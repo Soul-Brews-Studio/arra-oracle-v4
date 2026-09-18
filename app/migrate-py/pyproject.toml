@@ -6,10 +6,12 @@ requires-python = ">=3.10"
 dependencies = [
     "lancedb>=0.38.0",
     "pydantic>=2",
+    "requests>=2",
 ]
 
 [project.scripts]
 arra-migrate = "arra_migrate.__main__:main"
+arra-probe = "arra_migrate.probe:main"
 
 [build-system]
 requires = ["hatchling"]

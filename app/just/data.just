@@ -12,7 +12,7 @@ schema:
 versions:
     @uv run --quiet {{scripts}}/lance_peek.py {{table}} versions
 
-# Rows, minus the 1024-float vector that would swamp a terminal
+# Rows, minus the embedding vector that would swamp a terminal
 rows limit="20":
     @uv run --quiet {{scripts}}/lance_peek.py {{table}} rows {{limit}}
 

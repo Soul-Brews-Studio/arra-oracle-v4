@@ -6,6 +6,9 @@ from typing import Optional
 
 from lancedb.pydantic import LanceModel, Vector
 
-EMBEDDING_DIM = 1024  # mxbai-embed-large and bge-m3 both emit 1024
+# One source for the dimension, shared with the embedder, so the schema and
+# the model that fills it cannot disagree. all-minilm emits 384 (measured
+# 2026-09-18). Override both together with EMBEDDING_MODEL + EMBEDDING_DIMENSIONS.
+from ..embeddings import EMBEDDING_DIM
 
 __all__ = ["LanceModel", "Vector", "EMBEDDING_DIM", "datetime", "Optional"]

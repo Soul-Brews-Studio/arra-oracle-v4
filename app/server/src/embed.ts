@@ -5,8 +5,9 @@
 // `embedding: null` and backfilled later. An embedder outage must not block a write.
 
 const OLLAMA_URL = process.env.OLLAMA_URL ?? "http://127.0.0.1:11434";
-const MODEL = process.env.EMBEDDING_MODEL ?? "mxbai-embed-large";
-export const DIMS = Number(process.env.EMBEDDING_DIMENSIONS ?? 1024);
+// Defaults mirror migrate-py/src/arra_migrate/embeddings.py. Change both or neither.
+const MODEL = process.env.EMBEDDING_MODEL ?? "all-minilm";
+export const DIMS = Number(process.env.EMBEDDING_DIMENSIONS ?? 384);
 
 export type EmbedHealth = { ok: boolean; model: string; dims: number; detail: string };
 

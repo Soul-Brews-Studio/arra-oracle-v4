@@ -42,12 +42,23 @@ def main() -> int:
             tbl = db.open_table(name)
 
             # models.py is the source of truth; disk is the thing that can be stale.
-            declared = {f.name for f in model.to_arrow_schema()}
-            on_disk = {f.name for f in tbl.schema}
-            missing, extra = declared - on_disk, on_disk - declared
-            if missing or extra:
+            # Compare TYPE as well as name: on 2026-09-18 this said `ok` while the
+            # disk held Vector(1024) and the model declared Vector(384). A name-only
+            # diff cannot see a dimension change, which is the most likely drift.
+            declared = {f.name: (str(f.type), f.nullable) for f in model.to_arrow_schema()}
+            on_disk = {f.name: (str(f.type), f.nullable) for f in tbl.schema}
+            missing = sorted(declared.keys() - on_disk.keys())
+            extra = sorted(on_disk.keys() - declared.keys())
+            retyped = sorted(
+                f"{k}: disk={on_disk[k][0]} declared={declared[k][0]}"
+                for k in declared.keys() & on_disk.keys()
+                if declared[k] != on_disk[k]
+            )
+            if missing or extra or retyped:
                 drift += 1
-                print(f"DRIFT {name}: missing={sorted(missing)} extra={sorted(extra)}")
+                print(f"DRIFT {name}: missing={missing} extra={extra}")
+                for r in retyped:
+                    print(f"      {r}")
             else:
                 print(f"ok    {name} -- rows={tbl.count_rows()} version={tbl.version}")
             continue
