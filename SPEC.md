@@ -1,6 +1,6 @@
 # arra-oracle-v4 — Specification
 
-**Version**: `v26.9.18-alpha.858`
+**Version**: `v26.9.18-alpha.902`
 **Status**: draft
 **Date**: 2026-09-18 08:52 GMT+7
 **Supersedes**: [`Soul-Brews-Studio/arra-oracle-v3`](https://github.com/Soul-Brews-Studio/arra-oracle-v3) (`26.7.26-alpha.227`)
@@ -942,6 +942,76 @@ one reconciler, one direction, and a visible counter rather than a silent assump
 `'<memory_id>:<chunk_index>'`, so re-embedding a document is an idempotent overwrite
 rather than an append that silently doubles its weight in recall. Retried writes — and
 MCP clients do retry — must not duplicate a chunk.
+
+#### 4.5.6 Python owns the Lance dataset; TypeScript only searches it
+
+**Decision (2026-09-18, Nat): the vector side is Python.** The `chunks` schema above is
+declared once, as a `lancedb.pydantic.LanceModel`, and that declaration is the only place
+it exists:
+
+```python
+from lancedb.pydantic import LanceModel, Vector
+
+class Chunk(LanceModel):
+    id: str                  # '<memory_id>:<chunk_index>' — deterministic (§4.5.5)
+    memory_id: str           # FK into libSQL. Not enforced here; Lance has no FKs.
+    chunk_index: int
+    workspace_name: str      # redundant ON PURPOSE — the fail-closed backstop (§4.5.2)
+    text: str
+    vector: Vector(1024)     # D is fixed at dataset creation and cannot change (§4.5.3)
+    embedder: str            # 'bge-m3@1024' — model AND dim, one string
+    status: int              # 1 live, 0 withdrawn
+    created_at: datetime
+```
+
+**Why Python, when the runtime is Bun (§5).** The embedder already lives there —
+`bge-m3` is a Python-ecosystem model, and step 2 of the write path is an embedding call.
+Putting the Lance append in the same process as the thing that produces the vectors
+removes a hop rather than adding one.
+
+**Why this costs almost nothing: the language boundary sits on a seam that already
+exists.** §4.6 returns from `remember` after step 1, with the row marked
+`sync_state = 'pending'`; steps 2–4 are a scheduled reconciler pass. **That reconciler is
+the Python worker.** It reads pending rows from libSQL, embeds, appends to Lance, and
+writes back `sync_state`/`last_sync_at`/`sync_attempts`. No FFI, no shared process, no
+cross-language ORM — the queue was already the interface, and it is now also the
+language border.
+
+```
+  Bun / Elysia                     libSQL                    Python indexer
+  ────────────                     ──────                    ──────────────
+  remember()  ──INSERT────────▶  sync_state='pending'  ◀──── poll pending
+    returns immediately                                      embed(text)
+                                                             Lance append
+                                 sync_state='synced'  ◀────  write back
+  recall()  ──search()──────────────────────────────────────▶ (read-only)
+```
+
+**One owner, therefore one place the assertion runs.** §4.5.2 requires `workspace_name`
+to be asserted on every read of a Lance result — not filtered, asserted, because filtering
+would hide the bug. Two SDKs in two languages means two copies of that check and one of
+them eventually drifts. With a single owner it is written once.
+
+So TypeScript never declares the Lance schema and never writes to it. It calls one
+read-only interface, the same shape and the same precedent as `SessionSource` (§14.6):
+
+```ts
+interface VectorStore {                          // external · read-only from v4's side
+  search(bank: string, vector: Float32Array, k: number,
+         filter?: { type?: string; status?: number }): Promise<ChunkHit[]>;
+  health(): Promise<{ ok: boolean; datasets: number; detail: string }>;
+}
+```
+
+**The honest cost:** one process boundary on the `recall` hot path. That is the trade —
+a language border where the vectors are produced, in exchange for an IPC hop where they
+are read.
+
+> **This whole subsection is contingent.** §4.4d holds that LanceDB is **optional in v1**,
+> and spike **S9** decides whether it is needed at all: if a libSQL brute-force scan over
+> `F32_BLOB` with a `workspace_name` prefilter returns in under 50 ms at this corpus size,
+> there is no second store, no Python worker and no IPC hop — and §4.4–4.7 collapse to
+> about a page. Build none of this before S9 reports.
 
 ### 4.6 The write path — two stores, no transaction
 
