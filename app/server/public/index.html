@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>arra-oracle-v4 — memories</title>
+<style>
+  :root { --bg:#0a0a0f; --fg:#e8e8ef; --dim:#9a9aa8; --accent:#64b5f6; --line:#23232e; --panel:#12121a; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  main { max-width:750px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:18px; margin:0 0 2px; color:var(--accent); font-weight:600; }
+  .sub { color:var(--dim); font-size:13px; margin-bottom:20px; }
+  .bar { display:flex; flex-wrap:wrap; gap:10px; font-size:12px; color:var(--dim);
+         background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:10px 12px; margin-bottom:20px; }
+  .bar b { color:var(--fg); font-weight:600; }
+  .dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:5px; vertical-align:middle; }
+  .up { background:#4caf50; } .down { background:#e53935; }
+  section { border:1px solid var(--line); background:var(--panel); border-radius:6px; padding:14px; margin-bottom:16px; }
+  h2 { font-size:13px; margin:0 0 10px; color:var(--dim); text-transform:uppercase; letter-spacing:.06em; font-weight:600; }
+  input, textarea, select, button { font:inherit; font-size:14px; background:#0e0e16; color:var(--fg);
+    border:1px solid var(--line); border-radius:5px; padding:8px 10px; width:100%; }
+  textarea { resize:vertical; min-height:64px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+  .row > * { flex:1 1 150px; }
+  button { background:var(--accent); color:#06121f; border:none; font-weight:600; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+  button:active { transform:translateY(1px); }
+  .hit { border-top:1px solid var(--line); padding:10px 0; }
+  .hit:first-of-type { border-top:none; }
+  .hit .meta { font-size:12px; color:var(--dim); display:flex; gap:10px; flex-wrap:wrap; }
+  .hit .content { margin-top:4px; white-space:pre-wrap; word-break:break-word; }
+  .tag { border:1px solid var(--line); border-radius:4px; padding:0 5px; }
+  .vec { color:var(--accent); }
+  .novec { color:#c9873f; }
+  .empty { color:var(--dim); font-size:13px; }
+  .msg { font-size:13px; margin-top:8px; min-height:18px; color:var(--dim); }
+</style>
+</head>
+<body>
+<main>
+  <h1>arra-oracle-v4 — memories</h1>
+  <div class="sub">Rust migrated the table · TypeScript opens, inserts, embeds and queries it · LanceDB on disk</div>
+
+  <div class="bar" id="bar"><span>loading…</span></div>
+
+  <section>
+    <h2>Write a memory</h2>
+    <div class="row">
+      <input id="name" placeholder="name (slug)" />
+      <input id="bank" placeholder="bank (default)" />
+      <input id="type" placeholder="type (note)" />
+    </div>
+    <textarea id="content" placeholder="content — ภาษาไทยก็ค้นเจอ"></textarea>
+    <div class="row" style="margin-top:8px">
+      <button id="add">Save</button>
+      <button class="ghost" id="backfill">Backfill missing vectors</button>
+    </div>
+    <div class="msg" id="writeMsg"></div>
+  </section>
+
+  <section>
+    <h2>Search</h2>
+    <div class="row">
+      <input id="q" placeholder="query" />
+      <select id="mode">
+        <option value="text">full-text (icu)</option>
+        <option value="vector">semantic (1024-d)</option>
+      </select>
+      <input id="qbank" placeholder="bank filter (optional)" />
+    </div>
+    <div class="row"><button id="go">Search</button></div>
+    <div class="msg" id="searchMsg"></div>
+  </section>
+
+  <section>
+    <h2 id="resultsTitle">Recent</h2>
+    <div id="results"><div class="empty">nothing yet</div></div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;" }[c]));
+
+async function health() {
+  try {
+    const h = await (await fetch("/api/health")).json();
+    if (h.error) { $("bar").innerHTML = `<span><i class="dot down"></i>${esc(h.error)}</span>`; return; }
+    const e = h.embedder, d = h.db;
+    $("bar").innerHTML = `
+      <span><i class="dot ${e.ok ? "up" : "down"}"></i>embedder <b>${esc(e.model)}</b> ${e.dims}d</span>
+      <span>rows <b>${d.rows}</b></span>
+      <span>embedded <b>${d.embedded}</b></span>
+      <span>pending <b>${d.unembedded}</b></span>
+      <span>v<b>${d.version}</b></span>
+      <span>${d.indices.length ? esc(d.indices.join(" ")) : "no index"}</span>`;
+  } catch (err) { $("bar").innerHTML = `<span><i class="dot down"></i>${esc(err)}</span>`; }
+}
+
+function render(rows, title) {
+  $("resultsTitle").textContent = title;
+  $("results").innerHTML = rows.length ? rows.map((r) => `
+    <div class="hit">
+      <div class="meta">
+        <span class="tag">${esc(r.workspace_name)}</span>
+        <span class="tag">${esc(r.type)}</span>
+        <b>${esc(r.name)}</b>
+        <span class="${r.embedded ? "vec" : "novec"}">${r.embedded ? "vector" : "no vector"}</span>
+        ${r.score !== undefined ? `<span>score ${r.score.toFixed(3)}</span>` : ""}
+        ${r.distance !== undefined ? `<span>dist ${r.distance.toFixed(3)}</span>` : ""}
+      </div>
+      <div class="content">${esc(r.content)}</div>
+    </div>`).join("") : `<div class="empty">no rows</div>`;
+}
+
+async function recent() {
+  const rows = await (await fetch("/api/memories?limit=25")).json();
+  render(rows, "Recent");
+}
+
+$("add").onclick = async () => {
+  const body = { name: $("name").value.trim() || "untitled", content: $("content").value.trim(),
+                 workspace_name: $("bank").value.trim() || "default", type: $("type").value.trim() || "note" };
+  if (!body.content) { $("writeMsg").textContent = "content is empty"; return; }
+  $("writeMsg").textContent = "saving…";
+  const r = await (await fetch("/api/memories", { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(body) })).json();
+  $("writeMsg").textContent = r.error ? r.error : `saved ${r.id} — ${r.embedded ? "embedded inline" : "no vector yet (embedder down), backfill later"}`;
+  $("content").value = "";
+  await health(); await recent();
+};
+
+$("backfill").onclick = async () => {
+  $("writeMsg").textContent = "backfilling…";
+  const r = await (await fetch("/api/backfill", { method:"POST" })).json();
+  $("writeMsg").textContent = r.error ? r.error : `embedded ${r.embedded}, ${r.remaining} still pending`;
+  await health(); await recent();
+};
+
+$("go").onclick = async () => {
+  const q = $("q").value.trim();
+  if (!q) return;
+  const bank = $("qbank").value.trim();
+  $("searchMsg").textContent = "searching…";
+  const url = `/api/search?q=${encodeURIComponent(q)}&mode=${$("mode").value}${bank ? `&bank=${encodeURIComponent(bank)}` : ""}`;
+  const r = await (await fetch(url)).json();
+  if (r.error) { $("searchMsg").textContent = r.error; return; }
+  $("searchMsg").textContent = `${r.count} hit(s) · ${r.mode}${r.bank ? ` · bank ${r.bank}` : ""}`;
+  render(r.rows, `Results — ${r.mode}`);
+};
+$("q").addEventListener("keydown", (e) => { if (e.key === "Enter") $("go").click(); });
+
+health(); recent();
+</script>
+</body>
+</html>
