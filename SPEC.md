@@ -1,6 +1,6 @@
 # arra-oracle-v4 — Specification
 
-**Version**: `v26.9.18-alpha.852`
+**Version**: `v26.9.18-alpha.858`
 **Status**: draft
 **Date**: 2026-09-18 08:52 GMT+7
 **Supersedes**: [`Soul-Brews-Studio/arra-oracle-v3`](https://github.com/Soul-Brews-Studio/arra-oracle-v3) (`26.7.26-alpha.227`)
@@ -355,13 +355,16 @@ memories                                                         tier 2 · v4 on
   name               TEXT            ← slug. UNIQUE (name, workspace_name), Honcho's idiom
   workspace_name     TEXT NOT NULL  FK → workspaces.name    ← THE isolation constraint
   session_name       TEXT NULL                              ← filed in a session. Organisation, not scope.
-  peer_name          TEXT NULL                              ← who wrote it. Attribution, Honcho's idiom
-  FK (session_name, workspace_name) → sessions              ← composite: cannot file into another bank's session
-  FK (peer_name,    workspace_name) → peers                 ← composite, same reason
+  peer_name          TEXT NULL                              ← who WROTE it. Attribution, Honcho's idiom
+  subject_peer_name  TEXT NULL                              ← who it is ABOUT. §3.4.2
+  FK (session_name,      workspace_name) → sessions         ← composite: cannot file into another bank's session
+  FK (peer_name,         workspace_name) → peers            ← composite, same reason
+  FK (subject_peer_name, workspace_name) → peers            ← composite, same reason
   type               TEXT default 'note'  ← free text, guarded by a vocabulary named `type` (§3.3)
   content            TEXT
-  created_at         TIMESTAMP            ← when we learned it   ⎫ bitemporal
-  valid_time         TIMESTAMP NULL       ← when it was true     ⎭
+  created_at         TIMESTAMP            ← when we LEARNED it   ⎫ bitemporal
+  valid_from         TIMESTAMP NULL       ← when it STARTED being true   ⎬ an interval,
+  valid_to           TIMESTAMP NULL       ← NULL = still true            ⎭ not a point §3.4.2
   sync_state         TEXT pending|synced|failed   ⎫ Honcho's three columns, on the row
   last_sync_at       TIMESTAMP NULL                ⎬ (models.py:411–417) — not a
   sync_attempts      INTEGER default 0             ⎭ reconciler table (§4.6.1)
@@ -401,9 +404,55 @@ Lance and libSQL both push predicates down on columns and neither does on JSON. 
 rendered but never queried goes in the bag, exactly as Honcho puts `display_name` and
 `repo_url` there rather than growing `peers` to eleven columns.
 
-One column arrived: **`peer_name`**. Tier 2 previously had no author at all — `supersede_log`
-recorded who *retired* a memory while nothing recorded who *wrote* it. Honcho attributes
-every message to a peer; adopting its shape closed a gap v4 had not noticed.
+Columns arrived too. **`peer_name`**: tier 2 previously had no author at all —
+`supersede_log` recorded who *retired* a memory while nothing recorded who *wrote* it.
+Honcho attributes every message to a peer; adopting its shape closed a gap v4 had not
+noticed. **`subject_peer_name`** and the **`valid_from`/`valid_to`** pair are §3.4.2.
+
+#### 3.4.2 Life, events and chat — three shapes, no new tables
+
+Three things a memory bank is asked for, and where each already lives:
+
+| Asked for | Table | New machinery |
+|---|---|---|
+| **chat log** | `messages` (tier 1) | **none.** Seq-ordered, peer-attributed, per session per bank. 8,598 vault files are already this shape (§14.7) |
+| **event** | `memories`, `type='event'` | the valid interval, below |
+| **life** | `memories`, `type='life'`, `subject_peer_name` set | the interval **and** the subject |
+
+**`life`, `event`, `chat`, `note`, `decision` are terms, not tables.** They are rows in the
+`type` vocabulary (§3.3), and because that vocabulary is `kind: 'categories'`, an unknown
+type **fails closed** rather than quietly minting a sixth spelling of one concept. Adding a
+kind of memory is a term insert. It is never a migration.
+
+**Why an interval and not a point.** `valid_time` was a single timestamp, inherited from
+v3's `oracle_documents`. v3's *other* memory table, `oracle_memories`, carried
+`valid_from`/`valid_to` — a real interval — and for life facts that is the one that works:
+*"lived in Chiang Mai 2015–2020"* and *"what was true in March 2026"* are both unaskable
+against a point. v4 takes the better of v3's two models. `valid_to IS NULL` means still
+true, so the current-state query is
+
+```sql
+WHERE valid_from <= :t AND (valid_to IS NULL OR valid_to > :t)
+```
+
+and `created_at` stays what it always was — when *we learned it*, which is a different
+question from when it was *true*, and the reason this is called bitemporal.
+
+**Why `subject_peer_name` is not Honcho's observer/observed.** §3.2.2 skips Honcho's
+`collections`/`documents` (`models.py:335,379`) because they model *theory of mind* —
+what peer A **believes about** peer B — and v4 has no `reflect`. The subject axis is
+separable from that and much cheaper: a memory *about* Nat is a fact the bank holds, not a
+belief one peer holds about another. That needs **one nullable column**, not two tables and
+an observer dimension. If v4 ever grows real theory-of-mind, Honcho's tables are still
+there to adopt whole — this column does not block that and does not pretend to be it.
+
+**Scope answers both readings of "per workspace."** `workspace_name NOT NULL` scopes every
+memory to the bank; `session_name` optionally narrows it to one room. So *"Nat's life
+events in this bank"* and *"what happened in this room"* are both plain indexed queries,
+and neither can cross a bank boundary (§3.5).
+
+**A timeline across all three is a view, not a table** — `UNION` of `messages` by
+`created_at` and `memories` by `valid_from`. Two ordered reads, no third copy of the data.
 
 Tier 3 — `traces`, `trace_hits`, and the observability tables (`connections`,
 `mcp_calls`) — is in §14, §7.2 and §6.3, in the same idiom and under the same rule:
