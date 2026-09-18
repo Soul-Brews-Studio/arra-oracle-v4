@@ -93,6 +93,10 @@ re-embedding. Do not reopen this without new measurements.
    where `HMM = hour*100 + minute`. Update the `**Version**:` and `**Date**:` lines together.
 7. **Never `git push --force`, never `git commit --amend`, never push to `main`.** Feature
    branch + PR. Vault files under `ψ/` are shared state — **never `git add` them here.**
+8. **Diagrams are ASCII.** Nat reads ASCII far faster than a rendered graph, and it survives
+   in a terminal, a commit message, a `.md` diff, and a code comment alike. A mermaid version
+   may sit *beside* it collapsed in a `<details>`, never in front of it — and where the two
+   disagree, the ASCII is the one that is right.
 
 ---
 
