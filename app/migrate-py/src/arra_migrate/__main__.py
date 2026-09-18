@@ -11,8 +11,7 @@ import sys
 import lancedb
 
 from .models import TABLES
-
-DATA_DIR = os.environ.get("ARRA_DATA_DIR", "../data")
+from .storage import DATA_DIR, describe, storage_options
 
 
 def _print_schema(tbl) -> None:
@@ -25,7 +24,8 @@ def main() -> int:
     check_only = "--check" in sys.argv
     reset = bool(os.environ.get("ARRA_RESET"))
 
-    db = lancedb.connect(DATA_DIR)
+    print(f"store: {describe()}")
+    db = lancedb.connect(DATA_DIR, storage_options=storage_options())
 
     # `table_names()` PAGINATES, defaulting to 10. With 15 tables the tail came
     # back missing, so the "already exists" check below said absent and the

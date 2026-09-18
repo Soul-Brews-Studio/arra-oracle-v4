@@ -3,8 +3,8 @@
 
 import { connect, Index, type Connection, type Table } from "@lancedb/lancedb";
 import { embed, embedOne, DIMS } from "./embed";
+import { DATA_DIR, storageOptions, storageInfo } from "./storage";
 
-const DATA_DIR = process.env.ARRA_DATA_DIR ?? "../data";
 const TABLE = "memories";
 
 let conn: Connection | null = null;
@@ -15,11 +15,11 @@ let table: Table | null = null;
 // a second server, a backfill worker) stay invisible until checkoutLatest().
 // Read-your-own-writes within one process works without it -- cross-process does not.
 export async function db(): Promise<Table> {
-  conn ??= await connect(DATA_DIR);
+  conn ??= await connect(DATA_DIR, { storageOptions: storageOptions() });
   if (!table) {
     const names = await conn.tableNames();
     if (!names.includes(TABLE)) {
-      throw new Error(`table '${TABLE}' not found in ${DATA_DIR}. Run the Rust migration first.`);
+      throw new Error(`table '${TABLE}' not found in ${DATA_DIR}. Run 'just migrate run' first.`);
     }
     table = await conn.openTable(TABLE);
     return table;
@@ -147,7 +147,7 @@ export async function stats() {
   const unembedded = (await tbl.query().where("embedding IS NULL").toArray()).length;
   return {
     table: TABLE,
-    data_dir: DATA_DIR,
+    storage: storageInfo(),
     rows,
     embedded: rows - unembedded,
     unembedded,

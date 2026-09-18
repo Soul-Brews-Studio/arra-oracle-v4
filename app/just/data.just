@@ -31,3 +31,8 @@ s3probe target="local":
 # A throwaway local S3 on :5555, so s3probe runs with no credentials at all.
 moto:
     uv run --with 'moto[server]' moto_server -p 5555
+
+# Where the dataset lives right now. Local unless ARRA_DATA_DIR says otherwise.
+store:
+    @curl -s http://127.0.0.1:{{env_var_or_default("PORT","3939")}}/api/health \
+      | python3 -c "import json,sys; print(json.load(sys.stdin)['db']['storage'])"
