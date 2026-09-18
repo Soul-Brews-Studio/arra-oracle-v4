@@ -7,6 +7,9 @@ import { DATA_DIR, storageOptions, storageInfo } from "./storage";
 
 const TABLE = "memories";
 
+/** After this many failures a row stops being retried and stays `failed`. */
+const MAX_SYNC_ATTEMPTS = 5;
+
 let conn: Connection | null = null;
 let table: Table | null = null;
 
@@ -64,7 +67,12 @@ export async function insert(m: NewMemory): Promise<{ id: string; embedded: bool
       created_at: new Date(),
       valid_from: null,
       valid_to: null,
+      // Honcho's three, kept together (§4.6.1). A write that could not embed is
+      // `pending` with 1 attempt recorded, so a backfill can tell it apart from
+      // a row it has never tried.
       sync_state: embedding ? "synced" : "pending",
+      last_sync_at: embedding ? new Date() : null,
+      sync_attempts: embedding ? 0 : 1,
       superseded_by: null,
       superseded_at: null,
       is_active: true,
@@ -92,6 +100,7 @@ const clean = (rows: any[]) =>
     type: r.type,
     content: r.content,
     sync_state: r.sync_state,
+    sync_attempts: r.sync_attempts ?? 0,
     embedded: r.embedding != null,
     score: r._score ?? undefined,
     distance: r._distance ?? undefined,
@@ -122,10 +131,30 @@ export async function list(bank?: string, limit = 50) {
 // The backfill: find rows with no vector, embed them, write vectors back by id.
 export async function backfill(batch = 32) {
   const tbl = await db();
-  const pending = await tbl.query().where("embedding IS NULL").limit(batch).toArray();
+  // MAX_ATTEMPTS bounds the poison-row loop §4.6.1 warns about.
+  const pending = await tbl
+    .query()
+    .where(`embedding IS NULL AND sync_attempts < ${MAX_SYNC_ATTEMPTS}`)
+    .limit(batch)
+    .toArray();
   if (pending.length === 0) return { embedded: 0, remaining: 0 };
 
-  const vectors = await embed(pending.map((r: any) => r.content));
+  // An embedder outage must COUNT against each row, not silently retry forever.
+  // §4.6.1: sync_attempts is what lets a backfill give up on a poison row.
+  let vectors: number[][];
+  try {
+    vectors = await embed(pending.map((r: any) => r.content));
+  } catch (e) {
+    await tbl.mergeInsert("id").whenMatchedUpdateAll().execute(
+      pending.map((r: any) => ({
+        ...Object.fromEntries(Object.entries(r).filter(([k]) => k !== "embedding")),
+        embedding: null,
+        sync_state: "failed",
+        sync_attempts: (r.sync_attempts ?? 0) + 1,
+      })),
+    );
+    throw e;
+  }
   await tbl
     .mergeInsert("id")
     .whenMatchedUpdateAll()
@@ -134,6 +163,7 @@ export async function backfill(batch = 32) {
         ...Object.fromEntries(Object.entries(r).filter(([k]) => k !== "embedding")),
         embedding: vectors[i],
         sync_state: "synced",
+        last_sync_at: new Date(),
       })),
     );
 
