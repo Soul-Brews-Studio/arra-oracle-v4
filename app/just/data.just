@@ -21,3 +21,13 @@ disk:
     @du -sh {{table}}
     @echo "manifests: $(ls {{table}}/_versions/*.manifest 2>/dev/null | wc -l | tr -d ' ')"
     @echo "txns:      $(ls {{table}}/_transactions/*.txn 2>/dev/null | wc -l | tr -d ' ')"
+
+# LanceDB against S3. `just data s3probe` = local moto; `just data s3probe r2` = R2.
+# R2 needs R2_ACCOUNT_ID + AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY exported;
+# wrangler cannot mint the key, it is a dashboard token (R2 > API > Manage API tokens).
+s3probe target="local":
+    cd {{source_directory()}}/../migrate-py && S3_TARGET={{target}} uv run arra-s3probe
+
+# A throwaway local S3 on :5555, so s3probe runs with no credentials at all.
+moto:
+    uv run --with 'moto[server]' moto_server -p 5555

@@ -7,11 +7,13 @@ dependencies = [
     "lancedb>=0.38.0",
     "pydantic>=2",
     "requests>=2",
+    "boto3>=1.34",
 ]
 
 [project.scripts]
 arra-migrate = "arra_migrate.__main__:main"
 arra-probe = "arra_migrate.probe:main"
+arra-s3probe = "arra_migrate.s3probe:main"
 
 [build-system]
 requires = ["hatchling"]
