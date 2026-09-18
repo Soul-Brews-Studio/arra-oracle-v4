@@ -1,8 +1,8 @@
 # arra-oracle-v4 — Specification
 
-**Version**: `v26.9.18-alpha.700`
+**Version**: `v26.9.18-alpha.830`
 **Status**: draft
-**Date**: 2026-09-18 07:00 GMT+7
+**Date**: 2026-09-18 08:30 GMT+7
 **Supersedes**: [`Soul-Brews-Studio/arra-oracle-v3`](https://github.com/Soul-Brews-Studio/arra-oracle-v3) (`26.7.26-alpha.227`)
 **Repository**: <https://github.com/Soul-Brews-Studio/arra-oracle-v4>
 **Author**: Neo (AI) with Nat — written by an Oracle, AI speaking as itself (Rule 6)
@@ -46,7 +46,7 @@ v3 works, and its core decisions were right. What it also carries after a year:
   theory-of-mind. (That is Honcho's job and Honcho does it better.)
 - **Not** an opinionated reasoner. No disposition traits, no `reflect`. Retrieval
   returns documents; synthesis is the calling model's job.
-- **Not** multi-writer-at-scale in v1. Single writer per bank (§4.5).
+- **Not** multi-writer-at-scale in v1. Single writer per bank (§4.7).
 - **Not** a Cloudflare Worker. See §5.1 for why, and §5.4 for how Workers still fit.
 
 ---
@@ -66,88 +66,152 @@ v3 works, and its core decisions were right. What it also carries after a year:
 
 ## 3. Data model
 
-### 3.1 Hierarchy
+**v4's data model is Honcho's data model.** The core tables are byte-compatible with
+[`plastic-labs/honcho`](https://github.com/plastic-labs/honcho) (`src/models.py`) — same
+names, same columns, same constraints — so a bank exports to a running Honcho instance as
+a plain table dump and imports back the same way. What arra-oracle-v3 knew that Honcho
+does not (typed memories, supersede-not-delete, a controlled taxonomy) is added in
+**separate tables Honcho never reads**. §15 states the contract.
+
+> **Decision (2026-09-18, Nat):** *"go same Honcho, that's cool — but I need bank."*
+> Honcho's schema, unchanged, with exactly one word renamed on the surface.
+
+### 3.1 One alias — `bank`. Everything else keeps Honcho's word.
+
+| Honcho table | v4 surface word | What it is |
+|---|---|---|
+| `workspaces` | **bank** ← *the only rename* | the tenant: isolation, auth, one LanceDB dataset |
+| `sessions` | **session** | a room. Flat — no nesting |
+| `peers` | **peer** | anyone who writes: oracle, human, agent, service |
+| `messages` | **message** | one utterance in a session |
+| `session_peers` | **session peer** | who is in which session, with join/leave history |
 
 ```
-Workspace                    tenant / namespace / billing-and-access boundary
-└── Bank                     one isolated memory store — its own LanceDB dataset
-    └── Document             typed, superseded-not-deleted, bitemporal
-        └── Chunk            embedded unit (vector row)
+/mcp/:bank/:session    →    workspaces.name = :bank  ·  sessions.name = :session
 ```
 
-Two levels, deliberately:
+That is the entire alias layer. **No table named `banks`, no column named `bank_id`.**
+Wherever this document says *"the bank"*, the column is `workspace_name`. Everywhere else
+the prose word and the column name are the same word — which is the point.
 
-- **Workspace** answers *"whose is this?"* — access control, quota, deletion blast
-  radius. Maps to v3's existing `tenants` concept.
-- **Bank** answers *"which brain is this?"* — one retrieval corpus. A workspace with
-  banks `god-oracle` and `god-oracle-proof` keeps them as separate brains that share
-  one owner.
+> **An earlier draft also surfaced `sessions` as "workspace". Withdrawn (Nat,
+> 2026-09-18).** It put v4's word *workspace* onto Honcho's `sessions` while Honcho's own
+> `workspaces` meant something else — one word naming two different tables across two
+> systems that are meant to be interchangeable. **A session is a session.** The alias
+> budget is one, and `bank` spends it.
 
-> A single-bank workspace is a normal, expected shape. The second level costs nothing
-> when unused: `workspace/default` is implicit if the caller names only a bank.
-
-### 3.2 Entities
-
-```ts
-interface Workspace {
-  id: string;             // nanoid
-  slug: string;           // unique, URL-safe — appears in MCP endpoint paths
-  name: string;
-  created_at: number;
-  metadata: Json;
-}
-
-interface Bank {
-  id: string;             // nanoid
-  workspace_id: string;   // FK → Workspace, NOT NULL
-  slug: string;           // unique *within workspace*
-  name: string;
-  mission: string | null; // free text: what this bank is for. Descriptive, not behavioural.
-  created_at: number;
-  metadata: Json;
-}
-
-interface Document {
-  id: string;
-  bank_id: string;        // FK → Bank, NOT NULL  ← the isolation constraint
-
-  // Free text, NOT an enum. A new type is a string a client picks,
-  // never a migration someone has to run. Default 'note'. See §3.3.
-  type: string;
-
-  title: string;          // 1..200
-  content: string;        // body, <= 100_000
-  source_file: string | null;
-  project: string | null;
-  origin: string | null;
-
-  // bitemporal
-  created_at: number;     // when we learned it
-  valid_time: number | null;  // when it was true in the world
-  indexed_at: number;
-
-  // supersede, never delete
-  superseded_by: string | null;
-  superseded_at: number | null;
-  superseded_reason: string | null;
-
-  // provenance — an answer must be traceable to a line range
-  line_start: number | null;
-  line_end: number | null;
-  chunk_index: number | null;
-
-  // published flag. Unpublishing is the reversible act;
-  // supersede is the deliberate one. There is no DELETE (§4.2).
-  status: 0 | 1;
-}
+```
+bank ═══ workspaces ════════════════════════════════════════════════ tier 1, Honcho
+│        the tenant · the isolation boundary · one LanceDB dataset
+│
+├── sessions ──────────── a room. Flat — no parent, no nesting (§3.1.1).
+│     ├── session_peers ─ membership, with joined_at / left_at
+│     └── messages ────── seq-ordered, peer-attributed, read-tracked
+├── peers ─────────────── the address book. name = 'm5:arra-oracle-v3'
+│
+├── memories ──────────── typed · bitemporal · superseded-not-deleted ── tier 2, v4  §3.4
+│     └── chunk (LanceDB)  optional in v1                                            §4.4d
+├── vocabularies → terms  Drupal-shaped taxonomy                                     §3.3
+└── traces → trace_hits ─ what was searched, and what it found ──────── tier 3, v4   §14
 ```
 
-Classification is **not** a column on the document — it is a taxonomy (§3.3).
-`concepts: string[]` from v3 is replaced by term references.
+#### 3.1.1 Flat — no nesting, anywhere
 
-`mission` is **descriptive metadata only** — it does not alter retrieval or ranking.
-(Hindsight's disposition traits shape its `reflect` reasoning; v4 has no reflect, so
-copying that would be cargo cult.)
+**A session has no parent.** There is no channel-versus-thread distinction, no
+`parent_id`, no tree. A session is a room; if you want another room, you make another
+session. That is the whole model.
+
+An earlier draft borrowed a nested channel/thread shape. It is gone. Three reasons, in
+increasing order of weight:
+
+1. **Half the columns would be NULL** on any session that wasn't a thread — one table
+   doing two jobs.
+2. **Nothing bounded the recursion.** A self-referencing `parent_id` with no depth
+   constraint admits nesting nobody designed for.
+3. **Every listing query would need `WHERE parent_id IS NULL`, and forgetting it fails
+   open** — the same disease as path-derived isolation (§3.5), somewhere new.
+
+And the evidence: a survey of this fleet's vault (2026-09-18) found **8,598 messages
+carrying `from` / `to` / `timestamp` / `read`, and no `thread_id`, no `in_reply_to`.**
+Production conversation here is already entirely flat. Honcho is flat too — `sessions`
+has no parent column.
+
+> Replies still nest: `messages.in_reply_to` points at another message. **Threading is a
+> property of messages, not of rooms.** That is the one place a tree is cheap and
+> correct, and it needs no second table.
+
+### 3.2 Tier 1 — Honcho's five tables, unchanged
+
+Column names, types, uniqueness and foreign keys are Honcho's (`honcho/src/models.py`,
+lines cited). v4 adds only **nullable** columns, marked `+v4`. Nothing Honcho wrote is
+renamed, re-typed, or given a new meaning.
+
+```
+workspaces                                        surface: BANK            models.py:97
+  id                 TEXT  PK · nanoid, len 21
+  name               TEXT  UNIQUE        ← the FK target everywhere. Not `id`.
+  created_at         TIMESTAMP
+  h_metadata         JSON                ← user-visible
+  internal_metadata  JSON
+  configuration      JSON
+  +v4 mission        TEXT NULL           ← descriptive only. Never behavioural.
+
+peers                                             surface: peer            models.py:130
+  id · name · workspace_name → workspaces.name
+  h_metadata         JSON                ← kind · display_name · repo_url · mcp_url · last_seen_at
+  internal_metadata · configuration · created_at
+  UNIQUE (name, workspace_name)                                                    :156
+      name = 'm5:arra-oracle-v3' — the WHOLE federation tag, host included.
+
+sessions                                          surface: session         models.py:167
+  id · name · workspace_name → workspaces.name
+  is_active          BOOL default true   ← a boolean, not a status enum
+  h_metadata         JSON                ← room · issue_url · issue_number · project
+  internal_metadata · configuration · created_at
+  UNIQUE (name, workspace_name)                                                    :195
+
+session_peers                                     membership with history  models.py:569
+  workspace_name · session_name · peer_name
+  configuration · internal_metadata
+  joined_at          TIMESTAMP
+  left_at            TIMESTAMP NULL      ← leaving is a timestamp, not a DELETE
+  FK (session_name, workspace_name) → sessions (name, workspace_name)
+  FK (peer_name,    workspace_name) → peers    (name, workspace_name)
+
+messages                                                                   models.py:206
+  id                 INTEGER PK autoincrement   ⎫ two keys on purpose:
+  public_id          TEXT nanoid, len 21        ⎭ internal order vs external handle
+  workspace_name · session_name · peer_name     ← all three ON THE ROW
+  content            TEXT ≤ 65 535
+  token_count        INTEGER
+  seq_in_session     INTEGER
+  h_metadata · internal_metadata · created_at
+  UNIQUE (workspace_name, session_name, seq_in_session)   :258  ← order is a CONSTRAINT
+  FK (session_name, workspace_name) → sessions            :243
+  FK (peer_name,    workspace_name) → peers               :248
+  +v4 role           TEXT NULL     ← free text: question | answer | note | …
+  +v4 in_reply_to    TEXT NULL     ← FK → messages.public_id. Replies nest; sessions don't.
+  +v4 read           BOOL NULL     ← 8,597 vault files already carry these (§12.4)
+  +v4 read_at        TIMESTAMP NULL
+```
+
+#### 3.2.1 Five things this gives you that v4 was about to reinvent worse
+
+| # | Honcho does | v4 had drafted | Why Honcho's wins |
+|---|---|---|---|
+| 1 | **the tenant inside every foreign key** — `FK (session_name, workspace_name) → sessions (name, workspace_name)` | a tenant column + a runtime assertion | structural. You *cannot* reference a session in another bank; the database refuses. An assertion is discipline; a composite FK is physics |
+| 2 | **names are keys** — every FK targets `workspaces.name`, never `id` | `id` + `slug` + `name` | one identifier. Readable rows, URLs, logs |
+| 3 | `is_active: bool` | `status` enums on the room and the memory | two states need one bit, not a vocabulary |
+| 4 | **ordering is a uniqueness constraint** — `UNIQUE(…, seq_in_session)` | order by `created_at` | timestamps tie under fast writes; a constraint cannot |
+| 5 | **membership has history** — `session_peers.left_at` | nothing | Principle 1, in a join table |
+
+#### 3.2.2 What v4 deliberately does not take
+
+| Honcho has | v4 skips it because |
+|---|---|
+| `collections` + `documents` keyed on `observer` / `observed` (`:335`, `:379`) | theory-of-mind — *"what peer A believes about B"*. v4 has no `reflect`; copying it would be cargo cult |
+| GIN `to_tsvector('english', content)` (`:264`) | English-only. **20.7% of this fleet's corpus is Thai.** Honcho's copy of the exact defect v4 exists to avoid. An FTS index is not data — v4 keeps `trigram` over the same column and the rows move either way |
+| PostgreSQL | v4 is libSQL. Type mapping is mechanical, stated in §15.3 |
 
 ### 3.3 Taxonomy — vocabularies, terms, tagging
 
@@ -162,13 +226,13 @@ it.
 | `document` | one piece of content: title, body, datetime |
 | `vocabulary` | a namespace for terms, **carrying a policy** (`kind`, below) |
 | `term` | a label inside a vocabulary — nestable, ordered by weight |
-| `document_terms` | the join — a document wears any number of terms |
+| `memory_terms` | the join — a document wears any number of terms |
 
 ```ts
 interface Vocabulary {
   id: string;
-  workspace_id: string;     // FK → Workspace — see "Scope" below
-  name: string;             // machine name, lowercase slug, 1..64, unique per workspace
+  workspace_name: string;          // FK → Bank, NOT NULL — see "Scope" below
+  name: string;             // machine name, lowercase slug, 1..64, unique per bank
   label: string;
   description: string;
   kind: 'tags' | 'categories';   // ← the whole point
@@ -186,8 +250,8 @@ interface Term {
   created_at: string;
 }
 
-interface DocumentTerm {        // PRIMARY KEY (document_id, term_id)
-  document_id: string;          // FK → Document, ON DELETE CASCADE
+interface DocumentTerm {        // PRIMARY KEY (memory_id, term_id)
+  memory_id: string;          // FK → Memory, ON DELETE CASCADE
   term_id: string;              // FK → Term,     ON DELETE CASCADE
 }
 ```
@@ -218,17 +282,19 @@ which is exactly where Drupal puts it. This is the single most important line in
 - `UNIQUE (vocabulary_id, name)` — one term name per vocabulary. Two vocabularies may
   both hold `draft`.
 
-#### 3.3.3 Scope — vocabularies are per **workspace**, not per bank
+#### 3.3.3 Scope — vocabularies belong to the **bank**
 
-A term is a *label*, not content. Scoping vocabularies to the workspace lets sibling
-banks share one controlled vocabulary, which is what makes *"everything about X across
-my banks"* answerable. Documents remain bank-isolated (§3.4); only the label namespace
-is shared, and only within one workspace.
+A term is a *label*, not content — but the label namespace still has to sit **inside** the
+isolation boundary, not beside it. Since §3.1 makes **bank** the outer container,
+`Vocabulary.workspace_name` is NOT NULL and every workspace in a bank shares one controlled
+vocabulary. That is what makes *"everything about X across my rooms"* answerable without
+opening a cross-bank seam.
 
-> Consequence to accept knowingly: two banks in one workspace can infer that a term
-> exists from a vocabulary listing. Terms are owner-defined labels, so this is
-> acceptable — but it is a deliberate seam in an otherwise fail-closed design, and
-> §10 carries it as an open question.
+> This closes a hole the inverted hierarchy had. When vocabularies were workspace-scoped
+> and workspace sat *above* bank, two sibling banks could infer a term's existence from a
+> vocabulary listing — a deliberate leak in an otherwise fail-closed design, carried in
+> §10 as an open question. With bank as the outer container the leak cannot occur:
+> **nothing at all crosses a bank boundary, including labels.**
 
 #### 3.3.4 Refusals must name the caller's mistake
 
@@ -258,24 +324,75 @@ reads and classifies.
 
 `list_documents(untagged: true)` is therefore a first-class query, not an afterthought.
 
-### 3.4 Isolation — fail closed
+### 3.4 Tier 2 — the memory layer, from arra-oracle-v3
+
+What v3 knew that Honcho does not: a typed, superseded-not-deleted, bitemporal knowledge
+store with a controlled taxonomy over it. It hangs off the bank, and optionally off a
+session, with the same composite-FK discipline as tier 1.
+
+> **The table is `memories`, not `documents`.** Honcho already owns `documents`
+> (`models.py:379`) with a different meaning. A v4 table with the same name and a
+> different shape would look compatible and not be — the one kind of incompatibility that
+> actually hurts.
+
+```
+memories                                                         tier 2 · v4 only
+  id                 TEXT PK · nanoid
+  workspace_name     TEXT NOT NULL  FK → workspaces.name    ← THE isolation constraint
+  session_name       TEXT NULL                              ← filed in a session. Organisation, not scope.
+  FK (session_name, workspace_name) → sessions              ← composite: cannot file into another bank's session
+  type               TEXT default 'note'  ← free text, guarded by a vocabulary named `type` (§3.3)
+  title · content · source_file · project · origin
+  created_at         TIMESTAMP            ← when we learned it   ⎫ bitemporal
+  valid_time         TIMESTAMP NULL       ← when it was true     ⎭
+  sync_state         TEXT pending|synced|failed   ⎫ Honcho's three columns, on the row
+  last_sync_at       TIMESTAMP NULL                ⎬ (models.py:411–417) — not a
+  sync_attempts      INTEGER default 0             ⎭ reconciler table (§4.6.1)
+  superseded_by      TEXT NULL FK → memories.id   ← pointer; the log is supersede_log
+  superseded_at · superseded_reason
+  line_start · line_end · chunk_index             ← provenance to a line range
+  is_active          BOOL default true            ← publish flag, Honcho's idiom.
+                                                    Unpublish is reversible; supersede is deliberate.
+
+vocabularies   workspace_name NOT NULL · name · label · description
+               kind: tags | categories · term_policy: open | sealed
+               UNIQUE (name, workspace_name)                                    §3.3
+terms          vocabulary_id · name · description · parent_id · weight
+               UNIQUE (vocabulary_id, name)
+memory_terms   PK (memory_id, term_id) · both CASCADE
+supersede_log  id autoincrement · workspace_name NOT NULL
+               old_id · old_title · old_type · old_source   ← snapshotted at supersede time
+               new_id NULL (= retired) · new_title · new_source
+               reason · actor_peer_name → peers · superseded_at · project        §4.2
+```
+
+Tier 3 — `traces`, `trace_hits`, and the observability tables (`connections`,
+`mcp_calls`) — is in §14 and §7 and follows the same rule: `workspace_name NOT NULL` on
+every row, composite FKs to any session or peer it references.
+
+### 3.5 Isolation — fail closed, by schema
 
 v3 isolates vectors by **filesystem path** (`tenantDataPath()` folded into the LanceDB
-directory, with the adapter itself tenant-blind). That is elegant and cheap, and it
-**fails open**: one code path that builds a path without the helper silently shares a
-dataset, and nothing errors.
+directory, the adapter itself tenant-blind). Elegant, cheap, and it **fails open**: one
+code path that builds a path without the helper silently shares a dataset, and nothing
+errors. v3's two live isolation holes (`forum_messages`, `supersede_log` — no tenant
+column at all) are the same failure: the tenant was a *convention*, not a *constraint*.
 
-v4 keeps path-derived storage but adds a backstop:
+v4 takes Honcho's answer, which is structural, and keeps two backstops:
 
 | Layer | Mechanism | Failure mode |
 |---|---|---|
-| Storage | one LanceDB dataset per bank, path derived from `workspace/bank` | fails open |
-| Metadata | `bank_id` **NOT NULL** FK on every document row | fails closed |
-| Vector rows | `bank_id` stored **in the Lance schema** and asserted on every read | fails closed |
-| Access | `resolveBank(workspaceSlug, bankSlug)` is the **only** way to obtain a handle | single choke point |
+| **Schema** | `workspace_name NOT NULL` on every row · **composite FKs** carry it into every reference | **cannot fail** — a cross-bank reference is a constraint violation at INSERT |
+| Storage | one LanceDB dataset per bank, path derived from `workspaces.name` | fails open |
+| Vector rows | `workspace_name` stored **in the Lance schema**, asserted on every read | fails closed |
+| Access | `resolveBank(name)` is the **only** way to get a handle | single choke point |
 
-Storing `bank_id` redundantly in the vector rows is intentional duplication: it makes a
-cross-bank leak an assertion failure rather than a wrong answer.
+The composite FK is the load-bearing row. It is why §11's criterion — *"two banks provably
+cannot see each other's memories"* — is enforced by the database rather than proven by a
+test. The test still exists; it now documents a guarantee instead of supplying one.
+
+`workspace_name` in the vector rows stays intentional duplication: LanceDB has no foreign
+keys, so the schema guarantee stops at the libSQL boundary and the assertion carries it across.
 
 ---
 
@@ -286,13 +403,31 @@ cross-bank leak an assertion failure rather than a wrong answer.
 | Store | Holds | Engine |
 |---|---|---|
 | Metadata + FTS | workspaces, banks, documents, supersede chain, entity links, **full-text index** | **Turso / libSQL** |
-| Vectors + chunks | embedded chunks, `bank_id`, doc pointer | **LanceDB** |
+| Vectors + chunks | embedded chunks, `workspace_name`, doc pointer | **LanceDB** — **optional in v1**, behind the §4.3 driver seam (§4.4d) |
 
 **Turso (libSQL), not stock SQLite.** libSQL is SQLite-compatible, so Drizzle and the
-whole SQLite mental model carry over — but **embedded replicas** give the local-first →
-cloud seam directly: a local file for reads, optionally syncing to a remote. That
-removes the `local | cloud` fork from the metadata half entirely (§4.3 then only
-governs vector storage).
+whole SQLite mental model carry over, and it offers **embedded replicas** as an opt-in
+path to cloud.
+
+> ⚠️ **Correction (2026-09-18).** An earlier draft claimed embedded replicas "give the
+> local-first → cloud seam directly". **That is wrong.** Per Turso's documentation:
+> *"Writes are sent to the remote primary database configured at `syncUrl` by default.
+> They are NOT written to the local file first."* Write transactions containing reads
+> always go to the primary. So with a sync URL configured and the network down,
+> `remember` **fails**.
+
+**The rule v4 adopts: the local file is the source of truth. Sync is replication you
+opt into.**
+
+| Mode | Config | Writes offline |
+|---|---|---|
+| **Local-only** (default) | `ORACLE_DB_URL=file:...`, no sync URL | ✅ always — a plain local libSQL file |
+| Replica, online | `+ ORACLE_DB_SYNC_URL` | ✅ forwarded to primary |
+| Replica, offline | `+ ORACLE_DB_SYNC_URL` | ❌ **fails** unless `offline: true` is set |
+
+If a deployment both syncs *and* must survive a network outage, `offline: true` is
+mandatory, not optional. Local-first and replicated-by-default are **not** the same
+posture, and v4 defaults to the first.
 
 #### 4.1.1 Why FTS lives in libSQL and vectors do not
 
@@ -309,6 +444,13 @@ where trigram returns 435**. Thai is effectively invisible.
 
 > **arra-oracle-v3 shipped `unicode61`-only and is structurally unable to find Thai
 > inside words.** This is a known inherited defect that v4 exists to not repeat.
+> Verified 2026-09-18: `arra-oracle-v3/src/db/migrations/0017_fts5_bootstrap.sql` uses
+> `porter unicode61`, as does `indexer-pro/src/db/index.ts`. Of the fleet's five markdown
+> indexers only **`digger-node`** (`migrations/0001_init.sql:125`) and **`session-viewer`**
+> (`schema.sql:115`, a second `events_fts_tri` table) use `trigram` — and `session-viewer`
+> is the only one that *routes by query length* between a `unicode61` and a `trigram`
+> index. **20.7% of this fleet's vault contains Thai** (2,088 of 10,073 files), so the
+> three `unicode61` indexers cannot see a fifth of the corpus from the inside of a word.
 
 Costs of trigram, accepted knowingly: ~1.8–3× index size, cannot match a needle under 3
 characters (fall back to `LIKE` **and say so in the response**), and must never be
@@ -318,6 +460,36 @@ as FTS5's `NOT` and returns silence.
 > This finding has now been independently measured **four times** across this fleet. It
 > is the single most re-derived result we have, which is why it ships as a hard default
 > rather than being rediscovered a fifth time.
+
+> ⚠️ **Correction (2026-09-18).** An earlier draft let this read as a reason FTS must
+> live in libSQL. It is not. **LanceDB also has an n-gram tokenizer** — verified in
+> `@lancedb/lancedb@0.27.2`: `baseTokenizer?: "simple" | "whitespace" | "raw" | "ngram"`
+> (`dist/indices.d.ts:479`) with `ngramMinLength` / `ngramMaxLength` (`:509`, `:513`)
+> and `prefixOnly` (`:515`). `min=3, max=3` is trigram.
+>
+> **Resolved (2026-09-18, independent verification).** Lance's n-gram is
+> **character-level over the whole text**, so `ความ` trigrams exactly as FTS5 trigram
+> does: tantivy `NgramTokenizer::new(min, max, prefix_only)` at
+> `lance-index-11.0.0/src/scalar/inverted/tokenizer.rs:1095–1103`. An `icu` tokenizer
+> (real Thai word segmentation) also exists at `:1091`. **This fleet has already shipped
+> it** — `ψ/lab/01-arra-memory-lancedb` is a complete LanceDB-only port of
+> arra-memory-haos using `ngram(3,3)` (`arra-memory/src/db.ts:319–321`), measuring FTS
+> `"ความจำ"` at 5 ms @3k rows and 22 ms @30k.
+>
+> Thai therefore does **not** decide the engine. Three Lance-side traps do remain, all
+> found by that lab's adversarial audit and each now carrying a regression test:
+>
+> | Trap | Detail |
+> |---|---|
+> | `MatchQuery` defaults to **OR** (`dist/query.d.ts:504`) | FTS5 trigram `MATCH` means *contiguous substring*; Lance ORs the trigrams and ranks by BM25, so rows merely sharing trigrams compete for slots. The lab saw "three rows at limit 100 and nothing at limit 30" until it pushed `LIKE` into `WHERE` for membership and used the index only for ranking. `operator: And` gives all-trigrams-present, not contiguity; `PhraseQuery` gives contiguity at index-size cost |
+> | `removeStopWords: true`, `stem: true` are **defaults** | both silently mangle trigrams |
+> | **The FTS index does not follow writes** | new rows are served by a flat BM25 pass over the unindexed tail (`lance-11.0.0/src/io/exec/fts.rs:1550–1552`) until `optimize()`; `fastSearch()` skips them entirely (`dist/query.d.ts:204–210`). The lab runs `optimize()` every 10 minutes |
+>
+> The doc comment above the union (`:471–478`) still documents only
+> `simple | whitespace | raw` — `ngram` remains undocumented API surface.
+>
+> The honest statement: **trigram is non-negotiable; which engine provides it is not
+> decided by Thai.** The reasons libSQL holds FTS are the relational ones in §4.4d.
 
 #### 4.1.3 External-content FTS needs its triggers or it lies
 
@@ -330,14 +502,100 @@ results.
 The `DELETE` and `UPDATE` triggers must emit FTS5 `'delete'` rows for the *old* values.
 A bare `UPDATE` leaves the previous text matchable forever.
 
-### 4.2 Supersede as a constraint
+### 4.2 Supersede — a pointer *and* a log
 
-There is no `DELETE` in the write path. `supersede(doc_id, by, reason)` writes
-`superseded_by` / `superseded_at` / `superseded_reason`. Default queries filter
-`superseded_by IS NULL`; history is always reachable with an explicit flag.
+There is no `DELETE` in the write path. Supersede is how a memory stops being current.
 
-Bank deletion is likewise a status change, not a drop. Physical removal is an
-out-of-band operator action, never an API call.
+It is recorded in **two places, deliberately**, following v3 (`oracle_documents`
+columns + a separate `supersede_log` table):
+
+**1. The pointer, on the document** — answers *"is this current, and what replaced it?"*
+
+```ts
+superseded_by: string | null;      // → the document that replaced it
+superseded_at: number | null;
+superseded_reason: string | null;
+```
+
+Default queries filter `superseded_by IS NULL`. History is always reachable with an
+explicit flag — never by a different table.
+
+**2. The log, standalone** — answers *"what changed, when, and why?"*
+
+```ts
+interface SupersedeEntry {
+  id: number;                  // autoincrement — the log is ordered
+  workspace_name: string;             // NOT NULL — the log is bank-isolated too (§3.4)
+
+  old_id: string;              // the superseded document
+  old_title: string | null;    // ← snapshotted at supersede time
+  old_type: string | null;     // ←
+  old_source: string | null;   // ←
+
+  new_id: string | null;       // null = retired with no replacement
+  new_title: string | null;
+  new_source: string | null;
+
+  reason: string | null;
+  actor_peer_name: string | null; // FK → peers (§3.2) when known, else a label
+  superseded_at: number;
+  project: string | null;
+}
+```
+
+#### 4.2.1 Why both — the log is not redundant
+
+Three things the pointer alone cannot do:
+
+| Question | Pointer | Log |
+|---|---|---|
+| "Is this doc current?" | ✅ one column read | ✗ would need a scan |
+| "What changed in this bank last week?" | ✗ no time-ordered view | ✅ indexed on `superseded_at` |
+| "What did this doc say *before* the title was rewritten?" | ✗ reads the live row, already changed | ✅ `old_title`/`old_type` snapshotted |
+| "Retired with nothing replacing it" | ✗ `superseded_by` is null — indistinguishable from *current* | ✅ an explicit row with `new_id = null` |
+
+That last row is the sharp one. **A pointer cannot express "retired, replaced by
+nothing"** — `superseded_by IS NULL` already means *current*. Without the log,
+withdrawing a wrong memory is either impossible or requires a sentinel value. The log
+makes it an ordinary entry.
+
+#### 4.2.2 The snapshot columns are the point
+
+`old_title` / `old_type` / `old_source` are copied **at supersede time**, not joined at
+read time. A join would show whatever the row says *now* — and the row may itself have
+been edited since. The log is a record of a decision as it was made, so it carries its
+own evidence.
+
+This is the same reasoning as `connections.label` being "resolved at write time" (§7.2),
+and the opposite of `status` in Lance (§4.5.4), which is deliberately derived. Snapshot
+what a *decision* saw; derive what merely *reflects* current state.
+
+#### 4.2.3 Supersede is append-only and never rewritten
+
+Superseding a document that is *already* superseded appends a second entry — it does
+not edit the first. The chain `A → B → C` is three documents and two log rows, and all
+of it stays readable.
+
+`supersede_chain(doc_id)` walks it in either direction. This is the one query that
+makes Principle 1 useful rather than merely true: *nothing is deleted* is worth little
+if the history cannot be traversed.
+
+#### 4.2.4 Everything else that "deletes" is also a status change
+
+| Thing | Retirement mechanism |
+|---|---|
+| Document | `superseded_by` + log entry (above) |
+| Bank | `status`, never a drop |
+| Vocabulary | `status` — **not** `vocabulary_delete` (corrects §6.2.2) |
+| Term | superseded by another term via `term_merge`, not deleted |
+| Credential | **hard delete** — named exception (§7.3) |
+| Call log row | **expires** — named exception, telemetry not memory (§6.3) |
+
+Physical removal of any of the first four is an out-of-band operator action, never an
+API call, and it is the only path that needs the purge runbook.
+
+> The two exceptions are deliberate and both concern things that are **not memory**: a
+> revoked secret must stop existing, and telemetry must not grow without bound.
 
 ### 4.3 Storage drivers — the local/cloud seam
 
@@ -405,6 +663,45 @@ the OS, `auto_vacuum` was off, and a watch daemon rebuilt ANN daily.
 Putting vectors in LanceDB keeps that failure mode out of the file that holds
 workspaces, banks, and the supersede chain.
 
+> ⚠️ **Correction (2026-09-18).** This reason is **weaker than written above.** The
+> 92 GB file was produced by an **ops pattern** — a watch daemon running
+> `DROP INDEX` + `CREATE INDEX ... libsql_vector_idx` nightly over 442k×1024-d vectors
+> — **not** by an engine property of storing vectors in SQLite. A design that never
+> drops and rebuilds an ANN index on a schedule does not reproduce it.
+>
+> At v1 scale the index is not needed at all: 10k chunks × 1024-d float32 is a ~40 MB
+> brute-force scan, tens of milliseconds, and v3 runs 7,130 documents with **zero**
+> embeddings. **Rule if vectors ever land in libSQL: build `libsql_vector_idx` only past
+> a threshold (~50k chunks), never drop it, and re-embed into a new column or table.**
+> The four mandatory operational rules at the end of §4.4c already say the rest.
+>
+> Consequence: §4.4's *two* stated reasons for a second store are now both qualified —
+> (a) measures a corpus shape that is not v4's (see §9-S8), and (b) blames an engine for
+> a schedule. §4.4d is the resulting decision.
+
+#### 4.4c LanceDB has its own growth pathology — it is not the safe side
+
+The previous two points explain why vectors stay out of libSQL. They must not be read
+as "LanceDB is free of this problem". It has a different one, and the spec owes it the
+same page:
+
+- **Every `remember` is a Lance commit** — one fragment plus one manifest version. On
+  R2 that is N more objects, per write.
+- **Scan cost grows with fragment count.** Many tiny fragments is the pathological shape,
+  and single-row appends produce exactly that.
+- **`optimize()` / compaction is required**, not optional, and it is a scheduled
+  operation nobody will run unless the spec says to.
+- **`cleanup_old_versions()` deletes old manifest versions** — a *hard delete*, which
+  must be squared with Principle 1 (§2.1). Resolution: Lance version history is
+  **storage-engine bookkeeping, not the memory record**. The memory record's history is
+  the supersede chain in libSQL (§4.2), which is never touched by compaction. Say this
+  out loud so nobody "protects" old Lance versions in the belief they are the archive.
+- **No ANN index policy is specced**, so a query on R2 brute-forces the dataset over
+  HTTP. An index-build threshold is needed.
+
+Expected to bite around 10k memories on R2 — see spike **S7**. Until S7 closes, treat
+per-write commit cost as unmeasured.
+
 **If v4 ever does put vectors in libSQL**, these are mandatory, not optional:
 - check `PRAGMA freelist_count` against `page_count` before believing a file is "too big"
 - set `auto_vacuum=INCREMENTAL` *before* the first full VACUUM
@@ -412,7 +709,199 @@ workspaces, banks, and the supersede chain.
   schema and stock SQLite dies with `no such function: libsql_vector_idx`
 - never `DROP`+`CREATE` an ANN index on a schedule
 
-### 4.5 Concurrency
+#### 4.4d Could LanceDB be the *only* store? No — and the real question is the inverse
+
+Asked directly (Nat, 2026-09-18). Answered against `@lancedb/lancedb@0.27.2` type
+definitions, not from memory.
+
+**LanceDB-only is not viable.** Five load-bearing guarantees in this spec have no
+LanceDB equivalent:
+
+| # | Guarantee | Spec | Why Lance cannot |
+|---|---|---|---|
+| 1 | `memory_terms` many-to-many resolution | §3.3 | **No joins.** `join`, `groupBy`, `aggregate` return zero hits in `dist/query.d.ts`. Every tag query becomes a scan plus a client-side merge |
+| 2 | Fail-closed isolation | §3.4 | No `NOT NULL`, no foreign keys. The `workspace_name` FK that §3.4 calls "fails closed" degrades to an application check — which is the layer §3.4 exists to stop relying on |
+| 3 | Controlled vocabulary **refuses** an unknown term | §3.3.1 | No `UNIQUE (vocabulary_id, name)`, no FK. The guard becomes a read-then-write race, so the corpus rot §3.3.1 describes returns |
+| 4 | `supersede_log` is ordered | §4.2 | No autoincrement |
+| 5 | Threads, messages, entities | §12 | `peer_name` FK, `in_reply_to` self-reference, thread→message cascade — relational throughout |
+| 6 | Multi-table atomicity | §3.3, §4.2 | `tag` must check `kind` + term existence + insert the join as one act; `supersede` must UPDATE the pointer and INSERT the log together. Lance commits **one table at a time** |
+| 7 | `connections` folded on write | §7.2 | `requests++` on **every HTTP request** → one fragment + one manifest **per request**. No compaction schedule survives this. Same for `mcp_calls` (§6.3), one commit per tool call |
+| 8 | Concurrent `term_create` | §3.3.1 | `mergeInsert` is **not** an upsert under concurrency — two writers read the same table version, both find no match, both insert. The lab had to serialise per key in-process to recover what a PRIMARY KEY gives free. This is exactly the `mcp` / `MCP` duplication §3.3.1 exists to prevent |
+
+Per-row mutation does exist (`update({where, values})`, `dist/table.d.ts:117/131/161`;
+`delete(predicate)`, `:169`), so supersede is *expressible* — but the cost is larger than
+§4.4c implies. `lance-11.0.0/src/dataset/write/update.rs:440–506`: an UPDATE writes the
+updated rows as **new fragments**, applies **deletion vectors** to the old fragments, then
+commits a **manifest** — and the new row is unindexed, for vectors *and* FTS, until
+`optimize()` runs. **10k supersedes without compaction ≈ 10k tiny fragments + 10k deletion
+files + 10k manifest versions.** §4.4c framed this as an *append* pathology driven by
+`remember`; it is equally driven by `supersede` and by the `sync_state` update in §4.6.
+
+**The inverse question is the live one.** Nothing in §3, §4.2, §6, §7 or §12 needs
+LanceDB. Set against that:
+
+- FTS scores **0.765** to vectors' **0.099** on this corpus shape (§4.4a)
+- hybrid RRF scores **0.437** — worse than FTS alone (§4.4a)
+- **arra-oracle-v3 runs 7,130 documents with 0 embeddings in production.** The vector
+  subsystem is fully present and has never been switched on
+- LanceDB adds native Rust bindings that **cannot run in a Worker** (§5.1), a mandatory
+  compaction obligation (§4.4c), an immutable vector dimension (§4.5.3), and the entire
+  two-store consistency seam (§4.5.4, §4.6)
+
+**Decision: libSQL is mandatory; LanceDB is optional in v1, behind the §4.3 driver
+seam.** v1 ships keyword/trigram recall — which §4.4a already makes the default — and
+semantic recall reports *"not enabled"* rather than silently returning nothing. Adding
+LanceDB later is a driver, not a migration, because §4.3 already defines that seam.
+
+This is deliberately the **reversible** direction. Shipping both stores first and
+removing one later is a rewrite; shipping one and adding the second is config.
+
+**The viable LanceDB-only subset, for the record:** one `memories` table with
+`tags: List<Utf8>`, no vocabulary/term tables, no threads, one process, one writer.
+That is precisely what `ψ/lab/01-arra-memory-lancedb` built and audited (44 agents,
+9 defects fixed) — so the boundary is measured, not guessed. Add §3.3 or §12 and you are
+reimplementing a relational engine in TypeScript.
+
+> **Cross-check.** This section was written from a first-pass review, then independently
+> re-derived by a second model reading the LanceDB and Lance-core sources directly. Both
+> reached (d). The second pass supplied rows 6–8 above, the `update.rs` cost, and the
+> §4.4(b) correction.
+
+> What would overturn this: S8 (below) showing semantic recall materially beats trigram
+> on a *memory-shaped* corpus. §4.4a's benchmark is **known-item retrieval on raw
+> session transcripts** — not paraphrase-queried curated memories, which is v4's actual
+> workload. The measurement is real; its transfer to this corpus is assumed, and that
+> assumption has never been tested.
+
+### 4.5 The LanceDB schema
+
+One **dataset per bank**, at the path §4.3 derives. One **row per chunk**, not per
+document.
+
+```
+table  chunks                        -- one Lance dataset per bank
+
+  id              utf8        not null   -- '<memory_id>:<chunk_index>', deterministic
+  memory_id     utf8        not null   -- FK into libSQL `documents` (not enforced here)
+  chunk_index     int32       not null
+  workspace_name         utf8        not null   -- ← redundant on purpose. §3.4.
+  text            utf8        not null   -- the chunk as embedded, not the whole document
+  vector          fixed_size_list<float32, D>  not null
+  embedder        utf8        not null   -- 'bge-m3@1024' — model AND dim, one string
+  status          int8        not null   -- 1 live, 0 withdrawn from default recall
+  created_at      timestamp[us, UTC] not null
+```
+
+#### 4.5.1 Why these columns and not a metadata blob
+
+v3's adapter carries `metadata: Record<string, string | number>` because it had to
+satisfy five backends. v4 has one, so the filters get to be **real columns**: Lance
+pushes predicates down to the scan, and a blob would force a full deserialise per row
+to answer `WHERE workspace_name = ?`.
+
+#### 4.5.2 `workspace_name` is stored even though the dataset is already per-bank
+
+This is the §3.4 fail-closed backstop, and it is deliberate duplication. Path-derived
+isolation fails open — one code path that builds a path without `resolveBank()` silently
+opens the wrong dataset and **nothing errors**. With `workspace_name` on the row, every read
+asserts it and a leak becomes a loud assertion failure instead of a wrong answer.
+
+The assertion runs on results, not as a filter: filtering would *hide* the bug, which is
+the failure mode this exists to prevent.
+
+#### 4.5.3 `embedder` per row, not per dataset
+
+`'<model>@<dim>'` as one string, because the dim is the half that breaks silently.
+
+A bank re-embedded with a different model is a different corpus (spike S4). Storing the
+identity per *row* rather than per dataset means a partial re-embed is detectable
+mid-flight — which is exactly the state an interrupted backfill leaves behind. `bank_info`
+reports the distinct set; more than one value means a re-embed is incomplete.
+
+`D` in `fixed_size_list<float32, D>` is fixed at dataset creation and **cannot change
+without rewriting the dataset**. Changing embedder to one of a different dimension is
+therefore a new dataset, not a migration.
+
+#### 4.5.4 `status` is denormalised from libSQL, and that is a known seam
+
+Supersede lives in libSQL (§4.2) and is the record of truth. But `recall` must exclude
+superseded chunks *inside the vector scan* — fetching k results and then filtering them
+against libSQL returns fewer than k, unpredictably.
+
+So `status` is mirrored into Lance, which means two stores hold one fact:
+
+- `supersede()` writes libSQL **first**, then updates Lance
+- an interruption between them leaves a chunk that is live in Lance and superseded in
+  libSQL — it can surface in `recall` until reconciled
+- **libSQL always wins.** The reconcile pass rewrites Lance from libSQL, never the
+  reverse
+- `bank_info` reports the count of rows whose `status` disagrees
+
+This is the same consistency gap as the write path (§4.6) and it gets the same answer:
+one reconciler, one direction, and a visible counter rather than a silent assumption.
+
+> Note it is `status`, **not** a `superseded_by` copy. Lance holds the *decision*
+> (include in default recall or not), never the supersede chain. The chain has one
+> home.
+
+#### 4.5.5 Chunk ids are deterministic
+
+`'<memory_id>:<chunk_index>'`, so re-embedding a document is an idempotent overwrite
+rather than an append that silently doubles its weight in recall. Retried writes — and
+MCP clients do retry — must not duplicate a chunk.
+
+### 4.6 The write path — two stores, no transaction
+
+`remember` touches three things that cannot share a transaction: a libSQL row, an
+**external embedding call**, and a LanceDB append. A crash between any two leaves the
+bank inconsistent, and the earlier draft said nothing about it.
+
+**Order is chosen so that every failure leaves a state that is detectable and
+repairable, never silently wrong:**
+
+```
+1. libSQL INSERT memory         (sync_state = 'pending')   ← the memory now exists
+2. embed(text)                  external call
+3. LanceDB append chunks        (deterministic ids, §4.5.5)
+4. libSQL UPDATE               sync_state = 'synced', last_sync_at = now
+   on any failure:             sync_state = 'failed',  sync_attempts += 1
+```
+
+| Crash after | State | Detected by | Repair |
+|---|---|---|---|
+| 1 | memory exists, no vectors | `sync_state = 'pending'` | backfill embeds it |
+| 2 | same as above — embedding is not persisted | same | same |
+| 3 | vectors exist, still `'pending'` | same | re-append is an **overwrite**, not a duplicate (§4.5.5) |
+| 4 | consistent | — | — |
+
+#### 4.6.1 Three columns on the row, not a reconciler table
+
+The earlier draft tracked this with a single `indexed_at` timestamp. v4 uses Honcho's
+three columns instead — `sync_state`, `last_sync_at`, `sync_attempts`
+(`honcho/src/models.py:411–417`, on both `documents` and `message_embeddings`) — because
+one timestamp cannot distinguish *never tried* from *tried and failed*, and cannot count
+retries. `sync_attempts` is what lets the backfill give up on a poison row instead of
+re-embedding it forever; `last_sync_at` still answers "when did the index catch up",
+which is the number an embedder change (S4) needs.
+
+**`remember` returns after step 1.** The document is durable and FTS-searchable
+immediately; vector recall arrives when indexing completes. Blocking the caller on an
+external embedder would make a memory server's write path only as available as its
+embedding provider.
+
+The reconciler is one scheduled pass, and it is the *same* one as §4.5.4 — it fixes
+`sync_state <> 'synced'` and `status` disagreement together, always writing Lance from
+libSQL. **libSQL is the record of truth; Lance is a derived index.** Losing the Lance
+dataset entirely must be recoverable by re-embedding, and nothing else.
+
+`bank_info` reports both counters — unembedded documents, and status disagreements. A
+consistency gap the operator cannot see is one nobody fixes.
+
+> `last_sync_at` is a timestamp rather than a boolean for the same reason `indexed_at`
+> was: it records *when* the derived index caught up, which is what an embedder change
+> (S4) needs in order to re-evaluate "caught up".
+
+### 4.7 Concurrency
 
 v1 assumes **one writer per bank**. Lance commits via manifest, and concurrent-writer
 safety on object storage historically needs an external commit lock. Until §9-S2
@@ -439,7 +928,7 @@ This is the single hard constraint shaping the whole deployment story.
 ┌──────────────────────────────────────────────┐
 │  arra-oracle-v4   (one Bun process, Elysia)  │
 │                                              │
-│   MCP endpoint  /mcp/:workspace/:bank        │
+│   MCP endpoint  /mcp/:bank[/:workspace]     │
 │   HTTP API      /v4/...                      │
 │   OAuth AS      /authorize /oauth/token      │
 │   ├── metadata store  (SQLite)               │
@@ -481,7 +970,9 @@ is additive — v1 ships without it, and nothing in v1 needs rewriting to add it
 - **Negotiate, don't pin.** Maintain a known-revisions list and answer an unrecognised
   client in the newest known revision rather than failing. (`digger-node` speaks five:
   `2026-07-28`, `2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05`.)
-- **Per-bank endpoints**: `/mcp/:workspace/:bank`. A connector is scoped to one bank at
+- **Per-bank endpoints**: `/mcp/:bank[/:workspace]` — **bank first, it is the tenant**
+  (§3.1); the workspace segment is optional and narrows the room, never the isolation.
+  A connector is scoped to one bank at
   registration time, so a model cannot address a bank it was not given.
 
 ### 6.2 Tools — v1
@@ -496,7 +987,9 @@ two others?"
 | `remember` | write a document into the connected bank |
 | `recall` | trigram/FTS search, with semantic as an explicit separate mode (§4.4) |
 | `get_document` | fetch one document by id, with provenance |
-| `supersede` | mark a document superseded by another, with a reason |
+| `supersede` | mark a document superseded by another (or retire it with no replacement), with a reason |
+| `supersede_chain` | walk a document's supersede history in either direction |
+| `supersede_log` | what changed in this bank, time-ordered |
 | `list_documents` | filter by type / term / project / time / **`untagged`**, paginated |
 | `bank_info` | what this bank is, counts, embedder identity, health |
 
@@ -609,6 +1102,94 @@ OAuth requirements, non-optional:
 > Implementation is ported from `Soul-Brews-Studio/digger-node` (`src/` — OAuth AS on a
 > Worker with D1). v4 reuses the **logic**, not the deployment target (§5.1).
 
+### 7.1 Bearer auth — a first-class door, not a fallback
+
+Bearer is not the lesser path. It is the **only** path for everything that can send a
+header: Claude Code, `curl`, scripts, CI, the miner-style jobs that write on a timer.
+OAuth exists solely because claude.ai cannot send one.
+
+| | Bearer | OAuth |
+|---|---|---|
+| Who | Claude Code, scripts, CI | claude.ai connectors |
+| Setup | paste a token into config | DCR + consent + PKCE |
+| Rotation | issue a new token, revoke the old (§7.3) | 30-day expiry, re-consent |
+| Scope | **per bank** (the tenant, §3.1), optionally narrowed to one workspace | bound to the `resource` it was issued for |
+
+Tokens are stored as **`sha256(token)`, base64url** — never in the clear. The plaintext
+exists exactly twice: in the response that hands it over, and in the `Authorization`
+header coming back. Verification hashes the presented value and looks it up.
+
+> The column is named `token_hash`, never `token`. digger-node renamed it rather than
+> reusing the old name precisely because *"a column called `token` holding a digest is
+> exactly the sort of quiet lie that survives into the next reader's assumptions."*
+> A stolen database must yield nothing that can be replayed.
+
+### 7.2 Who is connected — `connections`
+
+"How many clients are connected, and is claude.ai among them?" is a question neither
+the token table nor the call log can answer:
+
+- `oauth_clients` knows who **registered** — a token that exists is not a client that calls
+- `mcp_calls` knows which **tools ran** — a client can hold a session for hours and call
+  no tool at all, and a browser or sidebar never calls one
+
+So v4 keeps a third, small table — **a projection of the request stream, not a log**:
+
+```ts
+interface Connection {          // PRIMARY KEY: '<method>:<principal>'
+  id: string;
+  workspace_name: string;              // ← v4 adds this; digger-node is single-corpus
+  method: 'bearer' | 'oauth' | 'owner-session';
+  principal: string;            // token id or oauth client_id — NEVER the credential
+  label: string;                // resolved at write time, so a renamed client shows its current face
+  user_agent: string | null;
+  remote_ip: string | null;
+  first_seen: string;
+  last_seen: string;
+  requests: number;
+  tool_calls: number;
+  last_tool: string | null;
+}
+```
+
+Folded on write: counters add, `last_*` replace, `first_seen` is kept. One row per
+caller, not per request — a row per request would grow without bound to answer a
+question about the present.
+
+**Nothing here is a credential.** The bearer that proved a caller is discarded at the
+gate; only the *method* survives.
+
+### 7.3 Revocation
+
+| Action | Effect |
+|---|---|
+| `revoke_token(id)` | one credential dies |
+| `revoke_client(client_id)` | **everything that client holds** — live tokens *and* any authorization code still in flight |
+| `revoke_workspace_tokens(ws)` | the panic button |
+
+Revocation is a **hard delete of the credential row**, and this is a deliberate,
+named exception to Principle 1 (§2.1): a revoked token that still exists somewhere is
+not a historical record, it is a live risk. The *fact* of the revocation is retained —
+who, when, which client — in the audit trail; the secret is not.
+
+Revoking must also clear the matching `connections` row, or the UI keeps showing a
+client that can no longer call.
+
+> Because there are **no refresh tokens** (§7), revocation is genuinely final: a
+> revoked claude.ai connector must be re-consented, not silently renewed.
+
+### 7.4 Surfaces
+
+| Where | Shows |
+|---|---|
+| HTTP API + CLI | full connections list, token list, revoke — **the only place revoke lives** |
+| `/health` (§6.4) | counts only: doors open, connected clients in the last hour |
+| MCP | **read-only** `connections` tool, scoped to the caller's workspace |
+
+Revocation is **never an MCP tool.** A model must not be able to cut off another
+client — or itself — and a hallucinated `revoke_workspace_tokens` must have no path to
+exist. Same reasoning as bank/workspace lifecycle (§6.2.2).
+
 ---
 
 ## 8. Relationship to v3 — fresh start, no migration
@@ -641,14 +1222,19 @@ is ever wanted, it is a separate proposal against a v4 that already works.
 | # | Question | Why it blocks | Done when |
 |---|---|---|---|
 | **S1** | Does `@lancedb/lancedb` read/write an **R2** bucket via `s3://` + `endpoint`? | §4.3 assumes yes; undocumented by LanceDB | a table created, written, and queried against a real R2 bucket |
-| **S2** | Concurrent-writer safety on object storage — is an external commit lock required? | §4.5 single-writer assumption is a workaround, not a decision | two writers against one bank on R2, observed conflict behaviour documented |
-| **S3** | Does claude.ai's connector accept a **path-scoped** resource (`/mcp/ws/bank`)? | §6.1 per-bank endpoints depend on RFC 9728 `resource` exact-match with a path | a real claude.ai connector added and approved against a path-scoped URL |
+| **S2** | Concurrent-writer safety on object storage — is an external commit lock required? | §4.7 single-writer assumption is a workaround, not a decision | two writers against one bank on R2, observed conflict behaviour documented |
+| **S3** | Does claude.ai's connector accept a **path-scoped** resource (`/mcp/:bank`)? | §6.1 per-bank endpoints depend on RFC 9728 `resource` exact-match with a path | a real claude.ai connector added and approved against a path-scoped URL |
 | **S4** | Embedder choice for local-first (no API key) vs cloud | affects bank portability — a bank re-embedded with a different model is a different corpus | embedder identity recorded per bank, mismatch detected on read |
-| **S5** | Turso **embedded replica** behaviour under an offline local-first start — does it degrade cleanly with no sync URL? | §4.1/§4.3 assume "sync is a config value"; if the client demands reachability, local-first breaks | server starts, writes, and recalls with `ORACLE_DB_SYNC_URL` unset and the network down |
-| **S6** | Does `tokenize='trigram'` FTS behave identically on libSQL as on stock SQLite FTS5? | §4.1.2 is load-bearing for Thai; a libSQL divergence would be silent | `ความ` returns the trigram-count order of magnitude (~435), not the `unicode61` one (~5) |
+| **S5** | With `ORACLE_DB_SYNC_URL` **set** and the network **down**, does a write fail — and does `offline: true` actually rescue it? | §4.1 now states writes forward to the primary; the rescue path is documented but unverified. Testing the no-sync-URL case proves nothing | a write is attempted in all three modes of §4.1's table and each behaves as the table claims |
+| **S6** | Does `tokenize='trigram'` FTS behave identically on **libSQL** as on stock SQLite FTS5? | §4.1.2 is load-bearing for Thai; a libSQL divergence would be silent. *(The LanceDB half of this question is closed — §4.1.2: character-level n-gram, already shipped and measured by this fleet.)* | `ความ` returns the trigram order of magnitude (~435), not the `unicode61` one (~5) |
+| **S7** | LanceDB fragment/version growth on R2 under single-row appends (§4.4c) | one commit per `remember` means object count and scan cost grow without bound; compaction policy is unspecced | 10k single-row appends on a real R2 bucket; object count, recall latency and `optimize()` cost measured |
+| **S9** | **The one-hour experiment that settles §4.4d.** One Bun script: libSQL file, 10k real v3 documents (real Thai), `F32_BLOB(1024)`, `tokenize='trigram'`, **no vector index**. Measure (1) `ORDER BY vector_distance_cos(...) LIMIT 20` with a `workspace_name` prefilter, (2) `ความ` hit count — which also closes S6, (3) file size and `PRAGMA freelist_count` after 10k supersede UPDATEs | if (1) < 50 ms and (3) freelist ≈ 0, LanceDB has nothing to earn in v1 and §4.4–4.7 collapse to roughly one page | all three measured and recorded in this spec |
+| ~~**S10**~~ | ~~What already indexes the `.jsonl` corpus?~~ **CLOSED 2026-09-18.** 7–8 indexers found; `session-viewer` owns `~/.session-viewer/sessions.db` as sole writer, `session-search` reads it. **v4 is a reader, not an eighth writer** — recorded in §14.9 | — | done |
+| **S8** | Does semantic recall beat trigram on a **memory-shaped** corpus (curated memories, paraphrase queries) rather than raw transcripts? | §4.4d defers LanceDB entirely on the strength of §4.4a, whose benchmark is known-item retrieval on transcripts. If the transfer fails, LanceDB is load-bearing after all | ~200 curated memories, paraphrased queries, MRR for trigram vs bge-m3 reported side by side |
 
-Nothing in §4.1, §4.3, §4.5, or §6.1 should be treated as settled until its spike
-closes. **S6 is the highest-value cheap one** — it is a single query and it protects the
+Nothing in §4.1, §4.3, §4.4c, §4.4d, §4.7, or §6.1 should be treated as settled until its
+spike closes. **S9 is now the highest-value one** — it subsumes S6 and decides §4.4d outright.
+**S6 alone is the cheapest** — it is a single query and it protects the
 one defect v4 exists to not repeat.
 
 ---
@@ -663,6 +1249,9 @@ one defect v4 exists to not repeat.
    transcripts (Hindsight banks, arra-oracle documents, Honcho peers) with no shared ID
    space. v4 replacing v3 leaves three. Replacing Hindsight too leaves two.
 3. ~~**Licence**~~ — **decided: MIT** (2026-09-18), matching Hindsight. LICENSE committed.
+4. ~~**One store or two?**~~ — **decided (2026-09-18): libSQL mandatory, LanceDB optional
+   behind the §4.3 seam.** See §4.4d. Reopens only if **S8** shows semantic recall beats
+   trigram on a memory-shaped corpus.
 
 ---
 
@@ -680,12 +1269,12 @@ one defect v4 exists to not repeat.
 
 ---
 
-## 12. Entities, threads and channels
+## 12. Peers, sessions and messages
 
 Ported from v3's forum (`forum_threads` / `forum_messages`) and fleet log
 (`fleet_messages`), and joined to the fleet's existing presence transport.
 
-### 12.1 Scope — v1 is threads and chat, delivery comes later
+### 12.1 Scope — v1 is sessions and chat, delivery comes later
 
 **v1 builds the durable conversation. It does not build live delivery.**
 
@@ -719,23 +1308,31 @@ publish to it and record the attempt; **v4 never becomes a broker**.
 
 ### 12.2 Entity — the registerable participant
 
-```ts
-interface Entity {
-  id: string;
-  workspace_id: string;        // FK → Workspace. The address book is workspace-scoped.
-  slug: string;                // unique per workspace — matches OC_NAME / the MQTT <name>
-  kind: 'oracle' | 'human' | 'agent' | 'service';
-  display_name: string;
-  bank_id: string | null;      // an oracle's own bank, if it has one
-  repo_url: string | null;     // github.com/... — an oracle is usually a repo
-  mcp_url: string | null;      // if this entity exposes its own MCP endpoint
-  channel_name: string | null; // its MQTT <name>, when it differs from slug
-  metadata: Json;
-  created_at: string;
-  last_seen_at: string | null; // v1: last write by this entity. Later: observed presence.
-                               // Never asserted by v4 (§12.5).
-}
-```
+An entity is a row in **`peers`** (§3.2) — `name`, `workspace_name`, `h_metadata`,
+`configuration`, `created_at`, `UNIQUE (name, workspace_name)`. Nothing is added to it.
+`kind`, `display_name`, `repo_url`, `mcp_url` and `last_seen_at` live in `h_metadata`
+because none of them is joined on, constrained, or used in a query plan.
+
+#### 12.2.1 Three columns, not eleven — and why `host` is inside the name
+
+A draft of this gave Entity eleven columns: `host`, `slug`, `kind`, `display_name`,
+`workspace_name`, `repo_url`, `mcp_url`, `channel_name`, `last_seen_at`, plus metadata. Honcho's
+equivalent — `Peer` (`honcho/src/models.py:130`) — has **`name`, `workspace_name`,
+`metadata`, `configuration`** and nothing else. It is a working multi-tenant memory
+system; v4 is not more demanding than that, and eleven columns for an address book is
+over-engineering.
+
+So v4 keeps `name` and `metadata`. The reason this loses nothing:
+
+- **`kind`, `repo_url`, `mcp_url`, `display_name`, `last_seen_at`** are descriptive. None
+  is joined on, none is a constraint, none changes a query plan. They are metadata by
+  definition.
+- **`host` was never a separate fact.** This fleet's identity string is already
+  `m5:arra-oracle-v3` — host-qualified, and it appears that way in **8,598** vault message
+  headers. The full tag *is* the name. A separate `host` column would store the same
+  information twice and invite the two copies to disagree. `mba:digger` and `m5:digger`
+  are different names, therefore different rows, therefore different bodies under Rule 6
+  — exactly the distinction we wanted, with no extra column.
 
 **Registration is a write to v4; presence, when it exists, is read from the broker.** Keeping those
 separate is deliberate: a registry that also claimed liveness would go stale silently
@@ -747,42 +1344,33 @@ session's working directory, override `OC_NAME`) so one name addresses an entity
 both systems. v4 **must not** invent a second naming scheme.
 
 > Identity collision is a real, observed failure: two live sessions sharing a name steal
-> the broker connection from each other. v4 makes `(workspace_id, slug)` unique, so it
-> can at least *name* the collision rather than compound it.
+> the broker connection from each other. v4 makes **`(workspace_name, name)`** unique,
+> so it can at least *name* the collision rather than compound it.
+>
+> The host is *in* the name, not beside it — see §12.2.1.
 
-### 12.3 Threads and messages
+### 12.3 Sessions and messages
 
-```ts
-interface Thread {
-  id: string;
-  workspace_id: string;        // conversations are cross-bank by nature
-  bank_id: string | null;      // optional: pin a thread to one bank's subject matter
-  title: string;
-  status: 'active' | 'resolved' | 'archived';
-  created_by: string;          // FK → Entity
-  room: string | null;         // maps to the MQTT <room> segment
-  issue_url: string | null;    // v3 carried these and they earned their place
-  issue_number: number | null;
-  project: string | null;
-  created_at: string;
-  updated_at: string;
-}
+Sessions are defined once in §3.2 and are **flat** (§3.1.1) — no `threads` table, no
+`parent_id`. `name` is the session's name; `room`, `issue_url`, `issue_number` and
+`project` live in `h_metadata`. Messages hang off a session directly, and nest among
+themselves via `in_reply_to`.
 
-interface Message {
-  id: string;
-  thread_id: string;           // FK → Thread, ON DELETE CASCADE
-  author_id: string;           // FK → Entity  ← never a free-text name
-  role: string;                // free text, like `type` (§3.2): 'question','answer','note',…
-  content: string;
-  in_reply_to: string | null;  // FK → Message — threads nest, like terms do
-  created_at: string;
-  delivered: DeliveryRef[];    // empty in v1 — the seam for §12.5
-}
-```
+A message is a row in **`messages`** (§3.2): Honcho's columns plus four nullable v4
+additions — `role`, `in_reply_to`, `read`, `read_at`. `peer_name` is a composite foreign
+key into `peers`, never a free-text name. `seq_in_session` is unique per room, so order is
+a constraint rather than a hope.
+
+> **`read` / `read_at` are not an invention.** A survey of this fleet's vault
+> (2026-09-18) found them on **8,597 files** — `from`, `to`, `timestamp`, `read`, `readAt`
+> is the de-facto message schema already running at roughly 8,600 records across
+> `inbox/` and `inbox/archive/`. §12.4 originally specced unread as a *derived* query;
+> production already stores it per message, and a derived version cannot express "read
+> at 13:15 in a batch sweep", which the corpus does record. Adopt the existing shape.
 
 Three deliberate choices:
 
-1. **`author_id` is a foreign key, not a string.** v3's `forum_messages.author` and
+1. **`peer_name` is a foreign key, not a string.** v3's `forum_messages.author` and
    `fleet_messages.from_id` are free text, so "who said this" cannot be answered by a
    join — only by string-matching names that drift. Entities exist to fix that.
 2. **Threads and messages wear terms** (§3.3) like documents do. A conversation is
@@ -791,12 +1379,26 @@ Three deliberate choices:
 3. **Messages are FTS-indexed with `trigram`** (§4.1.2). A fleet conversation in Thai is
    exactly the case `unicode61` loses.
 
-#### 12.3.1 Promotion — the point of storing chat next to memory
+#### 12.3.1 Denormalise the ancestry onto the message — Honcho's pattern
+
+`Message` carries `workspace_name` even though it is reachable through `session_name`. This is
+deliberate and it is copied: Honcho's `Message` (`honcho/src/models.py:206`) stores
+**`workspace_name`, `session_name` and `peer_name` all on the row**, so the overwhelmingly
+common query — "messages in this tenant" — is single-table with no join.
+
+For v4 it does a second job: it puts `workspace_name` on the message row, which makes the
+message table obey §3.4's fail-closed rule the same way documents do. A message you can
+only attribute to a bank *by joining* is a message a forgotten join can leak.
+
+`seq` is Honcho's `seq_in_session` (`models.py:227`): an explicit monotonic integer per
+room, because ordering by timestamp ties under fast writes and `created_at` is not unique.
+
+#### 12.3.2 Promotion — the point of storing chat next to memory
 
 A message worth keeping becomes a document:
 
 ```
-promote(message_id, bank_id, type) → Document
+promote(message_id, workspace_name, type) → Memory
 ```
 
 The document records the message as its `origin`, so provenance runs
@@ -810,9 +1412,9 @@ because a store that decides for itself what was important stops being a mirror.
 No push, no lying about push. Each entity carries a read cursor per thread:
 
 ```ts
-interface ReadCursor {                 // PRIMARY KEY (entity_id, thread_id)
-  entity_id: string;
-  thread_id: string;
+interface ReadCursor {                 // PRIMARY KEY (peer_name, session_name)
+  peer_name: string;
+  session_name: string;                // the thread (§3.1.1)
   last_read_message_id: string | null;
   last_read_at: string;
 }
@@ -837,7 +1439,7 @@ Deferred from v1. Specified now only so v1 does not foreclose it.
 
 ```ts
 interface DeliveryRef {                // exists in the model from v1; unimplemented
-  entity_id: string;
+  peer_name: string;
   topic: string;
   published_at: string;
   outcome: 'published' | 'no-channel' | 'refused' | 'error';
@@ -922,7 +1524,7 @@ recalled from general knowledge; it was read or measured on 2026-09-18.
 | Trigram FTS + external-content triggers; `unicode61` swallows a Thai sentence as one token | `digger-node/migrations/0001_init.sql` — "measured independently four times across this fleet" |
 | claude.ai cannot send a static header → OAuth is mandatory; DCR, PKCE S256, RFC 8414/9728/9207; SHA-256 token storage; refusal must not redirect | [`digger-node/docs/connect-claude-ai.md`](https://github.com/Soul-Brews-Studio/digger-node/blob/main/docs/connect-claude-ai.md) |
 | Per-bank MCP endpoint precedent | `god-oracle/src/hindsight-miner/mine.sh` → `HINDSIGHT_MCP=http://localhost:8890/mcp/god-oracle` |
-| Hindsight bank fields (`bank_id`, `mission`, disposition) | `hindsight-clients/python/hindsight_client_api/models/bank_profile_response.py`, `disposition_traits.py` |
+| Hindsight bank fields (`workspace_name`, `mission`, disposition) | `hindsight-clients/python/hindsight_client_api/models/bank_profile_response.py`, `disposition_traits.py` |
 | Honcho workspace = root tenant | `honcho/src/models.py:Workspace` |
 | LanceDB S3-compatible addressing (`s3://`, `endpoint`, `region`, `allow_http`) | <https://docs.lancedb.com/storage/configuration> — **R2 is not named there**; §4.3 remains unverified (spike S1) |
 | LanceDB is native → cannot run in a CF Worker | `@lancedb/lancedb` ships Rust bindings; Workers have no native addons |
@@ -962,3 +1564,361 @@ source. Vault shared at `ψ →` neo-oracle's vault.
 
 *Written by an Oracle — AI speaking as itself (Rule 6).*
 *Spec `v26.9.18-alpha.700` · bump with `/calver --apply`.*
+
+---
+
+## 14. Traces
+
+v3's `trace_log` is the one subsystem with no equivalent anywhere else in this fleet, and
+the thing most likely to be lost in a rewrite. It is also **two systems that drifted
+apart**, which is the first thing this section has to fix.
+
+### 14.1 What a trace is — and the drift that has to be reconciled
+
+A **trace** is the record of a *search*: what was asked, what it found, and what it
+became. v3 stores that twice, in two places that share almost nothing:
+
+| | `trace_log` table (`arra-oracle-v3/src/db/schema.ts:171`) | `ψ/memory/traces/*.md` (72 files, surveyed 2026-09-18) |
+|---|---|---|
+| Identity | `trace_id` UNIQUE | filename `HHMM_kebab-slug.md` under `YYYY-MM-DD/` |
+| The question | `query`, `query_type`, `scope` | `query` **72/72**, `target` **72/72**, `mode` **72/72** |
+| **The graph** | `parent_trace_id`, `child_trace_ids[]`, `prev_trace_id`, `next_trace_id`, `depth` | **absent as fields** — links are relative paths inside a trailing `## Oracle Memory` section |
+| **The lifecycle** | `status: 'raw'`, `distilled_to_id`, `distilled_at` | **present but unmarked** — direction inferred only from where the link sits in the file |
+| **Quality** | *(no column)* | `confidence` 30/72, `friction_score` 26/72, `coverage` 23/72 |
+| Cost | `agent_count`, `duration_ms` | `agents` 18/72, `session` 7/72 |
+| What it found | six `found_*` JSON blobs + three counts | Markdown tables and bullets, **~95% machine-extractable** |
+
+Neither is a superset. **v4 takes the union**, and the three columns the table never had
+are the most interesting ones.
+
+> **`friction_score` is the idea worth keeping.** A trace that was hard to satisfy is a
+> statement about the *corpus*, not about the search. It is the only signal in this fleet
+> that points at what the memory is missing, and it exists in 26 files with no schema
+> behind it. v4 gives it one.
+
+### 14.2 `traces`
+
+```ts
+interface Trace {
+  id: string;
+  workspace_name: string;            // NOT NULL — a search runs against one bank (§3.4)
+  session_name: string | null;// which room it ran in, if any. Organisation, not scope.
+
+  query: string;              // what was asked
+  target: string | null;      // what corpus/repo it was aimed at
+  mode: string;               // free text, like `type` (§3.2). Observed: deep, smart,
+                              // synthesis, deep-dig, 'deep --dig'. NOT an enum — the
+                              // vault proves it is a free-form field in practice.
+  scope: string | null;
+  project: string | null;
+
+  session_id: string | null;  // the .jsonl UUID. No FK — it lives outside (§14.6.1).
+  actor_peer_name: string | null; // FK → peers (§3.2)
+
+  // quality — from the markdown, absent from v3's table
+  friction_score: number | null;  // 0.0–1.0, how hard this was to satisfy
+  confidence: string | null;      // controlled term, not free text (§3.3)
+  coverage: string | null;
+
+  // cost
+  agent_count: number | null;
+  duration_ms: number | null;
+
+  // the graph — ONE source per edge, see §14.4
+  parent_id: string | null;   // FK → Trace. Tree.
+  prev_id: string | null;     // FK → Trace. Sequence.
+  depth: number;
+
+  // the lifecycle
+  status: string;             // controlled term: 'raw' | 'distilled' | 'retired'
+  distilled_to: string | null;    // FK → Memory
+  distilled_at: number | null;
+
+  created_at: number;
+  updated_at: number;
+}
+```
+
+Traces wear terms (§3.3) like documents and threads do.
+
+**`mode` is free text; `confidence` and `status` are controlled.** The spec has to be
+explicit about which, because the corpus disagrees with itself:
+
+| Field | v4 | Observed in the vault | Why |
+|---|---|---|---|
+| `mode` | **free text**, like `type` (§3.2) | `deep` (56), `smart`, `synthesis`, `deep-dig`, `deep --dig`, `deep (main-agent only…)` | these are invocation strings, not a classification. A new search mode must be a string a client picks, never a migration |
+| `confidence` | **controlled term** | `high`, `medium`, `medium-high`, `HIGH`, `PROVEN` in 30 files | five spellings of three states — exactly the casing rot §3.3.1 exists to stop |
+| `status` | **controlled term** | `raw` | one axis every caller filters on |
+
+The importer therefore carries **one explicit normalisation map** for `confidence`
+(`HIGH`→`high`, `PROVEN`→`high`, `medium-high`→`medium`), applies it once, and records
+the original string in `metadata` so the mapping is auditable rather than lossy. It must
+**not** normalise `mode` — `deep --dig` and `deep` are different invocations and
+collapsing them destroys the distinction.
+
+### 14.3 `trace_hits` — what was found, normalised
+
+v3 stores results as six parallel JSON blob columns (`found_files`, `found_commits`,
+`found_issues`, `found_retrospectives`, `found_learnings`, `found_resonance`). They are
+unqueryable: *"which traces found file X"* requires a full scan and a JSON parse per row.
+
+One join table replaces all six:
+
+```ts
+interface TraceHit {              // PRIMARY KEY (trace_id, kind, ref)
+  trace_id: string;               // FK → Trace, ON DELETE CASCADE
+  kind: string;                   // controlled term — see the table below
+  ref: string;                    // the reference itself, canonical form
+  line_start: number | null;      // when kind='file' and a range was cited
+  line_end: number | null;
+  note: string | null;            // the one-line "why this matched"
+  position: number;               // order as presented
+}
+```
+
+The reference forms are already regular in the corpus — measured across all 72 trace
+files, **~95% cleanly extractable**:
+
+| `kind` | Observed form | Real example |
+|---|---|---|
+| `file` | `path:line-line` | `src/ssh.ts:69-100` |
+| `commit` | 7-char hash | `6b65f67` |
+| `issue` | bare `#NN` | `#26` |
+| `issue` | qualified | `laris-co/1x-data-flow-mind-grid #15` |
+| `repo` | `org/repo` | `laris-co/webhook-relay` |
+| `document` | vault-relative path | `ψ/memory/learnings/2026-03-08_session-6-mobile-ux.md` |
+
+> The measured 5% of noise is one specific collision: **"GitHub Action #161" is
+> indistinguishable from issue #161 without surrounding context.** The importer must
+> read the context word or emit `kind='ref-ambiguous'` — it must not guess, because a
+> wrong `kind` is silently wrong forever.
+
+`(trace_id, kind, ref)` as the primary key makes re-importing a trace idempotent, which
+matters because these files are re-read on every backfill.
+
+### 14.4 The graph — one source per edge
+
+v3 carries `parent_trace_id` **and** a denormalised `child_trace_ids[]` JSON array for
+the same edge, plus `prev_trace_id` and `next_trace_id` for the same sequence. Two
+writable sources per edge means they can disagree, and nothing detects it.
+
+**v4 stores each edge exactly once and derives the other direction:**
+
+| Edge | Stored | Derived |
+|---|---|---|
+| tree | `parent_id` | children = `WHERE parent_id = ?` |
+| sequence | `prev_id` | next = `WHERE prev_id = ?` |
+
+`trace_chain(id)` walks both. `child_trace_ids` and `next_trace_id` do not exist as
+columns. This costs one index each and removes a whole class of silent inconsistency.
+
+### 14.5 Distill — the same act as `promote`, finally named once
+
+v3 has `oracle_trace_distill` (trace → document). §12.3.1 has `promote` (message →
+document). They are one mechanism with two names, and the vault shows the cost of never
+saying so: distillation is **present but unmarked** — a trace links its learnings and
+retros in a trailing `## Oracle Memory` section, and the *direction* of the relationship
+is inferable only from where the link happens to sit in the file. Nothing can query it
+backwards. *"Which trace produced this learning?"* is unanswerable today.
+
+v4 defines one verb:
+
+```
+distill(source_id, source_kind: 'trace' | 'message', workspace_name, type) → Memory
+```
+
+- the new Document records its origin (`origin`, plus `source_file` when it came from a file)
+- the source records `distilled_to` and `distilled_at`
+- `status` moves `'raw' → 'distilled'`
+- it is **explicit and human/agent-triggered.** v4 never auto-distills, for the same
+  reason §12.3.1 never auto-promotes: a store that decides for itself what mattered has
+  stopped being a mirror (§2, Principle 3).
+
+### 14.6 Session mining lives outside — v4 queries it, v4 does not store it
+
+**Decision (2026-09-18, Nat): no `transcripts` table, no `insights` table.** An earlier
+draft specced both — a row per `.jsonl` file with `raw_path`, byte-offset tail state, a
+generated summary, `trace_count`, plus an `insights` table with anchors back into the
+transcript. It is cut. Two reasons, and the second is the real one:
+
+1. **It was becoming a second product inside the spec** — a mining scheduler, a
+   summariser, an extractor, a tail-follower, a rotation detector. None of that is a
+   memory bank.
+2. **Seven or eight tools on this fleet already index that corpus**, measured 2026-09-18.
+   `session-viewer` is the sole writer of `~/.session-viewer/sessions.db`;
+   `session-search` reads it. Adding a v4 table would make **v4 the eighth writer over
+   one corpus of 38,838 files and 21 GB**, with its own drift, its own backfill, and its
+   own answer to "what is a session summary".
+
+**So v4 is a client.** A session index is an **external service** behind one interface,
+and v4 ships with no implementation of it beyond a reader for the index that already
+exists.
+
+```ts
+interface SessionSource {                       // external · pluggable · read-only
+  find(query: string, limit?: number): Promise<SessionRef[]>;
+  get(session_id: string): Promise<SessionRef | null>;
+  read(session_id: string, from?: number, limit?: number): Promise<Excerpt[]>;
+}
+
+interface SessionRef {
+  session_id: string;        // the .jsonl UUID — also the filename
+  host: string;              // m5 | mba | white. A path means nothing without it.
+  project_encoded: string;   // the directory name, verbatim — the only reliable key
+  project_path: string | null;   // best-effort decode. NULLABLE — see below.
+  started_at: number;
+  ended_at: number | null;
+  message_count: number | null;
+  title: string | null;      // read, not generated — see below
+  source: string;            // which provider answered: 'session-viewer' | …
+}
+```
+
+Configured, not compiled in:
+
+```
+ORACLE_SESSION_SOURCE=session-viewer
+ORACLE_SESSION_DB=~/.session-viewer/sessions.db     # read-only. v4 never writes it.
+```
+
+Unset ⇒ the surface reports `"session source: not configured"` and session-linked
+features degrade. They do not fail, and they do not silently return nothing (§6.4).
+
+#### 14.6.1 The only durable link: `traces.session_id`
+
+The one fact v4 keeps in its own database is which session a trace ran in — a single
+`TEXT` column on `traces` (§14.2), holding the `.jsonl` UUID. No foreign key, because the
+referent lives in another system and may be archived or deleted.
+
+That column alone answers what the fleet census found **nothing** currently answers:
+
+| Question | Before | With `traces.session_id` |
+|---|---|---|
+| which memories came out of this session? | unanswerable | `traces → distilled_to → memories` |
+| how many times has this session been traced? | unanswerable | `SELECT count(*) FROM traces WHERE session_id = ?` |
+| where did this memory come from? | unanswerable | `memories.origin → trace → session` |
+
+"How many times traced" is therefore a **query, not a counter**. An earlier draft cached
+it as `transcripts.trace_count`; a cached count over a table v4 already owns is a second
+source of truth for a `count(*)` that costs nothing.
+
+#### 14.6.2 Two facts the external interface must not get wrong
+
+**The path encoding is lossy.** A project directory like
+`-opt-Code-github-com-laris-co-neo-oracle` is the real path with **both `/` and `.`
+replaced by `-`**. Verified on this machine 2026-09-18: **155 project directories contain
+`github-com`** — a destroyed dot — and **zero** retain a literal dot. So `a.b/c` and
+`a/b/c` encode identically. **`project_encoded` is the key; `project_path` is a
+best-effort decode that may be `NULL`.** Never key on the decode.
+
+**A title is read, not invented.** Claude Code transcripts carry no session summary
+record, but they do carry an optional `custom-title` record. `SessionRef.title` surfaces
+that when present and is `null` otherwise. v4 does **not** generate summaries — a
+generated summary is an unattributable claim unless it also carries the model and
+timestamp that produced it, and that machinery is exactly what §14.6 just declined to own.
+
+### 14.7 The import filter — mandatory, and the spec owes it a page
+
+A survey of this fleet's own vault (2026-09-18, 20 agents over 10,073 markdown files)
+found three things that would each, on their own, wreck a naive bulk import:
+
+| Finding | Measured | Consequence |
+|---|---|---|
+| **The corpus is mostly messages, not documents** | `from`/`to`/`timestamp`/`read` on **8,598** files; the knowledge keys (`source` 566, `tags` 459, `title` 455, `concepts` 123, `pattern` 101) on roughly 600 | ingesting everything as `Document` mislabels 85% of the corpus. Inbox files are `Message` (§12.3) |
+| **43% near-duplicate rate in dispatch logs** | 388 near-identical templates across one 888-file slice — `starting #N`, `done <sha>`, `PR #N merged` | machine chatter buries the ~637-file `memory/` tree. Dedupe on normalised body hash before insert |
+| **The tag vocabulary is contaminated by test fixtures** | top values `learn` 372, then `visible` **116**, `deleted` **116**, `crud` **116** — three tags at an identical count are a CRUD test suite, not concepts. Real concepts begin at `codebase` 19 | seeding a controlled vocabulary (§3.3.1) from the raw corpus would import the test suite as taxonomy |
+
+Two further facts the importer must handle rather than discover:
+
+- **20.7% of the corpus contains Thai** (2,088 of 10,073 files; `ความ` in 148). This is
+  the §4.1.2 trigram requirement restated as a measurement, and it includes 17 of the 72
+  trace files.
+- **Status is carried by the directory, not the content.** `inbox/archive/` and
+  `archive/` mark retirement by *path only* — no file body says it is archived. Only
+  `plans/` carries an in-content `status: SUPERSEDED` with a cross-reference. An importer
+  reading bodies alone cannot tell live from retired, which is precisely the failure
+  §4.2's pointer-and-log exists to end. **The importer must map path → status explicitly,
+  once, and record that it did.**
+
+### 14.8 What this deliberately does not do
+
+- **No auto-distill, no auto-promote.** Both require an explicit call (§14.5).
+- **No transcript storage at all.** Not the bytes, not a row per file. A session index is
+  an external service v4 queries (§14.6).
+- **No eighth index over the session corpus.** Measured 2026-09-18: **7–8 distinct
+  indexers** already exist over two corpora. `session-viewer` is the **canonical writer**
+  of `~/.session-viewer/sessions.db` and `session-search` is a **reader-only** consumer of
+  that same file — which is the pattern v4 follows. **v4 is a reader.** It stores
+  no table of its own — it queries an external `SessionSource` (§14.6) and keeps exactly
+  one column, `traces.session_id`, to tie a search back to the session it ran in.
+
+  > One thing there **is** worth copying into v4's own schema: `vector_runs(id, model,
+  > provider, endpoint, chunk_words, started_at, finished_at, events, vectors)`
+  > (`session-viewer/schema.sql:128–141`), which records **which embedding provider saw the
+  > data**. That is a stronger provenance claim than §4.5.3's per-row `embedder` string —
+  > it answers *"did this text leave the machine, and to whom"*, which §4.5.3 cannot, and
+  > §13 requires that question be answerable.
+- **No backward inference of distillation from link position.** The vault does this today
+  and it is unqueryable; v4 requires the explicit `distilled_to` pointer instead.
+
+---
+
+## 15. Honcho compatibility — the contract
+
+The whole point of §3's shape is that a v4 bank can leave for Honcho, or arrive from it,
+as a table dump. This section is what has to stay true for that to hold. **It is a
+constraint on every future change to §3, and it is short on purpose.**
+
+### 15.1 Three tiers
+
+| Tier | Tables | Rule |
+|---|---|---|
+| **1 — core** | `workspaces` `peers` `sessions` `session_peers` `messages` | byte-compatible with `honcho/src/models.py`. Same names, same types, same uniqueness, same composite FKs. v4 may add **nullable** columns and nothing else |
+| **2 — memory** | `memories` `vocabularies` `terms` `memory_terms` `supersede_log` | v4-only. Honcho never reads them. Dropping them leaves a valid Honcho database |
+| **3 — observability** | `traces` `trace_hits` `connections` `mcp_calls` | v4-only, same rule as tier 2 |
+
+**Export** = dump tier 1. **Import** = load tier 1. Neither touches tiers 2–3.
+
+### 15.2 The invariants
+
+1. **Never rename, re-type, or re-purpose a Honcho column.** Additive nullable columns only.
+2. **Never name a v4 table after a Honcho table.** `documents` and `collections` are
+   Honcho's (`models.py:379`, `:335`); v4's knowledge table is `memories` for exactly
+   this reason.
+3. **Every v4 table carries `workspace_name NOT NULL`** and reaches rooms and entities
+   through composite FKs, the same way tier 1 does. No v4 table gets a private idea of
+   the tenant.
+4. **The FTS index is not part of the contract.** Honcho's `to_tsvector('english')` and
+   v4's `tokenize='trigram'` sit over the same `content` column; each side rebuilds its
+   own index after import.
+5. **`h_metadata` is the extension point for tier 1.** Anything v4 wants on a peer or a
+   room that Honcho has no column for goes in `h_metadata`, not in a new column — a new
+   column is a new thing to reconcile; `h_metadata` is already JSON on both sides.
+
+### 15.3 Type mapping — PostgreSQL → libSQL
+
+| Honcho (Postgres) | v4 (libSQL) | Note |
+|---|---|---|
+| `TEXT` | `TEXT` | — |
+| `BigInteger` autoincrement | `INTEGER PRIMARY KEY AUTOINCREMENT` | `messages.id` |
+| `TIMESTAMP(timezone=True)` | `INTEGER` epoch ms **or** ISO-8601 `TEXT` | pick one, state it in the migration, never mix |
+| `JSONB` | `TEXT` holding JSON | `json_extract()` for queries |
+| `text[]` (`documents.source_ids`) | `TEXT` JSON array | tier-2 only; not exported |
+| `vector(1536)` | absent | embeddings are not in the contract; LanceDB or `F32_BLOB` per §4.4d |
+| GIN `to_tsvector` | FTS5 `trigram` | §15.2 rule 4 |
+| `CHECK (id ~ '^[A-Za-z0-9_-]+$')` | `CHECK (id GLOB '[A-Za-z0-9_-]*')` | regex → GLOB |
+
+### 15.4 The alternatives considered, so nobody reopens them by accident
+
+| Option | Tables | URLs | Why not |
+|---|---|---|---|
+| A — Honcho names everywhere | `workspaces` / `sessions` / `peers` | `/mcp/:workspace/:session` | loses "bank" — the word Nat actually uses and the one that names the product |
+| **B — bank on the surface, Honcho underneath** ✅ | `workspaces` / `sessions` / `peers` | `/mcp/:bank/:workspace` | **chosen.** Keeps the vocabulary; costs one alias layer (§3.1.2) |
+| C — v4 names in the database too | `banks` / `workspaces` / `entities` | `/mcp/:bank/:workspace` | export becomes a migration script instead of a dump, which is the whole benefit gone |
+
+### 15.5 How to know it still holds
+
+One test, run in CI: create a bank with two rooms, three entities and ten messages in v4;
+dump tier 1; load it into a stock Honcho (its `docker compose` on `white.local:8000`
+exists for this); call Honcho's `GET /v1/workspaces/{name}/sessions/{name}/messages` and
+compare. If the shapes ever drift, this is the test that says so before a user does.
