@@ -1,6 +1,6 @@
 # arra-oracle-v4 — Specification
 
-**Version**: `v26.9.18-alpha.902`
+**Version**: `v26.9.18-alpha.915`
 **Status**: draft
 **Date**: 2026-09-18 08:52 GMT+7
 **Supersedes**: [`Soul-Brews-Studio/arra-oracle-v3`](https://github.com/Soul-Brews-Studio/arra-oracle-v3) (`26.7.26-alpha.227`)
@@ -677,7 +677,7 @@ if the history cannot be traversed.
 
 | Thing | Retirement mechanism |
 |---|---|
-| Document | `superseded_by` + log entry (above) |
+| Memory | `superseded_by` + log entry (above) |
 | Bank | `status`, never a drop |
 | Vocabulary | `status` — **not** `vocabulary_delete` (corrects §6.2.2) |
 | Term | superseded by another term via `term_merge`, not deleted |
@@ -1444,6 +1444,16 @@ one defect v4 exists to not repeat.
 4. ~~**One store or two?**~~ — **decided (2026-09-18): libSQL mandatory, LanceDB optional
    behind the §4.3 seam.** See §4.4d. Reopens only if **S8** shows semantic recall beats
    trigram on a memory-shaped corpus.
+5. **`session-viewer` or `lanceglass` as the default `SessionSource`?** (§14.6) Both are
+   real, running systems, not a hypothetical choice. `session-viewer` is proven on the one
+   thing that matters most here — trigram FTS finds Thai inside words, the exact defect
+   §4.1.2 exists to avoid. `lanceglass` (deployed as **Structor**) is running at fleet
+   scale (6,402 sessions, 716,791 events, live 2026-09-18), watches **two machines**
+   where `session-viewer` watches one, and already splits plain rows from vectors into
+   separate LanceDB stores — independently converging on the exact shape v4 adopted for
+   its own memories in §4.5.6. Untested: whether `lanceglass` matches trigram's Thai
+   recall, or whether `SessionSource` should query both and merge. Nothing here decides
+   this — it only names both candidates honestly instead of defaulting by omission.
 
 ---
 
@@ -1932,12 +1942,51 @@ v4 defines one verb:
 distill(source_id, source_kind: 'trace' | 'message', workspace_name, type) → Memory
 ```
 
-- the new Document records its origin (`origin`, plus `source_file` when it came from a file)
+- the new Memory records its origin (`origin`, plus `source_file` when it came from a file)
 - the source records `distilled_to` and `distilled_at`
 - `status` moves `'raw' → 'distilled'`
 - it is **explicit and human/agent-triggered.** v4 never auto-distills, for the same
   reason §12.3.1 never auto-promotes: a store that decides for itself what mattered has
   stopped being a mirror (§2, Principle 3).
+
+#### 14.5.1 Chained distillation — 1st/2nd/3rd order, and the timestamp is what's true
+
+`distill()` is not limited to raw material. Its `source_id` can be another **trace** —
+`source_kind: 'trace'` already allows it — so a first-order trace (ran against a session,
+`depth = 0`) can itself be distilled into a second-order trace (`parent_id` → the first,
+`depth = 1`), and that into a third. **No new table.** This is §14.4's graph, walked more
+than once: `trace_chain(id)` already answers "what did this come from" at any depth; it
+does not care whether the parent is raw or itself a summary.
+
+**What has to be added is the anchor, because a chain of summaries is exactly the
+transmission-fidelity problem §14's own research keeps surfacing.** A third-order summary
+is three paraphrase-steps from the session it claims to describe. Without an anchor, "what
+does this claim rest on" degrades the same way an isnād does with a broken link (§14, faith
+research 2026-09-18) — except here nothing marks the break.
+
+**The anchor is the timestamp range, not the summary prose:**
+
+```ts
+interface Trace {
+  ...
+  session_id: string | null;      // existing — the .jsonl UUID, no FK (§14.6.1)
+  session_from_ts: number | null; // NEW — earliest raw event this trace (at any depth)
+  session_to_ts:   number | null; // NEW — traces back to. min/max of children's range.
+  ...
+}
+```
+
+Real columns, not `h_metadata` — this is the one place the §3.4.1 filter-key test forces
+it: *"what covers this time window"* is a query v4 needs to answer, not merely display.
+
+**The rule, stated once:** a trace's prose — `query`, and anything a distilled `Memory`
+says — is a **convenience**. The `(session_id, session_from_ts, session_to_ts)` triple is
+what a human verifies a claim against, by going to the actual transcript at that range
+(§14.6, `SessionSource.read`). A second- or third-order summary that has drifted from its
+source is still **checkable**, because the anchor does not drift — it is copied forward
+unchanged at every distillation, the same way `supersede_log` snapshots `old_title` rather
+than trusting a join (§4.2.2). Depth compounds paraphrase. It must never compound
+uncertainty about *where the paraphrase came from*.
 
 ### 14.6 Session mining lives outside — v4 queries it, v4 does not store it
 
@@ -1954,6 +2003,23 @@ transcript. It is cut. Two reasons, and the second is the real one:
    `session-search` reads it. Adding a v4 table would make **v4 the eighth writer over
    one corpus of 38,838 files and 21 GB**, with its own drift, its own backfill, and its
    own answer to "what is a session summary".
+
+**Three concrete implementations, not a hypothetical category.** Since the S10 survey,
+one of the seven-to-eight turned out to matter more than the others for this decision:
+
+| Provider | What it actually is | Measured, this session |
+|---|---|---|
+| `session-viewer` | single-machine, `sessions.db`, **trigram FTS5** | the only one proven to find Thai inside words (§4.1.2's own defect, fixed) |
+| **`lanceglass`** (`Soul-Brews-Studio/lanceglass`, deployed as **Structor**) | JSONL → typed LanceDB, **plain-rows store and vector store physically separate** — the exact split v4 just adopted for its own memories in §4.5.6, independently | live and running: **6,402 sessions · 716,791 events**, `lance-py` embedding backfill at 94,701/716,791 (pending/synced, same shape as §4.6.1), watchers on **two machines** (`watch-local`, `watch-kvmlab1`) |
+| `jsonl-indexer` (MCP, `nat-build-with-oracle` lab) | small, MCP-native — callable as a tool with no HTTP hop | 26,947 rows, 14 projects — lab-scale, not fleet-scale |
+
+Lanceglass/Structor is not a hypothetical fourth option: it is a **running system,
+independently converging on v4's own §4.5.6 architecture**, multi-machine where
+`session-viewer` is single-machine. It was counted in S10's "7–8" but not compared
+against the incumbent. That comparison is now **§10, open question 5** — this section
+keeps `session-viewer` as the documented default only because trigram-Thai is a proven,
+specific strength and nothing here has tested whether Lanceglass matches it, not because
+the comparison has been run.
 
 **So v4 is a client.** A session index is an **external service** behind one interface,
 and v4 ships with no implementation of it beyond a reader for the index that already
@@ -2029,7 +2095,7 @@ found three things that would each, on their own, wreck a naive bulk import:
 
 | Finding | Measured | Consequence |
 |---|---|---|
-| **The corpus is mostly messages, not documents** | `from`/`to`/`timestamp`/`read` on **8,598** files; the knowledge keys (`source` 566, `tags` 459, `title` 455, `concepts` 123, `pattern` 101) on roughly 600 | ingesting everything as `Document` mislabels 85% of the corpus. Inbox files are `Message` (§12.3) |
+| **The corpus is mostly messages, not documents** | `from`/`to`/`timestamp`/`read` on **8,598** files; the knowledge keys (`source` 566, `tags` 459, `title` 455, `concepts` 123, `pattern` 101) on roughly 600 | ingesting everything as `Memory` mislabels 85% of the corpus. Inbox files are `Message` (§12.3) |
 | **43% near-duplicate rate in dispatch logs** | 388 near-identical templates across one 888-file slice — `starting #N`, `done <sha>`, `PR #N merged` | machine chatter buries the ~637-file `memory/` tree. Dedupe on normalised body hash before insert |
 | **The tag vocabulary is contaminated by test fixtures** | top values `learn` 372, then `visible` **116**, `deleted` **116**, `crud` **116** — three tags at an identical count are a CRUD test suite, not concepts. Real concepts begin at `codebase` 19 | seeding a controlled vocabulary (§3.3.1) from the raw corpus would import the test suite as taxonomy |
 
