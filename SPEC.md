@@ -1,8 +1,8 @@
 # arra-oracle-v4 — Specification
 
-**Version**: `v26.9.18-alpha.830`
+**Version**: `v26.9.18-alpha.852`
 **Status**: draft
-**Date**: 2026-09-18 08:30 GMT+7
+**Date**: 2026-09-18 08:52 GMT+7
 **Supersedes**: [`Soul-Brews-Studio/arra-oracle-v3`](https://github.com/Soul-Brews-Studio/arra-oracle-v3) (`26.7.26-alpha.227`)
 **Repository**: <https://github.com/Soul-Brews-Studio/arra-oracle-v4>
 **Author**: Neo (AI) with Nat — written by an Oracle, AI speaking as itself (Rule 6)
@@ -110,9 +110,14 @@ bank ═══ workspaces ══════════════════
 ├── peers ─────────────── the address book. name = 'm5:arra-oracle-v3'
 │
 ├── memories ──────────── typed · bitemporal · superseded-not-deleted ── tier 2, v4  §3.4
-│     └── chunk (LanceDB)  optional in v1                                            §4.4d
+│     ├── chunk (LanceDB)  optional in v1                                            §4.4d
+│     └── memory_terms ─── the tagging join                                          §3.3
 ├── vocabularies → terms  Drupal-shaped taxonomy                                     §3.3
-└── traces → trace_hits ─ what was searched, and what it found ──────── tier 3, v4   §14
+├── supersede_log ─────── what changed, when, why — snapshotted                      §4.2
+│
+├── traces → trace_hits ─ what was searched, and what it found ──────── tier 3, v4   §14
+├── mcp_calls ─────────── every tool call, ok and error alike                        §6.3
+└── connections ───────── who is connected right now, folded on write               §7.2
 ```
 
 #### 3.1.1 Flat — no nesting, anywhere
@@ -189,7 +194,9 @@ messages                                                                   model
   UNIQUE (workspace_name, session_name, seq_in_session)   :258  ← order is a CONSTRAINT
   FK (session_name, workspace_name) → sessions            :243
   FK (peer_name,    workspace_name) → peers               :248
-  +v4 role           TEXT NULL     ← free text: question | answer | note | …
+  +v4 role           TEXT NULL     ← free text, NOT an enum — same rule as `type`
+                                    (§3.4) and `mode` (§14.2). Seen: question,
+                                    answer, note. A new one is a string, not a migration.
   +v4 in_reply_to    TEXT NULL     ← FK → messages.public_id. Replies nest; sessions don't.
   +v4 read           BOOL NULL     ← 8,597 vault files already carry these (§12.4)
   +v4 read_at        TIMESTAMP NULL
@@ -223,7 +230,7 @@ it.
 
 | Noun | Is |
 |---|---|
-| `document` | one piece of content: title, body, datetime |
+| `memory` | one piece of content: title, body, datetime. **Honcho owns the word `document`** (§3.4), so v4 does not reuse it |
 | `vocabulary` | a namespace for terms, **carrying a policy** (`kind`, below) |
 | `term` | a label inside a vocabulary — nestable, ordered by weight |
 | `memory_terms` | the join — a document wears any number of terms |
@@ -231,7 +238,8 @@ it.
 ```ts
 interface Vocabulary {
   id: string;
-  workspace_name: string;          // FK → Bank, NOT NULL — see "Scope" below
+  workspace_name: string;          // FK → workspaces.name, NOT NULL — see "Scope".
+                                   // The bank, in prose. Never a column named `bank_id`.
   name: string;             // machine name, lowercase slug, 1..64, unique per bank
   label: string;
   description: string;
@@ -250,7 +258,7 @@ interface Term {
   created_at: string;
 }
 
-interface DocumentTerm {        // PRIMARY KEY (memory_id, term_id)
+interface MemoryTerm {          // PRIMARY KEY (memory_id, term_id)
   memory_id: string;          // FK → Memory, ON DELETE CASCADE
   term_id: string;              // FK → Term,     ON DELETE CASCADE
 }
@@ -335,40 +343,71 @@ session, with the same composite-FK discipline as tier 1.
 > different shape would look compatible and not be — the one kind of incompatibility that
 > actually hurts.
 
+**Tier 2 is written in tier 1's idiom.** Honcho's five tables share one shape —
+`id` + `name` + `workspace_name`, a pair of JSON bags (`h_metadata` user-visible,
+`internal_metadata` internal), `created_at`, `UNIQUE(name, workspace_name)`, and composite
+FKs that carry the tenant. v4's own tables use **the same shape**, which is what keeps the
+schema one thing to learn instead of two (§3.4.1).
+
 ```
 memories                                                         tier 2 · v4 only
-  id                 TEXT PK · nanoid
+  id                 TEXT PK · nanoid(21)
+  name               TEXT            ← slug. UNIQUE (name, workspace_name), Honcho's idiom
   workspace_name     TEXT NOT NULL  FK → workspaces.name    ← THE isolation constraint
   session_name       TEXT NULL                              ← filed in a session. Organisation, not scope.
+  peer_name          TEXT NULL                              ← who wrote it. Attribution, Honcho's idiom
   FK (session_name, workspace_name) → sessions              ← composite: cannot file into another bank's session
+  FK (peer_name,    workspace_name) → peers                 ← composite, same reason
   type               TEXT default 'note'  ← free text, guarded by a vocabulary named `type` (§3.3)
-  title · content · source_file · project · origin
+  content            TEXT
   created_at         TIMESTAMP            ← when we learned it   ⎫ bitemporal
   valid_time         TIMESTAMP NULL       ← when it was true     ⎭
   sync_state         TEXT pending|synced|failed   ⎫ Honcho's three columns, on the row
   last_sync_at       TIMESTAMP NULL                ⎬ (models.py:411–417) — not a
   sync_attempts      INTEGER default 0             ⎭ reconciler table (§4.6.1)
-  superseded_by      TEXT NULL FK → memories.id   ← pointer; the log is supersede_log
-  superseded_at · superseded_reason
-  line_start · line_end · chunk_index             ← provenance to a line range
+  superseded_by      TEXT NULL FK → memories.id   ← pointer; the reason lives in supersede_log
+  superseded_at      TIMESTAMP NULL
   is_active          BOOL default true            ← publish flag, Honcho's idiom.
                                                     Unpublish is reversible; supersede is deliberate.
+  h_metadata         JSON   ← title · source_file · project · origin · line_start · line_end
+  internal_metadata  JSON
 
-vocabularies   workspace_name NOT NULL · name · label · description
+vocabularies   id · name · workspace_name NOT NULL · label · description
                kind: tags | categories · term_policy: open | sealed
+               h_metadata · internal_metadata · created_at
                UNIQUE (name, workspace_name)                                    §3.3
-terms          vocabulary_id · name · description · parent_id · weight
-               UNIQUE (vocabulary_id, name)
+terms          id · vocabulary_id · name · description · parent_id · weight
+               h_metadata · created_at · UNIQUE (vocabulary_id, name)
 memory_terms   PK (memory_id, term_id) · both CASCADE
 supersede_log  id autoincrement · workspace_name NOT NULL
                old_id · old_title · old_type · old_source   ← snapshotted at supersede time
                new_id NULL (= retired) · new_title · new_source
-               reason · actor_peer_name → peers · superseded_at · project        §4.2
+               reason · peer_name → peers · superseded_at · h_metadata           §4.2
 ```
 
+#### 3.4.1 What this shape costs, and what it bought
+
+Two columns left tier 2 in the Honcho-idiom pass, and both were carrying a duplicate:
+
+| Cut | Why |
+|---|---|
+| `memories.chunk_index` | chunking is a **LanceDB** concern — `chunks.chunk_index` (§4.5) is already the per-chunk ordinal, one row per chunk. A single `chunk_index` on the parent memory names no particular chunk and conflates two granularities |
+| `memories.superseded_reason` | `supersede_log.reason` (§4.2) already holds it, **snapshotted at supersede time**. Two writable copies of one sentence, and the log's copy is the one that survives later edits |
+
+Six display-and-provenance fields — `title`, `source_file`, `project`, `origin`,
+`line_start`, `line_end` — moved into `h_metadata`. **The test applied was: is it a filter
+key or a display field?** Everything callers filter or join on stays a real column, because
+Lance and libSQL both push predicates down on columns and neither does on JSON. Everything
+rendered but never queried goes in the bag, exactly as Honcho puts `display_name` and
+`repo_url` there rather than growing `peers` to eleven columns.
+
+One column arrived: **`peer_name`**. Tier 2 previously had no author at all — `supersede_log`
+recorded who *retired* a memory while nothing recorded who *wrote* it. Honcho attributes
+every message to a peer; adopting its shape closed a gap v4 had not noticed.
+
 Tier 3 — `traces`, `trace_hits`, and the observability tables (`connections`,
-`mcp_calls`) — is in §14 and §7 and follows the same rule: `workspace_name NOT NULL` on
-every row, composite FKs to any session or peer it references.
+`mcp_calls`) — is in §14, §7.2 and §6.3, in the same idiom and under the same rule:
+`workspace_name NOT NULL` on every row, composite FKs to any session or peer it references.
 
 ### 3.5 Isolation — fail closed, by schema
 
@@ -512,13 +551,17 @@ columns + a separate `supersede_log` table):
 **1. The pointer, on the document** — answers *"is this current, and what replaced it?"*
 
 ```ts
-superseded_by: string | null;      // → the document that replaced it
+superseded_by: string | null;      // → the memory that replaced it
 superseded_at: number | null;
-superseded_reason: string | null;
 ```
 
 Default queries filter `superseded_by IS NULL`. History is always reachable with an
 explicit flag — never by a different table.
+
+**The reason is not here.** It lives once, in `supersede_log.reason` below, snapshotted at
+supersede time. An earlier draft carried `superseded_reason` on the row as well; that is
+two writable copies of one sentence, and the log's copy is the one that survives a later
+edit to the row it describes (§3.4.1).
 
 **2. The log, standalone** — answers *"what changed, when, and why?"*
 
@@ -536,10 +579,11 @@ interface SupersedeEntry {
   new_title: string | null;
   new_source: string | null;
 
-  reason: string | null;
-  actor_peer_name: string | null; // FK → peers (§3.2) when known, else a label
+  reason: string | null;       // the ONLY copy — see the pointer block above
+  peer_name: string | null;    // FK (peer_name, workspace_name) → peers (§3.2) when
+                               // known, else a label. Honcho's word, one fleet (§3.4.1).
   superseded_at: number;
-  project: string | null;
+  h_metadata: object;          // project, and whatever else the caller attached
 }
 ```
 
@@ -1057,6 +1101,35 @@ want to read later.
 
 Inputs are truncated **at write time**, not at read time — otherwise a 100 KB argument
 blob lives in the log forever and is only trimmed when someone happens to look.
+
+Same idiom as everything else (§3.4.1) — and **`workspace_name` is a real column, not an
+assumption.** v3's call log had no tenant column at all, which is one of the two isolation
+holes §3.5 exists to close; a log that is "obviously scoped" without a column to prove it
+is a log that leaks the moment one query forgets a join:
+
+```ts
+interface McpCall {
+  id: string;                 // nanoid(21)
+  workspace_name: string;     // NOT NULL, FK → workspaces.name — THE tenant column.
+                              // v3's mcp_calls had none. §3.5.
+  session_name: string | null;// FK (session_name, workspace_name) → sessions
+  peer_name: string | null;   // FK (peer_name, workspace_name) → peers — who called
+
+  tool: string;               // the tool name as invoked
+  status: string;             // controlled term: 'ok' | 'error'
+  duration_ms: number;
+
+  h_metadata: object;         // input (truncated at write time) · result summary ·
+                              // error message · connection id
+  internal_metadata: object;
+
+  created_at: number;
+}
+```
+
+`status` is a column rather than a flag inside the bag because *"show me every call that
+errored"* is the query this table exists to answer (§6.4), and a JSON probe cannot use an
+index for it.
 
 This is also the debugging surface that produced §3.3.4: both refusal-message fixes in
 `digger-node` were found by *reading its own call log*, not by a test.
@@ -1598,31 +1671,31 @@ are the most interesting ones.
 
 ### 14.2 `traces`
 
+Same idiom as tier 1 and tier 2 (§3.4.1): filter keys are columns, everything else is in
+the bag.
+
 ```ts
 interface Trace {
   id: string;
-  workspace_name: string;            // NOT NULL — a search runs against one bank (§3.4)
+  name: string;               // slug — the vault already names these `HHMM_kebab-slug`.
+                              // UNIQUE (name, workspace_name), Honcho's idiom.
+  workspace_name: string;     // NOT NULL — a search runs against one bank (§3.4)
   session_name: string | null;// which room it ran in, if any. Organisation, not scope.
+  peer_name: string | null;   // who ran it. FK (peer_name, workspace_name) → peers
 
   query: string;              // what was asked
-  target: string | null;      // what corpus/repo it was aimed at
   mode: string;               // free text, like `type` (§3.2). Observed: deep, smart,
                               // synthesis, deep-dig, 'deep --dig'. NOT an enum — the
                               // vault proves it is a free-form field in practice.
-  scope: string | null;
-  project: string | null;
 
   session_id: string | null;  // the .jsonl UUID. No FK — it lives outside (§14.6.1).
-  actor_peer_name: string | null; // FK → peers (§3.2)
 
-  // quality — from the markdown, absent from v3's table
-  friction_score: number | null;  // 0.0–1.0, how hard this was to satisfy
-  confidence: string | null;      // controlled term, not free text (§3.3)
-  coverage: string | null;
-
-  // cost
-  agent_count: number | null;
-  duration_ms: number | null;
+  friction_score: number | null;  // 0.0–1.0, how hard this was to satisfy. A column
+                                  // because it is the one signal that points at what
+                                  // the corpus is MISSING, and you sort by it (§14.1).
+  confidence: string | null;      // controlled term, not free text (§3.3) — a column
+                                  // because the normalisation map below is enforceable
+                                  // only on something you can group by.
 
   // the graph — ONE source per edge, see §14.4
   parent_id: string | null;   // FK → Trace. Tree.
@@ -1634,12 +1707,25 @@ interface Trace {
   distilled_to: string | null;    // FK → Memory
   distilled_at: number | null;
 
+  h_metadata: object;         // target · project · coverage · agent_count · duration_ms
+  internal_metadata: object;
+
   created_at: number;
   updated_at: number;
 }
 ```
 
-Traces wear terms (§3.3) like documents and threads do.
+**What left, and why** — the same filter-key-or-display-field test as §3.4.1:
+
+| Field | Disposition | Reason |
+|---|---|---|
+| `scope` | **cut** | v3's SQL had it; the 72-file vault survey (§14.1) measured `query`, `target` and `mode` at **72/72** and never established a rate for `scope` at all. `target` (what it aimed at) and `project` cover the ground. A column inherited from a schema rather than from evidence is exactly what Principle 2 says not to carry forward |
+| `coverage` | → `h_metadata` | 23/72, and no definition that distinguishes it from `confidence` in practice. Reported, never filtered |
+| `target`, `project` | → `h_metadata` | displayed on every trace, filtered on approximately never |
+| `agent_count`, `duration_ms` | → `h_metadata` | cost telemetry. Read in aggregate reports, not in `WHERE` clauses |
+| `actor_peer_name` | **renamed** `peer_name` | Honcho calls this column `peer_name` in `messages` and `session_peers`. One fleet, one word |
+
+Traces wear terms (§3.3) like memories do.
 
 **`mode` is free text; `confidence` and `status` are controlled.** The spec has to be
 explicit about which, because the corpus disagrees with itself:
