@@ -26,7 +26,15 @@ def main() -> int:
     reset = bool(os.environ.get("ARRA_RESET"))
 
     db = lancedb.connect(DATA_DIR)
-    existing = set(db.table_names())
+
+    # `table_names()` PAGINATES, defaulting to 10. With 15 tables the tail came
+    # back missing, so the "already exists" check below said absent and the
+    # overwrite would have destroyed tables 11-15 on every re-run. Ask for more
+    # than can exist, and assert we did not hit the ceiling anyway.
+    existing = set(db.table_names(limit=1000))
+    if len(existing) >= 1000:
+        raise RuntimeError("table listing hit the page limit; raise it before trusting this")
+
     drift = 0
 
     for name, model in TABLES.items():
