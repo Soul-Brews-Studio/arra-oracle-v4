@@ -2,25 +2,21 @@
 
 **Read [`AGENTS.md`](AGENTS.md) first — it is the canonical guide for this repo.**
 
-Everything about the design, the closed decisions, the column idiom, and the working rules
-lives there. This file holds only what is specific to Claude Code sessions. The spec itself
-bans two writable sources for one fact (§14.4); these two files follow the same rule.
+Current operating rules live in AGENTS.md; the complete target design lives in DESIGN.md.
+This file holds only Claude Code session guidance, not a second design authority.
 
 ---
 
 ## Orientation
 
-- **`SPEC.md` is the product.** 2,195 lines, `v26.9.18-alpha.915`. There is **no code in
-  this repo yet**, by decision.
-- Currently on branch `spec/honcho-core`, **PR #1 open** against `main`.
+- Read `AGENTS.md` and `DESIGN.md` for current Python/LanceDB/TS direction. `SPEC.md` preserves historical rationale, including superseded architecture.
+- Active code exists in `app/`; inspect `git status`/HEAD rather than assuming a branch or PR state. Full 19-table target is not yet shipped.
 - `ψ/` is a symlink to the shared neo-oracle vault. **Never `git add` anything under it.**
 
 ## Before you edit `SPEC.md`
 
-1. Skim §3 (data model) and §4 (storage) — most questions are already answered there, often
-   with a `> Decision (date, Nat):` callout explaining why the obvious alternative lost.
-2. Check AGENTS.md's "closed decisions" table. Several were settled after three or four
-   rounds of redesign; reopening one without new evidence costs a session.
+1. Read the current AGENTS/DESIGN direction first; SPEC §3/§4 are historical rationale, not current storage authority.
+2. Check AGENTS.md's "Chosen direction" table and current issue contract gates; separate historical decisions from later superseding evidence.
 3. Bump the version on every substantive edit — CalVer `v{yy}.{m}.{d}-alpha.{HMM}`,
    Asia/Bangkok, `HMM = hour*100 + minute`. `**Version**:` and `**Date**:` move together.
 
@@ -53,6 +49,6 @@ than patching a patch.
 - Never `git push --force`, never `git commit --amend`, never merge a PR without human
   approval, never push to `main`, never commit secrets.
 - Use `git -C <path>`, not `cd`. Temp files in `.tmp/` only.
-- Attribution on commits: `Co-Authored-By: Claude <model> <noreply@anthropic.com>`.
+- Attribute commits to the actual AI author; never use a Claude identity for another assistant.
 
 *Written by an Oracle — AI speaking as itself (Rule 6).*

@@ -1,8 +1,8 @@
 # arra-oracle-v4 — Specification
 
-**Version**: `v26.9.18-alpha.915`
+**Version**: `v26.9.20-alpha.1625`
 **Status**: draft
-**Date**: 2026-09-18 08:52 GMT+7
+**Date**: 2026-09-20 16:25 GMT+7
 **Supersedes**: [`Soul-Brews-Studio/arra-oracle-v3`](https://github.com/Soul-Brews-Studio/arra-oracle-v3) (`26.7.26-alpha.227`)
 **Repository**: <https://github.com/Soul-Brews-Studio/arra-oracle-v4>
 **Author**: Neo (AI) with Nat — written by an Oracle, AI speaking as itself (Rule 6)
@@ -16,6 +16,14 @@
 >
 > Every material claim below carries a source. Measured claims cite the measurement;
 > external claims cite a URL. See [§13 Provenance](#13-provenance).
+
+---
+
+## Current-status notice — historical specification retained
+
+This document preserves the earlier research and SQL-oriented design; its storage/runtime/constraint statements are **not current implementation instructions**. Read [AGENTS.md](AGENTS.md) and [DESIGN.md](DESIGN.md) first. The active app uses Python LanceModel schemas, TypeScript/Bun/Elysia and canonical LanceDB, not libSQL metadata plus a Python-only vector index. Binary activity is chosen. The active registry is 15 tables / 152 fields; the 19-table revision design remains proposed. LanceDB does not supply SQL FK/uniqueness enforcement.
+
+Sections 3.5, 4.1–4.7, 6.1, 9–10 and 15 contain superseded assumptions or unproved historical gates. Keep their measurements as dated evidence; do not treat them as authorization to reset data or reverse later decisions. SPEC's no-v3-migration rule still holds: DESIGN's copy-migration concerns the v4 spike only. Issue #23 owns remaining physical contract decisions; no timestamp/digest/revision-publication guarantee is frozen by this notice.
 
 ---
 
