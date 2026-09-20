@@ -452,7 +452,33 @@ class IsolationTests(unittest.TestCase):
         TS_ROOT / "auth" / "policy.ts",
         TS_ROOT / "auth" / "loader.ts",
         TS_ROOT / "app.ts",
+        # The #26 publication kernel reuses the governed codecs by contract:
+        # it must not carry a second canonicalizer. EXACT files only -- never
+        # a blanket publication/ exclusion, so a new module there has to be
+        # added here deliberately and reviewed.
+        TS_ROOT / "publication" / "errors.ts",
+        TS_ROOT / "publication" / "rows.ts",
+        TS_ROOT / "publication" / "storage.ts",
+        TS_ROOT / "publication" / "service.ts",
     )
+
+    #: The publication kernel is internal: no active source may import it.
+    PUBLICATION_FILES = (
+        TS_ROOT / "publication" / "errors.ts",
+        TS_ROOT / "publication" / "rows.ts",
+        TS_ROOT / "publication" / "storage.ts",
+        TS_ROOT / "publication" / "service.ts",
+    )
+    PUBLICATION_IMPORT_PATTERNS = (
+        "publication/service",
+        "publication/storage",
+        "publication/rows",
+        "publication/errors",
+        "./publication",
+        "../publication",
+    )
+    #: `writer_gate` is a fixture/operator tool, not an active migrator import.
+    WRITER_GATE_PATTERNS = ("writer_gate", "from .writer_gate", "arra_migrate.writer_gate")
     # Adapters must not reach raw data/model/audit modules directly; they go
     # through the admitted operation service.
     ADAPTER_FILES = (
@@ -502,6 +528,82 @@ class IsolationTests(unittest.TestCase):
             for pattern in self.RAW_DEPENDENCY_PATTERNS:
                 with self.subTest(file=path.name, pattern=pattern):
                     self.assertNotIn(f'from "{pattern}"', text)
+
+    def test_no_active_server_source_imports_the_publication_kernel(self):
+        """Nothing outside the four publication files may import them.
+
+        Bounded source-text check over server sources plus the CLI: it reports
+        absence of enumerated substrings. It is NOT module resolution and does
+        not prove a dynamic `import(expr)` is impossible.
+        """
+        publication = set(self.PUBLICATION_FILES)
+        scanned = [p for p in self.TS_ROOT.rglob("*.ts") if p not in publication] + [self.CLI]
+        self.assertGreaterEqual(len(scanned), 8, f"scan collapsed: {len(scanned)} files")
+        for path in self.PUBLICATION_FILES:
+            self.assertNotIn(path, scanned)
+        for path in scanned:
+            text = path.read_text(encoding="utf-8")
+            for pattern in self.PUBLICATION_IMPORT_PATTERNS:
+                with self.subTest(file=path.name, pattern=pattern):
+                    self.assertNotIn(pattern, text)
+
+    def test_no_active_python_source_imports_the_writer_gate(self):
+        """`writer_gate` is an operator/fixture tool, not a migrator import."""
+        scanned = [p for p in self.PY_ROOT.rglob("*.py") if p.name != "writer_gate.py"]
+        self.assertGreaterEqual(len(scanned), 35, f"scan collapsed: {len(scanned)} modules")
+        for path in scanned:
+            text = path.read_text(encoding="utf-8")
+            for pattern in self.WRITER_GATE_PATTERNS:
+                with self.subTest(module=path.name, pattern=pattern):
+                    self.assertNotIn(pattern, text)
+
+    def test_the_publication_import_scan_fires_on_representative_text(self):
+        """Sensitivity, on INDEPENDENT hand-written source.
+
+        Written by hand rather than generated from the pattern tuple: a test
+        that formats its own patterns into a file and finds them again is
+        circular, and a typo would still pass. Fixtures live in a
+        TemporaryDirectory; nothing is written into product source.
+        """
+        # One sample per enumerated pattern, so each is genuinely exercised.
+        flagged = (
+            'import { openPublicationWriter } from "src/publication/service";\n',
+            'import { quote } from "src/publication/storage";\n',
+            'import { encodeRevisionRow } from "src/publication/rows";\n',
+            'import { PublicationError } from "src/publication/errors";\n',
+            'const a = await import("./publication");\n',
+            'const b = await import("../publication");\n',
+        )
+        benign = (
+            'import { createApp } from "./app";\n',
+            'import { admit } from "./auth/policy";\n',
+            "// publication is documented in app/docs/contracts\n",
+        )
+        hits = lambda text: [p for p in self.PUBLICATION_IMPORT_PATTERNS if p in text]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertNotIn(str(self.TS_ROOT), str(root))
+            matched = set()
+            for index, source in enumerate(flagged):
+                probe = root / f"flagged_{index}.ts"
+                probe.write_text(source, encoding="utf-8")
+                with self.subTest(kind="flagged", source=source.strip()):
+                    found = hits(probe.read_text(encoding="utf-8"))
+                    self.assertNotEqual([], found)
+                    matched.update(found)
+            # EVERY pattern must be exercised by some sample. Asserting only
+            # "something matched" let a typo'd pattern hide behind a broader
+            # sibling -- measured: corrupting one entry still passed.
+            self.assertEqual(
+                set(self.PUBLICATION_IMPORT_PATTERNS),
+                matched,
+                "some enumerated pattern is never exercised by a flagged sample",
+            )
+            for index, source in enumerate(benign):
+                probe = root / f"benign_{index}.ts"
+                probe.write_text(source, encoding="utf-8")
+                with self.subTest(kind="benign", source=source.strip()):
+                    self.assertEqual([], hits(probe.read_text(encoding="utf-8")))
 
     def test_the_raw_mcp_dispatcher_is_no_longer_a_runtime_export(self):
         """`handleMcp(body, bank)` operated with no admission; it must be gone."""
