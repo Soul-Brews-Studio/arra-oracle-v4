@@ -3,14 +3,17 @@ import unittest
 from pathlib import Path
 
 from arra_migrate.models import TABLES
-
+from arra_migrate.target_manifest import validate_target_manifest
 
 MANIFEST = Path(__file__).parents[1] / "contracts" / "target-19-manifest.json"
 
 
 class TargetManifestTests(unittest.TestCase):
+    def setUp(self):
+        self.manifest = json.loads(MANIFEST.read_text())
+
     def test_manifest_is_explicit_and_not_active_registry(self):
-        manifest = json.loads(MANIFEST.read_text())
+        manifest = self.manifest
         target = manifest["target_tables"]
         current = manifest["current_registry_tables"]
         self.assertEqual(manifest["status"], "proposed-not-active")
@@ -26,9 +29,20 @@ class TargetManifestTests(unittest.TestCase):
         })
 
     def test_manifest_contains_only_named_lanes(self):
-        manifest = json.loads(MANIFEST.read_text())
+        manifest = self.manifest
         self.assertEqual(manifest["target_tables"][:5], [
             "workspaces", "peers", "sessions", "session_peers", "messages",
         ])
         self.assertIn("deferred", manifest)
         self.assertTrue(manifest["deferred"])
+
+    def test_validator_rejects_drift_and_activation(self):
+        validate_target_manifest(self.manifest)
+        cases = []
+        for field, value in (("status", "active"), ("target_count", 18), ("target_tables", self.manifest["target_tables"][:-1]), ("current_registry_tables", self.manifest["current_registry_tables"] + ["extra"])):
+            changed = dict(self.manifest)
+            changed[field] = value
+            cases.append(changed)
+        for changed in cases:
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                validate_target_manifest(changed)
