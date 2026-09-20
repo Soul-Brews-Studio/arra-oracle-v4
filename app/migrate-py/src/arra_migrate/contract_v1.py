@@ -154,6 +154,17 @@ def message_digest(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(_DIGEST_DOMAIN + canonical_message(payload)).hexdigest()
 
 
+def source_replay_outcome(existing_digest: str | None, incoming_digest: str) -> str:
+    """Classify source-key replay before a message service writes anything."""
+    if not isinstance(incoming_digest, str) or re.fullmatch(r"[0-9a-f]{64}", incoming_digest) is None:
+        raise ValueError("incoming digest must be lowercase SHA-256 hex")
+    if existing_digest is None:
+        return "new"
+    if not isinstance(existing_digest, str) or re.fullmatch(r"[0-9a-f]{64}", existing_digest) is None:
+        raise ValueError("existing digest must be lowercase SHA-256 hex")
+    return "idempotent" if existing_digest == incoming_digest else "conflict"
+
+
 def _require_string(value: Any, field: str) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{field} must be a string")  # noqa: TRY004 - uniform codec rejection

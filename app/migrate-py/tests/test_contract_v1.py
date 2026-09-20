@@ -12,6 +12,7 @@ from arra_migrate.contract_v1 import (
     new_id,
     parse_int64,
     parse_timestamp,
+    source_replay_outcome,
     validate_id,
 )
 
@@ -187,6 +188,15 @@ class MessageContractTests(unittest.TestCase):
             }[field]
             with self.subTest(field=field):
                 self.assertNotEqual(message_digest(changed), original)
+
+    def test_source_replay_outcome(self) -> None:
+        digest = message_digest(self.payload)
+        self.assertEqual(source_replay_outcome(None, digest), "new")
+        self.assertEqual(source_replay_outcome(digest, digest), "idempotent")
+        self.assertEqual(source_replay_outcome("0" * 64, digest), "conflict")
+        for existing, incoming in ((None, "BAD"), ("BAD", digest)):
+            with self.subTest(existing=existing), self.assertRaises(ValueError):
+                source_replay_outcome(existing, incoming)
 
     def test_nullable_fields_accept_null_and_content_accepts_empty_string(self) -> None:
         payload = dict(self.payload)

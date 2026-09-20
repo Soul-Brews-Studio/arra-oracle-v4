@@ -88,3 +88,10 @@ export function canonicalMessage(value: unknown): Uint8Array {
 export function messageDigest(value: unknown): string {
   return createHash("sha256").update("arra-message/v1\n", "utf8").update(canonicalMessage(value)).digest("hex");
 }
+
+export function sourceReplayOutcome(existingDigest: string | null, incomingDigest: string): "new" | "idempotent" | "conflict" {
+  if (!/^[a-f0-9]{64}$/.test(incomingDigest)) throw new Error("incoming digest must be lowercase SHA-256 hex");
+  if (existingDigest === null) return "new";
+  if (!/^[a-f0-9]{64}$/.test(existingDigest)) throw new Error("existing digest must be lowercase SHA-256 hex");
+  return existingDigest === incomingDigest ? "idempotent" : "conflict";
+}

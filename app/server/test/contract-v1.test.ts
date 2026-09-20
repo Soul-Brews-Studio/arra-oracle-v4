@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { newId, validateId, parseInt64, formatInt64, parseTimestamp, formatTimestamp, canonicalMessage, messageDigest } from "../src/contracts/v1";
+import { newId, validateId, parseInt64, formatInt64, parseTimestamp, formatTimestamp, canonicalMessage, messageDigest, sourceReplayOutcome } from "../src/contracts/v1";
 
 export const messageFixture = {
   source_namespace: "relic://claude/session/transcript",
@@ -48,6 +48,15 @@ describe("candidate v1 closed codecs (not active storage migration)", () => {
     expect(messageDigest(Object.fromEntries(Object.entries(messageFixture).reverse()))).toBe(messageDigest(messageFixture));
     expect(messageDigest({ ...messageFixture, content: "é" })).not.toBe(messageDigest({ ...messageFixture, content: "e\u0301" }));
     expect(messageDigest({ ...messageFixture, source_message_id: "276" })).not.toBe(messageDigest(messageFixture));
+  });
+
+  test("source replay distinguishes new, same-payload retry and changed payload", () => {
+    const digest = messageDigest(messageFixture);
+    expect(sourceReplayOutcome(null, digest)).toBe("new");
+    expect(sourceReplayOutcome(digest, digest)).toBe("idempotent");
+    expect(sourceReplayOutcome("0".repeat(64), digest)).toBe("conflict");
+    expect(() => sourceReplayOutcome(null, "BAD")).toThrow();
+    expect(() => sourceReplayOutcome("BAD", digest)).toThrow();
   });
 
   test("closed message envelope rejects omission, extras, invalid strings and time", () => {
