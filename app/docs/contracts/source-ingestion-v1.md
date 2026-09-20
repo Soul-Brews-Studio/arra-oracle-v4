@@ -1,6 +1,6 @@
 # Source ingestion and legacy boundary v1
 
-Status: **APPROVED BOUNDED IMPLEMENTATION CONTRACT, NOT IMPLEMENTED**. Reviewed 2026-09-20; all four shape/trust/order/precision decisions and the final Arrow-scope wording correction are resolved. Root-owned continuation of #23 after accepted byte contract `6289311` and scoped-read repair `7dd21d0`. No schema change, ingestion endpoint, migration, runtime activation, credential or live write is authorized by this draft.
+Status: **ACCEPTED ISOLATED IMPLEMENTATION** at `33e3c44`; contract review and independent acceptance completed. This does not activate a service or prove durable ingestion. Reviewed 2026-09-20; all four shape/trust/order/precision decisions and the final Arrow-scope wording correction are resolved. Root-owned continuation of #23 after accepted byte contract `6289311` and scoped-read repair `7dd21d0`. No schema change, ingestion endpoint, migration, runtime activation, credential or live write is authorized by this contract.
 
 ## 1. Preserve existing bytes
 
@@ -60,7 +60,7 @@ adapter configuration + input
   -> durable result / original ID on retry
 ```
 
-A future bounded #23 implementation may provide pure source-state validators and mapping fixtures only. It must not allocate IDs, read clocks, write LanceDB or introduce an independent canonicalization rule. Service uniqueness, sequence allocation, authorization, writer exclusion and durable acknowledgment are not proved by that package. #31 owns shared HTTP/MCP/CLI error mapping; use the already accepted closed error vocabulary rather than inventing another error envelope.
+The accepted isolated implementation at `33e3c44` provides pure source-state validators and mapping fixtures. Its contract prohibits ID allocation, clock reads, LanceDB writes and an independent canonicalization rule; acceptance does not establish durable service behavior. Service uniqueness, sequence allocation, authorization, writer exclusion and durable acknowledgment are not proved by that package. #31 owns shared HTTP/MCP/CLI error mapping; use the already accepted closed error vocabulary rather than inventing another error envelope.
 
 ## 7. Required proof before dispatch/acceptance
 
@@ -73,7 +73,7 @@ A future bounded #23 implementation may provide pure source-state validators and
 7. Copy fixtures preserve legacy IDs/time/order, record explicit migration-intake basis, replay the same mapping deterministically, and report collisions/precision failures without losing rows.
 8. No active-path imports, dependency changes, live writes or target-registry activation for isolated contract work.
 
-These are required gates, not test results. #23 and #28 remain open.
+This list records acceptance requirements, not standalone test results. The isolated package was accepted at `33e3c44`; see [delivery gates](delivery-gates.md) for evidence and limits. #23 contract-definition work is satisfied, with tracker closure pending documentation reconciliation. #28 durable service enforcement remains open; cross-row collisions and copy rehearsal remain #34.
 
 ## 8. Closed pure interface (normative)
 

@@ -80,9 +80,11 @@ Message source namespace/ID/digest have all-or-none logical presence; source cre
 
 The tests must not conflate a model-schema comparison with persisted-state evidence, nor a directory-exists error with schema-drift detection. Representative timestamp round trips are not proof over the entire supported calendar range.
 
-## 5. Gates that stay open
+## 5. Historical remaining gates at the physical-slice handoff
 
-#23 still needs complete revision/snapshot canonical byte rules, arbitrary extension-number policy, evidence target contracts/keys, source namespace grammar, error shapes, full operation scope and compatibility adapters. A future revision digest must cover the governed content and complete association snapshots; a placeholder digest string or the existing message codec does not establish this.
+Status correction: revision/evidence byte rules were subsequently accepted at `6289311`, and source/legacy boundary mapping at `33e3c44`. The following paragraph preserves the earlier handoff, not the current backlog. See [delivery gates](delivery-gates.md) for current enforcement ownership. No physical field or golden provenance is changed by this note.
+
+At that handoff, #23 still needed complete revision/snapshot canonical byte rules, arbitrary extension-number policy, evidence target contracts/keys, source namespace grammar, error shapes, full operation scope and compatibility adapters. A future revision digest must cover the governed content and complete association snapshots; a placeholder digest string or the existing message codec does not establish this.
 
 #26 must prove head/base publication, idempotent retry/conflict, accepted ancestry/orphan behavior, crash/recovery, service/migrator exclusion and reader refresh behavior. #27/#28 own taxonomy, projection reconciliation and scoped evidence/session/message services. #29/#30 own lifecycle eligibility and derived search reconciliation. Authorization and any R2 write proof remain separate gates.
 

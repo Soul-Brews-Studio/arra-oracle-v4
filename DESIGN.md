@@ -2,9 +2,9 @@
 
 > Candidate implementation addendum: [target-v1 decisions](app/docs/contracts/target-v1-decisions.md) refines revision association authority and physical fixture gates for isolated #23 work; it is not runtime activation or #23 completion.
 
-> Next reviewed contract: [revision/evidence v1](app/docs/contracts/revision-evidence-v1.md) pins complete snapshots, typed evidence keys, RFC8785 bytes and fail-closed Python/Bun batch validation. Python still owns physical schema. This is an implementation handoff, not proof these codecs or new MCP features are shipped. Honcho tier-1 interoperability remains a separate unproved #8 gate.
+> Accepted isolated contract: [revision/evidence v1](app/docs/contracts/revision-evidence-v1.md) pins complete snapshots, typed evidence keys, RFC8785 bytes and fail-closed Python/Bun batch validation. Python still owns physical schema. The isolated codecs were accepted at `6289311`; this is not proof that new MCP features are shipped. Honcho tier-1 interoperability remains a separate unproved #8 gate.
 
-> Current delivery overlay: [delivery gates](app/docs/contracts/delivery-gates.md) records accepted isolated physical/byte contracts through `6289311`, remaining enforcement owners and unchanged runtime boundaries. Earlier built-state snapshots below remain historical.
+> Current delivery overlay: [delivery gates](app/docs/contracts/delivery-gates.md) records accepted isolated physical/byte/source contracts through `33e3c44` and the scoped-read repair `7dd21d0`, remaining enforcement owners and unchanged runtime boundaries. Earlier built-state snapshots below remain historical.
 
 # v4 revised full design: conversation, knowledge, context, and LanceDB
 
@@ -406,7 +406,7 @@ append attributed message batch            select bounded source excerpt
                         conclusion revision
 ```
 
-Preserve speaker, source order/identity. Proposed columns above pin source identity/digest and distinguish nullable source time from required server ingestion time; legacy `created_at` conversion stays explicit. Namespace includes provider/account/session when IDs are not global. Hash a versioned canonical source payload (speaker/content/source time), excluding ingestion time. Exact replay returns the prior result; changed-payload replay conflicts. Single-writer uniqueness, sequence allocation and per-item durable batch acknowledgment remain **#23/#28 proof gates**.
+Preserve speaker, source order/identity. Proposed columns above pin source identity/digest and distinguish nullable source time from required server ingestion time; legacy `created_at` conversion stays explicit. Namespace includes provider/account/session when IDs are not global. Hash a versioned canonical source payload (speaker/content/source time), excluding ingestion time. Exact replay returns the prior result; changed-payload replay conflicts. Source identity, digest and pure replay mapping are defined by the accepted #23 contracts. Single-writer uniqueness, sequence allocation and per-item durable batch acknowledgment remain **#26/#28 service proof gates**.
 
 Connector principal is not speaker identity. Unknown/imported speakers stay unknown until mapped. Validate source mappings in existing metadata before considering a new registry.
 
@@ -454,7 +454,7 @@ One revision owns complete immutable term/link snapshots in its row.
 Association meaning is immutable; query projection rows are rebuildable.
 ```
 
-Digest covers canonical content, governed fields and complete term/link snapshots; canonicalization/commit are open gates. The required snapshot columns and canonical version are the [candidate physical refinement](app/docs/contracts/target-v1-decisions.md), not proof of validated bytes. `node_revision_terms` and `revision_links` are derived projections, not separate association authority or publication prerequisites. Unchanged text may reuse compatible vectors without merging revisions.
+Digest covers canonical content, governed fields and complete term/link snapshots. Canonical byte validation was accepted in the isolated [revision/evidence contract](app/docs/contracts/revision-evidence-v1.md) at `6289311`; durable publication remains #26. The required snapshot columns and canonical version are the [candidate physical refinement](app/docs/contracts/target-v1-decisions.md); physical shape alone is not byte-validation proof. `node_revision_terms` and `revision_links` are derived projections, not separate association authority or publication prerequisites. Unchanged text may reuse compatible vectors without merging revisions.
 
 No table per type. Do not hide identity/permissions/perspective/evidence in `fields`. Type behavior requires explicit validators, not just labels.
 
@@ -620,7 +620,7 @@ R -> revision_links -> targets    target match -> owning revisions
      code/commits/trace hits                     requiring review
 ```
 
-For reverse lookup, `target_key=SHA256(versioned canonical {W,kind,identity})`. Identity uses the discriminant's required identifiers, not display titles or capture annotations. Internal revision targets include node+revision IDs; Relic events include namespace/transcript/event/capture digest. Code includes commit/path/range; issue/discussion include canonical repository key, number and optional comment ID (URL is display-only). A generic URL preserves the exact validated absolute string initially: do not equate redirects or discard query/fragment. Pin canonical encoding and repository keys in #23; test equivalent structured locators and distinct captures. The key is derived, not alternate authority.
+For reverse lookup, `target_key=SHA256(versioned canonical {W,kind,identity})`. Identity uses the discriminant's required identifiers, not display titles or capture annotations. Internal revision targets include node+revision IDs; Relic events include namespace/transcript/event/capture digest. Code includes commit/path/range; issue/discussion include canonical repository key, number and optional comment ID (URL is display-only). A generic URL preserves the exact validated absolute string initially: do not equate redirects or discard query/fragment. Canonical encoding, repository keys and structured-locator equivalence/distinctness are defined and tested by the accepted #23 revision/evidence contract. Authorized direct/reverse query equality and projection coverage remain #25/#28 service gates. The key is derived, not alternate authority.
 
 Direct edges first; recursion has depth/result/access bounds. Reverse lookup uses the same links, not another writable table. Label current versus historical coverage; hidden dependents must not leak through counts/IDs.
 
@@ -1041,7 +1041,7 @@ Same operation_id with different payload: reject, do not reinterpret.
 
 This is **not a cross-table transaction proof**. Publication visibility across table snapshots, crash recovery, idempotency, rejected-branch cleanup, and migration exclusivity all need tests. A prepared/orphan revision must not appear in normal history just because its row exists; the accepted head/ancestry and verified revision-row snapshots govern visibility; partial association projections must not redefine content. If tests cannot prove this protocol, change the physical layout/commit representation before shipping.
 
-#23 has not frozen IDs/time/JSON/vector contracts. Pin omission/null, timestamp/Int64 codecs, finite vector/profile validation, errors, source-message identity and cross-operation idempotency. Per-table `UNIQUE(W,operation_id)` is a logical requirement, not a settled cross-table retry namespace.
+#23 defines versioned ID, omission/null, timestamp/Int64, JSON, error, source-message identity and scoped replay contracts, plus the target fixed-size Float32[384] physical shape. Accepted pure codecs do not establish durable cross-operation retry behavior (#26/#28), shared runtime transport enforcement (#31), or copy conversion (#34). Model/profile compatibility and revision-aware vector validation remain #30; dimensions alone do not establish compatibility. Per-table `UNIQUE(W,operation_id)` expresses a logical requirement, not an enforced LanceDB constraint or a universal cross-table retry namespace.
 
 An append-only supersession event must pass expected-revision and current-lifecycle checks under the same serialization boundary. No writable duplicate replacement pointer is required initially; introduce a rebuildable projection only with explicit precedence and repair rules.
 
@@ -1151,7 +1151,7 @@ Not automatic scope: full Honcho dreamer, a new message broker, arbitrary plugin
 Reuse [roadmap #22](https://github.com/Soul-Brews-Studio/arra-oracle-v4/issues/22), not forty matching tickets.
 
 ```text
-#23 contract + #24 current defects
+#23 contracts accepted + #24 scope repair closed
        |                |
        +----> #25 auth / fail-closed scope
        |
