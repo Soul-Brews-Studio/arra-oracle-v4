@@ -89,9 +89,16 @@ export function messageDigest(value: unknown): string {
   return createHash("sha256").update("arra-message/v1\n", "utf8").update(canonicalMessage(value)).digest("hex");
 }
 
+// Bounded repair (revision-evidence-v1 §6): `RegExp.test` coerces its argument
+// with ToString, so an ARRAY holding one valid digest, or an object with a
+// matching toString, used to pass. Digests must be actual strings.
+function isLowercaseSha256Hex(value: unknown): value is string {
+  return typeof value === "string" && value.length === 64 && /^[a-f0-9]{64}$/.test(value);
+}
+
 export function sourceReplayOutcome(existingDigest: string | null, incomingDigest: string): "new" | "idempotent" | "conflict" {
-  if (!/^[a-f0-9]{64}$/.test(incomingDigest)) throw new Error("incoming digest must be lowercase SHA-256 hex");
+  if (!isLowercaseSha256Hex(incomingDigest)) throw new Error("incoming digest must be a lowercase SHA-256 hex string");
   if (existingDigest === null) return "new";
-  if (!/^[a-f0-9]{64}$/.test(existingDigest)) throw new Error("existing digest must be lowercase SHA-256 hex");
+  if (!isLowercaseSha256Hex(existingDigest)) throw new Error("existing digest must be a lowercase SHA-256 hex string");
   return existingDigest === incomingDigest ? "idempotent" : "conflict";
 }

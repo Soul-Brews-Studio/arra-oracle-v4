@@ -2,6 +2,8 @@
 
 > Candidate implementation addendum: [target-v1 decisions](app/docs/contracts/target-v1-decisions.md) refines revision association authority and physical fixture gates for isolated #23 work; it is not runtime activation or #23 completion.
 
+> Next reviewed contract: [revision/evidence v1](app/docs/contracts/revision-evidence-v1.md) pins complete snapshots, typed evidence keys, RFC8785 bytes and fail-closed Python/Bun batch validation. Python still owns physical schema. This is an implementation handoff, not proof these codecs or new MCP features are shipped. Honcho tier-1 interoperability remains a separate unproved #8 gate.
+
 # v4 revised full design: conversation, knowledge, context, and LanceDB
 
 <!-- arra-v4:full-revision-after-honcho:2026-09-20 -->

@@ -1,0 +1,55 @@
+{
+ "source": "Hand-authored expected bytes per app/docs/contracts/revision-evidence-v1.md sections 2-5. Digests are hashlib.sha256 over the hand-written text with the stated domain prefix. NOT produced by the TypeScript implementation under test.",
+ "revision": {
+  "input_content": {
+   "workspace_name": "w",
+   "node_id": "Node0000000000000001_",
+   "base_revision_id": null,
+   "title": "T",
+   "body": "B",
+   "body_format": "text",
+   "fields": "{\"b\":2,\"a\":1.50}",
+   "author_peer_name": "neo",
+   "observer_peer_name": null,
+   "subject_peer_name": "nat",
+   "session_name": null,
+   "is_active": true,
+   "valid_from": "2026-09-18T03:39:42.000Z",
+   "valid_to": null,
+   "change_reason": null,
+   "schema_version": "1",
+   "canonical_version": "arra-revision/v1",
+   "term_snapshot_json": "[{\"position\":\"1\",\"term_id\":\"Term0000000000000002_\",\"vocabulary_id\":\"Vocb0000000000000001_\",\"vocabulary_name_snapshot\":\"topics\",\"term_name_snapshot\":\"schema\",\"label_snapshot\":null},{\"term_id\":\"Term0000000000000001_\",\"vocabulary_id\":\"Vocb0000000000000001_\",\"vocabulary_name_snapshot\":\"type\",\"term_name_snapshot\":\"conclusion\",\"label_snapshot\":\"Conclusion\",\"position\":\"0\"}]",
+   "link_snapshot_json": "[{\"position\":\"0\",\"relation\":\"supports\",\"target_kind\":\"session\",\"target\":{\"session_name\":\"s1\"},\"excerpt\":null,\"content_hash\":null,\"captured_at\":null,\"capture_status\":\"locator_only\",\"note\":null}]",
+   "h_metadata": null,
+   "internal_metadata": "{\"k\":\"v\"}"
+  },
+  "expected": {
+   "canonical_json": "{\"author_peer_name\":\"neo\",\"base_revision_id\":null,\"body\":\"B\",\"body_format\":\"text\",\"canonical_version\":\"arra-revision/v1\",\"change_reason\":null,\"fields\":{\"a\":1.5,\"b\":2},\"h_metadata\":null,\"internal_metadata\":{\"k\":\"v\"},\"is_active\":true,\"links\":[{\"capture_status\":\"locator_only\",\"captured_at\":null,\"content_hash\":null,\"excerpt\":null,\"note\":null,\"position\":\"0\",\"relation\":\"supports\",\"target\":{\"session_name\":\"s1\"},\"target_kind\":\"session\"}],\"node_id\":\"Node0000000000000001_\",\"observer_peer_name\":null,\"schema_version\":\"1\",\"session_name\":null,\"subject_peer_name\":\"nat\",\"terms\":[{\"label_snapshot\":\"Conclusion\",\"position\":\"0\",\"term_id\":\"Term0000000000000001_\",\"term_name_snapshot\":\"conclusion\",\"vocabulary_id\":\"Vocb0000000000000001_\",\"vocabulary_name_snapshot\":\"type\"},{\"label_snapshot\":null,\"position\":\"1\",\"term_id\":\"Term0000000000000002_\",\"term_name_snapshot\":\"schema\",\"vocabulary_id\":\"Vocb0000000000000001_\",\"vocabulary_name_snapshot\":\"topics\"}],\"title\":\"T\",\"valid_from\":\"2026-09-18T03:39:42.000Z\",\"valid_to\":null,\"workspace_name\":\"w\"}",
+   "content_digest": "f49e14b41a164d0170b33308375ebabace00bf8105d8cf2d60519e39a076ec42",
+   "columns": {
+    "fields": "{\"a\":1.5,\"b\":2}",
+    "term_snapshot_json": "[{\"label_snapshot\":\"Conclusion\",\"position\":\"0\",\"term_id\":\"Term0000000000000001_\",\"term_name_snapshot\":\"conclusion\",\"vocabulary_id\":\"Vocb0000000000000001_\",\"vocabulary_name_snapshot\":\"type\"},{\"label_snapshot\":null,\"position\":\"1\",\"term_id\":\"Term0000000000000002_\",\"term_name_snapshot\":\"schema\",\"vocabulary_id\":\"Vocb0000000000000001_\",\"vocabulary_name_snapshot\":\"topics\"}]",
+    "link_snapshot_json": "[{\"capture_status\":\"locator_only\",\"captured_at\":null,\"content_hash\":null,\"excerpt\":null,\"note\":null,\"position\":\"0\",\"relation\":\"supports\",\"target\":{\"session_name\":\"s1\"},\"target_kind\":\"session\"}]",
+    "h_metadata": null,
+    "internal_metadata": "{\"k\":\"v\"}"
+   }
+  }
+ },
+ "target": {
+  "input": {
+   "workspace_name": "w",
+   "target_kind": "issue",
+   "target": {
+    "repo": "Soul-Brews-Studio/arra-oracle-v4",
+    "number": "23",
+    "url": "https://github.com/Soul-Brews-Studio/arra-oracle-v4/issues/23"
+   }
+  },
+  "expected": {
+   "target_json": "{\"number\":\"23\",\"repo\":\"soul-brews-studio/arra-oracle-v4\",\"url\":\"https://github.com/Soul-Brews-Studio/arra-oracle-v4/issues/23\"}",
+   "key_json": "{\"identity\":{\"number\":\"23\",\"repo\":\"soul-brews-studio/arra-oracle-v4\"},\"target_kind\":\"issue\",\"workspace_name\":\"w\"}",
+   "target_key": "3d34cb3450146a10209336a4adb1a4fe27cdd3bd84a0d8bc432ec8e00e4331b9"
+  }
+ }
+}
