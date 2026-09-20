@@ -1,0 +1,37 @@
+{
+  "note": "Hand-authored synthetic values. Digests computed independently with Python hashlib (sha256 of the 64 ASCII token characters, no prefix, no newline), NOT by the module under test. No value here is a real credential.",
+  "tokens": {
+    "alpha": {
+      "secret": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "sha256": "a8ae6e6ee929abea3afcfc5258c8ccd6f85273e0d4626d26c7279f3250f77c8e"
+    },
+    "beta": {
+      "secret": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+      "sha256": "7b9d07f2404b102b3c62fede026097c5ab81668f18414abd8ea560cecb008006"
+    },
+    "gamma": {
+      "secret": "deadbeefcafef00ddeadbeefcafef00ddeadbeefcafef00ddeadbeefcafef00d",
+      "sha256": "92f068d70e7e7c7cb67d71ea1454c258cf7c96fc071748ee7f3894622c1d9eaf"
+    },
+    "unknown": {
+      "secret": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+      "sha256": "2a8abfa8cb9906290437854193ca6bca41d4d4e26d1d454bd66a35158095e737"
+    },
+    "alpha_uppercase_variant": {
+      "note": "Same hex value as `alpha` but uppercase. Its digest is DIFFERENT, so a policy that stored this digest must still reject the uppercase token at grammar, before any hashing.",
+      "secret": "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF",
+      "sha256": "0ea37c243f60974b0d54c6b2d76cece3f4c742492cce48eaf81f357931d6d69e"
+    }
+  },
+  "times": {
+    "not_before": "2026-09-20T00:00:00.000Z",
+    "not_before_ms": 1789862400000,
+    "expires_at": "2026-09-21T00:00:00.000Z",
+    "expires_at_ms": 1789948800000,
+    "inside_ms": 1789905600000
+  },
+  "clock_bounds": {
+    "min_ms": -62135596800000,
+    "max_ms": 253402300799999
+  }
+}

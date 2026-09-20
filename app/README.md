@@ -1,89 +1,93 @@
-# arra-oracle-v4 — POC app
+# arra-oracle-v4 — active local app
 
-Python owns the schema, declared as LanceModels. TypeScript opens what the migration
-wrote, then inserts, embeds and queries it. One LanceDB directory on disk, no second
-store, no language boundary in the write path.
+Read [the current guide](../AGENTS.md) and [full target design](../DESIGN.md).
+This is an unauthenticated local prototype, not the completed 19-table design.
 
+```text
+Python LanceModel registry (15 tables / 152 fields; memories=20)
+                          |
+                          v
+                    local LanceDB
+                          ^
+                          |
+           TypeScript / Bun / Elysia :3939
+                 HTTP + MCP + source-run CLI
 ```
-app/
-  migrate-py/  Python  OWNS THE SCHEMA. LanceModel declarations -> tables.
-  migrate-rs/  Rust    retained, no longer the owner. Same 18 fields.
-  server/      Bun     Hono API + UI. Opens the table, never defines it.
-  data/        LanceDB dataset, written by the migration, read+written by TS.
-```
 
-The schema is declared once, as pydantic models that carry their own Arrow types
-(`migrate-py/src/arra_migrate/models.py`), so there is no separate `pa.schema([...])`
-to keep in sync with the model.
+## Ownership and paths
 
-## Run it
+| Path | Responsibility |
+|---|---|
+| `migrate-py/src/arra_migrate/models/` | Active Python schema registry |
+| `migrate-py/src/arra_migrate/__main__.py` | Table creation and drift checks |
+| `server/src/` | Elysia HTTP/MCP, storage and application behavior |
+| `cli.ts` | CLI adapter over current MCP/HTTP methods |
+| `cli.test.ts`, `server/test/` | Regression tests; isolated fixtures/stubs |
+| `migrate-rs/`, root `migrate-rust/` | Historical experiments, not schema owners |
+| `docs/history/` | Original dated POC reports, preserved verbatim |
+
+The Python registry defines Arrow types; opening it from TypeScript does not add SQL foreign keys, uniqueness, authorization or cross-table transactions. Those need explicit application contracts and tests.
+
+## Local run with an isolated dataset
+
+With this checkout's existing Python venv and Bun dependencies installed, from repository root:
 
 ```bash
-# 1. schema (idempotent; `just migrate reset` recreates)
-just migrate run
+# Choose a NEW isolated local directory; do not reset an existing bank.
+export ARRA_DATA_DIR="$(mktemp -d)"
+app/migrate-py/.venv/bin/python -m arra_migrate
+app/migrate-py/.venv/bin/python -m arra_migrate --check
 
-# 2. backend + UI
-just server install && just server start
-# http://127.0.0.1:3939
+# Foreground process, localhost only; do not run a second writer on the same data.
+bun run --cwd app/server start
 ```
 
-Embeddings come from a local Ollama (`mxbai-embed-large`, 1024-d — the dimension the
-column was created with). Override with `OLLAMA_URL`, `EMBEDDING_MODEL`,
-`EMBEDDING_DIMENSIONS`. No key, no network.
+Startup creates the ICU content index only when missing; an existing index is retained. Explicit reindex remains a global maintenance operation.
 
-## API
+The same absolute `ARRA_DATA_DIR` must reach migration and server. Default relative `../data` depends on cwd and is unsuitable for ambiguous scripted runs. Never use `ARRA_RESET=1` on existing data casually. Optional S3/R2 configuration exists but is not proof of production concurrency or auth.
 
-| | |
-|---|---|
-| `GET /api/health` | row counts, embedded vs pending, table version, indices, embedder status |
-| `GET /api/memories?bank=&limit=` | list |
-| `POST /api/memories` | `{name, content, workspace_name?, type?}` — embeds inline, falls back to null |
-| `GET /api/search?q=&mode=text\|vector&bank=&limit=` | FTS (icu) or semantic (1024-d) |
-| `POST /api/backfill?batch=32` | embed rows where `embedding IS NULL` |
-| `POST /api/reindex` | build/replace the FTS index on `content` |
+Default embedder configuration is Ollama `all-minilm`, 384 dimensions, with `OLLAMA_URL`, `EMBEDDING_MODEL`, and `EMBEDDING_DIMENSIONS` overrides. Do not change a live table's dimension/profile through environment settings and assume compatibility. Ollama is an HTTP service; locality depends on the configured URL. No cloud call is needed for the regression suite.
 
-## Three things this POC establishes
+## Current interfaces
 
-**Index first, embed later works.** `embedding` is nullable and *not* bound into the
-Lance schema as an embedding function. Rows land with text only; `POST /api/backfill`
-fills vectors afterwards via `mergeInsert("id")`. Binding an embedding function into the
-schema (the `LanceSchema` + `sourceField/vectorField` pattern) would make every write
-block on an embedding call — the un-transactional write path SPEC.md §4.6 already flags.
+MCP endpoint: `/mcp/:bank`, with bank = `workspaces.name` (not credentials).
 
-**Tenant isolation holds on the search path.** `?q=ความ` returns rows from two banks;
-adding `&bank=default` drops the foreign one. Not just a write-time constraint.
+```text
+remember recall get_memory list_memories
+bank_info call_log call_stats status
+```
 
-**A Table handle is a pinned snapshot, not a live view.** Caching the handle made the
-server report 4 rows while the table held 5 — writes from another process stayed
-invisible. `checkoutLatest()` before each access is what makes Rust-writes/TS-reads
-actually work. This is the kind of thing only running it finds.
+HTTP surface:
 
-## Measured, worth knowing
+```text
+GET  /health                 GET  /api/health
+GET  /api/memories            POST /api/memories
+GET  /api/search              POST /api/backfill
+POST /api/reindex
+```
 
-`mxbai-embed-large` is weak on Thai semantics: a Thai query about memory
-(`หน่วยความจำภาษาไทย`) ranked the only Thai-heavy row **last** of four, while the same
-row is the top FTS hit for `ความทรงจำ`. On this corpus FTS beats vectors for Thai —
-consistent with the fleet's prior measurement (MRR 0.765 FTS vs 0.099 vectors) and
-directly relevant to spike S8 (#7). A Thai-capable embedder (bge-m3) is the thing to
-test before trusting semantic search on Thai content.
+Backfill and reindex are global maintenance operations in this prototype. Do not infer bank isolation from an unrelated CLI `--bank`. The obsolete extra `/mcp/:bank/:workspace` segment must not be interpreted as a second tenant/context boundary; the repaired handler rejects it explicitly.
 
-Also: LanceDB's `icu` tokenizer segments a Thai query into words and ORs them, so
-`ความทรงจำ` matches any row containing `ความ`. Lesson 8's "icu matches exactly" held
-only because nothing else in that corpus shared the token.
+```bash
+bun app/cli.ts help
+bun app/cli.ts status --bank example --pretty
+bun app/cli.ts remember --bank example --content 'A reviewed fact' --peer neo --subject nat
+bun app/cli.ts recall --bank example --query 'reviewed' --mode text
+```
 
-## Why Python owns the schema, and Rust does not
+The CLI covers 13 current backend commands plus help. It validates arguments, forwards subject attribution, and exits nonzero for HTTP/JSON-RPC/MCP tool errors. It preserves JSON envelopes. It is not an installed global binary and does not implement future node/context/peer APIs.
 
-Rust worked. It was replaced for cost, not correctness: **8.1 GB of build artifacts and a
-612 MB debug binary, from a 3m31s cold build, for 72 lines that run once.** The strong
-typing that justified it buys little here — a schema is a data declaration, not logic, so
-there is no invariant for the type system to enforce. It would earn its place if the
-migration layer grew validation, ordering, or transforms.
+## Verification and remaining scope
 
-The swap was safe because **Lance is language-neutral**. `just migrate check` was run
-against the table Rust had already created and reported `ok` — the same 18 fields, the same
-types. Python then created the table from scratch in a scratch directory and TypeScript
-opened it unchanged: 18 fields, `FixedSizeList[1024]<Float32>`, nullable. Three languages,
-one directory, no conversion step.
+```bash
+bun test app/cli.test.ts
+bun run --cwd app/server test
+bun run --cwd app/server typecheck
+bun run --cwd app/server build
+```
 
-`migrate-rs/` is kept rather than deleted. `just migrate rs-run` still works, and it is the
-proof of that language-neutrality claim rather than just an assertion of it.
+The typecheck script uses the already-installed TypeScript compiler; this patch adds no dependency. `skipLibCheck` excludes dependency declaration diagnostics, not our source/tests.
+
+Inspect the actual test output; a help check is not a live backend test, and passing current regressions is not proof that the future schema is implemented. Use temporary data and stub model calls. Keep existing app data, v3, and other agents' services untouched.
+
+The roadmap is [#22](https://github.com/Soul-Brews-Studio/arra-oracle-v4/issues/22). Auth, target schema codecs, immutable revision commit/recovery, taxonomy, peer/message provenance, context/chat, UI and migration/release gates remain unfinished. `DESIGN.md` is a publication-time snapshot of #36; consult fresh source/tests for newer repairs.

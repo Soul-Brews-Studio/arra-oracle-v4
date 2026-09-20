@@ -1,33 +1,82 @@
-// MCP dispatch. One stateless POST, per bank: /mcp/:bank[/:workspace]
-//
-// Bank FIRST — it is the tenant (§3.1). The workspace segment narrows the room,
-// never the isolation. A connector is scoped to one bank at registration, so a
-// model cannot address a bank it was not given.
+/**
+ * MCP adapter (`authorization-integration-v1.md` §1, §3).
+ *
+ * This module maps JSON-RPC envelopes onto the operation service and shapes the
+ * replies. It never receives a gate, an Admission or a request context, and it
+ * does not choose which action a tool needs -- the service owns that map.
+ *
+ * It is NOT authority-free, and the earlier comment claiming so was wrong: the
+ * dispatcher below receives scope-bound callable operations, and a callable
+ * operation IS authority. What bounds it is enforced on the service side --
+ * each operation re-checks the admitted action, and the whole set is
+ * invalidated when the request ends.
+ */
 
-import * as store from "../db";
-import * as embed from "../embed";
-import { storageInfo } from "../storage";
-import * as calls from "./calls";
-import { JsonRpcRequest, SERVER_NAME, SERVER_VERSION, err, negotiate, ok, text } from "./protocol";
+import type { WorkspaceAction } from "../auth/policy";
+import type { McpEnvelope, OperationService, ToolOperations } from "../auth/service";
+import { SERVER_NAME, SERVER_VERSION, err, negotiate, ok, text } from "./protocol";
 import { TOOLS } from "./tools";
 
-const nz = (v: unknown) => (typeof v === "string" && v.length ? v : undefined);
+/** Which action each tool needs. A tool absent here is not dispatchable. */
+const TOOL_ACTION: Readonly<Record<string, WorkspaceAction>> = Object.freeze({
+  remember: "content:write",
+  recall: "content:read",
+  get_memory: "content:read",
+  list_memories: "content:read",
+  bank_info: "diagnostics:read",
+  status: "diagnostics:read",
+  call_log: "audit:read",
+  call_stats: "audit:read",
+});
 
-async function runTool(name: string, args: Record<string, any>, bank: string): Promise<unknown> {
+export const toolAction = (tool: string): WorkspaceAction | undefined => TOOL_ACTION[tool];
+
+const optionalString = (args: Record<string, unknown>, field: string) => {
+  if (!(field in args)) return undefined;
+  const value = args[field];
+  if (typeof value !== "string" || !value.trim()) throw new Error(`${field} must be a non-blank string`);
+  return value;
+};
+
+const requiredString = (args: Record<string, unknown>, field: string) => {
+  const value = optionalString(args, field);
+  if (value === undefined) throw new Error(`${field} is required`);
+  return value;
+};
+
+const bounded = (value: unknown, fallback: number, field: string) => {
+  const number = value === undefined ? fallback : value;
+  if (typeof number !== "number") throw new Error(`${field} must be a number`);
+  if (!Number.isSafeInteger(number) || number < 1 || number > 1000) {
+    throw new Error(`${field} must be a safe integer between 1 and 1000`);
+  }
+  return number;
+};
+
+/** Scope may never travel in arguments: the route workspace is authoritative. */
+const SCOPE_CARRIERS = ["workspace_name", "bank", "workspace"] as const;
+
+/** Pure dispatcher: receives scope-bound operations, never a context. */
+export async function dispatchTool(
+  name: string,
+  args: Record<string, unknown>,
+  ops: ToolOperations,
+): Promise<unknown> {
+  for (const carrier of SCOPE_CARRIERS) {
+    if (carrier in args) throw new Error("scope may not be supplied in arguments");
+  }
+
   switch (name) {
     case "remember": {
-      const content = nz(args.content);
-      if (!content) throw new Error("content is required");
-      const res = await store.insert({
-        name: nz(args.name) ?? content.slice(0, 48).replace(/\s+/g, "-").toLowerCase(),
+      const content = requiredString(args, "content");
+      const res = await ops.insert({
+        name: optionalString(args, "name") ?? content.slice(0, 48).replace(/\s+/g, "-").toLowerCase(),
         content,
-        type: nz(args.type),
-        workspace_name: bank,
-        session_name: nz(args.session_name),
-        peer_name: nz(args.peer_name),
-      } as any);
-      // Say which happened. "embedded: false" is not a failure — it is §4.6's
-      // write path working, and the caller should not read it as one.
+        type: optionalString(args, "type"),
+        session_name: optionalString(args, "session_name"),
+        peer_name: optionalString(args, "peer_name"),
+        subject_peer_name: optionalString(args, "subject_peer_name"),
+      });
       return {
         ...res,
         sync_state: res.embedded ? "synced" : "pending",
@@ -35,125 +84,135 @@ async function runTool(name: string, args: Record<string, any>, bank: string): P
       };
     }
     case "recall": {
-      const q = nz(args.query);
-      if (!q) throw new Error("query is required");
-      const limit = Number(args.limit ?? 10);
-      return args.mode === "vector"
-        ? await store.searchVector(q, bank, limit)
-        : await store.searchText(q, bank, limit);
+      const q = requiredString(args, "query");
+      const limit = bounded(args.limit, 10, "limit");
+      const mode = args.mode === undefined ? "text" : args.mode;
+      if (mode !== "text" && mode !== "vector") throw new Error("mode must be 'text' or 'vector'");
+      return mode === "vector" ? ops.searchVector(q, limit) : ops.searchText(q, limit);
     }
     case "get_memory": {
-      const id = nz(args.id);
-      if (!id) throw new Error("id is required");
-      const rows = await store.list(bank, 1000);
-      const hit = rows.find((r: any) => r.id === id);
-      if (!hit) throw new Error(`no memory '${id}' in bank '${bank}'`);
+      const hit = await ops.getById(requiredString(args, "id"));
+      // Never reveal whether the id exists in some other bank.
+      if (!hit) throw new Error("no such memory in this bank");
       return hit;
     }
     case "list_memories": {
-      const rows = await store.list(bank, Number(args.limit ?? 20) * 4);
-      const want = (k: string, v: unknown) => v === undefined || (rows as any)[k] === v;
-      return rows
-        .filter(
-          (r: any) =>
-            want("type", nz(args.type)) &&
-            (nz(args.type) === undefined || r.type === args.type) &&
-            (nz(args.session_name) === undefined || r.session_name === args.session_name) &&
-            (nz(args.peer_name) === undefined || r.peer_name === args.peer_name) &&
-            (nz(args.sync_state) === undefined || r.sync_state === args.sync_state),
-        )
-        .slice(0, Number(args.limit ?? 20));
+      const syncState = optionalString(args, "sync_state");
+      if (syncState !== undefined && !["pending", "synced", "failed"].includes(syncState)) {
+        throw new Error("sync_state must be 'pending', 'synced', or 'failed'");
+      }
+      return ops.list(bounded(args.limit, 20, "limit"), {
+        type: optionalString(args, "type"),
+        session_name: optionalString(args, "session_name"),
+        peer_name: optionalString(args, "peer_name"),
+        subject_peer_name: optionalString(args, "subject_peer_name"),
+        sync_state: syncState,
+        is_active:
+          args.is_active === undefined
+            ? undefined
+            : typeof args.is_active === "boolean"
+              ? args.is_active
+              : (() => {
+                  throw new Error("is_active must be a boolean");
+                })(),
+      });
     }
     case "bank_info": {
-      const s = await store.stats();
-      const e = await embed.health();
-      return {
-        bank,
-        ...s,
-        embedder: { model: e.model, dims: e.dims, ok: e.ok },
-        storage: storageInfo(),
-        // §4.6.1: the operator must be able to SEE the consistency gap, or
-        // nobody fixes it.
-        gaps: { unembedded: s.unembedded ?? 0 },
-      };
+      const s = await ops.stats();
+      const embedder = await ops.embedReadiness();
+      // Sanitized: no storage URI, no model address, no other-bank counts.
+      return { bank: ops.bank, rows: s.rows, embedded: s.embedded, unembedded: s.unembedded, embedder };
     }
-    case "call_log":
-      return await calls.recent(Number(args.limit ?? 20), nz(args.status));
+    case "call_log": {
+      const status = optionalString(args, "status");
+      if (status !== undefined && status !== "ok" && status !== "error") {
+        throw new Error("status must be 'ok' or 'error'");
+      }
+      return ops.recentCalls(bounded(args.limit, 20, "limit"), status);
+    }
     case "call_stats":
-      return await calls.aggregate();
+      return ops.aggregateCalls();
     case "status": {
-      const e = await embed.health();
+      const embedder = await ops.embedReadiness();
       return {
         server: `${SERVER_NAME} ${SERVER_VERSION}`,
-        storage: storageInfo(),
-        // §6.4 — name the doors rather than saying "ok". Auth is not built yet
-        // and this says so, instead of implying a gate that does not exist.
-        auth: ["none — SPEC §7 not implemented"],
-        embedder: e.ok ? `${e.model} (${e.dims}d)` : `DOWN: ${e.detail}`,
+        auth: ["bearer — policy-file authorization active"],
+        embedder_ready: embedder.ok,
         tools: TOOLS.length,
+        contract: {
+          manifest: "arra-v4-target/1",
+          status: "proposed-not-active",
+          active_tables: 15,
+          target_tables: 19,
+        },
       };
     }
     default:
-      throw new Error(`unknown tool: ${name}`);
+      throw new Error("unknown tool");
   }
 }
 
-export async function handleMcp(body: unknown, bank: string, userAgent = ""): Promise<Response> {
-  const rpc = (body ?? {}) as JsonRpcRequest;
-  if (!rpc || typeof rpc !== "object" || typeof rpc.method !== "string") {
-    return Response.json(err(null, -32700, "parse error"), { status: 400 });
-  }
+export type McpOutcome =
+  | { readonly kind: "response"; readonly response: Response }
+  | { readonly kind: "denied"; readonly code: string };
 
-  const id = rpc.id ?? null;
-  const params = (rpc.params ?? {}) as Record<string, any>;
+export function createMcpAdapter(service: OperationService) {
+  return async function handle(
+    bank: string,
+    authorization: string | null,
+    readEnvelope: () => Promise<McpEnvelope | null>,
+    userAgent = "",
+  ): Promise<McpOutcome> {
+    if (!bank?.trim()) return { kind: "denied", code: "invalid_scope" };
 
-  switch (rpc.method) {
-    case "initialize":
-      return Response.json(
-        ok(id, {
-          protocolVersion: negotiate(params.protocolVersion),
-          capabilities: { tools: {} },
-          serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
-        }),
-      );
+    // Envelope id is only known after the body is read, which the service does
+    // lazily AFTER projection; replies before that point carry a null id.
+    let envelopeId: string | number | null = null;
+    const capturingReader = async () => {
+      const envelope = await readEnvelope();
+      envelopeId = envelope?.id ?? null;
+      return envelope;
+    };
 
-    // Notifications carry no id and expect no body.
-    case "notifications/initialized":
-    case "initialized":
-      return new Response(null, { status: 202 });
+    // The tool -> action map is owned by the service; passing one from here
+    // would let the adapter choose which grant a tool required.
+    const result = await service.runMcp(authorization, bank, capturingReader, dispatchTool, userAgent);
 
-    case "ping":
-      return Response.json(ok(id, {}));
-
-    case "tools/list":
-      return Response.json(ok(id, { tools: TOOLS }));
-
-    case "tools/call": {
-      const name = String(params.name ?? "");
-      const args = (params.arguments ?? {}) as Record<string, any>;
-      const started = Date.now();
-      const peer = nz(params.clientInfo?.name) ?? nz(userAgent) ?? null;
-      try {
-        const result = await runTool(name, args, bank);
-        await calls.logCall({
-          tool: name, input: args, status: "ok", result,
-          duration_ms: Date.now() - started, workspace_name: bank, peer_name: peer,
-        });
-        return Response.json(ok(id, text(result)));
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        await calls.logCall({
-          tool: name, input: args, status: "error", result: message,
-          duration_ms: Date.now() - started, workspace_name: bank, peer_name: peer,
-        });
-        // isError keeps the failure inside the TOOL RESULT, which is where an
-        // MCP client shows it to the model. A JSON-RPC error would be a
-        // transport fault instead, and the model would never see the reason.
-        return Response.json(ok(id, { ...text(message), isError: true }));
+    switch (result.kind) {
+      case "denied":
+        return { kind: "denied", code: result.code };
+      case "tools": {
+        // Catalogue ORDER preserved; only tools whose action was admitted.
+        const visible = TOOLS.filter((tool) => result.names.includes(tool.name));
+        return { kind: "response", response: Response.json(ok(envelopeId, { tools: visible })) };
       }
+      case "method_not_found":
+        return { kind: "response", response: Response.json(err(envelopeId, -32601, "method not found")) };
+      case "tool_error":
+        return {
+          kind: "response",
+          response: Response.json(ok(envelopeId, { ...text(result.message), isError: true })),
+        };
+      case "ok":
+        return { kind: "response", response: Response.json(ok(envelopeId, text(result.value))) };
     }
+  };
+}
 
-    default:
-      return Response.json(err(id, -32601, `method not found: ${rpc.method}`));
+/** Envelope shaping for handshake methods, which need no tool authority. */
+export function handshakeResponse(method: string, id: string | number | null, params: Record<string, unknown>) {
+  if (method === "initialize") {
+    return Response.json(
+      ok(id, {
+        protocolVersion: negotiate(params.protocolVersion),
+        capabilities: { tools: {} },
+        serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
+      }),
+    );
   }
+  if (method === "notifications/initialized" || method === "initialized") {
+    return new Response(null, { status: 202 });
+  }
+  if (method === "ping") return Response.json(ok(id, {}));
+  return null;
 }

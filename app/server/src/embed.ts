@@ -19,10 +19,22 @@ export async function embed(texts: string[]): Promise<number[][]> {
     body: JSON.stringify({ model: MODEL, input: texts }),
   });
   if (!res.ok) throw new Error(`embed failed: ${res.status} ${await res.text()}`);
-  const json = (await res.json()) as { embeddings: number[][] };
-  const bad = json.embeddings.find((v) => v.length !== DIMS);
-  if (bad) throw new Error(`embedder returned ${bad.length} dims, table expects ${DIMS}`);
-  return json.embeddings;
+  const json = (await res.json()) as { embeddings?: unknown };
+  if (!Array.isArray(json.embeddings)) throw new Error("embedder returned no embeddings array");
+  if (json.embeddings.length !== texts.length) {
+    throw new Error(`embedder returned ${json.embeddings.length} vectors for ${texts.length} inputs`);
+  }
+  for (const vector of json.embeddings) {
+    if (!Array.isArray(vector)) throw new Error("embedder returned a non-array vector");
+    if (vector.length !== DIMS) {
+      throw new Error(`embedder returned ${vector.length} dims, table expects ${DIMS}`);
+    }
+    if (!vector.every((value) =>
+      typeof value === "number" && Number.isFinite(value) && Number.isFinite(Math.fround(value)))) {
+      throw new Error("embedder returned a vector containing null, non-finite, or Float32-overflow values");
+    }
+  }
+  return json.embeddings as number[][];
 }
 
 export async function embedOne(text: string): Promise<number[]> {

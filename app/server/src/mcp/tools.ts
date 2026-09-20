@@ -14,16 +14,16 @@ export const TOOLS = [
   {
     name: "remember",
     description:
-      "Write a memory into the connected bank. Returns immediately after the row is durable; the vector is backfilled, so an embedder outage never blocks a write.",
+      "Write durable text into the connected bank without model I/O. Returns pending embedding; run explicit backfill to create its vector.",
     inputSchema: {
       type: "object",
       properties: {
-        content: { type: "string", description: "Required. The memory itself." },
-        name: { type: "string", description: "Slug. Generated from content if omitted." },
+        content: { type: "string", minLength: 1, description: "Required. The memory itself." },
+        name: { type: "string", minLength: 1, description: "Slug. Generated from content if omitted." },
         type: {
           type: "string",
           description:
-            "Free text guarded by the `type` vocabulary, not an enum. Default 'note'. Seen: note, decision, event.",
+            "Free-text type in the current spike; default note. Controlled taxonomy validation is planned, not implemented.",
         },
         session_name: { type: "string", description: "File it in a session. Organisation, not scope." },
         peer_name: { type: "string", description: "Who wrote it." },
@@ -35,13 +35,13 @@ export const TOOLS = [
   {
     name: "recall",
     description:
-      "Search this bank. Default mode is full-text (trigram/ICU), which this fleet measures at MRR 0.765 against 0.099 for vectors. Semantic is an explicit, separate mode (§4.4).",
+      "Search this bank using ICU full-text by default or explicit vector mode. Full revision/lifecycle eligibility and embedding-profile enforcement remain planned.",
     inputSchema: {
       type: "object",
       properties: {
         query: { type: "string", description: "Required." },
-        mode: { type: "string", description: "'text' (default) or 'vector'." },
-        limit: { type: "number", description: "Default 10." },
+        mode: { type: "string", enum: ["text", "vector"], description: "'text' (default) or 'vector'." },
+        limit: { type: "integer", minimum: 1, maximum: 1000, description: "Default 10." },
       },
       required: ["query"],
     },
@@ -58,22 +58,24 @@ export const TOOLS = [
   {
     name: "list_memories",
     description:
-      "Filter by type, session, peer, sync_state or is_active. Paginated. Use this rather than recall when you want a slice, not a ranking.",
+      "Filter by type, session, author/subject peer, sync_state or is_active before applying the limit. No continuation cursor yet; use recall for ranked search.",
     inputSchema: {
       type: "object",
       properties: {
         type: { type: "string" },
         session_name: { type: "string" },
         peer_name: { type: "string" },
-        sync_state: { type: "string", description: "pending | synced | failed" },
-        limit: { type: "number", description: "Default 20." },
+        subject_peer_name: { type: "string" },
+        sync_state: { type: "string", enum: ["pending", "synced", "failed"] },
+        is_active: { type: "boolean" },
+        limit: { type: "integer", minimum: 1, maximum: 1000, description: "Default 20." },
       },
     },
   },
   {
     name: "bank_info",
     description:
-      "What this bank is: counts, embedder identity, storage backend, and the two consistency gaps an operator needs to see (unembedded rows, failed rows).",
+      "Scoped memory/embedded/unembedded counts, embedder configuration and storage metadata. Counts are not an authorization guarantee.",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -83,8 +85,8 @@ export const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        limit: { type: "number", description: "Default 20." },
-        status: { type: "string", description: "Filter: ok | error." },
+        limit: { type: "integer", minimum: 1, maximum: 1000, description: "Default 20." },
+        status: { type: "string", enum: ["ok", "error"], description: "Filter: ok | error." },
       },
     },
   },
@@ -96,7 +98,7 @@ export const TOOLS = [
   {
     name: "status",
     description:
-      "Deployment state in one object — version, storage, auth doors, embedder, table count. Names the doors rather than saying 'ok' (§6.4), so a caller learns before spending ten minutes that something is off.",
+      "Deployment version, storage, authentication status, embedder health, tool count and explicit active-vs-target contract state. Authentication is currently absent; target tables are not active.",
     inputSchema: { type: "object", properties: {} },
   },
 ] as const;

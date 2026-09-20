@@ -4,7 +4,11 @@
   "type": "module",
   "scripts": {
     "start": "bun run src/index.ts",
-    "dev": "bun --watch src/index.ts"
+    "dev": "bun --watch src/index.ts",
+    "cli": "bun run ../cli.ts",
+    "test": "bun test test ../cli.test.ts",
+    "typecheck": "tsc --project tsconfig.json",
+    "build": "bun build src/index.ts --target=bun --packages=external --outdir .tmp/build"
   },
   "dependencies": {
     "@elysiajs/static": "^1.4.10",
