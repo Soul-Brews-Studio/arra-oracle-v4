@@ -40,7 +40,7 @@
 <body>
 <main>
   <h1>arra-oracle-v4 — memories</h1>
-  <div class="sub">Rust migrated the table · TypeScript opens, inserts, embeds and queries it · LanceDB on disk</div>
+  <div class="sub">Python owns the schema · TypeScript serves it · LanceDB · local prototype, no authentication</div>
 
   <div class="bar" id="bar"><span>loading…</span></div>
 
@@ -54,7 +54,7 @@
     <textarea id="content" placeholder="content — ภาษาไทยก็ค้นเจอ"></textarea>
     <div class="row" style="margin-top:8px">
       <button id="add">Save</button>
-      <button class="ghost" id="backfill">Backfill missing vectors</button>
+      <button class="ghost" id="backfill">Backfill all banks (admin)</button>
     </div>
     <div class="msg" id="writeMsg"></div>
   </section>
@@ -65,9 +65,9 @@
       <input id="q" placeholder="query" />
       <select id="mode">
         <option value="text">full-text (icu)</option>
-        <option value="vector">semantic (1024-d)</option>
+        <option value="vector">semantic (configured model)</option>
       </select>
-      <input id="qbank" placeholder="bank filter (optional)" />
+      <input id="qbank" placeholder="read bank (default)" />
     </div>
     <div class="row"><button id="go">Search</button></div>
     <div class="msg" id="searchMsg"></div>
@@ -82,9 +82,17 @@
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;" }[c]));
 
+const readBank = () => $("qbank").value.trim() || $("bank").value.trim() || "default";
+async function request(url, options) {
+  const response = await fetch(url, options);
+  const result = await response.json();
+  if (!response.ok || result.error) throw new Error(result.error || `HTTP ${response.status}`);
+  return result;
+}
+
 async function health() {
   try {
-    const h = await (await fetch("/api/health")).json();
+    const h = await request(`/api/health?bank=${encodeURIComponent(readBank())}`);
     if (h.error) { $("bar").innerHTML = `<span><i class="dot down"></i>${esc(h.error)}</span>`; return; }
     const e = h.embedder, d = h.db;
     $("bar").innerHTML = `
@@ -114,8 +122,11 @@ function render(rows, title) {
 }
 
 async function recent() {
-  const rows = await (await fetch("/api/memories?limit=25")).json();
-  render(rows, "Recent");
+  try {
+    const bank = readBank();
+    const rows = await request(`/api/memories?bank=${encodeURIComponent(bank)}&limit=25`);
+    render(rows, `Recent — ${bank}`);
+  } catch (error) { $("results").textContent = String(error); }
 }
 
 $("add").onclick = async () => {
@@ -123,32 +134,40 @@ $("add").onclick = async () => {
                  workspace_name: $("bank").value.trim() || "default", type: $("type").value.trim() || "note" };
   if (!body.content) { $("writeMsg").textContent = "content is empty"; return; }
   $("writeMsg").textContent = "saving…";
-  const r = await (await fetch("/api/memories", { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(body) })).json();
-  $("writeMsg").textContent = r.error ? r.error : `saved ${r.id} — ${r.embedded ? "embedded inline" : "no vector yet (embedder down), backfill later"}`;
-  $("content").value = "";
-  await health(); await recent();
+  try {
+    const r = await request("/api/memories", { method:"POST", headers:{"content-type":"application/json"}, body: JSON.stringify(body) });
+    $("writeMsg").textContent = `saved ${r.id} — ${r.embedded ? "embedded" : "pending embedding; run backfill when ready"}`;
+    $("content").value = "";
+    $("qbank").value = body.workspace_name;
+    await health(); await recent();
+  } catch (error) { $("writeMsg").textContent = String(error); }
 };
 
 $("backfill").onclick = async () => {
-  $("writeMsg").textContent = "backfilling…";
-  const r = await (await fetch("/api/backfill", { method:"POST" })).json();
-  $("writeMsg").textContent = r.error ? r.error : `embedded ${r.embedded}, ${r.remaining} still pending`;
-  await health(); await recent();
+  $("writeMsg").textContent = "backfilling across ALL banks…";
+  try {
+    const r = await request("/api/backfill", { method:"POST" });
+    $("writeMsg").textContent = `embedded ${r.embedded}, ${r.remaining} still pending (all banks)`;
+    await health(); await recent();
+  } catch (error) { $("writeMsg").textContent = String(error); }
 };
 
 $("go").onclick = async () => {
   const q = $("q").value.trim();
   if (!q) return;
-  const bank = $("qbank").value.trim();
+  const bank = readBank();
   $("searchMsg").textContent = "searching…";
-  const url = `/api/search?q=${encodeURIComponent(q)}&mode=${$("mode").value}${bank ? `&bank=${encodeURIComponent(bank)}` : ""}`;
-  const r = await (await fetch(url)).json();
-  if (r.error) { $("searchMsg").textContent = r.error; return; }
-  $("searchMsg").textContent = `${r.count} hit(s) · ${r.mode}${r.bank ? ` · bank ${r.bank}` : ""}`;
-  render(r.rows, `Results — ${r.mode}`);
+  const url = `/api/search?q=${encodeURIComponent(q)}&mode=${$("mode").value}&bank=${encodeURIComponent(bank)}`;
+  try {
+    const r = await request(url);
+    $("searchMsg").textContent = `${r.count} hit(s) · ${r.mode} · bank ${r.bank}`;
+    render(r.rows, `Results — ${r.mode} — ${r.bank}`);
+  } catch (error) { $("searchMsg").textContent = String(error); }
 };
 $("q").addEventListener("keydown", (e) => { if (e.key === "Enter") $("go").click(); });
 
+$("qbank").onchange = async () => { await health(); await recent(); };
+$("bank").onchange = async () => { if (!$("qbank").value.trim()) { await health(); await recent(); } };
 health(); recent();
 </script>
 </body>

@@ -28,7 +28,7 @@ export const KNOWN_PROTOCOL_VERSIONS = [
 ] as const;
 
 export const SERVER_NAME = "arra-oracle-v4";
-export const SERVER_VERSION = "26.9.18";
+export const SERVER_VERSION = "26.9.20-alpha.1625";
 
 export interface JsonRpcRequest {
   jsonrpc?: string;
@@ -49,10 +49,14 @@ export const err = (id: unknown, code: number, message: string) => ({
  *  returning a row hit this, so the conversion belongs HERE, at the one place
  *  every result passes through, not in each tool.
  *
- *  Number() is safe for what v4 stores in int64: epoch-ms timestamps and
- *  counters, both far below 2^53. A column that could exceed that would need a
- *  string instead — none does today. */
-const bigintSafe = (_k: string, v: unknown) => (typeof v === "bigint" ? Number(v) : v);
+ *  Values inside JS's safe-integer range remain numbers. Larger int64 values
+ *  stay exact as decimal strings rather than being silently rounded. */
+const bigintSafe = (_k: string, v: unknown) => {
+  if (typeof v !== "bigint") return v;
+  return v <= BigInt(Number.MAX_SAFE_INTEGER) && v >= BigInt(Number.MIN_SAFE_INTEGER)
+    ? Number(v)
+    : v.toString();
+};
 
 /** MCP tool results are content blocks, not bare JSON. */
 export const text = (value: unknown) => ({
