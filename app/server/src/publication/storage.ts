@@ -238,10 +238,24 @@ export function quote(value: string): string {
  * record batches and pulls each column's underlying values instead -- with
  * validity checked per row rather than assumed.
  */
-export async function rawRows(table: Table, predicate: string, limit?: number): Promise<Record<string, unknown>[]> {
-  let q = table.query().where(predicate);
-  if (limit !== undefined) q = q.limit(limit);
-  const arrow = await q.toArrow();
+/**
+ * Decode an ALREADY OBTAINED Arrow table into raw rows.
+ *
+ * Extracted from `rawRows` so an ordered/projected query can decode through
+ * exactly the same path instead of growing a second, subtly different one --
+ * a duplicate decoder is how a Number fallback creeps back in on one side only.
+ *
+ * Carries DATA, not authority: it takes an Arrow table a caller already holds
+ * and returns plain records. It opens nothing, holds nothing and cannot reach
+ * a connection, table handle or owner.
+ */
+export function decodeArrowRows(arrow: {
+  batches: ReadonlyArray<{
+    numRows: number;
+    schema: { fields: ReadonlyArray<{ name: string }> };
+    getChildAt(index: number): { isValid(row: number): boolean; get(row: number): unknown; data: ReadonlyArray<{ values?: unknown; offset?: number }> } | null;
+  }>;
+}): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = [];
 
   for (const batch of arrow.batches) {
@@ -277,6 +291,19 @@ export async function rawRows(table: Table, predicate: string, limit?: number): 
     }
   }
   return out;
+}
+
+/**
+ * Unchanged behaviour: where, optional limit, then decode.
+ *
+ * The decoding half now lives in `decodeArrowRows`; nothing else about this
+ * function moved. It still has NO ordering, so a bare `limit` here still
+ * returns arbitrary rows -- callers that need an extremum must order.
+ */
+export async function rawRows(table: Table, predicate: string, limit?: number): Promise<Record<string, unknown>[]> {
+  let q = table.query().where(predicate);
+  if (limit !== undefined) q = q.limit(limit);
+  return decodeArrowRows(await q.toArrow());
 }
 
 // No connection factory is exported. `service.ts` opens its own connection

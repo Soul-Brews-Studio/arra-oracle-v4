@@ -465,6 +465,11 @@ class IsolationTests(unittest.TestCase):
         # Listed as an exact file, deliberately, so the next module added under
         # publication/ still has to be reviewed rather than inheriting this.
         TS_ROOT / "publication" / "taxonomy.ts",
+        # The #59 context kernel reuses the SAME governed helpers for the same
+        # reason: it must not carry a second parser or canonicalizer. An exact
+        # file, deliberately, so the next module under publication/ still has
+        # to be reviewed rather than inheriting this.
+        TS_ROOT / "publication" / "context.ts",
     )
 
     #: The publication kernel is internal: no active source may import it.
@@ -474,8 +479,10 @@ class IsolationTests(unittest.TestCase):
         TS_ROOT / "publication" / "storage.ts",
         TS_ROOT / "publication" / "service.ts",
         TS_ROOT / "publication" / "taxonomy.ts",
+        TS_ROOT / "publication" / "context.ts",
     )
     PUBLICATION_IMPORT_PATTERNS = (
+        "publication/context",
         "publication/taxonomy",
         "publication/service",
         "publication/storage",
@@ -579,6 +586,7 @@ class IsolationTests(unittest.TestCase):
             'import { encodeRevisionRow } from "src/publication/rows";\n',
             'import { PublicationError } from "src/publication/errors";\n',
             'import { failTaxonomy } from "src/publication/taxonomy";\n',
+            'import { encodeMessageRow } from "src/publication/context";\n',
             'const a = await import("./publication");\n',
             'const b = await import("../publication");\n',
         )
