@@ -98,7 +98,7 @@ export const TOOLS = [
   {
     name: "status",
     description:
-      "Deployment version, storage, authentication status, embedder health and tool count. Authentication is currently absent.",
+      "Deployment version, storage, authentication status, embedder health, tool count and explicit active-vs-target contract state. Authentication is currently absent; target tables are not active.",
     inputSchema: { type: "object", properties: {} },
   },
 ] as const;

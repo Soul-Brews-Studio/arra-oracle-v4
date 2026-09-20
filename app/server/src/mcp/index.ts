@@ -119,6 +119,13 @@ async function runTool(name: string, args: Record<string, any>, bank: string): P
         auth: ["none — SPEC §7 not implemented"],
         embedder: e.ok ? `${e.model} (${e.dims}d)` : `DOWN: ${e.detail}`,
         tools: TOOLS.length,
+        contract: {
+          manifest: "arra-v4-target/1",
+          status: "proposed-not-active",
+          active_tables: 15,
+          target_tables: 19,
+          note: "target manifest is validated in the schema project; runtime still serves the active memory spike",
+        },
       };
     }
     default:

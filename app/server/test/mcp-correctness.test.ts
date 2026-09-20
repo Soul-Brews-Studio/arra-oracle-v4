@@ -189,12 +189,22 @@ describe("bank-scoped observability", () => {
 });
 
 describe("audit identity and wire safety", () => {
+  test("status reports active foundation separately from proposed target contract", async () => {
+    const result = await toolValue(await rpc("alpha", "status"));
+    expect(result.contract).toMatchObject({
+      manifest: "arra-v4-target/1",
+      status: "proposed-not-active",
+      active_tables: 15,
+      target_tables: 19,
+    });
+  });
+
   test("transport user-agent is never persisted as a peer identity", async () => {
     await rpc("alpha", "status", {}, "pretend-registered-peer/1.0");
     const table = await connection.openTable("mcp_calls");
     await table.checkoutLatest();
     const rows = await table.query().where("workspace_name = 'alpha'").toArray();
-    const latest = rows.find((row: any) => row.tool === "status");
+    const latest = rows.find((row: any) => row.tool === "status" && row.internal_metadata);
     expect(latest.peer_name).toBeNull();
     expect(JSON.parse(latest.internal_metadata)).toMatchObject({
       transport: { user_agent: "pretend-registered-peer/1.0" },
