@@ -841,3 +841,129 @@ describe("a bounded storage failure around the head step fail-stops the owner", 
     }
   }, 300_000);
 });
+
+describe("closing the writer releases the inherited gate EXACTLY once", () => {
+  /**
+   * A descriptor number is a reusable integer, not an identity.
+   *
+   * `close()` releases the inherited gate descriptor. Once fd 42 is closed the
+   * kernel may hand 42 back for something else, so a `close()` that releases on
+   * every call will eventually close a descriptor it never owned. That matters
+   * now because a shared owner bundle needs one-shot release.
+   *
+   * The child below proves it without mocking anything: it closes the writer,
+   * takes fd 42 back for a harmless temporary file of its own, closes again,
+   * and asks whether that unrelated descriptor survived.
+   */
+  const CLOSE_CHILD = new URL(
+    "./fixtures/publication-v1/close-once.ts",
+    import.meta.url,
+  ).pathname;
+
+  type CloseResult = {
+    gateFd: number;
+    published?: { ok: boolean; outcome?: Record<string, unknown> };
+    firstCloseReturned?: boolean;
+    secondCloseReturned?: boolean;
+    seizedGateFd?: boolean;
+    unrelatedFdStillOpen?: boolean | null;
+    unrelatedFdIsOurFile?: boolean;
+    unrelatedFdCloseError?: string | null;
+    closeIdentity?: boolean;
+    settledWhileParked?: boolean;
+    closeStatuses?: string[];
+    queuedAfterClose?: { ok: boolean; code?: string | null };
+    readAfterClose?: { ok: boolean; code?: string | null };
+    gateFdStillOpen?: boolean;
+  };
+
+  const runClose = async (root: string, payload: Record<string, unknown>): Promise<CloseResult> => {
+    const result = await runGated(root, CLOSE_CHILD, [root, JSON.stringify(payload)]);
+    // A child that died or was reaped can still have printed a partial line.
+    // Its JSON is only evidence if it exited cleanly.
+    if (result.code !== 0) {
+      throw new Error(`child exited ${result.code}: ${result.stderr.slice(0, 600)}`);
+    }
+    const line = result.stdout.trim().split("\n").filter(Boolean).at(-1);
+    if (line === undefined) {
+      throw new Error(`no output (${result.code}): ${result.stderr.slice(0, 600)}`);
+    }
+    return JSON.parse(line) as CloseResult;
+  };
+
+  test("a second close does NOT close an unrelated descriptor at the same number", async () => {
+    const local = await createFixture([ALPHA]);
+    try {
+      const seeded = local.workspaces[ALPHA]!;
+      const parsed = await runClose(local.datasetRoot, {
+        scenario: "reuse",
+        request: {
+          operation_id: "op-close-once",
+          content: revisionEnvelope(ALPHA, seeded, nodeId("closeoncenode")),
+        },
+        revisionIds: [revId("closeoncerev1")],
+        clockMs: CLOCK_MS,
+      });
+
+      // The setup has to have actually happened, or the assertion below would
+      // pass for the wrong reason.
+      expect(parsed.published!.ok).toBe(true);
+      expect(parsed.firstCloseReturned).toBe(true);
+      // Without the seizure the scenario says nothing, so it fails HERE rather
+      // than on a descriptor nobody proved we owned.
+      expect(parsed.seizedGateFd, "child never reclaimed the gate fd number").toBe(true);
+      expect(parsed.secondCloseReturned).toBe(true);
+
+      // THE defect: before the repair the second close closes fd 42 again,
+      // and fd 42 is now the child's own temporary file.
+      expect(parsed.unrelatedFdStillOpen).toBe(true);
+      // And it is genuinely OUR file, matched by device and inode, not merely
+      // some descriptor that happens to be open at that number.
+      expect(parsed.unrelatedFdIsOurFile).toBe(true);
+    } finally {
+      await local.cleanup();
+    }
+  }, 300_000);
+
+  test("repeated concurrent close drains once and preserves surrounding behaviour", async () => {
+    const local = await createFixture([ALPHA]);
+    try {
+      const seeded = local.workspaces[ALPHA]!;
+      const parsed = await runClose(local.datasetRoot, {
+        scenario: "concurrent",
+        request: {
+          operation_id: "op-close-conc-1",
+          content: revisionEnvelope(ALPHA, seeded, nodeId("closeconcnode")),
+        },
+        queued: {
+          operation_id: "op-close-conc-2",
+          content: revisionEnvelope(ALPHA, seeded, nodeId("closeconcnode2")),
+        },
+        revisionIds: [revId("closeconcrev1"), revId("closeconcrev2")],
+        clockMs: CLOCK_MS,
+      });
+
+      // ONE promise handed back, not three equivalent ones.
+      expect(parsed.closeIdentity).toBe(true);
+      // While the in-flight operation is parked on its boundary, no close may
+      // report completion: close drains, it does not abandon.
+      expect(parsed.settledWhileParked).toBe(false);
+      // All three settle once the park is released.
+      expect(parsed.closeStatuses).toEqual(["fulfilled", "fulfilled", "fulfilled"]);
+      // The parked operation finished and was accepted.
+      expect(parsed.published!.ok).toBe(true);
+      expect(parsed.published!.outcome!.outcome).toBe("accepted");
+      // Queued after close is still refused, exactly as before.
+      expect(parsed.queuedAfterClose!.ok).toBe(false);
+      expect(parsed.queuedAfterClose!.code).toBe("recovery_required");
+      // Reads after close are still refused by the released adapter, with the
+      // exact contract code rather than merely "some error".
+      expect(parsed.readAfterClose!.ok).toBe(false);
+      expect(parsed.readAfterClose!.code).toBe("recovery_required");
+      // And the gate really was released.
+      expect(parsed.gateFdStillOpen).toBe(false);
+    } finally {
+      await local.cleanup();
+    }
+  }, 300_000);
+});
