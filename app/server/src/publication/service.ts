@@ -23,8 +23,32 @@
 
 import { parseStrictBytes, type JcsObject, type JcsValue } from "../contracts/jcs";
 import { ENVELOPE_KEYS, revisionOp, verifyRevisionOp, type RevisionResult } from "../contracts/revision-v1";
-import { ContractError } from "../contracts/errors";
+import { ContractError, fail as failGoverned } from "../contracts/errors";
 import { failPublication, isContractError, PublicationError } from "./errors";
+import {
+  classifyMessageDestinationReplay,
+  prepareNewMessage,
+} from "../contracts/source-ingestion-v1";
+import {
+  encodeMessageRow,
+  encodePeerRow,
+  encodeSessionPeerRow,
+  encodeSessionRow,
+  parseAppendMessages,
+  parseGetMessage,
+  parseGetPeer,
+  parseGetSession,
+  parseJoinSession,
+  parseListMessages,
+  parseRegisterPeer,
+  parseRegisterSession,
+  rowWireBytes,
+  MAX_RESULT_WIRE_BYTES,
+  MESSAGE_FIELDS as MESSAGE_FIELDS_LOCAL,
+  PEER_FIELDS as PEER_FIELDS_LOCAL,
+  SESSION_FIELDS as SESSION_FIELDS_LOCAL,
+  SESSION_PEER_FIELDS as SESSION_PEER_FIELDS_LOCAL,
+} from "./context";
 import {
   encodeTermRow,
   encodeVocabularyRow,
@@ -63,6 +87,7 @@ import {
   assertInheritedGate,
   assertLocalDatasetRoot,
   assertTargetDataset,
+  decodeArrowRows,
   quote,
   rawRows,
   TARGET_TABLES,
@@ -83,6 +108,25 @@ import {
  */
 type DatasetAdapter = {
   query(table: string, predicate: string, limit?: number): Promise<Record<string, unknown>[]>;
+  /**
+   * Ordered projection of a few key columns.
+   *
+   * PRIVATE, and separate from `query` on purpose. `query` has no ordering, so
+   * a bare limit there returns ARBITRARY rows and can never yield an extremum
+   * -- measured on the pinned stack. This is the only shape allowed to pick a
+   * maximum or page a keyset.
+   *
+   * Ordered output bounds JS materialization. It does NOT bound SDK engine
+   * scan work or execution time, and nothing here should be read as claiming
+   * otherwise.
+   */
+  orderedProjection(
+    table: string,
+    predicate: string,
+    columns: string[],
+    ordering: { column: string; ascending: boolean },
+    limit: number,
+  ): Promise<Record<string, unknown>[]>;
   refresh(table: string): Promise<void>;
   version(table: string): Promise<number>;
   append(table: string, rows: Record<string, unknown>[]): Promise<number>;
@@ -123,6 +167,20 @@ function makeAdapter(connection: Connection, onRelease: () => void): DatasetAdap
       const tbl = await handle(table);
       await tbl.checkoutLatest();
       return rawRows(tbl, predicate, limit);
+    },
+    async orderedProjection(table, predicate, columns, ordering, limit) {
+      const tbl = await handle(table);
+      await tbl.checkoutLatest();
+      const arrow = await tbl
+        .query()
+        .where(predicate)
+        .select(columns)
+        .orderBy([{ columnName: ordering.column, ascending: ordering.ascending }])
+        .limit(limit)
+        .toArrow();
+      // Same decoder as rawRows, deliberately: a second decoding path is how a
+      // lossy Number fallback returns on one side only.
+      return decodeArrowRows(arrow);
     },
     async refresh(table) {
       await (await handle(table)).checkoutLatest();
@@ -841,6 +899,7 @@ type OwnerCore = {
   serial: <T>(work: () => Promise<T>) => Promise<T>;
   boundary: (name: PublicationBoundary, wroteAlready: boolean) => Promise<void>;
   taxonomyBoundary: (name: TaxonomyBoundary, wroteAlready: boolean) => Promise<void>;
+  contextBoundary: (name: ContextBoundary, wroteAlready: boolean) => Promise<void>;
   markAttemptedWrite: () => void;
   afterWrite: <T>(work: () => Promise<T>) => Promise<T>;
   poison: () => void;
@@ -871,7 +930,11 @@ function isSafeContractError(error: unknown): boolean {
 
 function createOwnerCore(
   writer: DatasetAdapter,
-  hooks: { onBoundary?: BoundaryHook; onTaxonomyBoundary?: TaxonomyBoundaryHook },
+  hooks: {
+    onBoundary?: BoundaryHook;
+    onTaxonomyBoundary?: TaxonomyBoundaryHook;
+    onContextBoundary?: ContextBoundaryHook;
+  },
 ): OwnerCore {
   let queue: Promise<unknown> = Promise.resolve();
   /** Fail-stop: once poisoned, no further queued mutation may run. */
@@ -918,6 +981,9 @@ function createOwnerCore(
 
   const taxonomyBoundary = (name: TaxonomyBoundary, wroteAlready: boolean): Promise<void> =>
     runHook(hooks.onTaxonomyBoundary as ((n: string) => Promise<void>) | undefined, name, wroteAlready);
+
+  const contextBoundary = (name: ContextBoundary, wroteAlready: boolean): Promise<void> =>
+    runHook(hooks.onContextBoundary as ((n: string) => Promise<void>) | undefined, name, wroteAlready);
 
   const serial = <T>(work: () => Promise<T>): Promise<T> => {
     const next = queue.then(async () => {
@@ -1000,6 +1066,7 @@ function createOwnerCore(
     serial,
     boundary,
     taxonomyBoundary,
+    contextBoundary,
     markAttemptedWrite,
     afterWrite,
     poison: () => {
@@ -2376,4 +2443,1001 @@ export async function openKnowledgeWriter(
     taxonomy: Object.freeze(taxonomy),
     close: core.close,
   });
+}
+
+/* ------------------------------------------------------------------ *
+ * Context registration and ordered ingestion. Private to this module.
+ * ------------------------------------------------------------------ */
+
+const WORKSPACES = "workspaces";
+const PEERS = "peers";
+const SESSIONS = "sessions";
+const SESSION_PEERS = "session_peers";
+const MESSAGES = "messages";
+
+const INT64_CEILING = 2n ** 63n - 1n;
+
+/** Exactly one row at a scoped identity, or null. Never a first-match guess. */
+async function contextOne(
+  adapter: DatasetAdapter,
+  table: string,
+  predicate: string,
+): Promise<Record<string, unknown> | null> {
+  const rows = await adapter.query(table, predicate, 2);
+  if (rows.length === 0) return null;
+  // Two rows at an identity that must be unique is corruption. Picking one
+  // would make a corrupt dataset look healthy. ROOT path: a global stored-state
+  // failure is not a complaint about a caller field.
+  if (rows.length > 1) failPublication("integrity_failure", "");
+  return rows[0]!;
+}
+
+/**
+ * The greatest stored value of an Int64 key, or null when the scope is empty.
+ *
+ * Ordered projection, never `limit` alone: an unordered limit returns an
+ * ARBITRARY row and can never yield a maximum. The selected extremum is
+ * validated and then required unique on its own key, because an extremum read
+ * says nothing about duplicates elsewhere -- this is deliberately NOT a
+ * whole-corpus integrity audit.
+ */
+async function selectedMaximum(
+  adapter: DatasetAdapter,
+  table: string,
+  column: string,
+  predicate: string,
+): Promise<bigint | null> {
+  const top = await adapter.orderedProjection(
+    table,
+    predicate,
+    [column],
+    { column, ascending: false },
+    1,
+  );
+  if (top.length === 0) return null;
+  const raw = top[0]![column];
+  if (typeof raw !== "bigint") failPublication("integrity_failure", "");
+  const value = raw;
+  if (value < -(2n ** 63n) || value > INT64_CEILING) failPublication("integrity_failure", "");
+  // Equality query bounded at 2 rows: enough to discriminate a duplicate key
+  // without pretending to have audited the rest of the table.
+  const sameKey = await adapter.query(table, `${predicate} AND ${column} = ${value.toString(10)}`, 2);
+  if (sameKey.length !== 1) failPublication("integrity_failure", "");
+  return value;
+}
+
+function contextScope(workspace: string): string {
+  return `workspace_name = ${quote(workspace)}`;
+}
+
+function createContextReadMethods(reader: DatasetAdapter) {
+  /** Reads present the publication envelope, like every other owner failure. */
+  const requireWorkspace = async (workspace: string): Promise<void> => {
+    await reader.refresh(WORKSPACES);
+    const row = await contextOne(reader, WORKSPACES, `name = ${quote(workspace)}`);
+    if (row === null) failPublication("invalid_reference", "/workspace_name");
+  };
+
+  return {
+    async getPeer(requestBytes: Uint8Array): Promise<Record<string, unknown> | null> {
+      const request = parseGetPeer(requestBytes);
+      await requireWorkspace(request.workspace_name);
+      await reader.refresh(PEERS);
+      const row = await contextOne(
+        reader,
+        PEERS,
+        `${contextScope(request.workspace_name)} AND name = ${quote(request.peer_name)}`,
+      );
+      // Absent is null, NOT not_found: that code's fixed message is node-specific.
+      return row === null ? null : encodePeerRow(row);
+    },
+
+    async getSession(requestBytes: Uint8Array): Promise<Record<string, unknown> | null> {
+      const request = parseGetSession(requestBytes);
+      await requireWorkspace(request.workspace_name);
+      await reader.refresh(SESSIONS);
+      const row = await contextOne(
+        reader,
+        SESSIONS,
+        `${contextScope(request.workspace_name)} AND name = ${quote(request.session_name)}`,
+      );
+      // Retired status does not erase readable history, so inactive is returned.
+      return row === null ? null : encodeSessionRow(row);
+    },
+
+    async getMessage(requestBytes: Uint8Array): Promise<Record<string, unknown> | null> {
+      const request = parseGetMessage(requestBytes);
+      await requireWorkspace(request.workspace_name);
+      await reader.refresh(MESSAGES);
+      const row = await contextOne(
+        reader,
+        MESSAGES,
+        `${contextScope(request.workspace_name)} AND public_id = ${quote(request.public_id)}`,
+      );
+      if (row === null) return null;
+      const encoded = encodeMessageRow(row);
+      // A single row over the response budget is refused rather than truncated.
+      if (rowWireBytes(encoded) > MAX_RESULT_WIRE_BYTES) failPublication("limit_exceeded", "");
+      return encoded;
+    },
+
+    async listMessages(
+      requestBytes: Uint8Array,
+    ): Promise<{ rows: Record<string, unknown>[]; next_after_seq: string | null }> {
+      const request = parseListMessages(requestBytes);
+      await requireWorkspace(request.workspace_name);
+      await reader.refresh(SESSIONS);
+      const session = await contextOne(
+        reader,
+        SESSIONS,
+        `${contextScope(request.workspace_name)} AND name = ${quote(request.session_name)}`,
+      );
+      if (session === null) failPublication("invalid_reference", "/session_name");
+
+      await reader.refresh(MESSAGES);
+      const after = request.after_seq === null ? null : BigInt(request.after_seq);
+      const scope =
+        `${contextScope(request.workspace_name)} AND session_name = ${quote(request.session_name)}` +
+        (after === null ? "" : ` AND seq_in_session > ${after.toString(10)}`);
+
+      // KEYSET, never offset: limit+1 detects continuation without paging by
+      // position, which would skip or repeat rows as the table grows.
+      const selected = await reader.orderedProjection(
+        MESSAGES,
+        scope,
+        ["seq_in_session", "public_id"],
+        { column: "seq_in_session", ascending: true },
+        request.limit + 1,
+      );
+
+      const keys: bigint[] = [];
+      const publicIds = new Set<string>();
+      for (const row of selected) {
+        const seq = row.seq_in_session;
+        if (typeof seq !== "bigint") failPublication("integrity_failure", "");
+        // The LOOKAHEAD row is validated too, not just the emitted page: a
+        // duplicate straddling the limit would otherwise evade the check and
+        // split silently across two pages.
+        if (keys.some((k) => k === seq)) failPublication("integrity_failure", "");
+        keys.push(seq);
+        const publicId = row.public_id;
+        if (typeof publicId !== "string") failPublication("integrity_failure", "");
+        if (publicIds.has(publicId)) failPublication("integrity_failure", "");
+        publicIds.add(publicId);
+      }
+
+      const page = keys.slice(0, request.limit);
+      const rows: Record<string, unknown>[] = [];
+      // Brackets plus one comma per row: sum + n + 1.
+      let budget = 1;
+      for (const seq of page) {
+        const row = await contextOne(
+          reader,
+          MESSAGES,
+          `${contextScope(request.workspace_name)} AND session_name = ${quote(request.session_name)} AND seq_in_session = ${seq.toString(10)}`,
+        );
+        if (row === null) failPublication("integrity_failure", "");
+        const encoded = encodeMessageRow(row);
+        budget += rowWireBytes(encoded) + 1;
+        // Cumulative wire budget. Over budget fails; it never truncates, which
+        // would hand back a short page indistinguishable from a real one.
+        if (budget > MAX_RESULT_WIRE_BYTES) failPublication("limit_exceeded", "");
+        rows.push(encoded);
+      }
+
+      const hasMore = keys.length > request.limit;
+      return {
+        rows,
+        next_after_seq: hasMore && page.length > 0 ? page[page.length - 1]!.toString(10) : null,
+      };
+    },
+  };
+}
+
+export type ContextBoundary = "before_write" | "after_write" | "after_readback";
+export type ContextBoundaryHook = (boundary: ContextBoundary) => Promise<void>;
+
+type ContextRegistration =
+  | { outcome: "created" | "already_satisfied"; row: Record<string, unknown> }
+  | { outcome: "conflict"; reason: "id" | "name" | "membership" };
+
+function createContextWriterService(
+  writer: DatasetAdapter,
+  core: OwnerCore,
+  options: { clock: Clock; sourceNamespace: string | null },
+) {
+  const reads = createContextReadMethods(writer);
+
+  /** Mutations run on the SHARED queue, so a context failure poisons the
+   *  publication and taxonomy facades too, and vice versa. */
+  const mutate = <T>(work: () => Promise<T>): Promise<T> => core.serial(work);
+
+  const requireWorkspaceRow = async (workspace: string): Promise<void> => {
+    await writer.refresh(WORKSPACES);
+    const row = await contextOne(writer, WORKSPACES, `name = ${quote(workspace)}`);
+    if (row === null) failPublication("invalid_reference", "/workspace_name");
+  };
+
+  /**
+   * Persist one row and prove it landed.
+   *
+   * Boundary order is frozen per appended row: before_write immediately before
+   * the SDK call, after_write on success, then readback verification, then
+   * after_readback. The attempted flag is set immediately before the SDK call
+   * and NOT before the hook, so a first hook failure with nothing attempted
+   * leaves the owner usable while a later one poisons.
+   */
+  const writeRow = async (
+    table: string,
+    row: Record<string, unknown>,
+    verify: () => Promise<Record<string, unknown>>,
+    expected: Record<string, unknown>,
+    fields: readonly string[],
+    wroteAlready: boolean,
+  ): Promise<Record<string, unknown>> => {
+    await core.contextBoundary("before_write", wroteAlready);
+    core.markAttemptedWrite();
+    try {
+      await writer.append(table, [row]);
+    } catch {
+      core.poison();
+      failPublication("recovery_required", "");
+    }
+    await core.contextBoundary("after_write", true);
+    const stored = await core.afterWrite(async () => {
+      await writer.refresh(table);
+      const found = await verify();
+      // COMPARE every physical field. Decoding proves structural validity and
+      // says nothing about whether the row holds what was asked for.
+      for (const field of fields) {
+        if (found[field] !== expected[field]) {
+          core.poison();
+          failPublication("recovery_required", "");
+        }
+      }
+      return found;
+    });
+    await core.contextBoundary("after_readback", true);
+    return stored;
+  };
+
+  const registerNamed = async (
+    table: string,
+    workspace: string,
+    requestedId: string,
+    requestedName: string,
+    build: (createdAt: bigint) => Record<string, unknown>,
+    encode: (row: Record<string, unknown>) => Record<string, unknown>,
+    fields: readonly string[],
+  ): Promise<ContextRegistration> => {
+    await requireWorkspaceRow(workspace);
+    await writer.refresh(table);
+    const byId = await contextOne(writer, table, `${contextScope(workspace)} AND id = ${quote(requestedId)}`);
+    const byName = await contextOne(writer, table, `${contextScope(workspace)} AND name = ${quote(requestedName)}`);
+
+    if (byId !== null) {
+      const stored = encode(byId);
+      // ID disagreement takes precedence after integrity checks.
+      if (stored.name !== requestedName) return { outcome: "conflict", reason: "id" };
+      // Same scoped ID+name: already satisfied, retaining the ORIGINAL
+      // timestamp and every current optional field. Nothing is rewritten.
+      return { outcome: "already_satisfied", row: stored };
+    }
+    if (byName !== null) return { outcome: "conflict", reason: "name" };
+
+    const createdAt = BigInt(options.clock()) * 1000n;
+    const physical = build(createdAt);
+    const expected = encode(physical);
+    const stored = await writeRow(
+      table,
+      physical,
+      async () => {
+        const found = await contextOne(writer, table, `${contextScope(workspace)} AND id = ${quote(requestedId)}`);
+        if (found === null) {
+          core.poison();
+          failPublication("recovery_required", "");
+        }
+        return encode(found);
+      },
+      expected,
+      fields,
+      false,
+    );
+    return { outcome: "created", row: stored };
+  };
+
+  return {
+    ...reads,
+
+    registerPeer: (requestBytes: Uint8Array): Promise<ContextRegistration> =>
+      mutate(async () => {
+        const request = parseRegisterPeer(requestBytes);
+        return registerNamed(
+          PEERS,
+          request.workspace_name,
+          request.peer_id,
+          request.name,
+          (created_at) => ({
+            id: request.peer_id,
+            name: request.name,
+            workspace_name: request.workspace_name,
+            // New optional fields are null. Peers are NEVER merged by display
+            // metadata or label resemblance.
+            h_metadata: null,
+            internal_metadata: null,
+            configuration: null,
+            created_at,
+          }),
+          encodePeerRow,
+          PEER_FIELDS_LOCAL,
+        );
+      }),
+
+    registerSession: (requestBytes: Uint8Array): Promise<ContextRegistration> =>
+      mutate(async () => {
+        const request = parseRegisterSession(requestBytes);
+        return registerNamed(
+          SESSIONS,
+          request.workspace_name,
+          request.session_id,
+          request.name,
+          (created_at) => ({
+            id: request.session_id,
+            name: request.name,
+            workspace_name: request.workspace_name,
+            is_active: true,
+            h_metadata: null,
+            internal_metadata: null,
+            configuration: null,
+            created_at,
+          }),
+          encodeSessionRow,
+          SESSION_FIELDS_LOCAL,
+        );
+      }),
+
+    joinSession: (requestBytes: Uint8Array): Promise<ContextRegistration> =>
+      mutate(async () => {
+        const request = parseJoinSession(requestBytes);
+        await requireWorkspaceRow(request.workspace_name);
+        await writer.refresh(SESSIONS);
+        await writer.refresh(PEERS);
+
+        const session = await contextOne(
+          writer,
+          SESSIONS,
+          `${contextScope(request.workspace_name)} AND name = ${quote(request.session_name)}`,
+        );
+        if (session === null) failPublication("invalid_reference", "/session_name");
+        if (encodeSessionRow(session).is_active !== true) {
+          failPublication("invalid_reference", "/session_name");
+        }
+        const peer = await contextOne(
+          writer,
+          PEERS,
+          `${contextScope(request.workspace_name)} AND name = ${quote(request.peer_name)}`,
+        );
+        if (peer === null) failPublication("invalid_reference", "/peer_name");
+
+        await writer.refresh(SESSION_PEERS);
+        const triple =
+          `${contextScope(request.workspace_name)} AND session_name = ${quote(request.session_name)}` +
+          ` AND peer_name = ${quote(request.peer_name)}`;
+        const existing = await contextOne(writer, SESSION_PEERS, triple);
+        if (existing !== null) {
+          const stored = encodeSessionPeerRow(existing);
+          // A left membership is TERMINAL through this interface. Rejoin is a
+          // separately reviewed lifecycle operation; rewriting left_at here
+          // would erase history.
+          if (stored.left_at !== null) return { outcome: "conflict", reason: "membership" };
+          return { outcome: "already_satisfied", row: stored };
+        }
+
+        const joined = BigInt(options.clock()) * 1000n;
+        const physical = {
+          workspace_name: request.workspace_name,
+          session_name: request.session_name,
+          peer_name: request.peer_name,
+          configuration: null,
+          internal_metadata: null,
+          joined_at: joined,
+          left_at: null,
+        };
+        const stored = await writeRow(
+          SESSION_PEERS,
+          physical,
+          async () => {
+            const found = await contextOne(writer, SESSION_PEERS, triple);
+            if (found === null) {
+              core.poison();
+              failPublication("recovery_required", "");
+            }
+            return encodeSessionPeerRow(found);
+          },
+          encodeSessionPeerRow(physical),
+          SESSION_PEER_FIELDS_LOCAL,
+          false,
+        );
+        return { outcome: "created", row: stored };
+      }),
+
+    /**
+     * Ordered batch ingestion.
+     *
+     * Whole-request grammar is validated BEFORE queue admission, so a malformed
+     * request throws rather than producing a fake index-0 result. Once admitted
+     * the shared queue is held for the entire call.
+     *
+     * Safe and unknown exceptions propagate through the shared serial boundary
+     * FIRST -- catching them inside would bypass operation-wide poisoning --
+     * and only the outside handler turns them into a durable-prefix result. A
+     * known conflict returns normally from inside, because it is not an
+     * ambiguous write and must not poison.
+     */
+    appendMessages: async (requestBytes: Uint8Array) => {
+      const request = parseAppendMessages(requestBytes);
+      const accepted: Array<{ index: number; outcome: "accepted" | "idempotent"; row: Record<string, unknown> }> = [];
+      // Brackets, then one comma per row: sum + n + 1, not sum + n.
+      let budget = 1;
+      // Did the batch actually ENTER the queued turn? A refusal that happens
+      // before admission -- closing, poisoned, owner unavailable -- must throw,
+      // because no item was ever entered and there is no prefix to report.
+      let admitted = false;
+
+      try {
+        const conflict = await core.serial(async () => {
+          admitted = true;
+          await requireWorkspaceRow(request.workspace_name);
+          await writer.refresh(SESSIONS);
+          const session = await contextOne(
+            writer,
+            SESSIONS,
+            `${contextScope(request.workspace_name)} AND name = ${quote(request.session_name)}`,
+          );
+          if (session === null) failPublication("invalid_reference", "/session_name");
+          if (encodeSessionRow(session).is_active !== true) {
+            failPublication("invalid_reference", "/session_name");
+          }
+
+          // Maxima are read ONCE, when the first NEW item needs them, then
+          // incremented privately under the held queue. Replays consume none.
+          let nextId: bigint | null = null;
+          let nextSeq: bigint | null = null;
+          let wroteAny = false;
+
+          for (const [index, item] of request.items.entries()) {
+            const at = (...rest: string[]) => `/items/${index}${rest.map((r) => `/${r}`).join("")}`;
+
+            await writer.refresh(MESSAGES);
+            const byPublicId = await contextOne(
+              writer,
+              MESSAGES,
+              `${contextScope(request.workspace_name)} AND public_id = ${quote(item.public_id)}`,
+            );
+
+            // ---- validate mode/digest WITHOUT sampling the clock. A sentinel
+            // intake is used because the seven-field digest excludes intake,
+            // so both passes agree. Its derived times are discarded.
+            let validated: Record<string, unknown>;
+            try {
+              validated = prepareNewMessage(JSON.stringify({
+                context: {
+                  workspace_name: request.workspace_name,
+                  session_name: request.session_name,
+                  intake_at: "1970-01-01T00:00:00.000Z",
+                  source_namespace: options.sourceNamespace,
+                },
+                message: item.message,
+                source: item.source,
+              }));
+            } catch (error) {
+              if (isContractError(error)) throw error;
+              return failPublication("invalid_request", at());
+            }
+
+            const sourceMessageId = validated.source_message_id as string | null;
+            const digest = validated.source_payload_digest as string | null;
+
+            // ---- REPLAY resolution. Sourced is anchored to its source tuple.
+            let existing: Record<string, unknown> | null = null;
+            if (sourceMessageId !== null && options.sourceNamespace !== null) {
+              existing = await contextOne(
+                writer,
+                MESSAGES,
+                `${contextScope(request.workspace_name)} AND source_namespace = ${quote(options.sourceNamespace)}` +
+                  ` AND source_message_id = ${quote(sourceMessageId)}`,
+              );
+              if (existing !== null) {
+                const stored = encodeMessageRow(existing);
+                await requireCurrentMembership(
+                  writer,
+                  request.workspace_name,
+                  request.session_name,
+                  stored.peer_name as string,
+                  at("message", "peer_name"),
+                );
+                // Destination FIRST, then proposed-ID collision, THEN payload.
+                // The accepted wrapper owns that ordering and the exact error.
+                assertReplayDestination(
+                  request.workspace_name,
+                  request.session_name,
+                  stored,
+                  `/items/${index}`,
+                );
+                // A different UNOCCUPIED proposal is ignored and the original
+                // id is returned; a proposal naming ANOTHER row conflicts.
+                if (byPublicId !== null && byPublicId.public_id !== stored.public_id) {
+                  return { index, conflict: "public_id" as const };
+                }
+                if (stored.source_payload_digest !== digest) {
+                  return { index, conflict: "source_payload" as const };
+                }
+                budget += rowWireBytes(stored) + 1;
+                // A response over budget is a LIMIT, not a conflict: reporting
+                // public_id here would blame the caller's identifier for a size
+                // problem. It stops at this index without a new write.
+                if (budget > MAX_RESULT_WIRE_BYTES) failPublication("limit_exceeded", "");
+                accepted.push({ index, outcome: "idempotent", row: stored });
+                continue;
+              }
+            }
+
+            // Source ABSENT but the proposed id is occupied: that row cannot be
+            // adopted into a sourced identity, so it conflicts before any local
+            // field comparison runs.
+            if (sourceMessageId !== null && existing === null && byPublicId !== null) {
+              return { index, conflict: "public_id" as const };
+            }
+
+            if (byPublicId !== null) {
+              const stored = encodeMessageRow(byPublicId);
+              await requireCurrentMembership(
+                writer,
+                request.workspace_name,
+                request.session_name,
+                stored.peer_name as string,
+                at("message", "peer_name"),
+              );
+              // Local wrong-destination has the SAME semantics as sourced, so
+              // it goes through the same wrapper and carries the same envelope.
+              assertReplayDestination(
+                request.workspace_name,
+                request.session_name,
+                stored,
+                `/items/${index}`,
+              );
+              // A local request cannot adopt a sourced row, nor the reverse.
+              const storedIsSourced = stored.source_message_id !== null;
+              const requestIsSourced = sourceMessageId !== null;
+              if (storedIsSourced !== requestIsSourced) return { index, conflict: "public_id" as const };
+              if (
+                stored.peer_name !== validated.peer_name ||
+                stored.content !== validated.content ||
+                stored.role !== validated.role ||
+                stored.in_reply_to !== validated.in_reply_to
+              ) {
+                return { index, conflict: "public_id" as const };
+              }
+              budget += rowWireBytes(stored) + 1;
+              if (budget > MAX_RESULT_WIRE_BYTES) failPublication("limit_exceeded", "");
+              accepted.push({ index, outcome: "idempotent", row: stored });
+              continue;
+            }
+
+            // ---- Refs and policy. These run for REPLAY as well as for a new
+            // item: a replay after the peer left must be refused, and stored
+            // identity integrity is not excused by "we saw this before".
+            await requireCurrentMembership(
+              writer,
+              request.workspace_name,
+              request.session_name,
+              validated.peer_name as string,
+              at("message", "peer_name"),
+            );
+
+            const replyTo = validated.in_reply_to as string | null;
+            if (replyTo !== null) {
+              if (replyTo === item.public_id) failPublication("invalid_request", at("message", "in_reply_to"));
+              const parent = await contextOne(
+                writer,
+                MESSAGES,
+                `${contextScope(request.workspace_name)} AND session_name = ${quote(request.session_name)}` +
+                  ` AND public_id = ${quote(replyTo)}`,
+              );
+              if (parent === null) failPublication("invalid_reference", at("message", "in_reply_to"));
+              await assertReplyChain(writer, request.workspace_name, request.session_name, parent);
+            }
+
+            if (nextId === null) {
+              const maxId = await selectedMaximum(writer, MESSAGES, "id", "true");
+              nextId = (maxId === null || maxId < 0n ? 0n : maxId) + 1n;
+              const maxSeq = await selectedMaximum(
+                writer,
+                MESSAGES,
+                "seq_in_session",
+                `${contextScope(request.workspace_name)} AND session_name = ${quote(request.session_name)}`,
+              );
+              nextSeq = (maxSeq === null || maxSeq < 0n ? 0n : maxSeq) + 1n;
+            }
+            if (nextId! > INT64_CEILING || nextSeq! > INT64_CEILING) {
+              failPublication("integrity_failure", "");
+            }
+
+            // BOTH proposed keys must be vacant before the append. Checking
+            // only the global id would let a session sequence collide.
+            const idTaken = await writer.query(MESSAGES, `id = ${nextId!.toString(10)}`, 2);
+            if (idTaken.length !== 0) failPublication("integrity_failure", "");
+            const seqTaken = await writer.query(
+              MESSAGES,
+              `${contextScope(request.workspace_name)} AND session_name = ${quote(request.session_name)}` +
+                ` AND seq_in_session = ${nextSeq!.toString(10)}`,
+              2,
+            );
+            if (seqTaken.length !== 0) failPublication("integrity_failure", "");
+
+            const intake = new Date(options.clock()).toISOString();
+            let row: Record<string, unknown>;
+            try {
+              row = prepareNewMessage(JSON.stringify({
+                context: {
+                  workspace_name: request.workspace_name,
+                  session_name: request.session_name,
+                  intake_at: intake,
+                  source_namespace: options.sourceNamespace,
+                },
+                message: item.message,
+                source: item.source,
+              }));
+            } catch (error) {
+              if (isContractError(error)) throw error;
+              return failPublication("invalid_request", at());
+            }
+
+            const physical = {
+              id: nextId!,
+              public_id: item.public_id,
+              workspace_name: request.workspace_name,
+              session_name: request.session_name,
+              peer_name: row.peer_name,
+              content: row.content,
+              // 0 means NOT MEASURED, not a tokenizer result.
+              token_count: 0n,
+              seq_in_session: nextSeq!,
+              h_metadata: null,
+              internal_metadata: null,
+              created_at: timestampToMicros(row.created_at),
+              role: row.role,
+              in_reply_to: row.in_reply_to,
+              read: null,
+              read_at: null,
+              source_namespace: row.source_namespace,
+              source_message_id: row.source_message_id,
+              source_payload_digest: row.source_payload_digest,
+              source_created_at:
+                row.source_created_at === null ? null : timestampToMicros(row.source_created_at as string),
+              ingested_at: timestampToMicros(row.ingested_at),
+            };
+            const expected = encodeMessageRow(physical);
+
+            const stored = await writeRow(
+              MESSAGES,
+              physical,
+              async () => {
+                // FOUR independent identities must each select exactly one row,
+                // and it must be the SAME row. A public-id lookup alone would
+                // miss a duplicated physical id or a colliding sequence.
+                const scope = contextScope(request.workspace_name);
+                const lookups: string[] = [
+                  `${scope} AND public_id = ${quote(item.public_id)}`,
+                  `${scope} AND session_name = ${quote(request.session_name)} AND seq_in_session = ${nextSeq!.toString(10)}`,
+                  `id = ${nextId!.toString(10)}`,
+                ];
+                if (row.source_message_id !== null && row.source_namespace !== null) {
+                  lookups.push(
+                    `${scope} AND source_namespace = ${quote(row.source_namespace as string)}` +
+                      ` AND source_message_id = ${quote(row.source_message_id as string)}`,
+                  );
+                }
+                let selected: Record<string, unknown> | null = null;
+                for (const predicate of lookups) {
+                  const found = await contextOne(writer, MESSAGES, predicate);
+                  if (found === null) {
+                    core.poison();
+                    failPublication("recovery_required", "");
+                  }
+                  const encoded = encodeMessageRow(found);
+                  if (selected !== null && encoded.public_id !== selected.public_id) {
+                    core.poison();
+                    failPublication("recovery_required", "");
+                  }
+                  selected = encoded;
+                }
+                return selected!;
+              },
+              expected,
+              MESSAGE_FIELDS_LOCAL,
+              wroteAny,
+            );
+            wroteAny = true;
+            nextId! += 1n;
+            nextSeq! += 1n;
+            budget += rowWireBytes(stored) + 1;
+            if (budget > MAX_RESULT_WIRE_BYTES) failPublication("limit_exceeded", "");
+            accepted.push({ index, outcome: "accepted", row: stored });
+          }
+          return null;
+        });
+
+        if (conflict !== null) {
+          return { outcome: "stopped" as const, results: accepted, stop: conflict };
+        }
+        return { outcome: "complete" as const, results: accepted, stop: null };
+      } catch (error) {
+        // Pre-admission refusal: rethrow. Converting it to a stopped result
+        // would invent an item-level failure for a request that never entered.
+        if (!admitted) throw error;
+        // The serial boundary has ALREADY classified and poisoned as needed.
+        // This only serializes the outcome.
+        return {
+          outcome: "stopped" as const,
+          results: accepted,
+          stop: { index: accepted.length, error: safeErrorEnvelope(error) },
+        };
+      }
+    },
+  };
+}
+
+/**
+ * Re-anchor a governed error beneath this request's item pointer.
+ *
+ * Code and MESSAGE are carried across untouched; only the path moves. An
+ * invented message here silently replaced the accepted codec's literal and no
+ * assertion that checked version/code/path could see it -- the message is part
+ * of the envelope.
+ *
+ * Same shape the codec itself uses when it re-anchors helper paths.
+ */
+function reanchorContractError(error: unknown, prefix: string): never {
+  if (error instanceof ContractError) {
+    throw new ContractError(error.code, `${prefix}${error.path}`, error.message);
+  }
+  throw error;
+}
+
+/**
+ * Destination check through the ACCEPTED replay wrapper.
+ *
+ * The wrapper owns destination-before-digest ordering and the exact
+ * scope_mismatch text. Calling it -- rather than comparing session names by
+ * hand and inventing an error -- is what keeps the envelope identical for
+ * sourced and local rows.
+ *
+ * Local rows carry no source triple, so a synthetic one is supplied purely to
+ * reach the destination comparison; the digests are equal, so the wrapper can
+ * only return or raise on DESTINATION. It never sees real local content.
+ */
+function assertReplayDestination(
+  workspace: string,
+  session: string,
+  stored: Record<string, unknown>,
+  itemPrefix: string,
+): void {
+  const storedNamespace = stored.source_namespace as string | null;
+  const sourced = storedNamespace !== null;
+  const namespace = sourced ? storedNamespace : "local";
+  const messageId = sourced ? (stored.source_message_id as string) : (stored.public_id as string);
+  const digest = sourced ? (stored.source_payload_digest as string) : "0".repeat(64);
+  try {
+    classifyMessageDestinationReplay(
+      JSON.stringify({
+        requested: { workspace_name: workspace, session_name: session },
+        incoming: {
+          source_namespace: namespace,
+          source_message_id: messageId,
+          source_payload_digest: digest,
+        },
+        existing: {
+          workspace_name: stored.workspace_name,
+          session_name: stored.session_name,
+          source_namespace: namespace,
+          source_message_id: messageId,
+          source_payload_digest: digest,
+          public_id: stored.public_id,
+        },
+      }),
+    );
+  } catch (error) {
+    reanchorContractError(error, itemPrefix);
+  }
+}
+
+/**
+ * The exact safe wire envelope: version, code, path, message. No `name`.
+ *
+ * Only ACTUAL ContractError or PublicationError instances serialize as
+ * themselves. An object merely shaped like one is unknown and normalizes to a
+ * fixed recovery_required -- matching on a `name` property would let arbitrary
+ * text out through the boundary.
+ */
+function safeErrorEnvelope(error: unknown): Record<string, unknown> {
+  if (error instanceof PublicationError || error instanceof ContractError) {
+    return error.toJSON() as unknown as Record<string, unknown>;
+  }
+  return new PublicationError("recovery_required", "").toJSON() as unknown as Record<string, unknown>;
+}
+
+/**
+ * Walk an existing reply chain, bounded.
+ *
+ * Counts STORED ancestors traversed; the row being appended is not yet in the
+ * chain and is not counted. 1024 visited is allowed, 1025 fails.
+ */
+async function assertReplyChain(
+  adapter: DatasetAdapter,
+  workspace: string,
+  session: string,
+  parent: Record<string, unknown>,
+): Promise<void> {
+  let cursor: Record<string, unknown> | null = parent;
+  let visited = 0;
+  const seen = new Set<string>();
+  while (cursor !== null) {
+    visited += 1;
+    if (visited > 1024) failPublication("limit_exceeded", "");
+    const encoded = encodeMessageRow(cursor);
+    const id = encoded.public_id as string;
+    if (seen.has(id)) failPublication("integrity_failure", "");
+    seen.add(id);
+    if (encoded.session_name !== session || encoded.workspace_name !== workspace) {
+      failPublication("integrity_failure", "");
+    }
+    const next = encoded.in_reply_to as string | null;
+    if (next === null) return;
+    cursor = await contextOne(
+      adapter,
+      MESSAGES,
+      `workspace_name = ${quote(workspace)} AND session_name = ${quote(session)} AND public_id = ${quote(next)}`,
+    );
+    if (cursor === null) failPublication("integrity_failure", "");
+  }
+}
+
+export type ContextReaderService = ReturnType<typeof createContextReadMethods>;
+export type ContextWriterService = ReturnType<typeof createContextWriterService>;
+
+export type ContextReaderBundle = {
+  publication: PublicationReaderService;
+  taxonomy: TaxonomyReaderService;
+  context: ContextReaderService;
+};
+
+export type ContextWriterBundle = {
+  publication: Omit<PublicationWriterService, "close">;
+  taxonomy: TaxonomyWriterService;
+  context: ContextWriterService;
+  close: () => Promise<void>;
+};
+
+export type ContextOptions = KnowledgeOptions & {
+  /** Trusted CONFIGURATION, never request JSON. `null` selects local-only
+   *  intake; a non-null value selects exactly that source namespace. It is not
+   *  an authorization credential. */
+  sourceNamespace: string | null;
+  onContextBoundary?: ContextBoundaryHook;
+};
+
+/**
+ * The configured namespace must be valid BEFORE a connection is opened.
+ *
+ * Nonempty only. There is deliberately NO byte ceiling here: the accepted
+ * source codec does not impose one, and the request cap is not a
+ * namespace-specific name bound. Inventing a 256-byte limit would be this
+ * module adding a rule the contract does not state.
+ */
+function assertSourceNamespace(namespace: string | null): void {
+  if (namespace === null) return;
+  if (typeof namespace !== "string" || namespace.length === 0) {
+    failPublication("invalid_request", "/sourceNamespace");
+  }
+}
+
+/** Read all three facades over one gateless connection. Reads need no gate,
+ *  no queue and no namespace configuration. */
+export async function openContextReader(datasetRoot: string): Promise<ContextReaderBundle> {
+  const canonical = assertLocalDatasetRoot(datasetRoot);
+  const adapter = makeAdapter(await openPrivateConnection(canonical), () => {});
+  return Object.freeze({
+    publication: Object.freeze(makeReadMethods(adapter)),
+    taxonomy: Object.freeze(createTaxonomyReadMethods(adapter)),
+    context: Object.freeze(createContextReadMethods(adapter)),
+  });
+}
+
+/**
+ * One owner, three write facades.
+ *
+ * The bundle ALONE closes the owner: the nested publication facade carries its
+ * data methods without `close`, and neither taxonomy nor context has one, so
+ * no facade can release a gate another still depends on.
+ *
+ * `newRevisionId` stays required because the bundle offers publication.
+ * Context operations never call it; allocating one lazily would hide a missing
+ * dependency until the first publish.
+ */
+export async function openContextWriter(
+  datasetRoot: string,
+  options: ContextOptions,
+): Promise<ContextWriterBundle> {
+  // Namespace validity is decided BEFORE any connection is opened, so an
+  // invalid configuration never takes the gate.
+  assertSourceNamespace(options.sourceNamespace);
+
+  const canonical = assertLocalDatasetRoot(datasetRoot);
+  assertInheritedGate(canonical, options.env);
+  if (OWNERS.has(canonical)) failPublication("writer_unavailable");
+  const token = Symbol(canonical);
+  OWNERS.set(canonical, token);
+
+  let adapter: DatasetAdapter;
+  try {
+    adapter = makeAdapter(await openPrivateConnection(canonical), () => {
+      if (OWNERS.get(canonical) === token) OWNERS.delete(canonical);
+    });
+  } catch (error) {
+    OWNERS.delete(canonical);
+    throw error;
+  }
+
+  const clock = options.clock ?? Date.now;
+  const core = createOwnerCore(adapter, {
+    onBoundary: options.onBoundary,
+    onTaxonomyBoundary: options.onTaxonomyBoundary,
+    onContextBoundary: options.onContextBoundary,
+  });
+  const publication = createPublicationWriterService(
+    adapter,
+    { clock, newRevisionId: options.newRevisionId },
+    core,
+  );
+  const { close: _ownedByTheBundle, ...publicationData } = publication;
+
+  return Object.freeze({
+    publication: Object.freeze(publicationData),
+    taxonomy: Object.freeze(createTaxonomyWriterService(adapter, core, { clock })),
+    context: Object.freeze(
+      createContextWriterService(adapter, core, { clock, sourceNamespace: options.sourceNamespace }),
+    ),
+    close: core.close,
+  });
+}
+
+/**
+ * The peer must exist AND hold a CURRENT active membership.
+ *
+ * Applied to replays as well as new items: a historical replay after the peer
+ * left is refused. That refusal never deletes history -- reads still return the
+ * message; only new or replayed appends require present membership.
+ */
+async function requireCurrentMembership(
+  adapter: DatasetAdapter,
+  workspace: string,
+  session: string,
+  peerName: string,
+  path: string,
+): Promise<void> {
+  await adapter.refresh(PEERS);
+  const peer = await contextOne(adapter, PEERS, `${contextScope(workspace)} AND name = ${quote(peerName)}`);
+  if (peer === null) failPublication("invalid_reference", path);
+  // Structural validity of the stored peer is required, not assumed.
+  encodePeerRow(peer);
+
+  await adapter.refresh(SESSION_PEERS);
+  const membership = await contextOne(
+    adapter,
+    SESSION_PEERS,
+    `${contextScope(workspace)} AND session_name = ${quote(session)} AND peer_name = ${quote(peerName)}`,
+  );
+  if (membership === null) failPublication("invalid_reference", path);
+  if (encodeSessionPeerRow(membership).left_at !== null) failPublication("invalid_reference", path);
 }
