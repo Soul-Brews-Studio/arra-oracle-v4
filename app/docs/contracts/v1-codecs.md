@@ -1,3 +1,5 @@
+> Historical slice report: the target registry and revision/evidence codecs listed below as remaining work were subsequently accepted **in isolation**, not activated. See [delivery gates](delivery-gates.md) for current status; the original verification counts remain historical.
+
 # Candidate v1 codecs — #23, 2026-09-20
 
 **Implemented as isolated contract evidence, not activated in legacy endpoints or the migrator.** This is a partial #23 slice, not the complete 19-table contract or authorization to migrate existing data. The approved product direction remains Python schema ownership, TypeScript application, and local-first LanceDB.

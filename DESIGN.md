@@ -4,6 +4,8 @@
 
 > Next reviewed contract: [revision/evidence v1](app/docs/contracts/revision-evidence-v1.md) pins complete snapshots, typed evidence keys, RFC8785 bytes and fail-closed Python/Bun batch validation. Python still owns physical schema. This is an implementation handoff, not proof these codecs or new MCP features are shipped. Honcho tier-1 interoperability remains a separate unproved #8 gate.
 
+> Current delivery overlay: [delivery gates](app/docs/contracts/delivery-gates.md) records accepted isolated physical/byte contracts through `6289311`, remaining enforcement owners and unchanged runtime boundaries. Earlier built-state snapshots below remain historical.
+
 # v4 revised full design: conversation, knowledge, context, and LanceDB
 
 <!-- arra-v4:full-revision-after-honcho:2026-09-20 -->

@@ -443,3 +443,100 @@ describe("keyword-search startup readiness", () => {
     expect((await response.json()).rows.map((r: any) => r.id)).toEqual([alpha.id]);
   });
 });
+
+describe("store scope boundary", () => {
+  // #24: db.ts took `bank?: string` and SKIPPED the predicate when it was absent,
+  // so scope depended on every caller remembering to pass one. No current caller
+  // omits it, which is why the HTTP fail-closed test passes -- these call the
+  // store DIRECTLY to pin the boundary itself rather than caller discipline.
+  //
+  // Runtime-bad input arrives through a typed seam: this single alias holds the
+  // cast so the exported signatures stay `bank: string` and are not weakened to
+  // let a test compile.
+  const raw = () =>
+    store as unknown as {
+      list(bank?: unknown, limit?: number, filters?: Record<string, unknown>): Promise<unknown>;
+      searchText(q: string, bank?: unknown, limit?: number): Promise<unknown>;
+      searchVector(q: string, bank?: unknown, limit?: number): Promise<unknown>;
+    };
+
+  const BLANK: unknown[] = [undefined, "", "   ", "\t", "\n"];
+  const NON_STRING: unknown[] = [null, 0, 1, true, false, {}, [], ["alpha"], Symbol("alpha")];
+
+  test("every scoped read rejects a missing, empty or whitespace bank", async () => {
+    for (const bank of BLANK) {
+      await expect(raw().list(bank)).rejects.toThrow(/bank is required/);
+      await expect(raw().searchText("alpha", bank)).rejects.toThrow(/bank is required/);
+      await expect(raw().searchVector("alpha", bank)).rejects.toThrow(/bank is required/);
+    }
+  });
+
+  test("every scoped read refuses a non-string bank rather than coercing it into a predicate", async () => {
+    for (const bank of NON_STRING) {
+      await expect(raw().list(bank)).rejects.toThrow(/bank is required/);
+      await expect(raw().searchText("alpha", bank)).rejects.toThrow(/bank is required/);
+      await expect(raw().searchVector("alpha", bank)).rejects.toThrow(/bank is required/);
+    }
+  });
+
+  test("a rejected scope costs no model call: searchVector refuses before embedOne", async () => {
+    const previous = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async (...args: Parameters<typeof fetch>) => {
+      calls += 1;
+      return previous(...args);
+    }) as unknown as typeof fetch;
+    try {
+      for (const bank of [...BLANK, ...NON_STRING]) {
+        await expect(raw().searchVector("alpha", bank)).rejects.toThrow(/bank is required/);
+      }
+      expect(calls).toBe(0);
+    } finally {
+      globalThis.fetch = previous;
+    }
+  });
+
+  test("scoped text and vector reads never cross banks, and an unknown but nonblank bank returns empty", async () => {
+    // Deterministic stub embeddings: alpha gets unit vector e0, beta gets e1, and
+    // the query vector is exactly e0 -- so a leak would surface as beta's row
+    // ranked into alpha's result rather than as a subtle ordering change.
+    const alphaVector = Array.from({ length: 384 }, (_, i) => (i === 0 ? 1 : 0));
+    const betaVector = Array.from({ length: 384 }, (_, i) => (i === 1 ? 1 : 0));
+    const table = await connection.openTable("memories");
+    await table.checkoutLatest();
+    await table.add([
+      memory("scope-alpha", "alpha", "note", { content: "boundary probe alpha", embedding: alphaVector }),
+      memory("scope-beta", "beta", "note", { content: "boundary probe beta", embedding: betaVector }),
+    ]);
+    await store.ensureFtsIndex();
+
+    const alphaText = (await store.searchText("boundary", "alpha")) as Array<{ workspace_name: string }>;
+    expect(alphaText.length).toBeGreaterThan(0);
+    expect([...new Set(alphaText.map((r) => r.workspace_name))]).toEqual(["alpha"]);
+    const betaText = (await store.searchText("boundary", "beta")) as Array<{ workspace_name: string }>;
+    expect([...new Set(betaText.map((r) => r.workspace_name))]).toEqual(["beta"]);
+
+    const previous = globalThis.fetch;
+    globalThis.fetch = (async () => Response.json({ embeddings: [alphaVector] })) as unknown as typeof fetch;
+    try {
+      const alphaVec = (await store.searchVector("boundary probe", "alpha")) as Array<{ workspace_name: string }>;
+      expect(alphaVec.length).toBeGreaterThan(0);
+      expect([...new Set(alphaVec.map((r) => r.workspace_name))]).toEqual(["alpha"]);
+      // Same query vector, different scope: only beta's row, never alpha's nearer one.
+      const betaVec = (await store.searchVector("boundary probe", "beta")) as Array<{ workspace_name: string }>;
+      expect([...new Set(betaVec.map((r) => r.workspace_name))]).toEqual(["beta"]);
+      // Unknown but NONBLANK bank is a valid scope with no rows: empty, not an error.
+      await expect(store.searchVector("boundary probe", "no-such-bank")).resolves.toEqual([]);
+    } finally {
+      globalThis.fetch = previous;
+    }
+    await expect(store.searchText("boundary", "no-such-bank")).resolves.toEqual([]);
+    await expect(store.list("no-such-bank")).resolves.toEqual([]);
+  });
+
+  test("list still applies filters and scope before the limit", async () => {
+    const rows = (await store.list("alpha", 1, { type: "note" })) as Array<{ workspace_name: string; type: string }>;
+    expect(rows.length).toBeLessThanOrEqual(1);
+    for (const row of rows) expect([row.workspace_name, row.type]).toEqual(["alpha", "note"]);
+  });
+});

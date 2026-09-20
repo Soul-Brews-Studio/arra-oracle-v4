@@ -43,8 +43,24 @@ export type NewMemory = {
 
 const quote = (value: string) => `'${value.replace(/'/g, "''")}'`;
 
-function requiredBank(bank: string | undefined): string {
-  if (!bank?.trim()) throw new Error("bank is required");
+/**
+ * The scope gate for the ORDINARY SCOPED READ HELPERS -- `list`, `searchText`,
+ * `searchVector`, `getById` and `stats`. Enforced HERE, at the store boundary,
+ * not by each caller remembering to pass a bank: an optional parameter that
+ * silently dropped the predicate made an unscoped, cross-bank read a missing
+ * argument away (#24). A non-string is refused rather than coerced, so a
+ * runtime-bad value from an untyped seam cannot reach a predicate.
+ *
+ * Deliberately NOT applied to the low-level maintenance paths: `db()` opens the
+ * table, `ensureFtsIndex` rebuilds an index, and `backfill` sweeps rows needing
+ * vectors across the whole dataset by design. Those are not ordinary reads and
+ * this gate is not a claim about them.
+ *
+ * An unknown but NONBLANK bank is a valid scope that simply matches nothing --
+ * it returns empty, it does not throw.
+ */
+function requiredBank(bank: unknown): string {
+  if (typeof bank !== "string" || !bank.trim()) throw new Error("bank is required");
   return bank;
 }
 
@@ -137,21 +153,28 @@ const clean = (rows: any[]) =>
     distance: r._distance ?? undefined,
   }));
 
-export async function searchText(q: string, bank?: string, limit = 10) {
+export async function searchText(q: string, bank: string, limit = 10) {
+  const scopedBank = requiredBank(bank);
   const tbl = await db();
-  let s = tbl.search(q, "fts");
-  if (bank) s = s.where(`workspace_name = '${bank.replace(/'/g, "''")}'`);
-  s = s.limit(limit);
-  return clean(await s.toArray());
+  const rows = await tbl
+    .search(q, "fts")
+    .where(`workspace_name = ${quote(scopedBank)}`)
+    .limit(limit)
+    .toArray();
+  return clean(rows);
 }
 
-export async function searchVector(q: string, bank?: string, limit = 10) {
+export async function searchVector(q: string, bank: string, limit = 10) {
+  // Scope first: a rejected request must cost no embedder call and no table open.
+  const scopedBank = requiredBank(bank);
   const tbl = await db();
   const vec = await embedOne(q);
-  let s = tbl.vectorSearch(vec);
-  if (bank) s = s.where(`workspace_name = '${bank.replace(/'/g, "''")}'`);
-  s = s.limit(limit);
-  return clean(await s.toArray());
+  const rows = await tbl
+    .vectorSearch(vec)
+    .where(`workspace_name = ${quote(scopedBank)}`)
+    .limit(limit)
+    .toArray();
+  return clean(rows);
 }
 
 export interface MemoryFilters {
@@ -163,17 +186,19 @@ export interface MemoryFilters {
   is_active?: boolean;
 }
 
-export async function list(bank?: string, limit = 50, filters: MemoryFilters = {}) {
+export async function list(bank: string, limit = 50, filters: MemoryFilters = {}) {
+  const scopedBank = requiredBank(bank);
   const tbl = await db();
   let q = tbl.query();
-  const predicates: string[] = [];
-  if (bank) predicates.push(`workspace_name = ${quote(bank)}`);
+  // Scope is unconditional; filters remain optional and are still applied
+  // BEFORE the limit, so a limit never selects from an unfiltered set.
+  const predicates: string[] = [`workspace_name = ${quote(scopedBank)}`];
   for (const key of ["type", "session_name", "peer_name", "subject_peer_name", "sync_state"] as const) {
     const value = filters[key];
     if (value !== undefined) predicates.push(`${key} = ${quote(value)}`);
   }
   if (filters.is_active !== undefined) predicates.push(`is_active = ${filters.is_active}`);
-  if (predicates.length) q = q.where(predicates.join(" AND "));
+  q = q.where(predicates.join(" AND "));
   q = q.limit(limit);
   return clean(await q.toArray());
 }
