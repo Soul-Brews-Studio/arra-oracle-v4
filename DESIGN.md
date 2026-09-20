@@ -1,10 +1,12 @@
-> Complete published design snapshot: [discussion #36](https://github.com/Soul-Brews-Studio/arra-oracle-v4/discussions/36). Its built-state section records publication-time evidence, not later patches. For running instructions see [app/README.md](app/README.md); release completion still requires [roadmap #22](https://github.com/Soul-Brews-Studio/arra-oracle-v4/issues/22). Open physical-contract gates remain open.
+> Working design based on [discussion #36](https://github.com/Soul-Brews-Studio/arra-oracle-v4/discussions/36), with the explicit #23 candidate-contract refinements linked below applied to the relevant ASCII boxes and publication sequence. The original discussion remains the historical revision-2 snapshot. Built-state sections record publication-time evidence, not later patches. For running instructions see [app/README.md](app/README.md); release completion still requires [roadmap #22](https://github.com/Soul-Brews-Studio/arra-oracle-v4/issues/22). Candidate physical fixtures do not complete #23 or activate migration.
+
+> Candidate implementation addendum: [target-v1 decisions](app/docs/contracts/target-v1-decisions.md) refines revision association authority and physical fixture gates for isolated #23 work; it is not runtime activation or #23 completion.
 
 # v4 revised full design: conversation, knowledge, context, and LanceDB
 
 <!-- arra-v4:full-revision-after-honcho:2026-09-20 -->
 
-**2026-09-20 — revision 2; reconciled through Relic CLI and current source. Design update, not a completed implementation.**
+**2026-09-20 — revision 2 plus reviewed #23 candidate-contract clarifications. Design and isolated fixture work, not completed runtime implementation.**
 
 Python owns the schema. TypeScript owns the application. LanceDB stores our content and derived search data. Keep local storage as the default; R2 is optional. The content model remains simple: **title, body, fields, dates, taxonomy, and revisions**.
 
@@ -431,9 +433,12 @@ Cite Relic by default; explicit selected imports preserve provenance, idempotenc
 | is_active                 explicit active/inactive decision       |
 | valid_from?, valid_to?    statement validity, not retention tier   |
 | change_reason?, created_at                                       |
-| schema_version, content_digest                                   |
+| schema_version, canonical_version, content_digest                |
+| term_snapshot_json        complete canonical term array          |
+| link_snapshot_json        complete canonical evidence array      |
 | h_metadata?, internal_metadata?                                  |
-| UNIQUE(W,node_id,revision_no); UNIQUE(W,operation_id)               |
+| Ordinal belongs to accepted ancestry, not global row uniqueness  |
+| UNIQUE(W,operation_id) within revision operations: service gate   |
 +------------------------------------------------------------------+
 
 Node N1
@@ -441,11 +446,11 @@ Node N1
   +-- R2: improved explanation
   +-- R3: added evidence / changed taxonomy  <-- current
 
-One revision includes its immutable term and link sets below.
-No edit-in-place of an accepted revision or its associations.
+One revision owns complete immutable term/link snapshots in its row.
+Association meaning is immutable; query projection rows are rebuildable.
 ```
 
-Digest covers canonical content, governed fields, term snapshots and links; canonicalization/commit are open gates. Unchanged text may reuse compatible vectors without merging revisions.
+Digest covers canonical content, governed fields and complete term/link snapshots; canonicalization/commit are open gates. The required snapshot columns and canonical version are the [candidate physical refinement](app/docs/contracts/target-v1-decisions.md), not proof of validated bytes. `node_revision_terms` and `revision_links` are derived projections, not separate association authority or publication prerequisites. Unchanged text may reuse compatible vectors without merging revisions.
 
 No table per type. Do not hide identity/permissions/perspective/evidence in `fields`. Type behavior requires explicit validators, not just labels.
 
@@ -514,7 +519,7 @@ Term         = one value within that group.
 +-----------------------------+------------------------------------+
                               |
                               v
-+-- node_revision_terms [P; replaces memory_terms] ------------------+
++-- node_revision_terms [P; derived query projection] ---------------+
 | W, revision_id, term_id                                          |
 | vocabulary_id            validated owner, not alternate authority|
 | vocabulary_name_snapshot, term_name_snapshot, label_snapshot?     |
@@ -540,8 +545,8 @@ No popularity decay or write-on-every-recall loop implied.
 ## 8. Evidence and links: many sources per conclusion
 
 ```text
-+-- revision_links [P] ----------------------------------------------+
-| id, W, revision_id                                               |
++-- revision_links [P; derived query projection] --------------------+
+| W, revision_id, position                                         |
 | relation                 supports | contradicts | derived_from   |
 |                          discusses | corrects | related_to       |
 | target_kind              node_revision | trace | message         |
@@ -552,8 +557,10 @@ No popularity decay or write-on-every-recall loop implied.
 | excerpt?                 bounded captured evidence               |
 | content_hash?            digest of captured evidence              |
 | captured_at?, capture_status                                     |
-| note?, position                                                   |
-| Immutable with owning revision; all internal targets scoped by W |
+| note?                                                           |
+| KEY(W,revision_id,position); no independent random id             |
+| Meaning pinned by revision snapshot; physical rows rebuildable   |
+| All internal targets scoped by W                                |
 +------------------------------------------------------------------+
 ```
 
@@ -715,7 +722,7 @@ T1 --next (reverse prev lookup)--> T2 --> T3
 ```text
 AUTHORITATIVE                         DERIVED / REBUILDABLE
 nodes + revisions                     search_chunks_v1
-revision terms + evidence             keyword index
+revision term/link snapshots          association projections + FTS
 sessions + messages                   vector index
 traces + supersede log                 filter metadata projections
 
@@ -752,9 +759,12 @@ SAVE PATH
   validate + authorize
           |
           v
-  commit content revision + terms + links
+  persist complete revision row with term/link snapshots
+  publish verified head (#26 proof gate)
           |
           +--> acknowledge durable content
+          |
+          +--> rebuild association query projections
           |
           v
   prepare chunk text / make keyword index eligible
@@ -1011,12 +1021,13 @@ This is a proposed initial deployment restriction, not a claim about all LanceDB
 PROPOSED REVISION COMMIT SEQUENCE -- must be proven
 
 1. Authenticate principal; authorize W and operation.
-2. Check operation_id and expected base_revision_id.
-3. Validate body, complete term set, evidence links, internal targets.
-4. Persist revision and immutable association rows.
-5. Verify completeness/digest; publish the current-revision pointer.
+2. Resolve scoped operation_id retry/conflict before new base checks.
+3. For a new operation, validate base/body/complete snapshots/targets.
+4. Persist one canonical revision row including both snapshots.
+5. Verify row completeness/digest; publish the current-revision head.
 6. Acknowledge only after read-back confirms published state.
-7. Derive search asynchronously; repair missing work by reconciliation.
+7. Derive term/link query projections and search; reconcile omissions.
+   Projection writes are NOT on the publication critical path.
 
 Crash before 5: prepared data must not become normal visible content.
 Crash after 5: retry operation_id returns the accepted result.
@@ -1024,7 +1035,7 @@ Conflicting base: return conflict, do not silently overwrite.
 Same operation_id with different payload: reject, do not reinterpret.
 ```
 
-This is **not a cross-table transaction proof**. Publication visibility across table snapshots, crash recovery, idempotency, rejected-branch cleanup, and migration exclusivity all need tests. A prepared/orphan revision must not appear in normal history just because its row exists; the accepted head/ancestry and verified associations govern visibility. If tests cannot prove this protocol, change the physical layout/commit representation before shipping.
+This is **not a cross-table transaction proof**. Publication visibility across table snapshots, crash recovery, idempotency, rejected-branch cleanup, and migration exclusivity all need tests. A prepared/orphan revision must not appear in normal history just because its row exists; the accepted head/ancestry and verified revision-row snapshots govern visibility; partial association projections must not redefine content. If tests cannot prove this protocol, change the physical layout/commit representation before shipping.
 
 #23 has not frozen IDs/time/JSON/vector contracts. Pin omission/null, timestamp/Int64 codecs, finite vector/profile validation, errors, source-message identity and cross-operation idempotency. Per-table `UNIQUE(W,operation_id)` is a logical requirement, not a settled cross-table retry namespace.
 
@@ -1053,10 +1064,14 @@ memories                        nodes + node_revisions
   embedding + sync columns      derived search migration/rebuild
   superseded_*                  reconcile with supersede_log
 
-memory_terms                    node_revision_terms
+memory_terms                    initial revision term snapshot
+                                -> derived node_revision_terms
 vocabularies/terms              reuse; add explicit policy/scope
 supersede_log                   keep history; add pinned revisions
-traces/trace_hits               keep; structured evidence + many results
+traces/trace_hits               structured evidence + many results
+  distilled_to/distilled_at     migrate legacy meaning to revision_links;
+                                omit writable singular pair from target;
+                                derive any compatibility display
 mcp_calls/connections           keep; fix scope and attribution
 read_cursors                    add workspace-safe identity
 
