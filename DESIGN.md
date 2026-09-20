@@ -4,7 +4,7 @@
 
 > Accepted isolated contract: [revision/evidence v1](app/docs/contracts/revision-evidence-v1.md) pins complete snapshots, typed evidence keys, RFC8785 bytes and fail-closed Python/Bun batch validation. Python still owns physical schema. The isolated codecs were accepted at `6289311`; this is not proof that new MCP features are shipped. Honcho tier-1 interoperability remains a separate unproved #8 gate.
 
-> Current delivery overlay: [delivery gates](app/docs/contracts/delivery-gates.md) records accepted isolated physical/byte/source contracts through `33e3c44` and the scoped-read repair `7dd21d0`, remaining enforcement owners and unchanged runtime boundaries. Earlier built-state snapshots below remain historical.
+> Current delivery overlay: [delivery gates](app/docs/contracts/delivery-gates.md) records accepted isolated physical/byte/source contracts, scoped reads, pure authorization policy `eb281cc` and local HTTP/MCP/CLI/browser integration `11cf723`. The running spike was not restarted; target19 remains isolated and #25 remains open for future target-service/reference coverage. Earlier built-state snapshots below remain historical.
 
 # v4 revised full design: conversation, knowledge, context, and LanceDB
 
