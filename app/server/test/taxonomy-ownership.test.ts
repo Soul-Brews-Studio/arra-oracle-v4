@@ -48,6 +48,8 @@ const ALLOWED_SERVICE_EXPORTS = [
   "PublicationError",
   "openContextReader",
   "openContextWriter",
+  "openEvidenceReader",
+  "openEvidenceWriter",
   "openKnowledgeReader",
   "openKnowledgeWriter",
   "openPublicationReader",
@@ -207,7 +209,7 @@ describe("service runtime export surface", () => {
   test(
     "no adapter, owner, connection or facade constructor is exported, now or later",
     () => {
-      // §11-extension: these seven RUNTIME exports and no others. Equality, not a
+      // §11-extension: these nine RUNTIME exports and no others. Equality, not a
       // subset — a subset check would accept a capability export added later.
       expect(Object.keys(service).sort()).toEqual(ALLOWED_SERVICE_EXPORTS);
       expect(Object.keys(service).filter((name) => FORBIDDEN_SERVICE_EXPORTS.includes(name))).toEqual([]);

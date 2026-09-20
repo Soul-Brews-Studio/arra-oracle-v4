@@ -30,6 +30,21 @@ import {
   prepareNewMessage,
 } from "../contracts/source-ingestion-v1";
 import {
+  deriveLinkRows,
+  deriveTermRows,
+  parseGetRevisionAssociations,
+  parseReconcileRevisionAssociations,
+  parseScanDependents,
+  MAX_EXAMINED_POSITIONS,
+  MAX_SELECTED_REVISIONS,
+  MAX_VISITED_NODES,
+  // Both modules define a 16 MiB response budget; aliased so the evidence
+  // paths name the one they actually mean.
+  MAX_RESULT_WIRE_BYTES as MAX_EVIDENCE_WIRE_BYTES,
+  TERM_FIELDS as TERM_FIELDS_LOCAL,
+  LINK_FIELDS as LINK_FIELDS_LOCAL,
+} from "./association";
+import {
   encodeMessageRow,
   encodePeerRow,
   encodeSessionPeerRow,
@@ -77,6 +92,7 @@ import {
   encodeRevisionRow,
   parseInt64Text,
   revisionWireBytes,
+  microsToTimestamp,
   timestampToMicros,
   utf8ByteLength,
 } from "./rows";
@@ -127,6 +143,20 @@ type DatasetAdapter = {
     ordering: { column: string; ascending: boolean },
     limit: number,
   ): Promise<Record<string, unknown>[]>;
+  /**
+   * Scoped delete of DERIVED projection rows only.
+   *
+   * Deliberately NOT a generic delete. The table must be one of the two named
+   * derived tables, and the predicate is CONSTRUCTED here from a workspace and
+   * a revision id -- a caller cannot supply predicate text. Exposing
+   * `delete(table, predicate)` would hand out a way to remove authoritative
+   * rows, which nothing in this kernel is allowed to do.
+   */
+  deleteDerivedScope(
+    table: "node_revision_terms" | "revision_links",
+    workspace: string,
+    revisionId: string,
+  ): Promise<{ numDeletedRows: number; version: number }>;
   refresh(table: string): Promise<void>;
   version(table: string): Promise<number>;
   append(table: string, rows: Record<string, unknown>[]): Promise<number>;
@@ -181,6 +211,26 @@ function makeAdapter(connection: Connection, onRelease: () => void): DatasetAdap
       // Same decoder as rawRows, deliberately: a second decoding path is how a
       // lossy Number fallback returns on one side only.
       return decodeArrowRows(arrow);
+    },
+    async deleteDerivedScope(table, workspace, revisionId) {
+      // Restricted by construction: only these two tables, and the predicate
+      // is built here from the reviewed literal escaper.
+      if (table !== "node_revision_terms" && table !== "revision_links") {
+        failPublication("integrity_failure");
+      }
+      // No checkoutLatest here: the ONLY caller preflights this exact scope
+      // with a refresh immediately before, inside the same serialized turn.
+      const tbl = await handle(table);
+      const result = (await tbl.delete(
+        `workspace_name = ${quote(workspace)} AND revision_id = ${quote(revisionId)}`,
+      )) as unknown as { numDeletedRows?: number };
+      const deleted = result?.numDeletedRows;
+      // Measured: a ZERO-match delete still advances the version, so the count
+      // -- not the version -- is what distinguishes a real deletion.
+      if (typeof deleted !== "number" || !Number.isSafeInteger(deleted) || deleted < 0) {
+        failPublication("integrity_failure");
+      }
+      return { numDeletedRows: deleted, version: await tbl.version() };
     },
     async refresh(table) {
       await (await handle(table)).checkoutLatest();
@@ -900,6 +950,7 @@ type OwnerCore = {
   boundary: (name: PublicationBoundary, wroteAlready: boolean) => Promise<void>;
   taxonomyBoundary: (name: TaxonomyBoundary, wroteAlready: boolean) => Promise<void>;
   contextBoundary: (name: ContextBoundary, wroteAlready: boolean) => Promise<void>;
+  evidenceBoundary: (name: EvidenceBoundary, wroteAlready: boolean) => Promise<void>;
   markAttemptedWrite: () => void;
   afterWrite: <T>(work: () => Promise<T>) => Promise<T>;
   poison: () => void;
@@ -934,6 +985,7 @@ function createOwnerCore(
     onBoundary?: BoundaryHook;
     onTaxonomyBoundary?: TaxonomyBoundaryHook;
     onContextBoundary?: ContextBoundaryHook;
+    onEvidenceBoundary?: EvidenceBoundaryHook;
   },
 ): OwnerCore {
   let queue: Promise<unknown> = Promise.resolve();
@@ -984,6 +1036,9 @@ function createOwnerCore(
 
   const contextBoundary = (name: ContextBoundary, wroteAlready: boolean): Promise<void> =>
     runHook(hooks.onContextBoundary as ((n: string) => Promise<void>) | undefined, name, wroteAlready);
+
+  const evidenceBoundary = (name: EvidenceBoundary, wroteAlready: boolean): Promise<void> =>
+    runHook(hooks.onEvidenceBoundary as ((n: string) => Promise<void>) | undefined, name, wroteAlready);
 
   const serial = <T>(work: () => Promise<T>): Promise<T> => {
     const next = queue.then(async () => {
@@ -1067,6 +1122,7 @@ function createOwnerCore(
     boundary,
     taxonomyBoundary,
     contextBoundary,
+    evidenceBoundary,
     markAttemptedWrite,
     afterWrite,
     poison: () => {
@@ -3440,4 +3496,820 @@ async function requireCurrentMembership(
   );
   if (membership === null) failPublication("invalid_reference", path);
   if (encodeSessionPeerRow(membership).left_at !== null) failPublication("invalid_reference", path);
+}
+
+/* ------------------------------------------------------------------ *
+ * Association materialization and evidence queries. Private to this module.
+ * ------------------------------------------------------------------ */
+
+const TERMS_TABLE = "node_revision_terms";
+const LINKS_TABLE = "revision_links";
+
+export type EvidenceBoundary =
+  | "before_delete"
+  | "after_delete"
+  | "after_delete_readback"
+  | "before_write"
+  | "after_term_write"
+  | "after_link_write"
+  | "after_readback";
+export type EvidenceBoundaryHook = (boundary: EvidenceBoundary) => Promise<void>;
+
+/** Compact JSON UTF-8 byte size, for the cumulative response budget. */
+function wireBytesOf(value: unknown): number {
+  return utf8ByteLength(JSON.stringify(value));
+}
+
+/**
+ * Resolve the accepted ancestry a request selects.
+ *
+ * `null` revision means the CAPTURED HEAD. An explicit revision that is not on
+ * accepted ancestry returns null rather than a raw orphan: a row merely
+ * existing in the table is not acceptance.
+ */
+async function selectAcceptedRevision(
+  adapter: DatasetAdapter,
+  workspace: string,
+  nodeId: string,
+  revisionId: string | null,
+): Promise<{ ancestry: Ancestry; head: string; selected: Record<string, unknown> } | null> {
+  await adapter.refresh("nodes");
+  const node = await findNode(adapter, workspace, nodeId);
+  if (node === null) return null;
+  const encodedNode = encodeNodeRow(node);
+  const head = encodedNode.current_revision_id;
+  if (typeof head !== "string") failPublication("integrity_failure", "");
+  await adapter.refresh("node_revisions");
+  const ancestry = await walkAncestry(adapter, workspace, nodeId, head);
+  const wanted = revisionId ?? head;
+  const selected = ancestry.encoded.find((row) => row.id === wanted);
+  if (selected === undefined) return null;
+  return { ancestry, head, selected };
+}
+
+/** The complete expected derived sets for ONE accepted revision. */
+function expectedSets(
+  workspace: string,
+  selected: Record<string, unknown>,
+): { terms: Record<string, unknown>[]; links: Record<string, unknown>[] } {
+  const revisionId = selected.id as string;
+  return {
+    terms: deriveTermRows(
+      workspace,
+      revisionId,
+      parseSnapshotArray(selected.term_snapshot_json, ""),
+    ),
+    links: deriveLinkRows(
+      workspace,
+      revisionId,
+      parseSnapshotArray(selected.link_snapshot_json, ""),
+    ),
+  };
+}
+
+function createEvidenceReadMethods(reader: DatasetAdapter) {
+  const requireWorkspace = async (workspace: string): Promise<void> => {
+    await reader.refresh(WORKSPACES);
+    const row = await contextOne(reader, WORKSPACES, `name = ${quote(workspace)}`);
+    if (row === null) failPublication("invalid_reference", "/workspace_name");
+  };
+
+  const associationsFor = (
+    workspace: string,
+    nodeId: string,
+    head: string,
+    selected: Record<string, unknown>,
+  ) => {
+    const sets = expectedSets(workspace, selected);
+    return {
+      workspace_name: workspace,
+      node_id: nodeId,
+      revision_id: selected.id as string,
+      content_digest: selected.content_digest as string,
+      snapshot_head_revision_id: head,
+      is_snapshot_head: selected.id === head,
+      terms: sets.terms,
+      links: sets.links,
+    };
+  };
+
+  return {
+    /**
+     * Authoritative associations, derived from the immutable snapshot.
+     *
+     * READ INVARIANT: this never queries node_revision_terms or
+     * revision_links. Materialization only changes those derived tables, so it
+     * cannot change this answer or the nodes-version witness.
+     */
+    async getRevisionAssociations(requestBytes: Uint8Array): Promise<Record<string, unknown> | null> {
+      const request = parseGetRevisionAssociations(requestBytes);
+      await requireWorkspace(request.workspace_name);
+      const resolved = await selectAcceptedRevision(
+        reader,
+        request.workspace_name,
+        request.node_id,
+        request.revision_id,
+      );
+      if (resolved === null) return null;
+      const result = associationsFor(
+        request.workspace_name,
+        request.node_id,
+        resolved.head,
+        resolved.selected,
+      );
+      if (wireBytesOf(result) > MAX_EVIDENCE_WIRE_BYTES) failPublication("limit_exceeded", "");
+      return result;
+    },
+
+    /**
+     * Reverse scan, correctness-first.
+     *
+     * Completeness is NOT answered from projection candidates: workspace nodes
+     * are enumerated, accepted ancestry verified, and links derived from
+     * snapshots even when projection rows are absent.
+     */
+    async scanDependents(requestBytes: Uint8Array): Promise<Record<string, unknown>> {
+      const request = parseScanDependents(requestBytes);
+      await requireWorkspace(request.workspace_name);
+
+      // Capture the witness AFTER an explicit refresh. The page version and
+      // every returned cursor version are this SAME captured value; they are
+      // not independently sampled.
+      await reader.refresh("nodes");
+      const captured = await reader.version("nodes");
+      if (!Number.isSafeInteger(captured) || captured <= 0) failPublication("integrity_failure", "");
+      const capturedText = BigInt(captured).toString(10);
+      if (request.cursor !== null && request.cursor.nodes_version !== capturedText) {
+        // A stale witness is a conservative restart, never a reinterpretation
+        // of a cursor against changed heads.
+        return { outcome: "restart_required" };
+      }
+
+      const occurrences: Record<string, unknown>[] = [];
+      /** Bytes of the ACTUAL candidate response, cursor and control included. */
+      const candidateBytes = (rows: Record<string, unknown>[], cursor: Record<string, unknown> | null) =>
+        wireBytesOf({ outcome: "page", nodes_version: capturedText, occurrences: rows, next_cursor: cursor });
+      let visitedNodes = 0;
+      let selectedRevisions = 0;
+      let examinedPositions = 0;
+      // Traversal progress. Advances over nonmatching links and completed
+      // revisions, so it can grow AFTER the last accepted match.
+      let nextCursor: Record<string, unknown> | null = null;
+      // The last boundary PROVEN to fit alongside the occurrences accepted up
+      // to that point, with the count it was proven against. Kept separately:
+      // reusing traversal progress on overflow re-measures the very value that
+      // overflowed, which is why the previous fallback could only throw again.
+      let lastMeasuredCursor: Record<string, unknown> | null = null;
+      let fittedCount = 0;
+
+      const cursorAt = (nodeId: string, revisionNo: string | null, position: string | null) => ({
+        workspace_name: request.workspace_name,
+        target_kind: request.target_kind,
+        target_key: request.target_key,
+        revision_mode: request.revision_mode,
+        nodes_version: capturedText,
+        node_id: nodeId,
+        revision_no: revisionNo,
+        position,
+      });
+
+      /** Has the witness moved since it was captured? */
+      const witnessMoved = async (): Promise<boolean> => {
+        await reader.refresh("nodes");
+        const now = await reader.version("nodes");
+        if (!Number.isSafeInteger(now) || now <= 0) failPublication("integrity_failure", "");
+        return BigInt(now).toString(10) !== capturedText;
+      };
+
+      // At the SAME nodes version the cursor's boundary must be real, even
+      // when both ordinal and position are null. Strict-greater enumeration
+      // would skip this check, and an inclusive fetch would silently move past
+      // a node that does not exist.
+      //
+      // The fault is COLLECTED rather than thrown: these reads happen after
+      // the witness was captured, so a cursor that was valid when it was
+      // issued can be invalidated by a concurrent write between the capture
+      // and this check. Blaming the caller's cursor for that is wrong -- at a
+      // changed witness the answer is restart, and only at an UNCHANGED
+      // witness is the cursor itself genuinely unusable.
+      if (request.cursor !== null) {
+        const cur = request.cursor;
+        let cursorFault: string | null = null;
+        const node = await contextOne(
+          reader,
+          "nodes",
+          `workspace_name = ${quote(request.workspace_name)} AND id = ${quote(cur.node_id)}`,
+        );
+        if (node === null) cursorFault = "/cursor/node_id";
+        if (cursorFault === null && cur.revision_no !== null) {
+          const at = await selectAcceptedRevision(reader, request.workspace_name, cur.node_id, null);
+          if (at === null) cursorFault = "/cursor/node_id";
+          else {
+            const chainAt =
+              request.revision_mode === "current"
+                ? [at.ancestry.encoded[at.ancestry.encoded.length - 1]!]
+                : at.ancestry.encoded;
+            const revisionAt = chainAt.find((r) => r.revision_no === cur.revision_no);
+            // The ordinal must belong to the SELECTED MODE, not merely exist.
+            if (revisionAt === undefined) cursorFault = "/cursor/revision_no";
+            else if (cur.position !== null) {
+              const links = deriveLinkRows(
+                request.workspace_name,
+                revisionAt.id as string,
+                parseSnapshotArray(revisionAt.link_snapshot_json, ""),
+              );
+              if (!links.some((l) => l.position === cur.position)) cursorFault = "/cursor/position";
+            }
+          }
+        }
+        if (cursorFault !== null) {
+          if (await witnessMoved()) return { outcome: "restart_required" };
+          failPublication("invalid_request", cursorFault);
+        }
+      }
+
+      let cursorNode = request.cursor?.node_id ?? null;
+      // A node with an UNFINISHED revision is refetched inclusively; a node
+      // already fully examined (both null) is passed strictly.
+      let inclusive = request.cursor !== null && request.cursor.revision_no !== null;
+      let done = false;
+
+      while (!done) {
+        if (visitedNodes >= MAX_VISITED_NODES) break;
+        const predicate =
+          cursorNode === null
+            ? `workspace_name = ${quote(request.workspace_name)}`
+            : `workspace_name = ${quote(request.workspace_name)} AND id ${inclusive ? ">=" : ">"} ${quote(cursorNode)}`;
+        const page = await reader.orderedProjection(
+          "nodes",
+          predicate,
+          ["id"],
+          { column: "id", ascending: true },
+          1,
+        );
+        if (page.length === 0) break;
+        const nodeId = page[0]!.id;
+        if (typeof nodeId !== "string") failPublication("integrity_failure", "");
+
+        // 0/1/>1 discrimination on EVERY selected identity. A duplicate at a
+        // page edge is invisible to keyset advancement, so it must be caught
+        // by an equality probe rather than by a page-level assertion.
+        const same = await reader.query(
+          "nodes",
+          `workspace_name = ${quote(request.workspace_name)} AND id = ${quote(nodeId)}`,
+          2,
+        );
+        if (same.length !== 1) failPublication("integrity_failure", "");
+
+        visitedNodes += 1;
+        cursorNode = nodeId;
+        inclusive = false;
+
+        const resolved = await selectAcceptedRevision(reader, request.workspace_name, nodeId, null);
+        if (resolved === null) {
+          nextCursor = cursorAt(nodeId, null, null);
+          continue;
+        }
+        // current selects the captured head only; history selects all accepted
+        // ancestors, oldest first.
+        const chain =
+          request.revision_mode === "current"
+            ? [resolved.ancestry.encoded[resolved.ancestry.encoded.length - 1]!]
+            : resolved.ancestry.encoded;
+
+        const resumeRevision =
+          request.cursor !== null && request.cursor.node_id === nodeId
+            ? request.cursor.revision_no
+            : null;
+        const resumePosition =
+          request.cursor !== null && request.cursor.node_id === nodeId
+            ? request.cursor.position
+            : null;
+
+        for (const revision of chain) {
+          const revisionNo = revision.revision_no as string;
+          if (resumeRevision !== null) {
+            const ordinal = BigInt(revisionNo);
+            const boundary = BigInt(resumeRevision);
+            // position null means that ordinal was FULLY examined, so it is
+            // skipped entirely rather than replayed from its first link.
+            if (resumePosition === null ? ordinal <= boundary : ordinal < boundary) continue;
+          }
+          if (selectedRevisions >= MAX_SELECTED_REVISIONS) {
+            done = true;
+            break;
+          }
+          selectedRevisions += 1;
+
+          const links = deriveLinkRows(
+            request.workspace_name,
+            revisionNo === undefined ? "" : (revision.id as string),
+            parseSnapshotArray(revision.link_snapshot_json, ""),
+          );
+          for (const link of links) {
+            const position = link.position as string;
+            if (
+              resumeRevision !== null &&
+              revisionNo === resumeRevision &&
+              resumePosition !== null &&
+              BigInt(position) <= BigInt(resumePosition)
+            ) {
+              continue;
+            }
+            if (examinedPositions >= MAX_EXAMINED_POSITIONS) {
+              done = true;
+              break;
+            }
+            examinedPositions += 1;
+            if (link.target_key !== request.target_key) {
+              nextCursor = cursorAt(nodeId, revisionNo, position);
+              continue;
+            }
+            const occurrence = {
+              workspace_name: request.workspace_name,
+              node_id: nodeId,
+              revision_id: revision.id as string,
+              revision_no: revisionNo,
+              content_digest: revision.content_digest as string,
+              snapshot_head_revision_id: resolved.head,
+              is_snapshot_head: revision.id === resolved.head,
+              link,
+            };
+            const candidateCursor = cursorAt(nodeId, revisionNo, position);
+            // Acceptance is measured against the TERMINAL form -- the smallest
+            // response that can carry this match, because an exhausted page
+            // emits a null cursor. Charging a continuation cursor that may
+            // never be emitted would split a legal exact-cap final page.
+            // Equality is allowed.
+            if (candidateBytes([...occurrences, occurrence], null) > MAX_EVIDENCE_WIRE_BYTES) {
+              // Never advance over the omitted matching occurrence. With no
+              // accepted prefix, a single unrepresentable item fails rather
+              // than spinning on an unchanged cursor.
+              if (occurrences.length === 0) failPublication("limit_exceeded", "");
+              done = true;
+              break;
+            }
+            occurrences.push(occurrence);
+            nextCursor = candidateCursor;
+            // Separately: the longest prefix whose CONTINUATION form also
+            // fits. A terminal page never needs this; a continued one can
+            // return no more than this much.
+            if (candidateBytes(occurrences, candidateCursor) <= MAX_EVIDENCE_WIRE_BYTES) {
+              lastMeasuredCursor = candidateCursor;
+              fittedCount = occurrences.length;
+            }
+            if (occurrences.length >= request.limit) {
+              done = true;
+              break;
+            }
+          }
+          if (done) break;
+          nextCursor = cursorAt(nodeId, revisionNo, null);
+        }
+        if (!done) nextCursor = cursorAt(nodeId, null, null);
+      }
+
+      // Check the witness AGAIN after all reads and before returning. Same
+      // validation as the initial capture: an out-of-range SDK value must not
+      // reach BigInt and become raw or rounded output.
+      if (await witnessMoved()) return { outcome: "restart_required" };
+
+      // Exhausted only when enumeration ran out, not when a budget stopped it.
+      const exhausted = !done && visitedNodes < MAX_VISITED_NODES;
+      const emitted = exhausted ? null : nextCursor;
+      const result = {
+        outcome: "page" as const,
+        nodes_version: capturedText,
+        occurrences,
+        next_cursor: emitted,
+      };
+      // An EXHAUSTED page always fits: every occurrence was accepted against
+      // exactly this terminal form. A CONTINUED one can still exceed, because
+      // the emitted boundary can be later and larger than the last measured
+      // candidate. Then the page is not thrown away -- it is trimmed to the
+      // prefix whose own continuation cursor was proven to fit.
+      if (wireBytesOf(result) > MAX_EVIDENCE_WIRE_BYTES) {
+        if (fittedCount === 0 || lastMeasuredCursor === null) {
+          failPublication("limit_exceeded", "");
+        }
+        // Fall back to the CHECKPOINT, not to traversal progress. Control
+        // fields can grow past the last accepted match -- a run of nonmatching
+        // links, or a completed revision -- and that growth is exactly what
+        // pushed the response over. The cursor is the one belonging to the
+        // LAST occurrence still returned, so the next page neither repeats a
+        // returned occurrence nor steps over an omitted match.
+        const fitted = {
+          outcome: "page" as const,
+          nodes_version: capturedText,
+          occurrences: occurrences.slice(0, fittedCount),
+          next_cursor: lastMeasuredCursor,
+        };
+        if (wireBytesOf(fitted) > MAX_EVIDENCE_WIRE_BYTES) failPublication("limit_exceeded", "");
+        return fitted;
+      }
+      return result;
+    },
+  };
+}
+
+type SetAction = "unchanged" | "filled" | "rebuilt";
+type TableName = "node_revision_terms" | "revision_links";
+
+/**
+ * Wire row -> PHYSICAL row for the shared Arrow append.
+ *
+ * The derived rows are WIRE shaped: `position` is decimal text and
+ * `captured_at` is an exact millisecond string. The shared append builds Arrow
+ * from BigInt and timestamp columns, so handing it the wire shapes writes the
+ * wrong physical types. Converted here rather than in storage.ts, which stays
+ * protected.
+ */
+function physicalDerivedRow(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...row };
+  out.position = BigInt(row.position as string);
+  if ("captured_at" in row) {
+    out.captured_at = row.captured_at === null ? null : timestampToMicros(row.captured_at as string);
+  }
+  return out;
+}
+
+function createEvidenceWriterService(writer: DatasetAdapter, core: OwnerCore) {
+  const reads = createEvidenceReadMethods(writer);
+
+  const rowsEqual = (a: Record<string, unknown>, b: Record<string, unknown>, fields: readonly string[]) =>
+    fields.every((f) => a[f] === b[f]);
+
+  const scopeOfRevision = (workspace: string, revisionId: string) =>
+    `workspace_name = ${quote(workspace)} AND revision_id = ${quote(revisionId)}`;
+
+  /** Read one scoped derived set, with enough lookahead to see excess rows. */
+  const preflight = async (
+    table: TableName,
+    workspace: string,
+    revisionId: string,
+    expected: Record<string, unknown>[],
+    fields: readonly string[],
+    encode: (row: Record<string, unknown>) => Record<string, unknown>,
+  ) => {
+    await writer.refresh(table);
+    const raw = await writer.query(table, scopeOfRevision(workspace, revisionId), expected.length + 1);
+    // A DERIVED row that cannot be decoded -- a sub-millisecond or
+    // out-of-wire-range capture time is physically valid in the timestamp[us]
+    // column -- is divergence of a rebuildable projection, NOT authoritative
+    // corruption. It is rebuilt here. Only an integrity failure raised BY this
+    // decoding is absorbed; anything else is a real fault and rethrows, and
+    // the post-write verification decode stays strict and fail-stop.
+    let decodable = true;
+    let currentRows: Record<string, unknown>[] = [];
+    try {
+      currentRows = raw.map(encode);
+    } catch (error) {
+      if (!(error instanceof PublicationError) || error.code !== "integrity_failure") throw error;
+      decodable = false;
+      currentRows = [];
+    }
+    const matches = (row: Record<string, unknown>) =>
+      currentRows.some((stored) => rowsEqual(stored, row, fields));
+    const noDuplicates = currentRows.every(
+      (stored, index) =>
+        currentRows.findIndex((other) => rowsEqual(other, stored, fields)) === index,
+    );
+    // An EMPTY set is vacuously a subset, which is what a first
+    // materialization looks like; treating it as a rebuild would fire a delete
+    // triple for a table with nothing to delete.
+    const isSubset =
+      noDuplicates && currentRows.every((stored) => expected.some((row) => rowsEqual(stored, row, fields)));
+    const allPresent = expected.every(matches);
+    const action: SetAction = !decodable
+      ? "rebuilt"
+      : allPresent && isSubset && currentRows.length === expected.length
+        ? "unchanged"
+        : isSubset
+          ? "filled"
+          : "rebuilt";
+    return {
+      action,
+      currentRows,
+      // The RAW observed count, so the delete comparison still holds when the
+      // stored rows were undecodable and `currentRows` is therefore empty.
+      observedCount: raw.length,
+      lookaheadReached: raw.length > expected.length,
+      toAppend: action === "rebuilt" ? expected : expected.filter((row) => !matches(row)),
+    };
+  };
+
+  /**
+   * Apply one table's plan.
+   *
+   * `attemptedAny` is the operation-wide truth across BOTH tables: a first
+   * pre-write hook failure with nothing attempted leaves the owner usable,
+   * while the same failure after any earlier row has been attempted poisons.
+   * Passing a constant `true` would have poisoned an untouched owner.
+   */
+  const applyTable = async (
+    table: TableName,
+    workspace: string,
+    revisionId: string,
+    plan: Awaited<ReturnType<typeof preflight>>,
+    expected: Record<string, unknown>[],
+    fields: readonly string[],
+    encode: (row: Record<string, unknown>) => Record<string, unknown>,
+    successBoundary: "after_term_write" | "after_link_write",
+    attemptedAny: () => boolean,
+    markAttempted: () => void,
+  ): Promise<void> => {
+    const scope = scopeOfRevision(workspace, revisionId);
+    if (plan.action === "unchanged") return;
+
+    // Wire -> physical conversion happens BEFORE the first mutation boundary
+    // and before any attempt flag. A conversion fault is a pure programming
+    // error, and raising it after `markAttempted` would poison an owner that
+    // never reached the SDK.
+    const physicalRows = plan.toAppend.map(physicalDerivedRow);
+
+    if (plan.action === "rebuilt") {
+      await core.evidenceBoundary("before_delete", attemptedAny());
+      markAttempted();
+      core.markAttemptedWrite();
+      const deleted = await core.afterWrite(async () =>
+        writer.deleteDerivedScope(table, workspace, revisionId),
+      );
+      await core.evidenceBoundary("after_delete", true);
+      await core.afterWrite(async () => {
+        await writer.refresh(table);
+        const left = await writer.query(table, scope, 1);
+        // A refreshed EMPTY scoped set is required before reinsertion. A table
+        // version is not a row-count substitute: a zero-match delete advances
+        // the version while deleting nothing.
+        if (left.length !== 0) {
+          core.poison();
+          failPublication("recovery_required", "");
+        }
+        // Exact compare when the pre-read exhausted the scope; lower-bound
+        // compare when the expected+1 lookahead was reached.
+        if (plan.lookaheadReached) {
+          if (deleted.numDeletedRows < plan.observedCount) {
+            core.poison();
+            failPublication("recovery_required", "");
+          }
+        } else if (deleted.numDeletedRows !== plan.observedCount) {
+          core.poison();
+          failPublication("recovery_required", "");
+        }
+      });
+      await core.evidenceBoundary("after_delete_readback", true);
+    }
+
+    for (const [index, row] of plan.toAppend.entries()) {
+      await core.evidenceBoundary("before_write", attemptedAny());
+      markAttempted();
+      core.markAttemptedWrite();
+      // Actual safe errors keep their class through the shared boundary; only
+      // genuinely unknown failures normalize. A local catch-all would relabel
+      // a deliberately raised error as recovery_required.
+      await core.afterWrite(async () => {
+        await writer.append(table, [physicalRows[index]!]);
+      });
+      await core.evidenceBoundary(successBoundary, true);
+      await core.afterWrite(async () => {
+        await writer.refresh(table);
+        const found = await writer.query(table, `${scope} AND position = ${row.position as string}`, 2);
+        if (found.length !== 1) {
+          core.poison();
+          failPublication("recovery_required", "");
+        }
+        if (!rowsEqual(encode(found[0]!), row, fields)) {
+          core.poison();
+          failPublication("recovery_required", "");
+        }
+      });
+      await core.evidenceBoundary("after_readback", true);
+    }
+  };
+
+  return {
+    ...reads,
+
+    reconcileRevisionAssociations: (requestBytes: Uint8Array) => {
+      // STATIC validation precedes owner work. Parsing inside the queued turn
+      // would make a malformed request an owner event.
+      const request = parseReconcileRevisionAssociations(requestBytes);
+      return core.serial(async () => {
+        await writer.refresh(WORKSPACES);
+        const ws = await contextOne(writer, WORKSPACES, `name = ${quote(request.workspace_name)}`);
+        if (ws === null) failPublication("invalid_reference", "/workspace_name");
+
+        // A missing NODE and an orphan revision are different references and
+        // must not collapse to one pointer. The reader keeps returning null
+        // for an absent node; only this WRITER reports it, at /node_id.
+        await writer.refresh("nodes");
+        if ((await findNode(writer, request.workspace_name, request.node_id)) === null) {
+          failPublication("invalid_reference", "/node_id");
+        }
+
+        const resolved = await selectAcceptedRevision(
+          writer,
+          request.workspace_name,
+          request.node_id,
+          request.revision_id,
+        );
+        // An orphan is never materialized into apparent acceptance.
+        if (resolved === null) failPublication("invalid_reference", "/revision_id");
+
+        const expected = expectedSets(request.workspace_name, resolved.selected);
+
+        // BOTH scoped sets are preflighted before ANY persistence.
+        const termPlan = await preflight(
+          TERMS_TABLE, request.workspace_name, request.revision_id,
+          expected.terms, TERM_FIELDS_LOCAL, encodeDerivedTerm,
+        );
+        const linkPlan = await preflight(
+          LINKS_TABLE, request.workspace_name, request.revision_id,
+          expected.links, LINK_FIELDS_LOCAL, encodeDerivedLink,
+        );
+
+        let attempted = false;
+        const attemptedAny = () => attempted;
+        const markAttempted = () => {
+          attempted = true;
+        };
+
+        // ALL term-table boundaries finish before ANY link-table boundary.
+        await applyTable(
+          TERMS_TABLE, request.workspace_name, request.revision_id, termPlan,
+          expected.terms, TERM_FIELDS_LOCAL, encodeDerivedTerm,
+          "after_term_write", attemptedAny, markAttempted,
+        );
+        await applyTable(
+          LINKS_TABLE, request.workspace_name, request.revision_id, linkPlan,
+          expected.links, LINK_FIELDS_LOCAL, encodeDerivedLink,
+          "after_link_write", attemptedAny, markAttempted,
+        );
+
+        // Final all-set verification: no boundaries, and no ACK for a
+        // count-only match.
+        if (attempted) {
+          await core.afterWrite(async () => {
+            for (const [table, rows, fields, encode] of [
+              [TERMS_TABLE, expected.terms, TERM_FIELDS_LOCAL, encodeDerivedTerm],
+              [LINKS_TABLE, expected.links, LINK_FIELDS_LOCAL, encodeDerivedLink],
+            ] as const) {
+              await writer.refresh(table);
+              const stored = (
+                await writer.query(
+                  table,
+                  scopeOfRevision(request.workspace_name, request.revision_id),
+                  rows.length + 1,
+                )
+              ).map(encode);
+              if (stored.length !== rows.length) {
+                core.poison();
+                failPublication("recovery_required", "");
+              }
+              for (const row of rows) {
+                if (!stored.some((s) => fields.every((f) => s[f] === row[f]))) {
+                  core.poison();
+                  failPublication("recovery_required", "");
+                }
+              }
+            }
+          });
+        }
+
+        return {
+          outcome:
+            termPlan.action === "unchanged" && linkPlan.action === "unchanged"
+              ? ("already_satisfied" as const)
+              : ("reconciled" as const),
+          workspace_name: request.workspace_name,
+          node_id: request.node_id,
+          revision_id: request.revision_id,
+          content_digest: resolved.selected.content_digest as string,
+          terms: { action: termPlan.action, count: BigInt(expected.terms.length).toString(10) },
+          links: { action: linkPlan.action, count: BigInt(expected.links.length).toString(10) },
+        };
+      });
+    },
+  };
+}
+
+/** Stored derived rows decode losslessly; Int64 positions are decimal text. */
+function encodeDerivedTerm(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const field of TERM_FIELDS_LOCAL) {
+    out[field] = field === "position" ? decimalOf(row[field]) : (row[field] ?? null);
+  }
+  return out;
+}
+function encodeDerivedLink(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const field of LINK_FIELDS_LOCAL) {
+    if (field === "position") out[field] = decimalOf(row[field]);
+    // RAW micros back to the exact wire string, so a stored capture time
+    // compares against the derived one instead of always differing.
+    else if (field === "captured_at") {
+      const raw = row[field];
+      out[field] = raw === null || raw === undefined ? null : microsToTimestamp(rawMicrosOf(raw));
+    } else out[field] = row[field] ?? null;
+  }
+  return out;
+}
+function rawMicrosOf(value: unknown): bigint {
+  if (typeof value === "bigint") return value;
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value)) failPublication("integrity_failure", "");
+    return BigInt(value);
+  }
+  return failPublication("integrity_failure", "");
+}
+function decimalOf(value: unknown): string {
+  if (typeof value === "bigint") return value.toString(10);
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value)) failPublication("integrity_failure", "");
+    return BigInt(value).toString(10);
+  }
+  if (typeof value === "string") return value;
+  return failPublication("integrity_failure", "");
+}
+
+export type EvidenceReaderService = ReturnType<typeof createEvidenceReadMethods>;
+export type EvidenceWriterService = ReturnType<typeof createEvidenceWriterService>;
+
+export type EvidenceReaderBundle = {
+  publication: PublicationReaderService;
+  taxonomy: TaxonomyReaderService;
+  context: ContextReaderService;
+  evidence: EvidenceReaderService;
+};
+export type EvidenceWriterBundle = {
+  publication: Omit<PublicationWriterService, "close">;
+  taxonomy: TaxonomyWriterService;
+  context: ContextWriterService;
+  evidence: EvidenceWriterService;
+  close: () => Promise<void>;
+};
+export type EvidenceOptions = ContextOptions & { onEvidenceBoundary?: EvidenceBoundaryHook };
+
+/** Four facades over one gateless connection. No gate, no queue. */
+export async function openEvidenceReader(datasetRoot: string): Promise<EvidenceReaderBundle> {
+  const canonical = assertLocalDatasetRoot(datasetRoot);
+  const adapter = makeAdapter(await openPrivateConnection(canonical), () => {});
+  return Object.freeze({
+    publication: Object.freeze(makeReadMethods(adapter)),
+    taxonomy: Object.freeze(createTaxonomyReadMethods(adapter)),
+    context: Object.freeze(createContextReadMethods(adapter)),
+    evidence: Object.freeze(createEvidenceReadMethods(adapter)),
+  });
+}
+
+/**
+ * One owner, four write facades.
+ *
+ * The bundle ALONE closes the owner. Nested facades carry no close, so no
+ * facade can release a gate another still depends on.
+ */
+export async function openEvidenceWriter(
+  datasetRoot: string,
+  options: EvidenceOptions,
+): Promise<EvidenceWriterBundle> {
+  assertSourceNamespace(options.sourceNamespace);
+  const canonical = assertLocalDatasetRoot(datasetRoot);
+  assertInheritedGate(canonical, options.env);
+  if (OWNERS.has(canonical)) failPublication("writer_unavailable");
+  const token = Symbol(canonical);
+  OWNERS.set(canonical, token);
+
+  let adapter: DatasetAdapter;
+  try {
+    adapter = makeAdapter(await openPrivateConnection(canonical), () => {
+      if (OWNERS.get(canonical) === token) OWNERS.delete(canonical);
+    });
+  } catch (error) {
+    OWNERS.delete(canonical);
+    throw error;
+  }
+
+  const clock = options.clock ?? Date.now;
+  const core = createOwnerCore(adapter, {
+    onBoundary: options.onBoundary,
+    onTaxonomyBoundary: options.onTaxonomyBoundary,
+    onContextBoundary: options.onContextBoundary,
+    onEvidenceBoundary: options.onEvidenceBoundary,
+  });
+  const publication = createPublicationWriterService(
+    adapter,
+    { clock, newRevisionId: options.newRevisionId },
+    core,
+  );
+  const { close: _ownedByTheBundle, ...publicationData } = publication;
+
+  return Object.freeze({
+    publication: Object.freeze(publicationData),
+    taxonomy: Object.freeze(createTaxonomyWriterService(adapter, core, { clock })),
+    context: Object.freeze(
+      createContextWriterService(adapter, core, { clock, sourceNamespace: options.sourceNamespace }),
+    ),
+    evidence: Object.freeze(createEvidenceWriterService(adapter, core)),
+    close: core.close,
+  });
 }
