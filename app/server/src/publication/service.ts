@@ -803,6 +803,16 @@ function createPublicationWriterService(
   let poisoned = false;
   /** Set by close(): work queued after it is rejected, not silently run. */
   let closing = false;
+  /**
+   * The ONE close, cached.
+   *
+   * A descriptor NUMBER is a reusable integer, not an identity. Once the
+   * inherited gate descriptor is released the kernel may hand that same number
+   * back for something entirely unrelated, so releasing on every call would
+   * eventually close a descriptor this writer never owned. Caching the promise
+   * also makes concurrent closes drain the queue once and settle together.
+   */
+  let closeOnce: Promise<void> | undefined;
 
   /**
    * Await the fault-test hook at a commanded boundary.
@@ -1318,11 +1328,17 @@ function createPublicationWriterService(
      * dataset as busy even though this owner is finished. Closing it is what
      * makes "close while the process stays alive" actually free the gate.
      */
-    close: async () => {
-      closing = true;
-      await queue.catch(() => undefined);
-      writer.release();
-      releaseInheritedGate();
+    close: () => {
+      // First call does the work; every later call awaits that same result.
+      // `closing` is still set synchronously here, so a request enqueued after
+      // close is rejected exactly as before.
+      closeOnce ??= (async () => {
+        closing = true;
+        await queue.catch(() => undefined);
+        writer.release();
+        releaseInheritedGate();
+      })();
+      return closeOnce;
     },
   });
 }
