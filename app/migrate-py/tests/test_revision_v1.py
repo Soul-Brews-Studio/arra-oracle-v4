@@ -460,6 +460,11 @@ class IsolationTests(unittest.TestCase):
         TS_ROOT / "publication" / "rows.ts",
         TS_ROOT / "publication" / "storage.ts",
         TS_ROOT / "publication" / "service.ts",
+        # The #47 taxonomy kernel reuses the SAME governed helpers for the same
+        # reason: it must not carry a second parser or a second canonicalizer.
+        # Listed as an exact file, deliberately, so the next module added under
+        # publication/ still has to be reviewed rather than inheriting this.
+        TS_ROOT / "publication" / "taxonomy.ts",
     )
 
     #: The publication kernel is internal: no active source may import it.
@@ -468,8 +473,10 @@ class IsolationTests(unittest.TestCase):
         TS_ROOT / "publication" / "rows.ts",
         TS_ROOT / "publication" / "storage.ts",
         TS_ROOT / "publication" / "service.ts",
+        TS_ROOT / "publication" / "taxonomy.ts",
     )
     PUBLICATION_IMPORT_PATTERNS = (
+        "publication/taxonomy",
         "publication/service",
         "publication/storage",
         "publication/rows",
@@ -571,6 +578,7 @@ class IsolationTests(unittest.TestCase):
             'import { quote } from "src/publication/storage";\n',
             'import { encodeRevisionRow } from "src/publication/rows";\n',
             'import { PublicationError } from "src/publication/errors";\n',
+            'import { failTaxonomy } from "src/publication/taxonomy";\n',
             'const a = await import("./publication");\n',
             'const b = await import("../publication");\n',
         )
