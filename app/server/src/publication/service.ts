@@ -23,7 +23,28 @@
 
 import { parseStrictBytes, type JcsObject, type JcsValue } from "../contracts/jcs";
 import { ENVELOPE_KEYS, revisionOp, verifyRevisionOp, type RevisionResult } from "../contracts/revision-v1";
+import { ContractError } from "../contracts/errors";
 import { failPublication, isContractError, PublicationError } from "./errors";
+import {
+  encodeTermRow,
+  encodeVocabularyRow,
+  failTaxonomy,
+  parseCreateTerm,
+  parseCreateVocabulary,
+  parseGetTerm,
+  parseGetVocabulary,
+  parseRenameTerm,
+  parseReparentTerm,
+  parseRetireTerm,
+  parseSeedRequest,
+  seedTermRows,
+  seedVocabularyRows,
+  SEED_TERM_ORDER,
+  TaxonomyError,
+  TERM_FIELDS,
+  VOCABULARY_FIELDS,
+  type TaxonomyErrorCode,
+} from "./taxonomy";
 import {
   EMPTY_ARRAY_BYTES,
   MAX_CHAIN_ROWS,
@@ -212,6 +233,20 @@ export type PublicationBoundary =
   | "after_head_publication";
 
 export type BoundaryHook = (boundary: PublicationBoundary) => Promise<void>;
+
+/**
+ * Taxonomy fault seam. Fires PER MUTATED ROW, never per staging phase: a
+ * crash-after-the-third-term test can only name WHICH row was written if each
+ * row emits its own triple.
+ */
+export type TaxonomyBoundary =
+  | "before_write"
+  | "after_term_write"
+  | "after_vocabulary_write"
+  | "after_update"
+  | "after_readback";
+
+export type TaxonomyBoundaryHook = (boundary: TaxonomyBoundary) => Promise<void>;
 
 /** Mint revision IDs. Injected so tests are deterministic without stubbing time. */
 export type IdSource = () => string;
@@ -793,11 +828,51 @@ function createPublicationReaderService(reader: DatasetAdapter): PublicationRead
  * Writer service. PRIVATE for the same reason as the reader factory: the
  * only supported construction is `openPublicationWriter`.
  */
-function createPublicationWriterService(
+/**
+ * The one module-private owner.
+ *
+ * Serial write queue, attempted-write tracking, fail-stop poison, released
+ * state and the one-shot close live HERE rather than in a facade, so
+ * publication and taxonomy genuinely SHARE them: a failure in either poisons
+ * later writes in both. Nothing here is exported and nothing accepts
+ * caller-asserted authority.
+ */
+type OwnerCore = {
+  serial: <T>(work: () => Promise<T>) => Promise<T>;
+  boundary: (name: PublicationBoundary, wroteAlready: boolean) => Promise<void>;
+  taxonomyBoundary: (name: TaxonomyBoundary, wroteAlready: boolean) => Promise<void>;
+  markAttemptedWrite: () => void;
+  afterWrite: <T>(work: () => Promise<T>) => Promise<T>;
+  poison: () => void;
+  close: () => Promise<void>;
+};
+
+/**
+ * Is this an error WE deliberately raised, rather than an unknown failure?
+ *
+ * Exact types only. Matching on a `name` or `code` property would let any
+ * object shaped like an error escape normalization.
+ */
+function isSafeContractError(error: unknown): boolean {
+  // `instanceof` against the ACTUAL classes.
+  //
+  // The protected `isContractError` helper matches on `name` alone, which is
+  // duck typing: measured, isContractError({name:"ContractError"}) is true.
+  // Using it here would let any object shaped like a contract error escape
+  // normalization and carry its raw text out through the boundary. The
+  // protected helper is left untouched -- it has its own callers and its own
+  // contract; it is simply the wrong tool for a trust decision.
+  return (
+    error instanceof PublicationError ||
+    error instanceof TaxonomyError ||
+    error instanceof ContractError
+  );
+}
+
+function createOwnerCore(
   writer: DatasetAdapter,
-  options: { clock: Clock; newRevisionId: IdSource; onBoundary?: BoundaryHook },
-): PublicationWriterService {
-  const reads = makeReadMethods(writer);
+  hooks: { onBoundary?: BoundaryHook; onTaxonomyBoundary?: TaxonomyBoundaryHook },
+): OwnerCore {
   let queue: Promise<unknown> = Promise.resolve();
   /** Fail-stop: once poisoned, no further queued mutation may run. */
   let poisoned = false;
@@ -821,10 +896,14 @@ function createPublicationWriterService(
    * leaves durable state this owner can no longer reason about, so it takes
    * the same fail-stop path as any other ambiguous post-write failure.
    */
-  const boundary = async (name: PublicationBoundary, wroteAlready: boolean): Promise<void> => {
-    if (options.onBoundary === undefined) return;
+  const runHook = async (
+    hook: ((name: string) => Promise<void>) | undefined,
+    name: string,
+    wroteAlready: boolean,
+  ): Promise<void> => {
+    if (hook === undefined) return;
     try {
-      await options.onBoundary(name);
+      await hook(name);
     } catch {
       if (wroteAlready) {
         poisoned = true;
@@ -833,6 +912,12 @@ function createPublicationWriterService(
       failPublication("invalid_request");
     }
   };
+
+  const boundary = (name: PublicationBoundary, wroteAlready: boolean): Promise<void> =>
+    runHook(hooks.onBoundary as ((n: string) => Promise<void>) | undefined, name, wroteAlready);
+
+  const taxonomyBoundary = (name: TaxonomyBoundary, wroteAlready: boolean): Promise<void> =>
+    runHook(hooks.onTaxonomyBoundary as ((n: string) => Promise<void>) | undefined, name, wroteAlready);
 
   const serial = <T>(work: () => Promise<T>): Promise<T> => {
     const next = queue.then(async () => {
@@ -857,7 +942,14 @@ function createPublicationWriterService(
           // ambiguous-window code the contract specifies. Doing it here keeps
           // the guarantee a property of the operation rather than something
           // each future write site has to remember.
-          if (!(error instanceof PublicationError)) failPublication("recovery_required");
+          // Preserve DELIBERATELY raised safe contract errors; normalize only
+          // genuinely unknown exceptions. Collapsing a thrown
+          // integrity_failure into recovery_required would lose the
+          // difference between "ambiguous" and "the stored row is
+          // structurally invalid" -- different operator problems. This is an
+          // exact list of our own error types, NOT a whitelist of any object
+          // that happens to carry a name or a code.
+          if (!isSafeContractError(error)) failPublication("recovery_required");
         }
         throw error;
       }
@@ -869,6 +961,77 @@ function createPublicationWriterService(
     );
     return next as Promise<T>;
   };
+
+  /**
+   * Whether the CURRENT serialized operation has attempted any persistence.
+   *
+   * One flag per operation, set immediately before each append or update,
+   * rather than a catch around every call site. Scattered catches were how
+   * the node append and the head update ended up unguarded while the
+   * revision readback was covered: the guarantee has to be a property of the
+   * operation, not something each new write site remembers to opt into.
+   */
+  let attemptedWrite = false;
+
+  /** Mark persistence as attempted. Call IMMEDIATELY before any write. */
+  const markAttemptedWrite = (): void => {
+    attemptedWrite = true;
+  };
+
+  /**
+   * Run post-write work, poisoning the owner if anything goes wrong.
+   *
+   * Once anything is durably written, every later step is inside the
+   * ambiguous window contract section 7 describes. Deliberately scoped to
+   * AFTER an attempted write: pre-write validation errors leave nothing
+   * behind and must keep the owner usable.
+   */
+  const afterWrite = async <T>(work: () => Promise<T>): Promise<T> => {
+    try {
+      return await work();
+    } catch (error) {
+      poisoned = true;
+      if (isSafeContractError(error)) throw error;
+      return failPublication("recovery_required");
+    }
+  };
+
+  return {
+    serial,
+    boundary,
+    taxonomyBoundary,
+    markAttemptedWrite,
+    afterWrite,
+    poison: () => {
+      poisoned = true;
+    },
+    /**
+     * Close: stop accepting work, drain what is in flight, then RELEASE the
+     * gate -- including the inherited descriptor. Deleting the in-process
+     * registry entry is not enough: the flock lives on fd 42.
+     *
+     * One-shot (#46): a descriptor NUMBER is reusable, so a second release
+     * would close a descriptor this owner never held.
+     */
+    close: () => {
+      closeOnce ??= (async () => {
+        closing = true;
+        await queue.catch(() => undefined);
+        writer.release();
+        releaseInheritedGate();
+      })();
+      return closeOnce;
+    },
+  };
+}
+
+function createPublicationWriterService(
+  writer: DatasetAdapter,
+  options: { clock: Clock; newRevisionId: IdSource },
+  core: OwnerCore,
+): PublicationWriterService {
+  const reads = makeReadMethods(writer);
+  const { afterWrite, boundary, markAttemptedWrite, poison, serial } = core;
 
   const publish = async (requestBytes: Uint8Array): Promise<PublishOutcome> => {
     const outer = parseRequest(requestBytes);
@@ -1207,7 +1370,7 @@ function createPublicationWriterService(
     });
     // Anything but exactly one row is ambiguous: fail-stop, never guess.
     if (rowsUpdated !== 1) {
-      poisoned = true;
+      poison();
       failPublication("recovery_required");
     }
     await boundary("after_head_publication", true);
@@ -1224,40 +1387,6 @@ function createPublicationWriterService(
   };
 
   /** Append one row, then read it back by BOTH scoped identities. */
-  /**
-   * Whether the CURRENT serialized operation has attempted any persistence.
-   *
-   * One flag per operation, set immediately before each append or update,
-   * rather than a catch around every call site. Scattered catches were how
-   * the node append and the head update ended up unguarded while the
-   * revision readback was covered: the guarantee has to be a property of the
-   * operation, not something each new write site remembers to opt into.
-   */
-  let attemptedWrite = false;
-
-  /** Mark persistence as attempted. Call IMMEDIATELY before any write. */
-  const markAttemptedWrite = (): void => {
-    attemptedWrite = true;
-  };
-
-  /**
-   * Run post-write work, poisoning the owner if anything goes wrong.
-   *
-   * Once anything is durably written, every later step is inside the
-   * ambiguous window contract section 7 describes. Deliberately scoped to
-   * AFTER an attempted write: pre-write validation errors leave nothing
-   * behind and must keep the owner usable.
-   */
-  const afterWrite = async <T>(work: () => Promise<T>): Promise<T> => {
-    try {
-      return await work();
-    } catch (error) {
-      poisoned = true;
-      if (error instanceof PublicationError) throw error;
-      return failPublication("recovery_required");
-    }
-  };
-
   const appendAndVerify = async (
     built: BuiltRevision,
     workspace: string,
@@ -1269,7 +1398,7 @@ function createPublicationWriterService(
     try {
       await writer.append("node_revisions", [built.physical]);
     } catch {
-      poisoned = true;
+      poison();
       failPublication("recovery_required");
     }
     await boundary("after_revision_append", true);
@@ -1280,7 +1409,7 @@ function createPublicationWriterService(
     const byId = await afterWrite(() => findRevisionById(writer, workspace, revisionId));
     const byOperation = await afterWrite(() => findOperation(writer, workspace, operationId));
     if (byId === null || byOperation === null) {
-      poisoned = true;
+      poison();
       failPublication("recovery_required");
     }
     // Compare the COMPLETE expected immutable row, field by field, not just
@@ -1294,7 +1423,7 @@ function createPublicationWriterService(
     const expected = built.wire;
     for (const field of Object.keys(expected)) {
       if (storedById[field] !== expected[field] || storedByOperation[field] !== expected[field]) {
-        poisoned = true;
+        poison();
         failPublication("recovery_required");
       }
     }
@@ -1328,18 +1457,7 @@ function createPublicationWriterService(
      * dataset as busy even though this owner is finished. Closing it is what
      * makes "close while the process stays alive" actually free the gate.
      */
-    close: () => {
-      // First call does the work; every later call awaits that same result.
-      // `closing` is still set synchronously here, so a request enqueued after
-      // close is rejected exactly as before.
-      closeOnce ??= (async () => {
-        closing = true;
-        await queue.catch(() => undefined);
-        writer.release();
-        releaseInheritedGate();
-      })();
-      return closeOnce;
-    },
+    close: core.close,
   });
 }
 
@@ -1388,11 +1506,12 @@ export async function openPublicationWriter(
     throw error;
   }
 
-  return createPublicationWriterService(adapter, {
-    clock: options.clock ?? Date.now,
-    newRevisionId: options.newRevisionId,
-    onBoundary: options.onBoundary,
-  });
+  const core = createOwnerCore(adapter, { onBoundary: options.onBoundary });
+  return createPublicationWriterService(
+    adapter,
+    { clock: options.clock ?? Date.now, newRevisionId: options.newRevisionId },
+    core,
+  );
 }
 
 /**
@@ -1499,3 +1618,762 @@ function buildRevisionRow(
 }
 
 export { PublicationError };
+
+/* ------------------------------------------------------------------ *
+ * Taxonomy persistence. Private to this module: taxonomy.ts stays pure.
+ * ------------------------------------------------------------------ */
+
+const VOCABULARIES = "vocabularies";
+const TERMS = "terms";
+
+/**
+ * Translate an owner-core failure into the taxonomy envelope.
+ *
+ * The shared core speaks one internal language (`PublicationError`) because it
+ * is shared; each facade presents its own envelope. Every publication code has
+ * a taxonomy counterpart, so this is total and never invents a classification
+ * -- it carries code and path across unchanged. Anything that is NOT a
+ * PublicationError is rethrown untouched, so governed `arra-error/v1`
+ * diagnostics still pass through.
+ */
+function asTaxonomyError(error: unknown): never {
+  if (error instanceof PublicationError) {
+    throw new TaxonomyError(error.code as TaxonomyErrorCode, error.path);
+  }
+  throw error;
+}
+
+/** Exactly one row at a scoped identity, or null. Never a first-match guess. */
+async function scopedOne(
+  adapter: DatasetAdapter,
+  table: string,
+  predicate: string,
+): Promise<Record<string, unknown> | null> {
+  const rows = await adapter.query(table, predicate);
+  if (rows.length === 0) return null;
+  // Multiple rows at an identity that must be unique is corruption. Picking
+  // one would make a corrupt dataset look healthy.
+  //
+  // ROOT path, deliberately: this is a global stored-state failure, not a
+  // complaint about the field the caller happened to send.
+  if (rows.length > 1) failTaxonomy("integrity_failure", "");
+  return rows[0]!;
+}
+
+const scopeOf = (workspace: string) => `workspace_name = ${quote(workspace)}`;
+
+function createTaxonomyReadMethods(reader: DatasetAdapter) {
+  /**
+   * Reads need the same envelope translation the mutators get.
+   *
+   * The owner core raises PublicationError because it is SHARED, so a
+   * released or otherwise unusable adapter surfaced
+   * `arra-publication-error/v1` from a taxonomy call. The code is identical
+   * in both envelopes, which is why asserting only the code never caught it.
+   *
+   * Governed ContractError from strict parsing passes through untouched:
+   * asTaxonomyError rethrows anything that is not a PublicationError.
+   */
+  const read = <T>(work: () => Promise<T>): Promise<T> => work().catch(asTaxonomyError);
+
+  return {
+    getVocabulary(requestBytes: Uint8Array): Promise<Record<string, unknown> | null> {
+      return read(async () => {
+        const request = parseGetVocabulary(requestBytes);
+        await reader.refresh(VOCABULARIES);
+        const row = await scopedOne(
+          reader,
+          VOCABULARIES,
+          `${scopeOf(request.workspace_name)} AND id = ${quote(request.vocabulary_id)}`,
+        );
+        return row === null ? null : encodeVocabularyRow(row);
+      });
+    },
+
+    getTerm(requestBytes: Uint8Array): Promise<Record<string, unknown> | null> {
+      return read(async () => {
+        const request = parseGetTerm(requestBytes);
+        await reader.refresh(TERMS);
+        // A staged term stays visible even when its vocabulary is absent: that
+        // is a legitimate resume state, not corruption, and hiding it would
+        // make a partial seed look like a fresh one.
+        const row = await scopedOne(
+          reader,
+          TERMS,
+          `${scopeOf(request.workspace_name)} AND id = ${quote(request.term_id)}`,
+        );
+        return row === null ? null : encodeTermRow(row);
+      });
+    },
+  };
+}
+
+type TaxonomyRow = Record<string, unknown>;
+type MutationOutcome = { outcome: "created" | "already_satisfied" | "updated"; row: TaxonomyRow };
+
+/**
+ * Compare a stored row against the state we would have written.
+ *
+ * `created_at` is EXCLUDED: an existing row keeps its own validated allocation
+ * time, and a retry must never refresh it. Everything else must match exactly,
+ * so a renamed or retired row conflicts rather than being silently repaired.
+ */
+function sameExcept(stored: TaxonomyRow, expected: TaxonomyRow, fields: readonly string[]): boolean {
+  for (const field of fields) {
+    if (field === "created_at") continue;
+    if (stored[field] !== expected[field]) return false;
+  }
+  return true;
+}
+
+function createTaxonomyWriterService(
+  writer: DatasetAdapter,
+  core: OwnerCore,
+  options: { clock: Clock },
+) {
+  const reads = createTaxonomyReadMethods(writer);
+
+  /** Run a mutation on the SHARED queue, presenting the taxonomy envelope. */
+  const mutate = <T>(work: () => Promise<T>): Promise<T> =>
+    core.serial(work).catch(asTaxonomyError);
+
+  /**
+   * Persist one row and prove it landed.
+   *
+   * Boundary order is frozen PER ROW: `before_write` immediately before the
+   * attempted SDK call, then exactly ONE success boundary, then the readback
+   * verification, then one `after_readback`. The attempted-write flag is set
+   * immediately before the SDK call and NOT before the hook, so a hook failure
+   * on a first row leaves the owner usable while a hook failure after an
+   * earlier attempted row still poisons.
+   *
+   * A failed SDK call or a failed verification emits no later success boundary.
+   */
+  const writeRow = async (
+    table: string,
+    row: TaxonomyRow,
+    successBoundary: TaxonomyBoundary,
+    wroteAlready: boolean,
+  ): Promise<void> => {
+    await core.taxonomyBoundary("before_write", wroteAlready);
+    core.markAttemptedWrite();
+    try {
+      await writer.append(table, [row]);
+    } catch {
+      core.poison();
+      failTaxonomy("recovery_required");
+    }
+    await core.taxonomyBoundary(successBoundary, true);
+    await core.afterWrite(async () => {
+      await writer.refresh(table);
+      const id = row.id as string;
+      const workspace = row.workspace_name as string;
+      const stored = await scopedOne(
+        writer,
+        table,
+        `${scopeOf(workspace)} AND id = ${quote(id)}`,
+      );
+      if (stored === null) {
+        core.poison();
+        failTaxonomy("recovery_required");
+      }
+      const encoded = table === TERMS ? encodeTermRow(stored) : encodeVocabularyRow(stored);
+      const fields = table === TERMS ? TERM_FIELDS : VOCABULARY_FIELDS;
+      const expected = table === TERMS ? encodeTermRow(row) : encodeVocabularyRow(row);
+      for (const field of fields) {
+        if (encoded[field] !== expected[field]) {
+          core.poison();
+          failTaxonomy("recovery_required");
+        }
+      }
+    });
+    await core.taxonomyBoundary("after_readback", true);
+  };
+
+  /**
+   * Resolve the workspace row before ANY identity lookup.
+   *
+   * Contract precedence is: request validity, workspace, scoped target
+   * identity, stored integrity, foreign refs, expected value, persistence.
+   * Skipping this let rows be written into a scope with no workspaces row --
+   * orphan state that nothing downstream can distinguish from real data.
+   */
+  const requireWorkspaceRow = async (workspace: string): Promise<void> => {
+    await writer.refresh("workspaces");
+    const row = await scopedOne(writer, "workspaces", `name = ${quote(workspace)}`);
+    if (row === null) failTaxonomy("invalid_reference", "/workspace_name");
+  };
+
+  const lookupVocabularyById = (workspace: string, id: string) =>
+    scopedOne(writer, VOCABULARIES, `${scopeOf(workspace)} AND id = ${quote(id)}`);
+  const lookupVocabularyByName = (workspace: string, name: string) =>
+    scopedOne(writer, VOCABULARIES, `${scopeOf(workspace)} AND name = ${quote(name)}`);
+  const lookupTermById = (workspace: string, id: string) =>
+    scopedOne(writer, TERMS, `${scopeOf(workspace)} AND id = ${quote(id)}`);
+  const lookupTermByName = (workspace: string, vocabularyId: string, name: string) =>
+    scopedOne(
+      writer,
+      TERMS,
+      `${scopeOf(workspace)} AND vocabulary_id = ${quote(vocabularyId)} AND name = ${quote(name)}`,
+    );
+
+  return {
+    ...reads,
+
+    createVocabulary: (requestBytes: Uint8Array): Promise<MutationOutcome> =>
+      mutate(async () => {
+        const request = parseCreateVocabulary(requestBytes);
+        // Preflight the WHOLE request before mutating anything.
+        await requireWorkspaceRow(request.workspace_name);
+        await writer.refresh(VOCABULARIES);
+        const byId = await lookupVocabularyById(request.workspace_name, request.vocabulary_id);
+        const byName = await lookupVocabularyByName(request.workspace_name, request.name);
+
+        const expected: TaxonomyRow = {
+          id: request.vocabulary_id,
+          name: request.name,
+          workspace_name: request.workspace_name,
+          label: request.label,
+          description: request.description,
+          kind: request.kind,
+          term_policy: request.term_policy,
+          cardinality: request.cardinality,
+          required: request.required,
+          hierarchy: request.hierarchy,
+          h_metadata: null,
+          internal_metadata: null,
+          created_at: BigInt(options.clock()) * 1000n,
+        };
+
+        if (byId !== null) {
+          const stored = encodeVocabularyRow(byId);
+          // A row at the requested ID is the EXPECTED row, not a collision
+          // merely because it exists. Only a mismatch conflicts.
+          if (!sameExcept(stored, encodeVocabularyRow(expected), VOCABULARY_FIELDS)) {
+            failTaxonomy("conflict", "/vocabulary_id");
+          }
+          return { outcome: "already_satisfied" as const, row: stored };
+        }
+        // A DIFFERENT id already occupying this scoped name conflicts on name.
+        if (byName !== null) failTaxonomy("conflict", "/name");
+
+        await writeRow(VOCABULARIES, expected, "after_vocabulary_write", false);
+        return { outcome: "created" as const, row: encodeVocabularyRow(expected) };
+      }),
+
+    createTerm: (requestBytes: Uint8Array): Promise<MutationOutcome> =>
+      mutate(async () => {
+        const request = parseCreateTerm(requestBytes);
+        await requireWorkspaceRow(request.workspace_name);
+        await writer.refresh(VOCABULARIES);
+        await writer.refresh(TERMS);
+
+        // Foreign references first: a missing or cross-workspace vocabulary is
+        // an invalid reference, not a conflict.
+        const vocabulary = await lookupVocabularyById(request.workspace_name, request.vocabulary_id);
+        if (vocabulary === null) failTaxonomy("invalid_reference", "/vocabulary_id");
+        const vocabularyRow = encodeVocabularyRow(vocabulary);
+
+        if (request.parent_id !== null) {
+          if (vocabularyRow.hierarchy !== "tree") failTaxonomy("invalid_request", "/parent_id");
+          // The WHOLE ancestry, bounded and scoped -- not just the immediate
+          // parent. A parent can be active and in-vocabulary while its own
+          // ancestor is missing or cyclic, and attaching beneath it would add
+          // a new row to a chain that is already structurally invalid.
+          await assertAncestryIsSafe(
+            request.workspace_name,
+            request.vocabulary_id,
+            request.term_id,
+            request.parent_id,
+          );
+        }
+
+        const expected: TaxonomyRow = {
+          id: request.term_id,
+          workspace_name: request.workspace_name,
+          vocabulary_id: request.vocabulary_id,
+          name: request.name,
+          description: request.description,
+          parent_id: request.parent_id,
+          weight: 0,
+          is_active: true,
+          h_metadata: null,
+          created_at: BigInt(options.clock()) * 1000n,
+        };
+
+        // Uniqueness is validated BEFORE any satisfied return. A matching ID
+        // does not excuse a DIFFERENT row holding the same scoped name, and
+        // reporting already-satisfied over that would call a corrupt dataset
+        // healthy. Name collisions include retired rows: a retired name still
+        // occupies its scoped identity.
+        const byName = await lookupTermByName(
+          request.workspace_name,
+          request.vocabulary_id,
+          request.name,
+        );
+        if (byName !== null && byName.id !== request.term_id) failTaxonomy("conflict", "/name");
+
+        const byId = await lookupTermById(request.workspace_name, request.term_id);
+        if (byId !== null) {
+          const stored = encodeTermRow(byId);
+          if (!sameExcept(stored, encodeTermRow(expected), TERM_FIELDS)) {
+            failTaxonomy("conflict", "/term_id");
+          }
+          return { outcome: "already_satisfied" as const, row: stored };
+        }
+
+        await writeRow(TERMS, expected, "after_term_write", false);
+        return { outcome: "created" as const, row: encodeTermRow(expected) };
+      }),
+
+    renameTerm: (requestBytes: Uint8Array): Promise<MutationOutcome> =>
+      mutate(async () => {
+        const request = parseRenameTerm(requestBytes);
+        await requireWorkspaceRow(request.workspace_name);
+        await writer.refresh(TERMS);
+        const existing = await lookupTermById(request.workspace_name, request.term_id);
+        if (existing === null) failTaxonomy("not_found", "/term_id");
+        const stored = encodeTermRow(existing);
+        if (stored.is_active !== true) failTaxonomy("invalid_request", "/term_id");
+
+        // Uniqueness FIRST, so an already-satisfied rename cannot skip it.
+        // Collisions include RETIRED rows: a retired name still occupies its
+        // scoped identity and must not be reused.
+        const clash = await lookupTermByName(
+          request.workspace_name,
+          stored.vocabulary_id as string,
+          request.name,
+        );
+        if (clash !== null && clash.id !== request.term_id) failTaxonomy("conflict", "/name");
+
+        // DESIRED first, then expected. Comparing expected first would report a
+        // guard mismatch for a request that is already satisfied.
+        if (stored.name === request.name) {
+          return { outcome: "already_satisfied" as const, row: stored };
+        }
+        if (stored.name !== request.expected_name) failTaxonomy("conflict", "/expected_name");
+
+        return await updateTerm(
+          request.workspace_name,
+          request.term_id,
+          { name: quote(request.name) },
+          `name = ${quote(request.expected_name)}`,
+          { ...stored, name: request.name },
+        );
+      }),
+
+    retireTerm: (requestBytes: Uint8Array): Promise<MutationOutcome> =>
+      mutate(async () => {
+        const request = parseRetireTerm(requestBytes);
+        await requireWorkspaceRow(request.workspace_name);
+        await writer.refresh(TERMS);
+        await writer.refresh(VOCABULARIES);
+        const existing = await lookupTermById(request.workspace_name, request.term_id);
+        if (existing === null) failTaxonomy("not_found", "/term_id");
+        const stored = encodeTermRow(existing);
+
+        // The vocabulary is resolved BEFORE the satisfied return: an orphaned
+        // term must name its problem rather than report already-satisfied and
+        // leave the operator believing the state is fine.
+        const vocabulary = await lookupVocabularyById(
+          request.workspace_name,
+          stored.vocabulary_id as string,
+        );
+        if (vocabulary === null) failTaxonomy("integrity_failure", "");
+
+        // No reactivation exists, so an already-inactive term is satisfied.
+        if (stored.is_active !== true) {
+          return { outcome: "already_satisfied" as const, row: stored };
+        }
+        if (encodeVocabularyRow(vocabulary).required === true) {
+          // Refuse retiring the LAST active term of a required vocabulary:
+          // that would leave a required classification unsatisfiable.
+          const active = await writer.query(
+            TERMS,
+            `${scopeOf(request.workspace_name)} AND vocabulary_id = ${quote(stored.vocabulary_id as string)} AND is_active = true`,
+          );
+          if (active.length <= 1) failTaxonomy("invalid_request", "/term_id");
+        }
+
+        // Children are deliberately NOT reparented or retired: a retired
+        // parent may remain in historical tree structure.
+        return await updateTerm(
+          request.workspace_name,
+          request.term_id,
+          { is_active: "false" },
+          "is_active = true",
+          { ...stored, is_active: false },
+        );
+      }),
+
+    reparentTerm: (requestBytes: Uint8Array): Promise<MutationOutcome> =>
+      mutate(async () => {
+        const request = parseReparentTerm(requestBytes);
+        await requireWorkspaceRow(request.workspace_name);
+        await writer.refresh(TERMS);
+        await writer.refresh(VOCABULARIES);
+        const existing = await lookupTermById(request.workspace_name, request.term_id);
+        if (existing === null) failTaxonomy("not_found", "/term_id");
+        const stored = encodeTermRow(existing);
+        if (stored.is_active !== true) failTaxonomy("invalid_request", "/term_id");
+
+        const vocabulary = await lookupVocabularyById(
+          request.workspace_name,
+          stored.vocabulary_id as string,
+        );
+        if (vocabulary === null) failTaxonomy("integrity_failure", "");
+        const hierarchy = encodeVocabularyRow(vocabulary).hierarchy;
+
+        if (hierarchy !== "tree") {
+          // A flat vocabulary accepts only a null desired parent, and a
+          // malformed non-null STORED parent is corruption this operation
+          // deliberately refuses to repair.
+          if (request.parent_id !== null) failTaxonomy("invalid_request", "/parent_id");
+          if (stored.parent_id !== null) failTaxonomy("integrity_failure", "");
+        }
+
+        if (request.parent_id !== null) {
+          if (request.parent_id === request.term_id) failTaxonomy("invalid_request", "/parent_id");
+          // Validate the requested structure BEFORE any already-satisfied
+          // shortcut: "desired equals current" must not skip cycle detection.
+          await assertAncestryIsSafe(
+            request.workspace_name,
+            stored.vocabulary_id as string,
+            request.term_id,
+            request.parent_id,
+          );
+        }
+
+        if (stored.parent_id === request.parent_id) {
+          return { outcome: "already_satisfied" as const, row: stored };
+        }
+        if (stored.parent_id !== request.expected_parent_id) {
+          failTaxonomy("conflict", "/expected_parent_id");
+        }
+
+        const guard =
+          request.expected_parent_id === null
+            ? "parent_id IS NULL"
+            : `parent_id = ${quote(request.expected_parent_id)}`;
+        return await updateTerm(
+          request.workspace_name,
+          request.term_id,
+          { parent_id: request.parent_id === null ? "NULL" : quote(request.parent_id) },
+          guard,
+          { ...stored, parent_id: request.parent_id },
+        );
+      }),
+
+    seedReservedVocabularies: (requestBytes: Uint8Array) =>
+      mutate(async () => seedReserved(requestBytes)),
+  };
+
+  /**
+   * Walk the DESIRED parent's ancestry to null, detecting self-reference and
+   * cycles with scoped unique lookups.
+   *
+   * Bounded at 1024 visited rows, equality accepted, cumulative: row 1025
+   * fails limit_exceeded rather than walking a corrupt chain forever.
+   */
+  async function assertAncestryIsSafe(
+    workspace: string,
+    vocabularyId: string,
+    termId: string,
+    desiredParentId: string,
+  ): Promise<void> {
+    const parent = await lookupTermById(workspace, desiredParentId);
+    if (parent === null) failTaxonomy("invalid_reference", "/parent_id");
+    const parentRow = encodeTermRow(parent);
+    if (parentRow.is_active !== true) failTaxonomy("invalid_request", "/parent_id");
+    if (parentRow.vocabulary_id !== vocabularyId) failTaxonomy("invalid_reference", "/parent_id");
+
+    let cursor: string | null = desiredParentId;
+    let visited = 0;
+    const seen = new Set<string>();
+    while (cursor !== null) {
+      visited += 1;
+      if (visited > 1024) failTaxonomy("limit_exceeded", "");
+      // Reaching the term being moved means the requested parent sits BELOW
+      // it: that is the cycle.
+      if (cursor === termId) failTaxonomy("invalid_request", "/parent_id");
+      if (seen.has(cursor)) failTaxonomy("integrity_failure", "");
+      seen.add(cursor);
+      const row: Record<string, unknown> | null = await lookupTermById(workspace, cursor);
+      if (row === null) failTaxonomy("integrity_failure", "");
+      const encoded = encodeTermRow(row);
+      if (encoded.vocabulary_id !== vocabularyId) failTaxonomy("integrity_failure", "");
+      cursor = (encoded.parent_id as string | null) ?? null;
+    }
+  }
+
+  /**
+   * Bootstrap the two reserved vocabularies and their seven terms.
+   *
+   * RESUMABLE by design. Any subset of the nine rows may already exist,
+   * including terms whose vocabulary is still absent and a vocabulary whose
+   * terms are not all there. Neither state is corruption and neither is
+   * completion, so each present row is compared to literal seed state and each
+   * absent row is staged.
+   *
+   * A row that has been renamed, retired or otherwise changed CONFLICTS. It is
+   * not repaired: reconciliation is outside this slice and needs a later
+   * reviewed operator operation. Re-running seed never claims to fix
+   * administration, and a missing or altered `note` never silently generates a
+   * substitute default.
+   */
+  async function seedReserved(requestBytes: Uint8Array) {
+    const request = parseSeedRequest(requestBytes);
+    const workspace = request.workspace_name;
+    await requireWorkspaceRow(workspace);
+    await writer.refresh(VOCABULARIES);
+    await writer.refresh(TERMS);
+
+    const now = options.clock();
+    const wantVocabularies = seedVocabularyRows(request, now);
+    const wantTerms = seedTermRows(request, now);
+
+    // ---- Preflight the ENTIRE manifest before mutating anything.
+    const resolved: Array<{
+      table: string;
+      want: TaxonomyRow;
+      stored: TaxonomyRow | null;
+      pointer: string;
+    }> = [];
+
+    // Each row's EXACT manifest pointer. Reporting a horizon collision at
+    // /type/terms sends a caller to the wrong field entirely.
+    const termPointer = (name: string): string =>
+      (SEED_TERM_ORDER.indexOf(name as never) < 5 ? "/type/terms/" : "/memory_horizon/terms/") + name;
+
+    for (const want of wantTerms) {
+      const pointer = termPointer(want.name as string);
+      const stored = await lookupTermById(workspace, want.id as string);
+      // Uniqueness is checked REGARDLESS of whether the ID already matches.
+      // A matching ID does not excuse a different row holding the same scoped
+      // name: the contract asks for full validation even on the satisfied
+      // path, and returning already-satisfied over a duplicate would report a
+      // corrupt dataset as healthy.
+      const byName = await lookupTermByName(
+        workspace,
+        want.vocabulary_id as string,
+        want.name as string,
+      );
+      if (byName !== null && byName.id !== want.id) failTaxonomy("conflict", pointer);
+
+      if (stored !== null) {
+        const encoded = encodeTermRow(stored);
+        // A staged term whose vocabulary_id differs from the supplied manifest
+        // CONFLICTS. It is never transferred or adopted into this manifest.
+        if (!sameExcept(encoded, encodeTermRow(want), TERM_FIELDS)) {
+          failTaxonomy("conflict", pointer);
+        }
+        resolved.push({ table: TERMS, want, stored: encoded, pointer });
+        continue;
+      }
+      resolved.push({ table: TERMS, want, stored: null, pointer });
+    }
+
+    for (const want of wantVocabularies) {
+      const pointer = `/${want.name as string}/vocabulary_id`;
+      const stored = await lookupVocabularyById(workspace, want.id as string);
+      const byName = await lookupVocabularyByName(workspace, want.name as string);
+      if (byName !== null && byName.id !== want.id) failTaxonomy("conflict", pointer);
+
+      if (stored !== null) {
+        const encoded = encodeVocabularyRow(stored);
+        if (!sameExcept(encoded, encodeVocabularyRow(want), VOCABULARY_FIELDS)) {
+          failTaxonomy("conflict", pointer);
+        }
+        resolved.push({ table: VOCABULARIES, want, stored: encoded, pointer });
+        continue;
+      }
+      resolved.push({ table: VOCABULARIES, want, stored: null, pointer });
+    }
+
+    // ---- Stage ONLY what is missing, in literal manifest order: the seven
+    // terms first, then the two vocabularies. Matching rows are skipped
+    // without rewriting them or resampling their clocks, and emit NO
+    // mutation boundaries at all.
+    let wroteAny = false;
+    for (const entry of resolved) {
+      if (entry.stored !== null) continue;
+      const success: TaxonomyBoundary =
+        entry.table === TERMS ? "after_term_write" : "after_vocabulary_write";
+      await writeRow(entry.table, entry.want, success, wroteAny);
+      wroteAny = true;
+    }
+
+    // ---- Final all-row verification. Mandatory, covered by the operation-wide
+    // post-write guard, and deliberately emitting no after_readback of its own
+    // so the trace stays one triple per mutated row.
+    const verify = async () => {
+      await writer.refresh(VOCABULARIES);
+      await writer.refresh(TERMS);
+      const terms: TaxonomyRow[] = [];
+      const vocabularies: TaxonomyRow[] = [];
+      // Expected state per row: an existing row keeps its own retained
+      // created_at, a newly staged one carries the allocation time we wrote.
+      const expectedFor = (entry: (typeof resolved)[number], encode: (r: TaxonomyRow) => TaxonomyRow) =>
+        entry.stored ?? encode(entry.want);
+
+      for (const entry of resolved) {
+        const isTerm = entry.table === TERMS;
+        const stored = isTerm
+          ? await lookupTermById(workspace, entry.want.id as string)
+          : await lookupVocabularyById(workspace, entry.want.id as string);
+        if (stored === null) failTaxonomy("recovery_required");
+        const encoded = isTerm ? encodeTermRow(stored) : encodeVocabularyRow(stored);
+        const expected = expectedFor(entry, isTerm ? encodeTermRow : encodeVocabularyRow);
+        // Re-CHECK equality. Decoding alone would accept a row that was
+        // corrupted after it was written and verified.
+        for (const field of isTerm ? TERM_FIELDS : VOCABULARY_FIELDS) {
+          if (encoded[field] !== expected[field]) failTaxonomy("recovery_required");
+        }
+        (isTerm ? terms : vocabularies).push(encoded);
+      }
+      return { vocabularies, terms };
+    };
+    const rows = wroteAny ? await core.afterWrite(verify) : await verify();
+
+    return {
+      // `created` means THIS call appended at least one row. A resumed seed can
+      // therefore return created without having created every row it returns.
+      outcome: wroteAny ? ("created" as const) : ("already_satisfied" as const),
+      vocabularies: rows.vocabularies,
+      terms: rows.terms,
+    };
+  }
+
+  /** Guarded single-row update: exactly one affected row, then full readback. */
+  async function updateTerm(
+    workspace: string,
+    termId: string,
+    assignments: Record<string, string>,
+    guard: string,
+    /** The complete row this update must produce, field for field. */
+    expected: TaxonomyRow,
+  ): Promise<MutationOutcome> {
+    await core.taxonomyBoundary("before_write", false);
+    core.markAttemptedWrite();
+    const { rowsUpdated } = await core.afterWrite(async () =>
+      writer.updateWhere(
+        TERMS,
+        `${scopeOf(workspace)} AND id = ${quote(termId)} AND ${guard}`,
+        assignments,
+      ),
+    );
+    // Anything but exactly one row is ambiguous: fail-stop, never guess.
+    if (rowsUpdated !== 1) {
+      core.poison();
+      failTaxonomy("recovery_required");
+    }
+    await core.taxonomyBoundary("after_update", true);
+    const row = await core.afterWrite(async () => {
+      await writer.refresh(TERMS);
+      const stored = await lookupTermById(workspace, termId);
+      if (stored === null) {
+        core.poison();
+        failTaxonomy("recovery_required");
+      }
+      const encoded = encodeTermRow(stored);
+      // COMPARE, do not merely decode. Encoding proves the row is structurally
+      // valid; it says nothing about whether it holds what we asked for. A
+      // non-throwing hook that corrupts a field between the update and this
+      // read would otherwise be accepted and returned as the result.
+      for (const field of TERM_FIELDS) {
+        if (encoded[field] !== expected[field]) {
+          core.poison();
+          failTaxonomy("recovery_required");
+        }
+      }
+      return encoded;
+    });
+    await core.taxonomyBoundary("after_readback", true);
+    return { outcome: "updated" as const, row };
+  }
+}
+
+export type TaxonomyReaderService = ReturnType<typeof createTaxonomyReadMethods>;
+export type TaxonomyWriterService = ReturnType<typeof createTaxonomyWriterService>;
+
+export type KnowledgeReaderService = {
+  publication: PublicationReaderService;
+  taxonomy: TaxonomyReaderService;
+};
+
+export type KnowledgeWriterService = {
+  publication: Omit<PublicationWriterService, "close">;
+  taxonomy: TaxonomyWriterService;
+  close: () => Promise<void>;
+};
+
+export type KnowledgeOptions = OperatorOptions & { onTaxonomyBoundary?: TaxonomyBoundaryHook };
+
+/**
+ * Read both facades over one gateless connection.
+ *
+ * Reads need no gate and no queue, so this contends with nothing: a poisoned
+ * or released writer elsewhere does not make a fresh reader unusable.
+ */
+export async function openKnowledgeReader(datasetRoot: string): Promise<KnowledgeReaderService> {
+  const canonical = assertLocalDatasetRoot(datasetRoot);
+  const adapter = makeAdapter(await openPrivateConnection(canonical), () => {});
+  return Object.freeze({
+    publication: Object.freeze(makeReadMethods(adapter)),
+    taxonomy: Object.freeze(createTaxonomyReadMethods(adapter)),
+  });
+}
+
+/**
+ * One owner, two write facades.
+ *
+ * The bundle ALONE closes the owner: `publication` here carries its three data
+ * methods without `close`, and `taxonomy` has no `close` at all, so neither
+ * facade can release a gate the other still depends on.
+ *
+ * Because the bundle offers publication, it requires the existing
+ * `newRevisionId` dependency even when a caller only touches taxonomy --
+ * taxonomy never calls it, and allocating one lazily would hide a missing
+ * dependency until the first publish.
+ */
+export async function openKnowledgeWriter(
+  datasetRoot: string,
+  options: KnowledgeOptions,
+): Promise<KnowledgeWriterService> {
+  const canonical = assertLocalDatasetRoot(datasetRoot);
+  // Gate and single-owner claim BOTH precede connect, exactly as the
+  // publication writer does: cross-factory opens on the same root contend.
+  assertInheritedGate(canonical, options.env);
+  if (OWNERS.has(canonical)) failPublication("writer_unavailable");
+  const token = Symbol(canonical);
+  OWNERS.set(canonical, token);
+
+  let adapter: DatasetAdapter;
+  try {
+    adapter = makeAdapter(await openPrivateConnection(canonical), () => {
+      if (OWNERS.get(canonical) === token) OWNERS.delete(canonical);
+    });
+  } catch (error) {
+    OWNERS.delete(canonical);
+    throw error;
+  }
+
+  const clock = options.clock ?? Date.now;
+  const core = createOwnerCore(adapter, {
+    onBoundary: options.onBoundary,
+    onTaxonomyBoundary: options.onTaxonomyBoundary,
+  });
+  const publication = createPublicationWriterService(
+    adapter,
+    { clock, newRevisionId: options.newRevisionId },
+    core,
+  );
+  const taxonomy = createTaxonomyWriterService(adapter, core, { clock });
+
+  const { close: _ownedByTheBundle, ...publicationData } = publication;
+  return Object.freeze({
+    publication: Object.freeze(publicationData),
+    taxonomy: Object.freeze(taxonomy),
+    close: core.close,
+  });
+}
