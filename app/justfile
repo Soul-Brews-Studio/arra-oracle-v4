@@ -1,0 +1,21 @@
+set shell := ["bash", "-uc"]
+
+mod migrate 'just/migrate.just'
+mod server  'just/server.just'
+mod view    'just/view.just'
+mod data    'just/data.just'
+
+# List everything, including module recipes
+default:
+    @just --list --list-submodules
+
+# Cold start: schema, deps, server. The order is the architecture.
+up:
+    @just migrate run
+    @just server install
+    @just server start
+
+# Is anything actually running?
+status:
+    @just data schema || true
+    @just server health || true

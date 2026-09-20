@@ -1,0 +1,10 @@
+[package]
+name = "arra-migrate"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# 0.38.0 needs "remote" even for local use: job.rs references Error::Http, which is gated behind it.
+lancedb = { version = "0.38.0", features = ["remote"] }
+arrow-schema = "58"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

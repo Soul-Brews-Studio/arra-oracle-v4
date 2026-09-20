@@ -1,0 +1,22 @@
+{
+  "name": "arra-v4-server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun --watch src/index.ts",
+    "cli": "bun run ../cli.ts",
+    "test": "bun test test ../cli.test.ts",
+    "typecheck": "tsc --project tsconfig.json",
+    "build": "bun build src/index.ts --target=bun --packages=external --outdir .tmp/build"
+  },
+  "dependencies": {
+    "@elysiajs/static": "^1.4.10",
+    "@lancedb/lancedb": "0.38.0",
+    "elysia": "^1.4.30",
+    "hono": "^4.6.14"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}

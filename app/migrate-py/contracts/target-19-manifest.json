@@ -1,0 +1,27 @@
+{
+  "manifest_version": "arra-v4-target/1",
+  "status": "proposed-not-active",
+  "authority": "discussion-36",
+  "current_registry_tables": [
+    "workspaces", "peers", "sessions", "session_peers", "messages",
+    "memories", "vocabularies", "terms", "memory_terms", "supersede_log",
+    "traces", "trace_hits", "mcp_calls", "connections", "read_cursors"
+  ],
+  "target_tables": [
+    "workspaces", "peers", "sessions", "session_peers", "messages",
+    "session_links",
+    "nodes", "node_revisions", "node_revision_terms", "revision_links", "supersede_log",
+    "vocabularies", "terms",
+    "traces", "trace_hits",
+    "search_chunks_v1",
+    "mcp_calls", "connections", "read_cursors"
+  ],
+  "target_count": 19,
+  "deferred": [
+    "authentication policy and principal tables",
+    "revision publication service and canonical envelope choice",
+    "source replay and error contract",
+    "search projection lifecycle",
+    "copy migration and R2 writer proof"
+  ]
+}

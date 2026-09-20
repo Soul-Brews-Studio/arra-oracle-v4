@@ -1,0 +1,23 @@
+[project]
+name = "arra-migrate"
+version = "0.1.0"
+description = "Schema owner for arra-oracle-v4. Declares tables as LanceModels and creates them."
+requires-python = ">=3.10"
+dependencies = [
+    "lancedb>=0.38.0",
+    "pydantic>=2",
+    "requests>=2",
+    "boto3>=1.34",
+]
+
+[project.scripts]
+arra-migrate = "arra_migrate.__main__:main"
+arra-probe = "arra_migrate.probe:main"
+arra-s3probe = "arra_migrate.s3probe:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/arra_migrate"]
