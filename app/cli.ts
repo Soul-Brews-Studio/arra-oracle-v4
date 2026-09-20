@@ -20,6 +20,10 @@ HTTP commands:
 
 Global options: --url URL (ARRA_URL; default http://127.0.0.1:3939)
                 --bank NAME (ARRA_BANK; default default), --pretty
+Credentials: ARRA_TOKEN only - 64 lowercase hex characters. There is no token
+flag and no config lookup, and the token is never printed. The health command
+is public and sends no credential. Over plain HTTP a token is sent only to
+127.0.0.1 or [::1]; any other host requires HTTPS.
 Output is JSON. Invalid arguments, HTTP errors and MCP errors exit nonzero.
 `;
 
@@ -71,14 +75,47 @@ try {
       if (value !== undefined && !values.includes(value)) throw new Error(`--${name} must be ${values.join("|")}`);
       return value;
     };
+    // The ONLY credential source. No flag, no URL credentials, no config file.
+    const token = process.env.ARRA_TOKEN;
+    // `health` is the one public command: it needs no token and sends none.
+    const isPublic = command === "health";
+    if (!isPublic) {
+      if (typeof token !== "string" || !/^[0-9a-f]{64}$/.test(token)) {
+        throw new Error("ARRA_TOKEN must be exactly 64 lowercase hex characters");
+      }
+    }
+
     const base = options.url ?? process.env.ARRA_URL ?? "http://127.0.0.1:3939";
     const url = new URL(base);
     if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error("--url must be an HTTP(S) base URL without credentials, query or fragment");
     const bank = options.bank ?? process.env.ARRA_BANK ?? "default";
     if (!bank.trim()) throw new Error("--bank must be non-empty");
     const output = (value: unknown) => console.log(JSON.stringify(value, (_k, v) => typeof v === "bigint" ? String(v) : v, options.pretty ? 2 : 0));
+    // A bearer over plain HTTP goes only to the TEXTUAL loopback literals.
+    //
+    // Checked against the ORIGINAL authority, not the parsed hostname: URL
+    // normalisation turns 2130706433, 127.1 and 0x7f000001 into 127.0.0.1, and
+    // while those do resolve to loopback, the contract deliberately permits
+    // only the two literal spellings. Validating post-normalisation would
+    // silently widen the rule.
+    const LOOPBACK_LITERALS = new Set(["127.0.0.1", "[::1]"]);
+    const originalAuthority = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)/i.exec(base)?.[1] ?? "";
+    const originalHost = originalAuthority.replace(/:\d+$/, "");
+    if (!isPublic && url.protocol === "http:" && !LOOPBACK_LITERALS.has(originalHost)) {
+      throw new Error("refusing to send a credential over plain HTTP to a non-loopback host");
+    }
+
     const request = async (path: string, init?: RequestInit) => {
-      const response = await fetch(`${url.href.replace(/\/$/, "")}${path}`, { ...init, signal: AbortSignal.timeout(30_000) });
+      const headers = new Headers((init?.headers as HeadersInit | undefined) ?? {});
+      // Exactly one Authorization header, and never on the public command.
+      if (!isPublic) headers.set("authorization", `Bearer ${token}`);
+      const response = await fetch(`${url.href.replace(/\/$/, "")}${path}`, {
+        ...init,
+        headers,
+        // A redirect could carry the credential to another origin: refuse.
+        redirect: "error",
+        signal: AbortSignal.timeout(30_000),
+      });
       const text = await response.text();
       let body: unknown;
       try { body = JSON.parse(text); } catch { body = text; }

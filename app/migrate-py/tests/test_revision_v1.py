@@ -439,22 +439,30 @@ class IsolationTests(unittest.TestCase):
     # JSON/Unicode/time helpers, so it is the one file exempt from the scan
     # below. Exempting the exact file, never the whole `auth/` directory: a
     # future auth module must not inherit this exemption silently.
-    POLICY_TS = TS_ROOT / "auth" / "policy.ts"
-    # Textual patterns searched for. This is an ENUMERATED substring list, not a
-    # resolver: it does not model TypeScript path resolution, tsconfig aliases,
-    # re-exports or dynamic `import(expr)`. It catches the spellings a static
-    # import of the policy module would normally be written with, nothing more.
-    POLICY_IMPORT_PATTERNS = (
-        "auth/policy",
-        "../auth/policy",
-        "./auth/policy",
-        "./policy",
+    # The #25 integration landed, so the isolated-policy no-import gate is
+    # deliberately RETIRED: auth/ modules now legitimately reuse the shared
+    # strict JSON/Unicode/time helpers, and the composition graph imports the
+    # policy module on purpose. What replaces it is a bounded EXACT dependency
+    # check matching the reviewed composition, below.
+    AUTH_DIR = TS_ROOT / "auth"
+    # Exactly the modules allowed to reuse the contract helpers. This is an
+    # allow-LIST of specific files, never a blanket `auth/` exclusion: a new
+    # module must be added here deliberately, with review.
+    HELPER_REUSE_ALLOWED = (
+        TS_ROOT / "auth" / "policy.ts",
+        TS_ROOT / "auth" / "loader.ts",
+        TS_ROOT / "app.ts",
     )
-
-    @classmethod
-    def policy_import_hits(cls, text: str) -> list[str]:
-        """Enumerated-substring scan shared by the guard and its sensitivity test."""
-        return [pattern for pattern in cls.POLICY_IMPORT_PATTERNS if pattern in text]
+    # Adapters must not reach raw data/model/audit modules directly; they go
+    # through the admitted operation service.
+    ADAPTER_FILES = (
+        TS_ROOT / "app.ts",
+        TS_ROOT / "mcp" / "index.ts",
+        # The HTTP entrypoint too: it imported ./db directly, contrary to the
+        # frozen section 3, and now delegates trusted index work to composition.
+        TS_ROOT / "index.ts",
+    )
+    RAW_DEPENDENCY_PATTERNS = ("./db", "../db", "./embed", "../embed", "./storage", "../storage", "./calls", "../mcp/calls")
 
     def test_no_active_python_path_imports_the_adapter(self):
         scanned = [p for p in self.PY_ROOT.rglob("*.py") if p.name != "revision_v1.py"]
@@ -463,15 +471,17 @@ class IsolationTests(unittest.TestCase):
             with self.subTest(module=str(path.relative_to(self.PY_ROOT))):
                 self.assertNotIn("revision_v1", path.read_text(encoding="utf-8"))
 
-    def test_no_route_mcp_or_cli_imports_the_new_contract_modules(self):
+    def test_only_reviewed_modules_reuse_the_contract_helpers(self):
         contracts = self.TS_ROOT / "contracts"
+        allowed = set(self.HELPER_REUSE_ALLOWED)
         scanned = [
             p
             for p in self.TS_ROOT.rglob("*.ts")
-            if contracts not in p.parents and p != self.POLICY_TS
+            if contracts not in p.parents and p not in allowed
         ] + [self.CLI]
         self.assertGreaterEqual(len(scanned), 8, f"scan collapsed: {len(scanned)} files")
-        self.assertNotIn(self.POLICY_TS, scanned)
+        for path in self.HELPER_REUSE_ALLOWED:
+            self.assertNotIn(path, scanned)
         for path in scanned:
             text = path.read_text(encoding="utf-8")
             for module in self.NEW_TS:
@@ -479,41 +489,47 @@ class IsolationTests(unittest.TestCase):
                     self.assertNotIn(f"contracts/{module}", text)
                     self.assertNotIn(f"./{module}", text)
 
-    def test_no_other_server_source_contains_a_policy_import_pattern(self):
-        """No scanned server source contains an enumerated policy-import pattern.
+    def test_adapters_do_not_import_raw_data_model_or_audit_modules(self):
+        """Adapters receive the admitted service, never a raw store handle.
 
-        The exact policy-file exemption permits helper reuse. This complementary
-        scan checks other selected source files for the enumerated policy-import
-        substrings; it does not resolve their imports.
+        Bounded source-text check over the reviewed adapter files. It reports
+        absence of enumerated import substrings; it does not resolve imports or
+        prove anything about runtime reachability.
         """
-        scanned = [p for p in self.TS_ROOT.rglob("*.ts") if p != self.POLICY_TS] + [self.CLI]
-        self.assertGreaterEqual(len(scanned), 8, f"scan collapsed: {len(scanned)} files")
-        for path in scanned:
-            with self.subTest(file=path.name):
-                self.assertEqual([], self.policy_import_hits(path.read_text(encoding="utf-8")))
+        for path in self.ADAPTER_FILES:
+            self.assertTrue(path.exists(), f"adapter missing: {path}")
+            text = path.read_text(encoding="utf-8")
+            for pattern in self.RAW_DEPENDENCY_PATTERNS:
+                with self.subTest(file=path.name, pattern=pattern):
+                    self.assertNotIn(f'from "{pattern}"', text)
 
-    def test_the_policy_import_scan_fires_on_representative_text(self):
-        """Sensitivity of the SHARED scan predicate, on independent text.
+    def test_the_raw_mcp_dispatcher_is_no_longer_a_runtime_export(self):
+        """`handleMcp(body, bank)` operated with no admission; it must be gone."""
+        text = (self.TS_ROOT / "mcp" / "index.ts").read_text(encoding="utf-8")
+        self.assertNotIn("export async function handleMcp", text)
+        self.assertNotIn("export function handleMcp", text)
 
-        The probe text below is hard-coded representative import source, written
-        out by hand rather than generated from POLICY_IMPORT_PATTERNS -- a test
-        that formats the pattern list into a file and then finds it again is
-        circular, and a typo in the list would still pass.
+    def test_the_raw_dependency_scan_fires_on_representative_text(self):
+        """Sensitivity of the adapter scan, on independent hand-written text.
 
-        Fixtures live in a TemporaryDirectory: tests never write into the
-        product source tree.
+        The probe source below is written by hand rather than generated from
+        RAW_DEPENDENCY_PATTERNS: a test that formats the pattern list into a
+        file and then finds it again is circular, and a typo in the list would
+        still pass. Fixtures live in a TemporaryDirectory; tests never write
+        into the product source tree.
         """
         flagged = (
-            'import { admit } from "../auth/policy";\n',
-            'import { parsePolicy } from "./auth/policy";\n',
-            'import type { Policy } from "./policy";\n',
-            'export { admit } from "../../server/src/auth/policy";\n',
+            'import * as store from "./db";\n',
+            'import { health } from "./embed";\n',
+            'import { storageInfo } from "./storage";\n',
+            'import * as calls from "../mcp/calls";\n',
         )
         benign = (
-            'import { handleMcp } from "./mcp";\n',
-            'import * as store from "./db";\n',
-            "// the authorization policy is documented in app/docs/contracts\n",
+            'import { createApp } from "./app";\n',
+            'import type { OperationService } from "./auth/service";\n',
+            "// the store is reached only through the admitted service\n",
         )
+        hits = lambda text: [p for p in self.RAW_DEPENDENCY_PATTERNS if f'from "{p}"' in text]
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self.assertNotIn(str(self.TS_ROOT), str(root))
@@ -521,22 +537,12 @@ class IsolationTests(unittest.TestCase):
                 probe = root / f"flagged_{index}.ts"
                 probe.write_text(source, encoding="utf-8")
                 with self.subTest(kind="flagged", source=source.strip()):
-                    self.assertNotEqual(
-                        [],
-                        self.policy_import_hits(probe.read_text(encoding="utf-8")),
-                        "scan missed a representative policy import",
-                    )
+                    self.assertNotEqual([], hits(probe.read_text(encoding="utf-8")))
             for index, source in enumerate(benign):
                 probe = root / f"benign_{index}.ts"
                 probe.write_text(source, encoding="utf-8")
                 with self.subTest(kind="benign", source=source.strip()):
-                    self.assertEqual(
-                        [],
-                        self.policy_import_hits(probe.read_text(encoding="utf-8")),
-                        "scan flagged an unrelated import",
-                    )
-        # The product source tree was never written to by this test.
-        self.assertFalse((self.TS_ROOT / "auth" / "__isolation_probe__.ts").exists())
+                    self.assertEqual([], hits(probe.read_text(encoding="utf-8")))
 
     def test_the_adapter_itself_imports_no_lancedb_or_storage(self):
         text = (self.PY_ROOT / "revision_v1.py").read_text(encoding="utf-8")

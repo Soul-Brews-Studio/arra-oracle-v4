@@ -69,6 +69,13 @@ function requiredBank(bank: string | undefined): string {
   return bank;
 }
 
+/** Non-secret authenticated attribution. Never a token, digest or header. */
+export interface AuditAttribution {
+  principal_id: string;
+  credential_id: string;
+  policy_version: string;
+}
+
 export interface CallRecord {
   tool: string;
   input: unknown;
@@ -76,12 +83,26 @@ export interface CallRecord {
   result: unknown;
   duration_ms: number;
   workspace_name: string;
+  /**
+   * DOMAIN field: the registered peer who authored the content, or null. The
+   * authenticated principal must NEVER be written here -- it travels in `auth`
+   * below, because overloading this column would silently redefine authorship.
+   */
   peer_name?: string | null;
   session_name?: string | null;
   client_label?: string | null;
+  /** Present for admitted operations; absent only for legacy internal writes. */
+  auth?: AuditAttribution | null;
 }
 
 let handle: Awaited<ReturnType<typeof connect>> | null = null;
+
+/** Fixed sanitized counter for audit-write failures; never exception text. */
+let auditFailures = 0;
+
+export function auditFailureCount(): number {
+  return auditFailures;
+}
 
 async function table() {
   handle ??= await connect(DATA_DIR, { storageOptions: storageOptions() });
@@ -100,21 +121,34 @@ export async function logCall(rec: CallRecord): Promise<void> {
         tool: rec.tool,
         status: rec.status,
         duration_ms: rec.duration_ms,
-        h_metadata: JSON.stringify({
-          input: truncate(rec.input),
-          result: truncate(rec.result),
-        }),
+        // A FRESH wrapper-owned object every time: caller metadata is never
+        // merged in, so a caller cannot forge or overwrite the auth block.
+        h_metadata: JSON.stringify(
+          rec.auth
+            ? {
+                input: truncate(rec.input),
+                result: truncate(rec.result),
+                auth: {
+                  principal_id: rec.auth.principal_id,
+                  credential_id: rec.auth.credential_id,
+                  policy_version: rec.auth.policy_version,
+                },
+              }
+            : { input: truncate(rec.input), result: truncate(rec.result) },
+        ),
         internal_metadata: rec.client_label
           ? JSON.stringify({ transport: { user_agent: truncate(rec.client_label) } })
           : null,
         created_at: Date.now(),
       },
     ]);
-  } catch (e) {
-    // A failing audit trail must not take down the call it is auditing. Say so
-    // on stderr rather than swallowing it — a silently broken log is worse than
-    // no log, because /health would still claim one exists.
-    console.error(`[call_log] write failed: ${e instanceof Error ? e.message : e}`);
+  } catch {
+    // Best-effort, and deliberately NOT transactional with the operation it
+    // audits: that operation already happened and is not rolled back here.
+    // Only a fixed sanitized marker is emitted, never raw exception text,
+    // which could carry store internals into the logs.
+    auditFailures += 1;
+    console.error("[call_log] audit_write_failed");
   }
 }
 

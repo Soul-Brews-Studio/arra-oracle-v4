@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { connect, Index, type Connection } from "@lancedb/lancedb";
@@ -14,6 +14,13 @@ import {
   TimestampMillisecond,
   Utf8,
 } from "apache-arrow";
+
+import { bearer, TOKENS } from "./helpers/auth-fixture";
+
+const HOST = "127.0.0.1:3939";
+const ORIGIN = `http://${HOST}`;
+const AUTH = bearer(TOKENS.alpha.secret);
+let policyPath: string;
 
 const ZERO_VECTOR = Array.from({ length: 384 }, () => 0);
 const utf8 = (name: string, nullable = true) => new Field(name, new Utf8(), nullable);
@@ -42,7 +49,17 @@ let connection: Connection;
 let store: typeof import("../src/db");
 let calls: typeof import("../src/mcp/calls");
 let mcp: typeof import("../src/mcp");
-let app: (typeof import("../src/index"))["app"];
+/**
+ * An admitted wrapper around the real app.
+ *
+ * #25 made every data route require a credential, so these pre-existing
+ * behaviour tests now run as an ADMITTED caller: the wrapper supplies the
+ * configured Host and a synthetic bearer when the case under test did not set
+ * one itself. The assertions below are unchanged — they still check ordering,
+ * scoping and validation, just from inside the gate rather than around it.
+ */
+let app: { handle(request: Request): Promise<Response> };
+let mcpHandle: ReturnType<typeof import("../src/mcp").createMcpAdapter>;
 let embed: typeof import("../src/embed");
 let originalFetch: typeof globalThis.fetch;
 let originalDataDir: string | undefined;
@@ -92,11 +109,19 @@ const call = (
 });
 
 async function rpc(bank: string, name: string, args: Record<string, unknown> = {}, ua = "") {
-  return mcp.handleMcp(
-    { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } },
+  // The adapter reads its envelope LAZILY, after admission; supplying it from a
+  // closure here mirrors how the HTTP route feeds the real request body.
+  const outcome = await mcpHandle(
     bank,
+    AUTH,
+    async () => ({ method: "tools/call", id: 1, params: { name, arguments: args } }),
     ua,
   );
+  if (outcome.kind === "denied") {
+    // Surface the denial as a Response so existing assertions keep their shape.
+    return new Response(JSON.stringify({ error: outcome.code }), { status: 403 });
+  }
+  return outcome.response;
 }
 
 function toolValue(response: Response) {
@@ -138,11 +163,73 @@ beforeAll(async () => {
     call("a-mid", "alpha", 40, { status: "error", duration_ms: 7 }),
   ]);
 
+  // A synthetic policy granting every action on both fixture banks, so these
+  // tests exercise behaviour rather than re-testing authorization itself.
+  policyPath = join(dataDir, "policy.json");
+  const grantAll = (name: string) => ({
+    name,
+    actions: ["content:read", "content:write", "audit:read", "diagnostics:read"],
+  });
+  await writeFile(
+    policyPath,
+    JSON.stringify({
+      version: "arra-auth/v1",
+      principals: [
+        {
+          id: "test-operator",
+          disabled: false,
+          workspaces: [
+            grantAll("alpha"),
+            grantAll("beta"),
+            grantAll("empty"),
+            grantAll("crowded"),
+            grantAll("scoped"),
+          ],
+          global_actions: ["maintenance:backfill", "maintenance:reindex"],
+        },
+      ],
+      credentials: [
+        {
+          id: "test-cred",
+          principal_id: "test-operator",
+          sha256: TOKENS.alpha.sha256,
+          not_before: "2026-01-01T00:00:00.000Z",
+          expires_at: "2030-01-01T00:00:00.000Z",
+          revoked: false,
+        },
+      ],
+    }),
+    { encoding: "utf-8", mode: 0o600 },
+  );
+  process.env.ARRA_AUTH_POLICY = policyPath;
+
   store = await import("../src/db");
   calls = await import("../src/mcp/calls");
   mcp = await import("../src/mcp");
-  ({ app } = await import("../src/index"));
   embed = await import("../src/embed");
+
+  const { buildApp } = await import("../src/index");
+  const built = await buildApp({ policyPath, origin: ORIGIN });
+  app = {
+    handle(request: Request) {
+      const headers = new Headers(request.headers);
+      headers.set("host", HOST);
+      if (!headers.has("authorization")) headers.set("authorization", AUTH);
+      const url = new URL(request.url);
+      const rebased = new URL(url.pathname + url.search, ORIGIN);
+      return built.handle(
+        new Request(rebased, {
+          method: request.method,
+          headers,
+          body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
+          // @ts-expect-error duplex is required when streaming a body in Bun
+          duplex: "half",
+        }),
+      );
+    },
+  };
+  const { composeService } = await import("../src/composition");
+  mcpHandle = mcp.createMcpAdapter(await composeService({ policyPath, origin: ORIGIN, port: 0 }));
 });
 
 afterAll(async () => {
@@ -172,12 +259,10 @@ describe("bank-scoped observability", () => {
     await expect((calls.recent as any)(undefined, 2)).rejects.toThrow("bank is required");
     await expect((calls.aggregate as any)("")).rejects.toThrow("bank is required");
     await expect((store.stats as any)(undefined)).rejects.toThrow("bank is required");
-    const response = await mcp.handleMcp(
-      { jsonrpc: "2.0", id: 1, method: "tools/list" },
-      " ",
-    );
-    expect(response.status).toBe(400);
-    expect(await response.json()).toMatchObject({ error: { message: "bank is required" } });
+    // A blank route bank is refused by the adapter before any admission work.
+    const outcome = await mcpHandle(" ", AUTH, async () => ({ method: "tools/list", id: 1, params: {} }));
+    expect(outcome.kind).toBe("denied");
+    expect(outcome.kind === "denied" && outcome.code).toBe("invalid_scope");
   });
 
   test("bank_info, call_log, and call_stats dispatch the route bank", async () => {
@@ -398,10 +483,12 @@ describe("boundary validation", () => {
       expect(wire.result.isError).toBe(true);
     }
 
-    const malformed = await mcp.handleMcp(
-      { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "status", arguments: [] } },
-      "alpha",
-    );
+    const malformedOutcome = await mcpHandle("alpha", AUTH, async () => ({
+      method: "tools/call",
+      id: 1,
+      params: { name: "status", arguments: [] },
+    }));
+    const malformed = malformedOutcome.kind === "response" ? malformedOutcome.response : new Response("{}");
     expect((await malformed.json() as any).result.isError).toBe(true);
     expect((await calls.recent("alpha", 100, "error")).some((row: any) =>
       row.tool === "status" && row.result === "arguments must be an object")).toBe(true);

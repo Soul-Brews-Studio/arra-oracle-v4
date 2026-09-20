@@ -68,12 +68,15 @@ function requiredBank(bank: unknown): string {
 // durable async reconciliation worker in #30 exists; remember must ACK even if
 // the configured embedder hangs forever.
 export async function insert(m: NewMemory): Promise<{ id: string; embedded: boolean }> {
+  // Fail closed: a write with no scope is an error, never an invented bank.
+  // Inventing `default` silently placed unscoped rows into a real workspace.
+  const scopedBank = requiredBank(m.workspace_name);
   const tbl = await db();
   const id = `m_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   const row = {
     id,
     name: m.name,
-    workspace_name: m.workspace_name ?? "default",
+    workspace_name: scopedBank,
     session_name: m.session_name ?? null,
     peer_name: m.peer_name ?? null,
     subject_peer_name: m.subject_peer_name ?? null,
