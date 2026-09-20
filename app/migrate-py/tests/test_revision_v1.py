@@ -423,18 +423,38 @@ class FakeWorkerTests(unittest.TestCase):
 
 
 class IsolationTests(unittest.TestCase):
-    """Bounded source-import evidence: nothing active imports the new contract modules.
+    """Bounded source-text checks for enumerated contract/adapter import patterns.
 
-    This is a recursive source scan with a floor, not a bundle-size argument.
-    It proves the active migrator/storage path and every server route/MCP/CLI
-    entry contain no import of these modules; it does not prove anything about
-    runtime behaviour beyond that.
+    Recursive file selection plus floors detects a collapsed scan. These checks
+    report absence of specified substrings in the selected files, not
+    TypeScript/Python import resolution, aliases, arbitrary re-exports or
+    runtime isolation.
     """
 
     PY_ROOT = Path(__file__).resolve().parents[1] / "src" / "arra_migrate"
     TS_ROOT = Path(__file__).resolve().parents[2] / "server" / "src"
     CLI = Path(__file__).resolve().parents[2] / "cli.ts"
     NEW_TS = ("jcs", "common", "errors", "evidence-v1", "revision-v1", "replay-v1", "batch-v1", "batch-worker")
+    # The #25 pure-policy slice is REQUIRED by its contract to reuse the strict
+    # JSON/Unicode/time helpers, so it is the one file exempt from the scan
+    # below. Exempting the exact file, never the whole `auth/` directory: a
+    # future auth module must not inherit this exemption silently.
+    POLICY_TS = TS_ROOT / "auth" / "policy.ts"
+    # Textual patterns searched for. This is an ENUMERATED substring list, not a
+    # resolver: it does not model TypeScript path resolution, tsconfig aliases,
+    # re-exports or dynamic `import(expr)`. It catches the spellings a static
+    # import of the policy module would normally be written with, nothing more.
+    POLICY_IMPORT_PATTERNS = (
+        "auth/policy",
+        "../auth/policy",
+        "./auth/policy",
+        "./policy",
+    )
+
+    @classmethod
+    def policy_import_hits(cls, text: str) -> list[str]:
+        """Enumerated-substring scan shared by the guard and its sensitivity test."""
+        return [pattern for pattern in cls.POLICY_IMPORT_PATTERNS if pattern in text]
 
     def test_no_active_python_path_imports_the_adapter(self):
         scanned = [p for p in self.PY_ROOT.rglob("*.py") if p.name != "revision_v1.py"]
@@ -445,14 +465,78 @@ class IsolationTests(unittest.TestCase):
 
     def test_no_route_mcp_or_cli_imports_the_new_contract_modules(self):
         contracts = self.TS_ROOT / "contracts"
-        scanned = [p for p in self.TS_ROOT.rglob("*.ts") if contracts not in p.parents] + [self.CLI]
+        scanned = [
+            p
+            for p in self.TS_ROOT.rglob("*.ts")
+            if contracts not in p.parents and p != self.POLICY_TS
+        ] + [self.CLI]
         self.assertGreaterEqual(len(scanned), 8, f"scan collapsed: {len(scanned)} files")
+        self.assertNotIn(self.POLICY_TS, scanned)
         for path in scanned:
             text = path.read_text(encoding="utf-8")
             for module in self.NEW_TS:
                 with self.subTest(file=path.name, module=module):
                     self.assertNotIn(f"contracts/{module}", text)
                     self.assertNotIn(f"./{module}", text)
+
+    def test_no_other_server_source_contains_a_policy_import_pattern(self):
+        """No scanned server source contains an enumerated policy-import pattern.
+
+        The exact policy-file exemption permits helper reuse. This complementary
+        scan checks other selected source files for the enumerated policy-import
+        substrings; it does not resolve their imports.
+        """
+        scanned = [p for p in self.TS_ROOT.rglob("*.ts") if p != self.POLICY_TS] + [self.CLI]
+        self.assertGreaterEqual(len(scanned), 8, f"scan collapsed: {len(scanned)} files")
+        for path in scanned:
+            with self.subTest(file=path.name):
+                self.assertEqual([], self.policy_import_hits(path.read_text(encoding="utf-8")))
+
+    def test_the_policy_import_scan_fires_on_representative_text(self):
+        """Sensitivity of the SHARED scan predicate, on independent text.
+
+        The probe text below is hard-coded representative import source, written
+        out by hand rather than generated from POLICY_IMPORT_PATTERNS -- a test
+        that formats the pattern list into a file and then finds it again is
+        circular, and a typo in the list would still pass.
+
+        Fixtures live in a TemporaryDirectory: tests never write into the
+        product source tree.
+        """
+        flagged = (
+            'import { admit } from "../auth/policy";\n',
+            'import { parsePolicy } from "./auth/policy";\n',
+            'import type { Policy } from "./policy";\n',
+            'export { admit } from "../../server/src/auth/policy";\n',
+        )
+        benign = (
+            'import { handleMcp } from "./mcp";\n',
+            'import * as store from "./db";\n',
+            "// the authorization policy is documented in app/docs/contracts\n",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertNotIn(str(self.TS_ROOT), str(root))
+            for index, source in enumerate(flagged):
+                probe = root / f"flagged_{index}.ts"
+                probe.write_text(source, encoding="utf-8")
+                with self.subTest(kind="flagged", source=source.strip()):
+                    self.assertNotEqual(
+                        [],
+                        self.policy_import_hits(probe.read_text(encoding="utf-8")),
+                        "scan missed a representative policy import",
+                    )
+            for index, source in enumerate(benign):
+                probe = root / f"benign_{index}.ts"
+                probe.write_text(source, encoding="utf-8")
+                with self.subTest(kind="benign", source=source.strip()):
+                    self.assertEqual(
+                        [],
+                        self.policy_import_hits(probe.read_text(encoding="utf-8")),
+                        "scan flagged an unrelated import",
+                    )
+        # The product source tree was never written to by this test.
+        self.assertFalse((self.TS_ROOT / "auth" / "__isolation_probe__.ts").exists())
 
     def test_the_adapter_itself_imports_no_lancedb_or_storage(self):
         text = (self.PY_ROOT / "revision_v1.py").read_text(encoding="utf-8")
