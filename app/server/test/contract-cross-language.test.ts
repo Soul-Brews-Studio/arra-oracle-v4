@@ -4,8 +4,25 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { connect } from "@lancedb/lancedb";
 import { canonicalMessage, messageDigest, formatInt64, validateId } from "../src/contracts/v1";
+
+test("TS consumes the same proposed target-19 manifest without activating it", async () => {
+  const path = fileURLToPath(new URL("../../migrate-py/contracts/target-19-manifest.json", import.meta.url));
+  const manifest = JSON.parse(await readFile(path, "utf8")) as {
+    status: string; target_count: number; current_registry_tables: string[]; target_tables: string[]; deferred: string[];
+  };
+  const current = ["workspaces", "peers", "sessions", "session_peers", "messages", "memories", "vocabularies", "terms", "memory_terms", "supersede_log", "traces", "trace_hits", "mcp_calls", "connections", "read_cursors"];
+  const target = ["workspaces", "peers", "sessions", "session_peers", "messages", "session_links", "nodes", "node_revisions", "node_revision_terms", "revision_links", "supersede_log", "vocabularies", "terms", "traces", "trace_hits", "search_chunks_v1", "mcp_calls", "connections", "read_cursors"];
+  expect(manifest.status).toBe("proposed-not-active");
+  expect(manifest.target_count).toBe(19);
+  expect(manifest.current_registry_tables).toEqual(current);
+  expect(manifest.target_tables).toEqual(target);
+  expect(new Set(target).size).toBe(19);
+  expect(target.filter((table) => !current.includes(table))).toEqual(["session_links", "nodes", "node_revisions", "node_revision_terms", "revision_links", "search_chunks_v1"]);
+  expect(manifest.deferred.length).toBeGreaterThan(0);
+});
 
 test("Python declares Arrow types and bytes; Bun reads the same scratch Lance rows", async () => {
   const root = await mkdtemp(join(tmpdir(), "arra-codec-contract-"));
