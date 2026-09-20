@@ -356,13 +356,15 @@ async function rejection(promise: Promise<unknown>): Promise<unknown> {
 // ── tests ───────────────────────────────────────────────────────────────────
 
 describe("context surface", () => {
-  test("service exports exactly the seven runtime names", () => {
+  test("service exports exactly the nine runtime names", () => {
     requireContextApi();
     const exported = Object.keys(service).sort();
     expect(exported).toEqual([
       "PublicationError",
       "openContextReader",
       "openContextWriter",
+      "openEvidenceReader",
+      "openEvidenceWriter",
       "openKnowledgeReader",
       "openKnowledgeWriter",
       "openPublicationReader",

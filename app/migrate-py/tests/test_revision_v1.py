@@ -470,6 +470,7 @@ class IsolationTests(unittest.TestCase):
         # file, deliberately, so the next module under publication/ still has
         # to be reviewed rather than inheriting this.
         TS_ROOT / "publication" / "context.ts",
+        TS_ROOT / "publication" / "association.ts",
     )
 
     #: The publication kernel is internal: no active source may import it.
@@ -480,8 +481,10 @@ class IsolationTests(unittest.TestCase):
         TS_ROOT / "publication" / "service.ts",
         TS_ROOT / "publication" / "taxonomy.ts",
         TS_ROOT / "publication" / "context.ts",
+        TS_ROOT / "publication" / "association.ts",
     )
     PUBLICATION_IMPORT_PATTERNS = (
+        "publication/association",
         "publication/context",
         "publication/taxonomy",
         "publication/service",
@@ -587,6 +590,7 @@ class IsolationTests(unittest.TestCase):
             'import { PublicationError } from "src/publication/errors";\n',
             'import { failTaxonomy } from "src/publication/taxonomy";\n',
             'import { encodeMessageRow } from "src/publication/context";\n',
+            'import * as association from "src/publication/association";\n',
             'const a = await import("./publication");\n',
             'const b = await import("../publication");\n',
         )
