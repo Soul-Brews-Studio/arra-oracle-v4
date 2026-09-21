@@ -210,7 +210,14 @@
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;" }[c]));
+// Escapes &, <, >, " and ' -- safe to interpolate into element TEXT position
+// (every current use in this file) AND into a quoted attribute value
+// (href="${esc(...)}", title="${esc(...)}", etc), should a future view need
+// one. Every call site here happens to land in text position today, where
+// only < and > matter, but this map is deliberately the FULL five-entity set
+// so the next attribute interpolation added to this file is safe by default
+// instead of needing this function re-derived first.
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 
 // Token lives ONLY in this variable for the tab's lifetime -- never written to
 // localStorage, a cookie, the URL or a static asset (same discipline as /index.html).
