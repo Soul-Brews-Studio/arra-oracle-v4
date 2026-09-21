@@ -5,3 +5,7 @@ __pycache__/
 
 # Rebuildable local code-intelligence database
 /.codegraph/
+
+# UI POC builds — rebuildable, never reviewed
+app/ui/*/node_modules/
+app/ui/*/dist/

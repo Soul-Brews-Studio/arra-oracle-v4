@@ -7,6 +7,12 @@ port := env_var_or_default("PORT", "3939")
 install:
     cd {{srv}} && bun install
 
+# Local dev only: target19 + legacy15 datasets under app/.tmp/, dev auth
+# policy, server backgrounded as the dataset's sole writer. Idempotent.
+# See app/.tmp/DEV-STACK.md (written on first run) for the token and paths.
+dev-stack:
+    @{{root}}/just/dev-stack.sh
+
 start:
     cd {{srv}} && bun run src/index.ts
 
