@@ -72,13 +72,16 @@ const RUNTIME_EXPORTS = [
 /** Twenty-two on every context WRITER facade (its own eleven plus the eleven
  *  reader methods it spreads in), eleven on every context READER facade. */
 const CONTEXT_WRITE_METHODS =
-  "advanceReadCursor,answerChat,appendMessages,createSessionLink,createTrace,getContext,getMessage," +
-  "getPeer,getReadCursor,getRecallEligibility,getSession,getTrace,indexRevisionChunks,joinSession," +
-  "listLifecycleHistory,listMessages,listPeers,listSearchChunks,listSessionLinks,listSessions,listTraceHits," +
-  "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode,writeChunkEmbedding";
+  "advanceReadCursor,answerChat,appendMessages,createSessionLink,createTrace,getContext," +
+  "getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
+  "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
+  "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessions,listTraceHits," +
+  "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
+  "writeChunkEmbedding";
 const CONTEXT_READ_METHODS =
   "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
-  "listLifecycleHistory,listMessages,listPeers,listSearchChunks,listSessionLinks,listSessions,listTraceHits";
+  "listConnections,listLifecycleHistory,listMcpCalls,listMessages,listPeers," +
+  "listSearchChunks,listSessionLinks,listSessions,listTraceHits";
 /** Bundle keys are unchanged by this slice; nested facades never carry close. */
 const CONTEXT_WRITER_KEYS = "close,context,publication,taxonomy";
 const EVIDENCE_WRITER_KEYS = "close,context,evidence,publication,taxonomy";
@@ -350,7 +353,7 @@ describe("context facades across all four factories", () => {
       expect(writerMethods).toContain("listSessionLinks");
       expect(readerMethods).toContain("listSessionLinks");
       expect(readerMethods).not.toContain("createSessionLink");
-      expect({ writer: writerMethods.length, reader: readerMethods.length }).toEqual({ writer: 27, reader: 14 });
+      expect({ writer: writerMethods.length, reader: readerMethods.length }).toEqual({ writer: 29, reader: 16 });
       expect(writerMethods).not.toContain("close");
       expect(readerMethods).not.toContain("close");
     },

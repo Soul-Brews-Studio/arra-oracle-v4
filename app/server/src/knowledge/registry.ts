@@ -36,7 +36,18 @@
 
 import type { EvidenceReaderBundle, EvidenceWriterBundle } from "../publication/service";
 
-export type KnowledgeAction = "content:read" | "content:write";
+/**
+ * `audit:read` widened in for #94 (`listMcpCalls`/`listConnections`): the
+ * runtime `admit()`/policy layer (`auth/policy.types.ts`'s `WorkspaceAction`)
+ * already supports all four workspace actions, and `auth/service.ts`'s
+ * `KNOWLEDGE_TOOL_ACTION` already derives `kb_<method>` grants generically
+ * from whatever `entry.action` says here -- this type was the only place
+ * still narrowed to two, not a deliberate scope boundary. Call-log data is
+ * audit data (`authorization-integration-v1.md` §"Audit append"), so it is
+ * gated the same way `MEMORY_TOOL_ACTION`'s `call_log`/`call_stats` already
+ * are, not folded into `content:read`.
+ */
+export type KnowledgeAction = "content:read" | "content:write" | "audit:read";
 
 /** Every write bundle also carries the full read surface (`...reads` spread
  *  in each writer factory), so this union covers both without a reader/writer
@@ -158,6 +169,11 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
   // none), it currently always answers `writer_unavailable` -- a real,
   // honestly-surfaced state, not a fabricated success.
   getContext: { action: "content:read", scopePath: [], call: (b, x) => b.context.getContext(x) },
+  // Audit data, not content: entitles the caller to `h_metadata.auth.credential_id`
+  // (see `context.encodeMcpCallRow.ts`), which `content:read` callers must
+  // never see.
+  listMcpCalls: { action: "audit:read", scopePath: [], call: (b, x) => b.context.listMcpCalls(x) },
+  listConnections: { action: "audit:read", scopePath: [], call: (b, x) => b.context.listConnections(x) },
   answerChat: {
     action: "content:write",
     scopePath: [],

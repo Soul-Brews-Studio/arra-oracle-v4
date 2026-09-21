@@ -61,7 +61,7 @@ describe("preflight: the required surface", () => {
         const bundle = await (service as Record<string, any>)[factory](fixture.datasetRoot);
         expect(Object.keys(bundle.context).sort()).toEqual([
           "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
-          "listLifecycleHistory", "listMessages", "listPeers", "listSearchChunks", "listSessionLinks", "listSessions",
+          "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks", "listSessionLinks", "listSessions",
           "listTraceHits",
         ]);
         expect("close" in bundle.context).toBe(false);
@@ -118,7 +118,7 @@ describe("real persistence: cursors inside the real gate", () => {
         expect(parsed.contextMethods).toEqual([
           "advanceReadCursor", "answerChat", "appendMessages", "createSessionLink", "createTrace", "getContext",
           "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
-          "indexRevisionChunks", "joinSession", "listLifecycleHistory", "listMessages", "listPeers", "listSearchChunks",
+          "indexRevisionChunks", "joinSession", "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks",
           "listSessionLinks", "listSessions", "listTraceHits", "reconcileSearchChunks", "registerPeer", "registerSession",
           "retireNode", "supersedeNode", "writeChunkEmbedding",
         ]);

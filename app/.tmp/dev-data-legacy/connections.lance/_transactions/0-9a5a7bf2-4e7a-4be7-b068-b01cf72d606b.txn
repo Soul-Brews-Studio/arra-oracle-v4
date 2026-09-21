@@ -1,0 +1,5 @@
+$9a5a7bf2-4e7a-4be7-b068-b01cf72d606b²»id ÿÿÿÿÿÿÿÿÿ*string8'workspace_name ÿÿÿÿÿÿÿÿÿ*string8method ÿÿÿÿÿÿÿÿÿ*string8"	principal ÿÿÿÿÿÿÿÿÿ*string8label ÿÿÿÿÿÿÿÿÿ*string8%
+user_agent ÿÿÿÿÿÿÿÿÿ*string08$	remote_ip ÿÿÿÿÿÿÿÿÿ*string08+
+first_seen ÿÿÿÿÿÿÿÿÿ*timestamp:us:-8*	last_seen ÿÿÿÿÿÿÿÿÿ*timestamp:us:-8 requests	 ÿÿÿÿÿÿÿÿÿ*int648"
+tool_calls
+ ÿÿÿÿÿÿÿÿÿ*int648$	last_tool ÿÿÿÿÿÿÿÿÿ*string08

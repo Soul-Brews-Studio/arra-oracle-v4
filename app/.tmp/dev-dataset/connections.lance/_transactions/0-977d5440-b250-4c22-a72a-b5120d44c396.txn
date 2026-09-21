@@ -1,0 +1,5 @@
+$977d5440-b250-4c22-a72a-b5120d44c396²»id ÿÿÿÿÿÿÿÿÿ*string8'workspace_name ÿÿÿÿÿÿÿÿÿ*string8method ÿÿÿÿÿÿÿÿÿ*string8"	principal ÿÿÿÿÿÿÿÿÿ*string8label ÿÿÿÿÿÿÿÿÿ*string8%
+user_agent ÿÿÿÿÿÿÿÿÿ*string08$	remote_ip ÿÿÿÿÿÿÿÿÿ*string08+
+first_seen ÿÿÿÿÿÿÿÿÿ*timestamp:us:-8*	last_seen ÿÿÿÿÿÿÿÿÿ*timestamp:us:-8 requests	 ÿÿÿÿÿÿÿÿÿ*int648"
+tool_calls
+ ÿÿÿÿÿÿÿÿÿ*int648$	last_tool ÿÿÿÿÿÿÿÿÿ*string08

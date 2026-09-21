@@ -44,6 +44,10 @@ export const TRACE_HITS = "trace_hits";
 
 export const SEARCH_CHUNKS = "search_chunks_v1";
 
+export const MCP_CALLS = "mcp_calls";
+
+export const CONNECTIONS = "connections";
+
 export const INT64_CEILING = 2n ** 63n - 1n;
 
 /** Bounded forward-walk cap for the replacement chain (#29). */

@@ -323,7 +323,13 @@ export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
 
   return {
     async getBundle(action: KnowledgeAction): Promise<KnowledgeBundle> {
-      if (action === "content:read") {
+      // Every action except `content:write` is a READ (#94 widened
+      // `KnowledgeAction` to add `audit:read`): branching on `!== "content:write"`
+      // rather than `=== "content:read"` keeps this exhaustive as read actions
+      // are added, instead of silently routing a new read action into the
+      // writer-gate path below, which would require a writer for a call that
+      // never mutates anything and could deadlock a reader-only deployment.
+      if (action !== "content:write") {
         reader ??= openEvidenceReader(requireRoot());
         return reader;
       }

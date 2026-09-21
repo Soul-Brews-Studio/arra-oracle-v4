@@ -532,7 +532,7 @@ describe("real persistence: registration, shapes and reads", () => {
       expect(parsed.contextMethods).toEqual([
         "advanceReadCursor", "answerChat", "appendMessages", "createSessionLink", "createTrace", "getContext",
         "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
-        "indexRevisionChunks", "joinSession", "listLifecycleHistory", "listMessages", "listPeers", "listSearchChunks",
+        "indexRevisionChunks", "joinSession", "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks",
         "listSessionLinks", "listSessions", "listTraceHits", "reconcileSearchChunks", "registerPeer", "registerSession",
         "retireNode", "supersedeNode", "writeChunkEmbedding",
       ]);
@@ -1090,7 +1090,7 @@ describe("core: the sourced path and the reader bundle", () => {
       // Exactly the fourteen READ methods; no mutator reachable from a reader.
       expect(parsed.readerContextMethods).toEqual([
         "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
-        "listLifecycleHistory", "listMessages", "listPeers", "listSearchChunks", "listSessionLinks", "listSessions",
+        "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks", "listSessionLinks", "listSessions",
         "listTraceHits",
       ]);
       // A gateless reader works AFTER the writer released its gate.
