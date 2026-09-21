@@ -27,6 +27,7 @@ import { AuthDenied, type McpEnvelope, type OperationService } from "./auth/serv
 import { decodeUtf8Strict, LIMITS, parseStrict } from "./contracts/jcs";
 import { SERVER_NAME, SERVER_VERSION } from "./mcp/protocol";
 import { handshakeResponse, type createMcpAdapter } from "./mcp";
+import { handleKnowledgeRequest, type KnowledgeAccess } from "./knowledge/transport";
 
 export type AppConfig = {
   /** Exact scheme/authority this process answers for, e.g. http://127.0.0.1:3939 */
@@ -84,7 +85,13 @@ export function createApp(
   config: AppConfig,
   service: OperationService,
   mcpHandle: ReturnType<typeof createMcpAdapter>,
-  options: { readonly assets?: string } = {},
+  options: {
+    readonly assets?: string;
+    /** #31: publication/taxonomy/context/evidence transport. Optional so every
+     *  existing test that constructs `createApp` with 3 args keeps working;
+     *  omitting it means `/api/knowledge/*` answers a fixed 404. */
+    readonly knowledge?: { policyPath: string; access: KnowledgeAccess };
+  } = {},
 ) {
   const origin = new URL(config.origin);
 
@@ -385,6 +392,22 @@ export function createApp(
         return guarded(async () => ({
           indices: await service.reindex(readAuthorization(request), bodyGate(request)),
         }));
+      },
+      { parse: "none" },
+    )
+
+    // ── knowledge transport (#31): publication/taxonomy/context/evidence ───
+    // `parse: "none"` for the same reason as every other protected POST: the
+    // raw bytes must reach the governed parser untouched. `:bank` is the
+    // ADMITTED scope; the body's own `workspace_name` is checked against it
+    // before dispatch, never trusted on its own (see knowledge/transport.ts).
+    .post(
+      "/api/knowledge/:bank/:method",
+      async ({ params, request }) => {
+        const blocked = transportGuard(request);
+        if (blocked) return blocked;
+        if (options.knowledge === undefined) return errorResponse(404);
+        return handleKnowledgeRequest(request, params, options.knowledge);
       },
       { parse: "none" },
     );

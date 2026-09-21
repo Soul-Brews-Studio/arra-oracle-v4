@@ -15,6 +15,7 @@
 import { admit, type Admission, type GlobalAction, type Policy, type WorkspaceAction } from "./policy";
 import { loadPolicy } from "./loader";
 import { TOOL_NAMES } from "../mcp/tools";
+import { KNOWLEDGE_METHODS } from "../knowledge/registry";
 
 export type AuthFailure = "unauthenticated" | "forbidden" | "policy_unavailable" | "invalid_request";
 
@@ -119,7 +120,7 @@ const MCP_ACTION_ORDER: readonly WorkspaceAction[] = [
  * Owned HERE, not supplied by a caller: letting an adapter choose which action
  * a tool required would let it pick the cheapest grant it happened to hold.
  */
-const TOOL_ACTION: Readonly<Record<string, WorkspaceAction>> = Object.freeze({
+const MEMORY_TOOL_ACTION: Readonly<Record<string, WorkspaceAction>> = {
   remember: "content:write",
   recall: "content:read",
   get_memory: "content:read",
@@ -128,6 +129,17 @@ const TOOL_ACTION: Readonly<Record<string, WorkspaceAction>> = Object.freeze({
   status: "diagnostics:read",
   call_log: "audit:read",
   call_stats: "audit:read",
+};
+
+/** #31: `kb_<method>` -> the same action `knowledge/registry.ts` declares.
+ *  Data-driven so a new registry entry is admitted/listed automatically. */
+const KNOWLEDGE_TOOL_ACTION: Readonly<Record<string, WorkspaceAction>> = Object.fromEntries(
+  Object.entries(KNOWLEDGE_METHODS).map(([method, entry]) => [`kb_${method}`, entry.action]),
+);
+
+const TOOL_ACTION: Readonly<Record<string, WorkspaceAction>> = Object.freeze({
+  ...MEMORY_TOOL_ACTION,
+  ...KNOWLEDGE_TOOL_ACTION,
 });
 
 export type StoreDependencies = {
@@ -488,7 +500,21 @@ export function createOperationService(
         });
         return { kind: "ok", value };
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        // #31: a governed envelope error (arra-error/v1, arra-publication-
+        // error/v1, arra-taxonomy-error/v1) must cross this transport
+        // UNCHANGED, same as HTTP. This is the one MCP exit every tool result
+        // funnels through, so the exact JSON is carried in `message` here
+        // rather than collapsed to `.message` text; `text()` on the MCP side
+        // passes a string value through untouched.
+        const envelope =
+          typeof error === "object" &&
+          error !== null &&
+          typeof (error as { code?: unknown }).code === "string" &&
+          typeof (error as { path?: unknown }).path === "string" &&
+          typeof (error as { toJSON?: unknown }).toJSON === "function"
+            ? JSON.stringify((error as { toJSON(): unknown }).toJSON())
+            : null;
+        const message = envelope ?? (error instanceof Error ? error.message : String(error));
         await appendAudit(context, {
           tool: name,
           input: args,
