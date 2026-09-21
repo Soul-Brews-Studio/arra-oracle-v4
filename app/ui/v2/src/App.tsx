@@ -5,6 +5,7 @@ import { DialecticPanel } from "./components/DialecticPanel";
 import { EmptyState } from "./components/EmptyState";
 import { ErrorNote } from "./components/ErrorNote";
 import { PeerRail } from "./components/PeerRail";
+import { SidebarShell } from "./components/SidebarShell";
 import { SessionRail } from "./components/SessionRail";
 import { Transcript } from "./components/Transcript";
 import { WorkspaceBar } from "./components/WorkspaceBar";
@@ -23,6 +24,7 @@ import { useMemory } from "./state/useMemory";
 export function App() {
   const m = useMemory();
   const [health, setHealth] = useState<number | null>(null);
+  const [railCollapsed, setRailCollapsed] = useState(false);
 
   // Verify the saved roster once per bank/workspace change: a bookmark that
   // has gone stale should announce itself on arrival, not the first time you
@@ -68,7 +70,12 @@ export function App() {
       />
 
       <div className="flex min-h-0 flex-1">
-        <aside className="flex w-60 shrink-0 flex-col gap-4 overflow-y-auto border-r border-edge p-3">
+        <SidebarShell
+          collapsed={railCollapsed}
+          onToggle={() => setRailCollapsed((v) => !v)}
+          peer={m.peer}
+          session={m.session}
+        >
           <PeerRail
             entries={m.roster.peers}
             selected={m.peer}
@@ -88,7 +95,7 @@ export function App() {
             onJoin={(n) => void m.actions.join(n)}
             busy={m.busy}
           />
-        </aside>
+        </SidebarShell>
 
         <main className="flex min-w-0 flex-1 flex-col">
           {m.session === null ? (

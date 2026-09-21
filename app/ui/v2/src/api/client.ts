@@ -61,7 +61,12 @@ export async function callMethod(
 export async function health(bank: string): Promise<ApiResult> {
   const started = performance.now();
   try {
-    const res = await fetch(`/api/health?bank=${encodeURIComponent(bank)}`);
+    // `/health`, NOT `/api/health`. Liveness is the one public route: it
+    // answers a constant version/auth-mode with zero storage or policy I/O,
+    // and it takes no bank. `/api/health` does not exist and returns a bare
+    // 400 from the Host/scope check, which reads like a server fault.
+    void bank;
+    const res = await fetch(`/health`);
     const body = await res.json().catch(() => null);
     return { ok: res.ok, status: res.status, durationMs: Math.round(performance.now() - started), body };
   } catch (err) {
