@@ -69,8 +69,21 @@ intact, so the diagram is not the fix -- reconciling SPEC.md is.
 `storage.ts` does not merely prefer the 19-table shape — it refuses to open a
 dataset that is not exactly it, checking every field name, Arrow type and
 nullability before any mutation. So "proposed" is no longer accurate for the
-TypeScript side. The ACTIVE Python registry is still the 15-table baseline; that
-gap is real and is the thing to decide on, not a documentation bug.
+TypeScript side. The ACTIVE Python registry is still the 15-table baseline.
+
+**Correction (2026-09-21):** an earlier version of this file said that gap "is
+the thing to decide on." That was wrong -- the decision already exists. Issue
+#23 froze the target19 contract on 2026-09-20, naming commits `8618094`,
+`6289311` and `33e3c44`, and states the arithmetic directly: "The target is
+15 - 2 + 6, not 15 + 4." It was decided in an ISSUE, which is why reading only
+the discussions makes it look undecided -- every discussion self-labels as a
+proposal.
+
+What is actually open is narrower and more specific: #23 explicitly froze "the
+versioned contract, not the full product," and `target-19-manifest.json` still
+records the target as `proposed-not-active`. The runtime has since moved past
+the status its own frozen manifest records, and neither the manifest nor the
+active Python registry was moved to match. See `DATABASE-HISTORY.md` section 3.
 
 ---
 
