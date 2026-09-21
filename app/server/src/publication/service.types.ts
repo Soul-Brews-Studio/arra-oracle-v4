@@ -57,6 +57,16 @@ export type DatasetAdapter = {
     workspace: string,
     revisionId: string,
   ): Promise<{ numDeletedRows: number; version: number }>;
+  /**
+   * Native, predicate-scoped row count -- the SDK's own `countRows`, which
+   * never materializes a row into JS. `listNodes`' opt-in `include_total` is
+   * the only caller: counting an open-ended workspace-scoped set has no
+   * keyset to bound it, so this exists to answer that WITHOUT reading every
+   * row through `query`/`orderedProjection` to count them by hand, which
+   * would turn an opt-in sidebar total into an unbounded full scan through
+   * this process instead of the SDK's own count path.
+   */
+  count(table: string, predicate: string): Promise<number>;
   refresh(table: string): Promise<void>;
   version(table: string): Promise<number>;
   append(table: string, rows: Record<string, unknown>[]): Promise<number>;

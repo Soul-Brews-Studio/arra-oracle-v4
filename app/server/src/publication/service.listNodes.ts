@@ -3,10 +3,23 @@ import { encodeNodeRow, encodeRevisionRow, MAX_CHAIN_WIRE_BYTES } from "./rows";
 import { quote } from "./storage";
 import { contextOne } from "./service.contextOne";
 import { NODE_REVISIONS, NODES, scopeOf } from "./service.constants";
+import { deriveNodeType } from "./service.deriveNodeType";
 import { parseListNodes } from "./service.parseListNodes";
 import { requireWorkspace } from "./service.requireWorkspace";
 import { type DatasetAdapter } from "./service.types";
 import { wireBytesOf } from "./service.wireBytesOf";
+
+/**
+ * Bounded scan window for a `type_term`-filtered page. Matches may be sparse
+ * across the id-ordered keyset, so `limit` (a count of MATCHES) cannot also
+ * bound how many nodes get examined to find them -- this is the separate cap
+ * on that examination work, one call's worth, mirroring `scanDependents`'
+ * `MAX_VISITED_NODES` for the same reason: a rare filter value must never
+ * turn a single request into an unbounded scan. Set well above
+ * `MAX_PAGE_LIMIT` because examining one node here is cheap (two point
+ * reads and a JSON parse), unlike `scanDependents`' full ancestry+link walk.
+ */
+const MAX_SCANNED_NODES = 1000;
 
 /**
  * Workspace-scoped, keyset-paginated node listing (#88).
@@ -18,26 +31,32 @@ import { wireBytesOf } from "./service.wireBytesOf";
 export async function listNodes(
   reader: DatasetAdapter,
   requestBytes: Uint8Array,
-): Promise<{ rows: Record<string, unknown>[]; next_after_id: string | null }> {
+): Promise<{ rows: Record<string, unknown>[]; next_after_id: string | null; total: string | null }> {
   const request = parseListNodes(requestBytes);
   await requireWorkspace(reader, request.workspace_name);
 
   await reader.refresh(NODES);
-  const scope =
-    scopeOf(request.workspace_name) +
-    (request.after_id === null ? "" : ` AND id > ${quote(request.after_id)}`);
+  const scope = scopeOf(request.workspace_name);
+  const idScope = scope + (request.after_id === null ? "" : ` AND id > ${quote(request.after_id)}`);
 
-  // KEYSET, never offset: limit+1 detects continuation without paging by
-  // position, which would skip or repeat rows as the table grows -- the same
-  // shape listMessages uses over seq_in_session. `nodes.id` is a nanoid21
-  // primary key and therefore a total order, which is exactly what makes
-  // ascending `id` a safe keyset boundary here.
+  // KEYSET, never offset: paging by position would skip or repeat rows as
+  // the table grows. `nodes.id` is a nanoid21 primary key and therefore a
+  // total order, which is exactly what makes ascending `id` a safe keyset
+  // boundary here -- the same shape listMessages uses over seq_in_session.
+  //
+  // Unfiltered, the scan window IS the page: limit+1 is the classic
+  // lookahead that detects continuation without a second round trip. A
+  // `type_term` filter breaks that equivalence -- matches can be sparse
+  // across the id order -- so it widens the window to MAX_SCANNED_NODES
+  // instead and the loop below stops on MATCH count, not window position.
+  const scanLimit = request.type_term === null ? request.limit + 1 : MAX_SCANNED_NODES;
+
   const selected = await reader.orderedProjection(
     NODES,
-    scope,
+    idScope,
     ["id"],
     { column: "id", ascending: true },
-    request.limit + 1,
+    scanLimit,
   );
 
   const ids: string[] = [];
@@ -50,14 +69,19 @@ export async function listNodes(
     ids.push(id);
   }
 
-  const page = ids.slice(0, request.limit);
   await reader.refresh(NODE_REVISIONS);
 
   const rows: Record<string, unknown>[] = [];
   // Brackets plus one comma per row: sum + n + 1.
   let budget = 1;
-  for (const id of page) {
-    const node = await contextOne(reader, NODES, `${scopeOf(request.workspace_name)} AND id = ${quote(id)}`);
+  let lastExaminedId: string | null = null;
+  let consumed = 0;
+
+  for (const id of ids) {
+    consumed += 1;
+    lastExaminedId = id;
+
+    const node = await contextOne(reader, NODES, `${scope} AND id = ${quote(id)}`);
     if (node === null) failPublication("integrity_failure", "");
     const encodedNode = encodeNodeRow(node);
 
@@ -75,15 +99,24 @@ export async function listNodes(
     // not a row to silently drop.
     if (typeof headId !== "string") failPublication("integrity_failure", "");
 
-    const revision = await contextOne(
-      reader,
-      NODE_REVISIONS,
-      `${scopeOf(request.workspace_name)} AND id = ${quote(headId)}`,
-    );
+    const revision = await contextOne(reader, NODE_REVISIONS, `${scope} AND id = ${quote(headId)}`);
     // A `current_revision_id` pointing at no row is the same corruption as a
     // null one -- a dangling pointer, not a softer "row missing" outcome.
     if (revision === null) failPublication("integrity_failure", "");
     const encodedRevision = encodeRevisionRow(revision);
+
+    if (request.type_term !== null) {
+      // Filters on `node_revisions.term_snapshot_json` (via the SAME decoder
+      // `deriveNodeType` already uses for the same field elsewhere), NOT on
+      // the derived `node_revision_terms` projection. That projection only
+      // exists once `reconcileRevisionAssociations` has run for a revision;
+      // a freshly published node has zero rows there until then. Filtering
+      // on it would silently miss every unreconciled node and present that
+      // partial set as if it were complete -- the snapshot, by contrast, is
+      // written WITH the revision and is never behind a separate write.
+      const nodeType = deriveNodeType(encodedRevision);
+      if (nodeType !== request.type_term) continue;
+    }
 
     const encoded = {
       ...encodedNode,
@@ -96,11 +129,31 @@ export async function listNodes(
     // would hand back a short page indistinguishable from a real one.
     if (budget > MAX_CHAIN_WIRE_BYTES) failPublication("limit_exceeded", "");
     rows.push(encoded);
+    if (rows.length >= request.limit) break;
   }
 
-  const hasMore = ids.length > request.limit;
-  return {
-    rows,
-    next_after_id: hasMore && page.length > 0 ? page[page.length - 1]! : null,
-  };
+  // More already-fetched ids were never examined (stopped on a filled match
+  // limit), OR the fetched window was itself capped at `scanLimit` and might
+  // continue beyond it -- either way there could be more. Only when the
+  // window was consumed in full AND fell short of `scanLimit` is the
+  // workspace (optionally filtered) truly exhausted.
+  const hasMore = consumed < ids.length || ids.length === scanLimit;
+  const next_after_id = hasMore && lastExaminedId !== null ? lastExaminedId : null;
+
+  let total: string | null = null;
+  if (request.include_total) {
+    if (request.type_term === null) {
+      // Native, predicate-scoped count -- never materializes a row into JS.
+      const n = await reader.count(NODES, scope);
+      total = n.toString(10);
+    }
+    // A `type_term` total has no equivalent native shape: the type lives in
+    // JSON text on each revision, not a physical/indexed column, so the only
+    // way to count it exactly is reading and parsing every candidate
+    // revision -- precisely the unbounded full-materialize-to-count this
+    // kernel refuses to do to fake a total. `total` stays null here: an
+    // honest "not computed", never an approximation presented as exact.
+  }
+
+  return { rows, next_after_id, total };
 }

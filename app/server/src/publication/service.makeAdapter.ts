@@ -203,6 +203,13 @@ export function makeAdapter(connection: Connection, onRelease: () => void): Data
       // lossy Number fallback returns on one side only.
       return decodeArrowRows(arrow);
     },
+    async count(table, predicate) {
+      const tbl = await handle(table);
+      await tbl.checkoutLatest();
+      const total = await tbl.countRows(predicate);
+      if (!Number.isSafeInteger(total) || total < 0) failPublication("integrity_failure");
+      return total;
+    },
     async deleteDerivedScope(table, workspace, revisionId) {
       // Restricted by construction: only these two tables, and the predicate
       // is built here from the reviewed literal escaper.
