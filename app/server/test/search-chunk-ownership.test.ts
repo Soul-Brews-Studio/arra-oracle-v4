@@ -58,13 +58,13 @@ const RUNTIME_EXPORTS = [
  *  (grep for `indexRevisionChunks` / `listSearchChunks` / `reconcileSearchChunks`
  *  in `createContextWriterService`'s returned object), never handed a count. */
 const CONTEXT_WRITE_METHODS =
-  "advanceReadCursor,appendMessages,createSessionLink,createTrace,getMessage,getPeer,getReadCursor," +
-  "getRecallEligibility,getSession,getTrace,indexRevisionChunks,joinSession,listLifecycleHistory," +
-  "listMessages,listSearchChunks,listSessionLinks,listTraceHits,reconcileSearchChunks,registerPeer," +
-  "registerSession,retireNode,supersedeNode";
+  "advanceReadCursor,answerChat,appendMessages,createSessionLink,createTrace,getContext,getMessage," +
+  "getPeer,getReadCursor,getRecallEligibility,getSession,getTrace,indexRevisionChunks,joinSession," +
+  "listLifecycleHistory,listMessages,listSearchChunks,listSessionLinks,listTraceHits," +
+  "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode";
 const CONTEXT_READ_METHODS =
-  "getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace,listLifecycleHistory," +
-  "listMessages,listSearchChunks,listSessionLinks,listTraceHits";
+  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
+  "listLifecycleHistory,listMessages,listSearchChunks,listSessionLinks,listTraceHits";
 const CONTEXT_WRITER_KEYS = "close,context,publication,taxonomy";
 const EVIDENCE_WRITER_KEYS = "close,context,evidence,publication,taxonomy";
 const CONTEXT_READER_KEYS = "context,publication,taxonomy";
