@@ -60,7 +60,8 @@ describe("preflight: the required surface", () => {
       for (const factory of readers) {
         const bundle = await (service as Record<string, any>)[factory](fixture.datasetRoot);
         expect(Object.keys(bundle.context).sort()).toEqual([
-          "getMessage", "getPeer", "getReadCursor", "getSession", "listMessages",
+          "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
+          "listLifecycleHistory", "listMessages", "listSearchChunks", "listSessionLinks", "listTraceHits",
         ]);
         expect("close" in bundle.context).toBe(false);
       }
@@ -105,14 +106,15 @@ describe("real persistence: cursors inside the real gate", () => {
   ];
   const SEED = 4;
 
-  test("BOTH writer factories expose the ten context methods, with no nested close", async () => {
+  test("BOTH writer factories expose the sixteen context methods, with no nested close", async () => {
     for (const factory of ["context", "evidence"] as const) {
       const fixture = await createReadCursorFixture([ALPHA]);
       try {
         const parsed = await drive(fixture.datasetRoot, [], { factory });
         expect(parsed.contextMethods).toEqual([
-          "advanceReadCursor", "appendMessages", "getMessage", "getPeer", "getReadCursor",
-          "getSession", "joinSession", "listMessages", "registerPeer", "registerSession",
+          "advanceReadCursor", "appendMessages", "createSessionLink", "createTrace", "getMessage", "getPeer",
+          "getReadCursor", "getSession", "indexRevisionChunks", "joinSession", "listMessages",
+          "reconcileSearchChunks", "registerPeer", "registerSession", "retireNode", "supersedeNode",
         ]);
         expect(parsed.contextHasClose).toBe(false);
         // Only the BUNDLE closes the owner; the bundle key set is unchanged.
