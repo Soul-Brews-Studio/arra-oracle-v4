@@ -139,9 +139,16 @@ const STATUS_FOR_CODE: Readonly<Record<string, number>> = Object.freeze({
   scope_mismatch: 400,
   worker_failure: 500,
   // arra-publication-error/v1 and arra-taxonomy-error/v1 share one code set.
+  // `conflict` is only ever thrown by `failTaxonomy` (TAXONOMY_ERROR_CODES) --
+  // it is NOT a member of PUBLICATION_ERROR_CODES, so this entry is reachable
+  // only through the taxonomy envelope today, not the publication one. It
+  // sits with this shared block anyway because both envelopes read the same
+  // map by code string, and a future publication code named `conflict` would
+  // land on the same, already-correct status without a second entry.
   invalid_request: 400,
   not_found: 404,
   invalid_reference: 400,
+  conflict: 409,
   integrity_failure: 500,
   writer_unavailable: 503,
   unsupported_dataset: 400,
