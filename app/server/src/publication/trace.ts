@@ -26,26 +26,26 @@
  * Traces and hits are IMMUTABLE in v1: there is no update method here, and
  * none should be added without a fresh review.
  *
- * This file is a thin barrel: one function/type/const per file under
- * `./trace/`, re-exported here so the public surface is unchanged. See
- * `./trace/types.ts` for the request/row shapes and `./trace/constants.ts`
- * for values shared by more than one function.
+ * This file is a thin barrel: one function/type/const per file, named
+ * `trace.<name>.ts` beside this one, re-exported here so the public surface
+ * is unchanged. See `trace.types.ts` for the request/row shapes and
+ * `trace.constants.ts` for values shared by more than one function.
  */
 
-export { MAX_HITS, parseCreateTrace } from "./trace/parseCreateTrace";
-export { parseGetTrace } from "./trace/parseGetTrace";
-export { MAX_PAGE_LIMIT, parseListTraceHits } from "./trace/parseListTraceHits";
+export { MAX_HITS, parseCreateTrace } from "./trace.parseCreateTrace";
+export { parseGetTrace } from "./trace.parseGetTrace";
+export { MAX_PAGE_LIMIT, parseListTraceHits } from "./trace.parseListTraceHits";
 
-export { TRACE_STATUSES, type TraceStatus } from "./trace/types";
+export { TRACE_STATUSES, type TraceStatus } from "./trace.types";
 export type {
   CreateTraceHitInput,
   CreateTraceRequest,
   GetTraceRequest,
   ListTraceHitsRequest,
-} from "./trace/types";
+} from "./trace.types";
 
-export { TRACE_FIELDS, encodeTraceRow } from "./trace/encodeTraceRow";
-export { TRACE_HIT_FIELDS, encodeTraceHitRow } from "./trace/encodeTraceHitRow";
+export { TRACE_FIELDS, encodeTraceRow } from "./trace.encodeTraceRow";
+export { TRACE_HIT_FIELDS, encodeTraceHitRow } from "./trace.encodeTraceHitRow";
 
-export { millisToTimestamp } from "./trace/millisToTimestamp";
-export { timestampToMillis } from "./trace/timestampToMillis";
+export { millisToTimestamp } from "./trace.millisToTimestamp";
+export { timestampToMillis } from "./trace.timestampToMillis";
