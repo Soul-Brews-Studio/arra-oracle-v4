@@ -44,6 +44,28 @@ Discussions #14, #18, #21 and #36 all predate or only partly record this:
 | #21 | 19-table design | shape agreed, columns moved since |
 | #36 | "15 built tables / 19 proposed" | the 19 are now BUILT and enforced |
 
+### Where the drift came from
+
+Relic shows every ASCII in this repo was drawn in v4-codex sessions on
+2026-09-19, and #14 states its own source in its first line: "Drawn from
+`SPEC.md` v26.9.18-alpha.915". The diagrams were never wrong about their
+source. The source moved out from under them.
+
+Measured in this worktree on 2026-09-21:
+
+```text
+                        memories /        nodes /
+                        memory_terms      node_revisions
+  SPEC.md  v26.9.20 ....... 27 ................. 0
+  DESIGN.md ................ 9 ................ 18
+```
+
+`SPEC.md` still describes the `memories` model end to end and does not mention
+node revisions once, while `DESIGN.md` describes the node/revision model. Two
+documents in the same repository specify two different databases, and the ASCII
+was drawn from the stale one. Correcting the diagram alone would leave that
+intact, so the diagram is not the fix -- reconciling SPEC.md is.
+
 `storage.ts` does not merely prefer the 19-table shape — it refuses to open a
 dataset that is not exactly it, checking every field name, Arrow type and
 nullability before any mutation. So "proposed" is no longer accurate for the
