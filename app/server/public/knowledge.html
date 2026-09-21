@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>arra-oracle-v4 — knowledge explorer</title>
+<style>
+  :root { --bg:#0a0a0f; --fg:#e8e8ef; --dim:#9a9aa8; --accent:#64b5f6; --line:#23232e; --panel:#12121a; --warn:#c9873f; --err:#e57373; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  main { max-width:750px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:18px; margin:0 0 2px; color:var(--accent); font-weight:600; }
+  .sub { color:var(--dim); font-size:13px; margin-bottom:14px; }
+  .sub a { color:var(--accent); }
+  .narrow-banner { display:none; background:#2a1f10; border:1px solid var(--warn); color:#e8c9a0;
+    border-radius:6px; padding:8px 10px; font-size:12px; margin-bottom:14px; }
+  @media (max-width: 480px) { .narrow-banner { display:block; } }
+  .tabs { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:16px; }
+  .tab { background:var(--panel); color:var(--dim); border:1px solid var(--line); border-radius:5px;
+    padding:7px 11px; font-size:12px; cursor:pointer; font-weight:600; }
+  .tab.active { color:#06121f; background:var(--accent); border-color:var(--accent); }
+  .tab.disabled { opacity:.45; cursor:not-allowed; }
+  section.view { display:none; border:1px solid var(--line); background:var(--panel); border-radius:6px; padding:14px; margin-bottom:16px; }
+  section.view.active { display:block; }
+  h2 { font-size:13px; margin:0 0 10px; color:var(--dim); text-transform:uppercase; letter-spacing:.06em; font-weight:600; }
+  h3 { font-size:12px; margin:16px 0 8px; color:var(--fg); font-weight:600; }
+  input, textarea, select, button { font:inherit; font-size:14px; background:#0e0e16; color:var(--fg);
+    border:1px solid var(--line); border-radius:5px; padding:8px 10px; width:100%; }
+  textarea { resize:vertical; min-height:56px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+  .row > * { flex:1 1 150px; }
+  button { background:var(--accent); color:#06121f; border:none; font-weight:600; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  button:active { transform:translateY(1px); }
+  .msg { font-size:13px; margin-top:8px; min-height:18px; color:var(--dim); word-break:break-word; }
+  .msg.err { color:var(--err); }
+  .msg.ok { color:#81c784; }
+  .persistent-bar { display:flex; flex-wrap:wrap; gap:10px; font-size:12px; color:var(--dim);
+    background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:10px 12px; margin-bottom:16px; }
+  .persistent-bar b { color:var(--fg); }
+  pre.result { background:#0e0e16; border:1px solid var(--line); border-radius:5px; padding:10px;
+    font-size:12.5px; overflow-x:auto; white-space:pre-wrap; word-break:break-word; margin:8px 0 0; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; margin-top:8px; }
+  table th, table td { text-align:left; padding:5px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
+  table th { color:var(--dim); font-weight:600; text-transform:uppercase; font-size:10.5px; letter-spacing:.04em; }
+  .badge { display:inline-block; border:1px solid var(--line); border-radius:4px; padding:0 5px; font-size:11px; color:var(--dim); }
+  .empty { color:var(--dim); font-size:13px; }
+  .not-impl { border:1px dashed var(--line); border-radius:6px; padding:16px; color:var(--dim); font-size:13px; }
+  .not-impl b { color:var(--warn); }
+  .field-hint { color:var(--dim); font-size:11.5px; margin:-4px 0 8px; }
+  .toggle-row { display:flex; gap:14px; align-items:center; font-size:13px; margin-bottom:8px; }
+  .toggle-row label { display:flex; gap:5px; align-items:center; width:auto; }
+  .toggle-row input[type=radio] { width:auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>arra-oracle-v4 — knowledge explorer</h1>
+  <div class="sub">
+    Talks to two SEPARATE backends on this same server: the #31 knowledge dataset
+    (<code>/api/knowledge/:bank/:method</code> — publication/taxonomy/context/evidence) and the
+    older memories dataset (<code>/api/search</code>, <code>/api/memories</code>). They are not the
+    same data. See <a href="/index.html">/index.html</a> for the plain memories UI this reuses for search.
+  </div>
+  <div class="narrow-banner">Narrow screen — nothing below is hidden; tables and JSON scroll horizontally instead.</div>
+
+  <div class="persistent-bar" id="bar"><span>not connected — set bank + token below</span></div>
+
+  <div class="tabs">
+    <button class="tab active" data-view="config">Configuration</button>
+    <button class="tab" data-view="messages">Messages</button>
+    <button class="tab" data-view="chat">Chat</button>
+    <button class="tab" data-view="search">Search (memories)</button>
+    <button class="tab disabled" data-view="conclusions" disabled>Conclusions</button>
+    <button class="tab disabled" data-view="traces" disabled>Traces</button>
+    <button class="tab disabled" data-view="history" disabled>History</button>
+  </div>
+
+  <!-- ── Configuration ─────────────────────────────────────────────── -->
+  <section class="view active" id="view-config">
+    <h2>Configuration</h2>
+    <div class="row">
+      <input id="bank" placeholder="workspace / bank name" />
+      <input id="token" type="password" placeholder="bearer token (kept in memory only, not persisted)" autocomplete="off" />
+    </div>
+    <div class="row">
+      <button id="checkHealth">Check /api/health</button>
+      <button class="ghost" id="logout">Log out (clear token)</button>
+    </div>
+    <div class="field-hint">
+      The bank you enter here is BOTH the admitted route scope for
+      <code>/api/knowledge/:bank/:method</code> and the <code>workspace_name</code> every request body
+      must carry — the transport rejects a request whose body names a different workspace than
+      the route (see <code>src/knowledge/transport.ts</code>).
+    </div>
+    <div class="msg" id="configMsg"></div>
+    <h3>What this explorer does NOT do (honestly, not silently)</h3>
+    <div class="field-hint">
+      There is no workspace/peer/session LISTING endpoint anywhere in this transport — only
+      get-by-name and get-by-id lookups (<code>getPeer</code>, <code>getSession</code>,
+      <code>getMessage</code>, <code>getVocabulary</code>, <code>getTerm</code> all require you to
+      already know the exact name or id). Navigation below is therefore typed identifiers, not a
+      browsable tree. Conclusions/Traces/History have no backing kernel wired into this transport
+      (registry.ts explicitly excludes session-link, lifecycle, trace and search-chunk for now) —
+      their tabs are disabled rather than rendering an empty shell. Publish/correct/supersede/retire
+      writes exist server-side (<code>publishRevision</code>, <code>retireTerm</code>, …) but are not
+      wired into this UI: their request envelopes are deep enough (node/revision/domain-reference
+      shape) that authoring them blind risked shipping a button that silently sends wrong data.
+    </div>
+  </section>
+
+  <!-- ── Messages ──────────────────────────────────────────────────── -->
+  <section class="view" id="view-messages">
+    <h2>Messages — listMessages / getMessage / getSession / getPeer</h2>
+    <div class="row">
+      <input id="msgSession" placeholder="session_name" />
+      <input id="msgAfterSeq" placeholder="after_seq (Int64 decimal, blank = from start)" />
+      <input id="msgLimit" placeholder="limit (1-100)" value="25" />
+    </div>
+    <div class="row">
+      <button id="loadMessages">List messages</button>
+      <button class="ghost" id="loadSession">getSession(session_name)</button>
+    </div>
+    <div class="row">
+      <input id="msgPeer" placeholder="peer_name" />
+      <input id="msgPublicId" placeholder="public_id (nanoid21) for getMessage" />
+    </div>
+    <div class="row">
+      <button class="ghost" id="loadPeer">getPeer(peer_name)</button>
+      <button class="ghost" id="loadOneMessage">getMessage(public_id)</button>
+    </div>
+    <div class="msg" id="messagesMsg"></div>
+    <div id="messagesResult"></div>
+  </section>
+
+  <!-- ── Chat ──────────────────────────────────────────────────────── -->
+  <section class="view" id="view-chat">
+    <h2>Chat — getContext / answerChat (#32)</h2>
+    <div class="row">
+      <input id="chatPeer" placeholder="peer_name (must hold current membership in session)" />
+      <input id="chatSession" placeholder="session_name" />
+      <input id="chatMaxItems" placeholder="max_items (1-50)" value="20" />
+    </div>
+    <div class="row">
+      <button id="loadContext">Load context (read-only, no model)</button>
+    </div>
+    <div class="msg" id="contextMsg"></div>
+    <div id="contextResult"></div>
+
+    <h3>Ask</h3>
+    <div class="field-hint">
+      This calls <code>answerChat</code>, which composes the SAME context above and then calls an
+      injected model. This deployment (<code>composeKnowledgeAccess</code>) does not configure a
+      model, so the server-side default (<code>() =&gt; mapModelFailure()</code>) answers
+      <code>writer_unavailable</code> for every question — that is a real, honestly-surfaced 503 from
+      the running code, not a mock. Expect it here until a model is wired at the composition layer.
+    </div>
+    <div class="row">
+      <textarea id="chatQuestion" placeholder="question"></textarea>
+    </div>
+    <div class="row">
+      <button id="askChat">Ask</button>
+    </div>
+    <div class="msg" id="chatMsg"></div>
+    <div id="chatResult"></div>
+  </section>
+
+  <!-- ── Search (memories dataset, #25) ───────────────────────────── -->
+  <section class="view" id="view-search">
+    <h2>Search — memories dataset (/api/search)</h2>
+    <div class="field-hint">
+      This is the OLDER memories bank, a different dataset from the knowledge kernel above. It is
+      reused here because it is the only endpoint on this server with a real, working
+      keyword-vs-semantic mode toggle.
+    </div>
+    <div class="toggle-row">
+      <label><input type="radio" name="searchMode" value="text" checked /> keyword (full-text)</label>
+      <label><input type="radio" name="searchMode" value="vector" /> semantic (vector)</label>
+    </div>
+    <div class="row">
+      <input id="searchQ" placeholder="query" />
+      <button id="runSearch">Search</button>
+    </div>
+    <div class="msg" id="searchMsg"></div>
+    <div id="searchResult"></div>
+  </section>
+
+  <!-- ── Disabled placeholders ─────────────────────────────────────── -->
+  <section class="view" id="view-conclusions">
+    <h2>Conclusions</h2>
+    <div class="not-impl"><b>Not implemented.</b> No conclusion/observation table or kernel method
+      is exposed by this transport (`registry.ts`) or by `publication/service.ts`'s bundles. Rendering
+      a Conclusions view here would have nothing real to fetch.</div>
+  </section>
+  <section class="view" id="view-traces">
+    <h2>Traces</h2>
+    <div class="not-impl"><b>Not implemented.</b> `trace.ts` exists in `src/publication/` but the
+      trace kernel is explicitly excluded from `KNOWLEDGE_METHODS` ("mid-integration elsewhere",
+      registry.ts) — there is no route to call.</div>
+  </section>
+  <section class="view" id="view-history">
+    <h2>History</h2>
+    <div class="not-impl"><b>Not implemented.</b> `getAcceptedHead` / `listAcceptedHistory` exist and
+      ARE wired into the registry, but both require a `node_id` this UI has no way to discover (no
+      listing endpoint, and node ids are not exposed anywhere else in this transport). Wiring a
+      lookup-by-id-only history view without ever being able to obtain a valid id would render an
+      always-empty form, which is worse than an honest "not implemented."</div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;" }[c]));
+
+// Token lives ONLY in this variable for the tab's lifetime -- never written to
+// localStorage, a cookie, the URL or a static asset (same discipline as /index.html).
+let authToken = "";
+$("token").oninput = () => { authToken = $("token").value.trim(); };
+$("logout").onclick = () => { authToken = ""; $("token").value = ""; $("configMsg").textContent = "token cleared"; };
+
+const bank = () => $("bank").value.trim();
+
+function authHeaders(extra) {
+  const h = new Headers(extra || {});
+  if (authToken) h.set("authorization", `Bearer ${authToken}`);
+  return h;
+}
+
+/** One knowledge-transport call. Sends EXACTLY the closed key set the method's
+ *  governed parser requires -- an extra or missing key is `unexpected_field` /
+ *  `missing_field`, not silently dropped (see contracts/common.ts). */
+async function callKnowledge(method, body) {
+  const b = bank();
+  if (!b) throw new Error("set a bank in Configuration first");
+  const res = await fetch(`/api/knowledge/${encodeURIComponent(b)}/${encodeURIComponent(method)}`, {
+    method: "POST",
+    headers: authHeaders({ "content-type": "application/json" }),
+    body: JSON.stringify(body),
+    redirect: "error",
+    cache: "no-store",
+  });
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { /* leave null */ }
+  if (!res.ok) {
+    // Governed envelopes carry {version, code, path, message}; surface the
+    // real code rather than inventing a generic string.
+    const detail = data && data.code ? `${data.code}${data.path ? " " + data.path : ""}: ${data.message || ""}` : `HTTP ${res.status}`;
+    const err = new Error(detail);
+    err.status = res.status;
+    err.body = data;
+    throw err;
+  }
+  return data;
+}
+
+async function memoriesRequest(url, options) {
+  const opts = { ...(options || {}) };
+  opts.headers = authHeaders(opts.headers);
+  opts.redirect = "error";
+  opts.cache = "no-store";
+  const response = await fetch(url, opts);
+  const result = await response.json();
+  if (response.status === 401 || response.status === 403) throw new Error("access denied");
+  if (!response.ok || result.error) throw new Error(result.error || `HTTP ${response.status}`);
+  return result;
+}
+
+function renderJson(el, value) {
+  el.innerHTML = `<pre class="result">${esc(JSON.stringify(value, null, 2))}</pre>`;
+}
+
+// ── tabs ─────────────────────────────────────────────────────────────
+document.querySelectorAll(".tab").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    if (tab.disabled) return;
+    document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
+    document.querySelectorAll("section.view").forEach((v) => v.classList.remove("active"));
+    tab.classList.add("active");
+    $(`view-${tab.dataset.view}`).classList.add("active");
+  });
+});
+
+// ── Configuration ────────────────────────────────────────────────────
+$("checkHealth").onclick = async () => {
+  $("configMsg").textContent = "checking…";
+  try {
+    const res = await fetch("/api/health?bank=" + encodeURIComponent(bank() || "default"), {
+      headers: authHeaders(), redirect: "error", cache: "no-store",
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    $("bar").innerHTML = `<span>bank <b>${esc(bank() || "default")}</b></span><span>embedder ${body.embedder && body.embedder.ok ? "ready" : "unavailable"}</span><span>rows <b>${esc(body.db && body.db.rows)}</b></span>`;
+    $("configMsg").textContent = "ok — /api/health responded (this is the MEMORIES dataset health, not the knowledge dataset, which has no health probe of its own)";
+  } catch (e) { $("configMsg").textContent = String(e.message || e); $("bar").textContent = "not connected"; }
+};
+
+// ── Messages ─────────────────────────────────────────────────────────
+function renderMessages(container, result) {
+  const rows = (result && result.rows) || [];
+  if (!rows.length) { container.innerHTML = '<div class="empty">no rows</div>'; return; }
+  const table = `<table><thead><tr><th>seq</th><th>peer</th><th>role</th><th>content</th><th>created_at</th><th>public_id</th></tr></thead><tbody>${
+    rows.map((r) => `<tr><td>${esc(r.seq_in_session)}</td><td>${esc(r.peer_name)}</td><td>${esc(r.role)}</td><td>${esc(r.content)}</td><td>${esc(r.created_at)}</td><td>${esc(r.public_id)}</td></tr>`).join("")
+  }</tbody></table><div class="field-hint">next_after_seq: <span class="badge">${esc(result.next_after_seq)}</span></div>`;
+  container.innerHTML = table;
+}
+
+$("loadMessages").onclick = async () => {
+  $("messagesMsg").textContent = "loading…";
+  try {
+    const limitRaw = $("msgLimit").value.trim();
+    const limit = limitRaw ? Number(limitRaw) : 25;
+    const after = $("msgAfterSeq").value.trim();
+    const result = await callKnowledge("listMessages", {
+      workspace_name: bank(),
+      session_name: $("msgSession").value.trim(),
+      after_seq: after ? after : null,
+      limit: Number.isInteger(limit) ? limit : 25,
+    });
+    $("messagesMsg").textContent = `${result.rows.length} row(s)`;
+    renderMessages($("messagesResult"), result);
+  } catch (e) { $("messagesMsg").textContent = String(e.message || e); $("messagesResult").innerHTML = ""; }
+};
+
+$("loadSession").onclick = async () => {
+  $("messagesMsg").textContent = "loading session…";
+  try {
+    const result = await callKnowledge("getSession", { workspace_name: bank(), session_name: $("msgSession").value.trim() });
+    $("messagesMsg").textContent = result === null ? "no such session" : "ok";
+    renderJson($("messagesResult"), result);
+  } catch (e) { $("messagesMsg").textContent = String(e.message || e); }
+};
+
+$("loadPeer").onclick = async () => {
+  $("messagesMsg").textContent = "loading peer…";
+  try {
+    const result = await callKnowledge("getPeer", { workspace_name: bank(), peer_name: $("msgPeer").value.trim() });
+    $("messagesMsg").textContent = result === null ? "no such peer" : "ok";
+    renderJson($("messagesResult"), result);
+  } catch (e) { $("messagesMsg").textContent = String(e.message || e); }
+};
+
+$("loadOneMessage").onclick = async () => {
+  $("messagesMsg").textContent = "loading message…";
+  try {
+    const result = await callKnowledge("getMessage", { workspace_name: bank(), public_id: $("msgPublicId").value.trim() });
+    $("messagesMsg").textContent = result === null ? "no such message" : "ok";
+    renderJson($("messagesResult"), result);
+  } catch (e) { $("messagesMsg").textContent = String(e.message || e); }
+};
+
+// ── Chat ─────────────────────────────────────────────────────────────
+let lastContextItems = [];
+
+$("loadContext").onclick = async () => {
+  $("contextMsg").textContent = "loading context…";
+  try {
+    const maxRaw = $("chatMaxItems").value.trim();
+    const result = await callKnowledge("getContext", {
+      workspace_name: bank(),
+      peer_name: $("chatPeer").value.trim(),
+      session_name: $("chatSession").value.trim(),
+      max_items: maxRaw ? Number(maxRaw) : 20,
+    });
+    lastContextItems = result.items || [];
+    $("contextMsg").textContent = `${result.items.length} item(s) · coverage ${result.coverage}${result.excluded.length ? ` · ${result.excluded.length} excluded` : ""}`;
+    const excludedNote = result.excluded.length
+      ? `<div class="field-hint">excluded (unauthorized or budget-exceeded, never silently dropped): ${result.excluded.map((x) => `${esc(x.session_name)}/${esc(x.public_id)} (${esc(x.reason)})`).join(", ")}</div>`
+      : "";
+    const items = result.items.map((it) => `<tr><td>${esc(it.session_name)}</td><td>${esc(it.peer_name)}</td><td>${esc(it.role)}</td><td>${esc(it.content)}</td></tr>`).join("");
+    $("contextResult").innerHTML = result.items.length
+      ? `<table><thead><tr><th>session</th><th>peer</th><th>role</th><th>content</th></tr></thead><tbody>${items}</tbody></table>${excludedNote}`
+      : `<div class="empty">no context items</div>${excludedNote}`;
+  } catch (e) { $("contextMsg").textContent = String(e.message || e); $("contextResult").innerHTML = ""; }
+};
+
+$("askChat").onclick = async () => {
+  $("chatMsg").textContent = "asking…";
+  $("chatResult").innerHTML = "";
+  try {
+    const maxRaw = $("chatMaxItems").value.trim();
+    const result = await callKnowledge("answerChat", {
+      workspace_name: bank(),
+      peer_name: $("chatPeer").value.trim(),
+      session_name: $("chatSession").value.trim(),
+      question: $("chatQuestion").value.trim(),
+      max_items: maxRaw ? Number(maxRaw) : 20,
+    });
+    $("chatMsg").textContent = "answered";
+    renderJson($("chatResult"), result);
+  } catch (e) {
+    // writer_unavailable (no model configured on this deployment) is the
+    // EXPECTED outcome right now -- shown plainly, not disguised as an error
+    // the user caused.
+    if (e.body && e.body.code === "writer_unavailable") {
+      $("chatMsg").textContent = "writer_unavailable — this deployment has no chat model configured (composeKnowledgeAccess passes none); the transport and context retrieval above are real, the model call is not.";
+    } else {
+      $("chatMsg").textContent = String(e.message || e);
+    }
+  }
+};
+
+// ── Search (memories) ────────────────────────────────────────────────
+$("runSearch").onclick = async () => {
+  const q = $("searchQ").value.trim();
+  if (!q) { $("searchMsg").textContent = "query is empty"; return; }
+  const mode = document.querySelector('input[name="searchMode"]:checked').value;
+  $("searchMsg").textContent = "searching…";
+  try {
+    const b = bank() || "default";
+    const r = await memoriesRequest(`/api/search?q=${encodeURIComponent(q)}&mode=${mode}&bank=${encodeURIComponent(b)}`);
+    $("searchMsg").textContent = `${r.count} hit(s) · mode=${esc(r.mode)} (explicitly chosen, never inferred) · bank ${esc(b)}`;
+    const rows = r.rows || [];
+    $("searchResult").innerHTML = rows.length
+      ? `<table><thead><tr><th>name</th><th>type</th><th>content</th><th>score/dist</th></tr></thead><tbody>${
+          rows.map((row) => `<tr><td>${esc(row.name)}</td><td>${esc(row.type)}</td><td>${esc(row.content)}</td><td>${row.score !== undefined ? esc(row.score.toFixed(3)) : row.distance !== undefined ? esc(row.distance.toFixed(3)) : ""}</td></tr>`).join("")
+        }</tbody></table>`
+      : '<div class="empty">no rows</div>';
+  } catch (e) { $("searchMsg").textContent = String(e.message || e); $("searchResult").innerHTML = ""; }
+};
+</script>
+</body>
+</html>

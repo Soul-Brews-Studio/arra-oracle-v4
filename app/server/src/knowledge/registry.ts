@@ -112,6 +112,20 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
     scopePath: [],
     call: (b, x) => writer(b).context.advanceReadCursor(x),
   },
+  // #33: evidence-grounded chat (#32). `getContext` is retrieval-only and
+  // lives on the reader facade, matching every other content:read method
+  // above. `answerChat` is defined only on the writer facade (it needs the
+  // injected `model` the writer alone carries) so it must run as
+  // content:write even though it persists nothing; with no model configured
+  // at this deployment (`composeKnowledgeAccess` passes none), it currently
+  // always answers `writer_unavailable` -- a real, honestly-surfaced state,
+  // not a fabricated success.
+  getContext: { action: "content:read", scopePath: [], call: (b, x) => b.context.getContext(x) },
+  answerChat: {
+    action: "content:write",
+    scopePath: [],
+    call: (b, x) => writer(b).context.answerChat(x),
+  },
 
   // ── evidence ─────────────────────────────────────────────────────────
   getRevisionAssociations: {
