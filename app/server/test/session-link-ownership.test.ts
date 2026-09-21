@@ -350,7 +350,7 @@ describe("context facades across all four factories", () => {
       expect(writerMethods).toContain("listSessionLinks");
       expect(readerMethods).toContain("listSessionLinks");
       expect(readerMethods).not.toContain("createSessionLink");
-      expect({ writer: writerMethods.length, reader: readerMethods.length }).toEqual({ writer: 22, reader: 11 });
+      expect({ writer: writerMethods.length, reader: readerMethods.length }).toEqual({ writer: 24, reader: 12 });
       expect(writerMethods).not.toContain("close");
       expect(readerMethods).not.toContain("close");
     },
