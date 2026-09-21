@@ -11,6 +11,25 @@ combined `bun run test:full` run). A one-line change to a pure codec waited
 behind ~400s of gate-serialized, multi-process, real-SIGKILL recovery tests
 before it knew whether it broke anything.
 
+## I changed one file, what do I run?
+
+In this order:
+
+1. **`bun run test:<kernel>`** — the file you touched, e.g. `bun run
+   test:context` after a context change. This is the loop for while you
+   work. Most kernels genuinely are seconds (`test:auth` is 1.06s for 157
+   tests); a handful are not — see "per-kernel reality" below before
+   assuming every kernel is fast.
+2. **`bun run test`** — the full suite, census-ordered fast-first, `--bail`.
+   Run before you consider the change done. With ordering now driven by
+   measured time instead of a filename guess, a regression in a cheap file
+   surfaces in about a second — `--bail` stops at the first failure and the
+   cheap files genuinely run first now.
+3. **`bun run test:fast`** — pre-push gate. Skips the slowest 10-file tier.
+   Still ~475s (see below) — not a during-work loop, a cheaper full-ish gate.
+4. **`bun run test:full`** — before merge. Every file, no bail, the number
+   everything else here is measured against.
+
 ## Per-kernel scripts
 
 Derived from the actual filenames in `test/` (61 flat files, plus 4 more
@@ -52,6 +71,52 @@ No file resisted classification — every file's prefix maps cleanly to one
 kernel, including the four single-file kernels (`batch-worker`, `evidence`,
 `mcp`, and the standalone `cli.test.ts`) and the two-tier
 `ownership`/`precision`/`recovery`/`service` naming most kernels share.
+
+### Per-kernel reality: seconds for most, minutes for a few
+
+"Per-kernel target instead of the full suite" is not uniformly a
+seconds-scale win — say so plainly rather than let the headline imply it.
+Summed per-file census time for every `test:<kernel>` script (same
+upper-bound-not-real-run-time caveat as everywhere else in this doc), sorted
+slowest first:
+
+| Script | Files | Tests | Summed time |
+|---|---|---|---|
+| `test:publication` | 6 | 96 | 195.99s |
+| `test:taxonomy` | 3 | 91 | 153.18s |
+| `test:read-cursor` | 4 | 83 | 141.66s |
+| `test:association` | 4 | 80 | 123.47s |
+| `test:context` | 4 | 81 | 90.55s |
+| `test:trace` | 4 | 35 | 89.06s |
+| `test:session-link` | 4 | 33 | 74.16s |
+| `test:workspace-isolation` | 2 | 22 | 56.91s |
+| `test:lifecycle` | 4 | 23 | 51.22s |
+| `test:search-chunk` | 4 | 42 | 46.20s |
+| `test:chat` | 4 | 41 | 23.84s |
+| `test:transport` | 4 | 40 | 7.17s |
+| `test:target-schema` | 1 | 4 | 4.33s |
+| `test:revision` | 2 | 12 | 2.74s |
+| `test:cli` | 1 | 49 | 1.90s |
+| `test:contract` | 2 | 9 | 1.76s |
+| `test:batch-worker` | 1 | 12 | 1.58s |
+| `test:auth` | 4 | 157 | 1.06s |
+| `test:mcp` | 1 | 24 | 0.97s |
+| `test:knowledge-chat` | 2 | 8 | 0.69s |
+| `test:ui-scope` | 1 | 13 | 0.09s |
+| `test:jcs` | 1 | 11 | 0.08s |
+| `test:source-ingestion` | 1 | 39 | 0.08s |
+| `test:evidence` | 1 | 11 | 0.04s |
+| `test:replay` | 1 | 6 | 0.03s |
+
+14 of 24 kernels are under 10s. The other 10 — every kernel whose files span
+`ownership`/`precision`/`recovery`/`service` (or the nested `fixtures/*-v1/`
+equivalent) — run 46s to 196s, because that's where the real fd-42 writer
+gate and real-SIGKILL recovery tests live. `test:publication`,
+`test:taxonomy`, `test:read-cursor`, and `test:association` (the four asked
+about explicitly) are all in that slow group: 196s, 153s, 142s, and 123s
+respectively, not seconds. A change to one of those four kernels gets the
+same feedback-loop problem the whole suite has, just smaller — real, but not
+solved by splitting alone.
 
 ## The `test.order.ts` own-goal, found while building this
 
@@ -165,10 +230,21 @@ test:fast`.
   tests (79.6%)**.
 - Excludes exactly the 10-file slow tier in the table above (209 tests,
   20.4%).
-- Real measured wall-clock time for `bun run test:fast` (one combined run,
-  same measurement method as the 712.87s baseline, not summed standalone
-  numbers): **see the run this session reported alongside this file** —
-  filled in once the timed run completed.
+- **Real measured wall-clock time** (one combined run, same measurement
+  method as the 712.87s baseline — not summed standalone numbers):
+
+  | | Files | Tests | Time |
+  |---|---|---|---|
+  | `test:fast` | 56 | 813 (100% pass) | **474.90s** |
+  | `test:full` | 66 | 1022 (100% pass) | 712.87s |
+
+  79.5% of the tests in 66.6% of the wall clock. **Be plain about what this
+  means: `test:fast` is not fast.** Just under 8 minutes is not a
+  during-work loop — nobody runs an 8-minute command between edits. It is a
+  reasonable pre-push gate (skip the slowest tier, keep most of the
+  coverage) and nothing more. The actual answer to "fail fast" is the
+  per-kernel targets above and `--bail` over census-ordered files in
+  `bun run test`, not this script.
 
 `test` and `test:full` are unchanged in behaviour: `test` still runs the
 full measured order with `--bail`, `test:full` still runs everything via a
