@@ -1,5 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
-import type { CredentialRecord } from "./types";
+import type { CredentialRecord } from "./policy.types";
 
 /**
  * Compare the presented digest against every credential digest with a

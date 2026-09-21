@@ -1,7 +1,7 @@
-import { utf8ByteLength } from "../../contracts/jcs";
-import type { JcsValue } from "../../contracts/jcs";
-import { MAX_WORKSPACE_NAME_BYTES } from "./constants";
-import { reject } from "./reject";
+import { utf8ByteLength } from "../contracts/jcs";
+import type { JcsValue } from "../contracts/jcs";
+import { MAX_WORKSPACE_NAME_BYTES } from "./policy.constants";
+import { reject } from "./policy.reject";
 
 export function requireWorkspaceName(value: JcsValue): string {
   if (typeof value !== "string" || value.trim().length === 0) reject("policy_invalid");

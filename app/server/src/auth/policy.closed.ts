@@ -1,6 +1,6 @@
-import { requireClosedObject, type Tokens } from "../../contracts/common";
-import type { JcsObject, JcsValue } from "../../contracts/jcs";
-import { opaque } from "./opaque";
+import { requireClosedObject, type Tokens } from "../contracts/common";
+import type { JcsObject, JcsValue } from "../contracts/jcs";
+import { opaque } from "./policy.opaque";
 
 const NO_TOKENS: Tokens = [];
 

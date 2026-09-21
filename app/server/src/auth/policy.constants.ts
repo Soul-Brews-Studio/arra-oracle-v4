@@ -1,6 +1,6 @@
 /** Shared constants for policy parsing and admission, used by several functions. */
 
-import type { GlobalAction, PolicyVersion, WorkspaceAction } from "./types";
+import type { GlobalAction, PolicyVersion, WorkspaceAction } from "./policy.types";
 
 export const POLICY_VERSION: PolicyVersion = "arra-auth/v1";
 

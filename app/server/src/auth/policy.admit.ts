@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
-import { BEARER_PATTERN, MAX_NOW_MS, MIN_NOW_MS, POLICY_VERSION } from "./constants";
-import { findCredential } from "./find-credential";
-import { parseTarget } from "./parse-target";
-import { lookupPolicy } from "./registry";
-import { reject } from "./reject";
-import { requireClosedInput } from "./require-closed-input";
-import type { Admission, AdmissionInput, Policy } from "./types";
+import { BEARER_PATTERN, MAX_NOW_MS, MIN_NOW_MS, POLICY_VERSION } from "./policy.constants";
+import { findCredential } from "./policy.findCredential";
+import { parseTarget } from "./policy.parseTarget";
+import { lookupPolicy } from "./policy.registry";
+import { reject } from "./policy.reject";
+import { requireClosedInput } from "./policy.requireClosedInput";
+import type { Admission, AdmissionInput, Policy } from "./policy.types";
 
 /**
  * Decide one request against one immutable snapshot and one caller-supplied

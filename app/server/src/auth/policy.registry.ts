@@ -1,4 +1,4 @@
-import type { Policy, PolicyRecord } from "./types";
+import type { Policy, PolicyRecord } from "./policy.types";
 
 /**
  * The construction boundary. A handle only authorizes if this module minted

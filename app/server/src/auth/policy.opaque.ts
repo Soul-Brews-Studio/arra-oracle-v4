@@ -1,5 +1,5 @@
-import { reject } from "./reject";
-import type { AuthErrorCode } from "./types";
+import { reject } from "./policy.reject";
+import type { AuthErrorCode } from "./policy.types";
 
 /**
  * Run a shared contract helper and discard everything it says on failure. The

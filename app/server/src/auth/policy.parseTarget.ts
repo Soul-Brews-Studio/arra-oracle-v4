@@ -1,9 +1,9 @@
-import { hasOnlyPairedSurrogates, utf8ByteLength } from "../../contracts/jcs";
-import { GLOBAL_ACTIONS, MAX_WORKSPACE_NAME_BYTES, WORKSPACE_ACTIONS } from "./constants";
-import { ownData } from "./own-data";
-import { reject } from "./reject";
-import { requireClosedInput } from "./require-closed-input";
-import type { AdmissionTarget, GlobalAction, WorkspaceAction } from "./types";
+import { hasOnlyPairedSurrogates, utf8ByteLength } from "../contracts/jcs";
+import { GLOBAL_ACTIONS, MAX_WORKSPACE_NAME_BYTES, WORKSPACE_ACTIONS } from "./policy.constants";
+import { ownData } from "./policy.ownData";
+import { reject } from "./policy.reject";
+import { requireClosedInput } from "./policy.requireClosedInput";
+import type { AdmissionTarget, GlobalAction, WorkspaceAction } from "./policy.types";
 
 export function parseTarget(value: unknown): AdmissionTarget {
   if (value === null || typeof value !== "object" || Array.isArray(value)) reject("invalid_request");

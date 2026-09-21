@@ -1,4 +1,4 @@
-import type { AuthErrorCode } from "./types";
+import type { AuthErrorCode } from "./policy.types";
 
 const MESSAGES: Readonly<Record<AuthErrorCode, string>> = Object.freeze({
   policy_invalid: "policy is invalid",

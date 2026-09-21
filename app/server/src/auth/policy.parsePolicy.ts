@@ -1,15 +1,15 @@
-import { parseStrictBytes } from "../../contracts/jcs";
-import { MAX_CREDENTIALS, MAX_DEPTH, MAX_DOCUMENT_BYTES, MAX_PRINCIPALS, POLICY_VERSION, ROOT_KEYS } from "./constants";
-import { closed } from "./closed";
-import { field } from "./field";
-import { hasDuplicate } from "./has-duplicate";
-import { opaque } from "./opaque";
-import { parseCredential } from "./parse-credential";
-import { parsePrincipal } from "./parse-principal";
-import { registerPolicy } from "./registry";
-import { reject } from "./reject";
-import { requireArrayValue } from "./require-array-value";
-import type { Policy, PolicyRecord, PrincipalRecord } from "./types";
+import { parseStrictBytes } from "../contracts/jcs";
+import { MAX_CREDENTIALS, MAX_DEPTH, MAX_DOCUMENT_BYTES, MAX_PRINCIPALS, POLICY_VERSION, ROOT_KEYS } from "./policy.constants";
+import { closed } from "./policy.closed";
+import { field } from "./policy.field";
+import { hasDuplicate } from "./policy.hasDuplicate";
+import { opaque } from "./policy.opaque";
+import { parseCredential } from "./policy.parseCredential";
+import { parsePrincipal } from "./policy.parsePrincipal";
+import { registerPolicy } from "./policy.registry";
+import { reject } from "./policy.reject";
+import { requireArrayValue } from "./policy.requireArrayValue";
+import type { Policy, PolicyRecord, PrincipalRecord } from "./policy.types";
 
 const NO_TOKENS: Array<string | number> = [];
 

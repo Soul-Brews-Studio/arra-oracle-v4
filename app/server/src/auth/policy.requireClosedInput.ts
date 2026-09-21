@@ -1,5 +1,5 @@
-import { ownData } from "./own-data";
-import { reject } from "./reject";
+import { ownData } from "./policy.ownData";
+import { reject } from "./policy.reject";
 
 export function requireClosedInput(value: unknown, keys: readonly string[]): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) reject("invalid_request");

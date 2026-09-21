@@ -13,13 +13,13 @@
  * are deliberately swallowed: a policy diagnostic must never echo a token, a
  * digest, a workspace name or a fragment of the document.
  *
- * This file is a thin barrel: the implementation lives in `./policy/`, split
- * one function per file. Nothing here changes behaviour — see `./policy/`
- * for the actual logic.
+ * This file is a thin barrel: the implementation lives beside it as
+ * `policy.<functionName>.ts`, one function per file. Nothing here changes
+ * behaviour — see those files for the actual logic.
  */
 
-export { admit } from "./policy/admit";
-export { parsePolicy } from "./policy/parse-policy";
+export { admit } from "./policy.admit";
+export { parsePolicy } from "./policy.parsePolicy";
 export type {
   Admission,
   AdmissionInput,
@@ -29,4 +29,4 @@ export type {
   Policy,
   PolicyVersion,
   WorkspaceAction,
-} from "./policy/types";
+} from "./policy.types";

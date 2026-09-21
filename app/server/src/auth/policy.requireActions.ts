@@ -1,6 +1,6 @@
-import type { JcsValue } from "../../contracts/jcs";
-import { requireArrayValue } from "./require-array-value";
-import { reject } from "./reject";
+import type { JcsValue } from "../contracts/jcs";
+import { requireArrayValue } from "./policy.requireArrayValue";
+import { reject } from "./policy.reject";
 
 export function requireActions<T extends string>(value: JcsValue, allowed: readonly T[]): T[] {
   const raw = requireArrayValue(value);

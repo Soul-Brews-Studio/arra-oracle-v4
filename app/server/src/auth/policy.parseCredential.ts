@@ -1,12 +1,12 @@
-import type { JcsValue } from "../../contracts/jcs";
-import { CREDENTIAL_KEYS } from "./constants";
-import { closed } from "./closed";
-import { field } from "./field";
-import { requireBooleanValue } from "./require-boolean-value";
-import { requireDigest } from "./require-digest";
-import { requireId } from "./require-id";
-import { requireTimestampMs } from "./require-timestamp-ms";
-import type { CredentialRecord } from "./types";
+import type { JcsValue } from "../contracts/jcs";
+import { CREDENTIAL_KEYS } from "./policy.constants";
+import { closed } from "./policy.closed";
+import { field } from "./policy.field";
+import { requireBooleanValue } from "./policy.requireBooleanValue";
+import { requireDigest } from "./policy.requireDigest";
+import { requireId } from "./policy.requireId";
+import { requireTimestampMs } from "./policy.requireTimestampMs";
+import type { CredentialRecord } from "./policy.types";
 
 export function parseCredential(value: JcsValue): CredentialRecord {
   const o = closed(value, CREDENTIAL_KEYS);
