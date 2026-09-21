@@ -24,6 +24,7 @@ Python LanceModel registry (15 tables / 152 fields; memories=20)
 | `cli.ts` | CLI adapter over current MCP/HTTP methods |
 | `cli.test.ts`, `server/test/` | Regression tests; isolated fixtures/stubs |
 | ~~`migrate-rs/`, root `migrate-rust/`~~ | Rust experiments, removed — never schema owners. Recoverable from git history |
+| ~~root `index-ts/`, `query-ts/`~~ | Spikes over the removed Rust dataset, removed — no producer, no importer. Recoverable from git history |
 | `docs/history/` | Original dated POC reports, preserved verbatim |
 
 The Python registry defines Arrow types; opening it from TypeScript does not add SQL foreign keys, uniqueness, authorization or cross-table transactions. Those need explicit application contracts and tests.
