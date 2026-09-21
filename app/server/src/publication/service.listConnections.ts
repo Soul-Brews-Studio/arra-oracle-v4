@@ -9,7 +9,7 @@ import { contextScope } from "./service.contextScope";
 import { requireWorkspace } from "./service.requireWorkspace";
 import { type DatasetAdapter } from "./service.types";
 
-export async function listConnections(reader: DatasetAdapter, requestBytes: Uint8Array): Promise<{ rows: Record<string, unknown>[]; next_after_id: string | null }> {
+export async function listConnections(reader: DatasetAdapter, requestBytes: Uint8Array): Promise<{ rows: Record<string, unknown>[]; next_after_id: string | null; total: string | null }> {
   const request = parseListConnections(requestBytes);
   await requireWorkspace(reader, request.workspace_name);
   await reader.refresh(CONNECTIONS);
@@ -55,9 +55,18 @@ export async function listConnections(reader: DatasetAdapter, requestBytes: Uint
     rows.push(encoded);
   }
 
+  // The count uses the SAME scoped predicate as the page, minus the cursor:
+  // a total that counted a different set than the page walks would be worse
+  // than no total at all. Filters (tool/status) stay IN it, because "how many
+  // errored" is the question this table exists to answer.
+  const total = request.include_total
+    ? (await reader.count(CONNECTIONS, contextScope(request.workspace_name))).toString(10)
+    : null;
+
   const hasMore = ids.length > request.limit;
   return {
     rows,
     next_after_id: hasMore && page.length > 0 ? page[page.length - 1]! : null,
+    total,
   };
 }

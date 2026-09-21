@@ -36,7 +36,7 @@ import { type DatasetAdapter } from "./service.types";
  * moving this READ to the active store instead). Whichever way it goes, `connections`
  * has the identical problem one level worse: nothing writes it in EITHER dataset.
  */
-export async function listMcpCalls(reader: DatasetAdapter, requestBytes: Uint8Array): Promise<{ rows: Record<string, unknown>[]; next_after_id: string | null }> {
+export async function listMcpCalls(reader: DatasetAdapter, requestBytes: Uint8Array): Promise<{ rows: Record<string, unknown>[]; next_after_id: string | null; total: string | null }> {
   const request = parseListMcpCalls(requestBytes);
   await requireWorkspace(reader, request.workspace_name);
   await reader.refresh(MCP_CALLS);
@@ -95,9 +95,18 @@ export async function listMcpCalls(reader: DatasetAdapter, requestBytes: Uint8Ar
     rows.push(encoded);
   }
 
+  // The count uses the SAME scoped predicate as the page, minus the cursor:
+  // a total that counted a different set than the page walks would be worse
+  // than no total at all. Filters (tool/status) stay IN it, because "how many
+  // errored" is the question this table exists to answer.
+  const total = request.include_total
+    ? (await reader.count(MCP_CALLS, scope)).toString(10)
+    : null;
+
   const hasMore = ids.length > request.limit;
   return {
     rows,
     next_after_id: hasMore && page.length > 0 ? page[page.length - 1]! : null,
+    total,
   };
 }
