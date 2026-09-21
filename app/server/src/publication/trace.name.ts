@@ -1,0 +1,8 @@
+import { requireBoundedText, requireNonemptyString, type Tokens } from "../contracts/common";
+import type { JcsValue } from "../contracts/jcs";
+
+const MAX_NAME_BYTES = 256;
+
+export function name(value: JcsValue | undefined, tokens: Tokens): string {
+  return requireBoundedText(requireNonemptyString(value ?? null, tokens), MAX_NAME_BYTES, tokens);
+}
