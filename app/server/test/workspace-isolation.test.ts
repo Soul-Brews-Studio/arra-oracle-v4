@@ -37,8 +37,8 @@ import {
   idSource,
   type Fixture,
 } from "./helpers/publication-fixture";
-import { peerRequest, sessionRequest, joinRequest, messageItem, appendRequest, contextId } from "./helpers/context-fixture";
-import { vocabularyRequest, termRequest } from "./helpers/taxonomy-fixture";
+import { peerRequest, sessionRequest, joinRequest, messageItem, appendRequest, contextId, createContextFixture } from "./helpers/context-fixture";
+import { vocabularyRequest, termRequest, seedManifest } from "./helpers/taxonomy-fixture";
 import { createSessionLinkRequest, listSessionLinksRequest } from "./helpers/session-link-fixture";
 import { createTraceRequest, hitInput } from "./helpers/trace-fixture";
 import { getReadCursorRequest, advanceReadCursorRequest, expectedPointer } from "./helpers/read-cursor-fixture";
@@ -58,7 +58,7 @@ const ev = (method: string, request: unknown) => ({ facade: "evidence", method, 
 const hx = (method: string, request: unknown) => ({ facade: "harness", method, request });
 
 const drive = async (
-  fixture: Fixture,
+  fixture: Fixture | { datasetRoot: string },
   ops: Array<Record<string, unknown>>,
   extra: Record<string, unknown> = {},
 ): Promise<Record<string, any>> => {
@@ -460,6 +460,53 @@ describe("taxonomy: colliding vocabulary/term ids across workspaces", () => {
       await fixture.cleanup();
     }
   }, TEST_TIMEOUT_MS);
+
+  test("seedReservedVocabularies: identical manifest ids in both workspaces both seed as CREATED, and each stays scoped to its own vocabularies/terms", async () => {
+    // A BARE fixture, deliberately: createFixture's own dataset already has
+    // reserved taxonomy seeded (by the Python exporter, not through this
+    // facade method), so seeding again there would test replay, not a fresh
+    // write. seedManifest's own default ids are LITERAL constants independent
+    // of the workspace argument, so calling it for alpha and beta with no
+    // overrides is itself the colliding-identity setup: identical
+    // vocabulary_id/term_id in both workspaces.
+    const fixture = await createContextFixture([ALPHA, BETA]);
+    try {
+      const manifestAlpha = seedManifest(ALPHA);
+      const manifestBeta = seedManifest(BETA);
+      expect(manifestBeta.type).toEqual(manifestAlpha.type);
+      expect(manifestBeta.memory_horizon).toEqual(manifestAlpha.memory_horizon);
+
+      const parsed = await drive(fixture, [
+        tax("seedReservedVocabularies", manifestAlpha),
+        // Same vocabulary_id/term ids, OTHER workspace: an unscoped lookup
+        // would find alpha's just-written rows and report already_satisfied
+        // here instead of created.
+        tax("seedReservedVocabularies", manifestBeta),
+        tax("getVocabulary", { workspace_name: ALPHA, vocabulary_id: (manifestAlpha.type as any).vocabulary_id }),
+        tax("getVocabulary", { workspace_name: BETA, vocabulary_id: (manifestBeta.type as any).vocabulary_id }),
+        tax("getTerm", { workspace_name: ALPHA, term_id: (manifestAlpha.type as any).terms.note }),
+        tax("getTerm", { workspace_name: BETA, term_id: (manifestBeta.type as any).terms.note }),
+      ]);
+      const alphaSeed = ok(parsed.op0, "alpha seed");
+      const betaSeed = ok(parsed.op1, "beta seed");
+      expect(alphaSeed.outcome).toBe("created");
+      expect(betaSeed.outcome).toBe("created");
+      // Every returned row, from BOTH tables, carries its OWN workspace --
+      // never the other's, despite the identical ids.
+      for (const row of [...alphaSeed.vocabularies, ...alphaSeed.terms]) {
+        expect(row.workspace_name).toBe(ALPHA);
+      }
+      for (const row of [...betaSeed.vocabularies, ...betaSeed.terms]) {
+        expect(row.workspace_name).toBe(BETA);
+      }
+      expect(ok(parsed.op2, "alpha getVocabulary").workspace_name).toBe(ALPHA);
+      expect(ok(parsed.op3, "beta getVocabulary").workspace_name).toBe(BETA);
+      expect(ok(parsed.op4, "alpha getTerm").workspace_name).toBe(ALPHA);
+      expect(ok(parsed.op5, "beta getTerm").workspace_name).toBe(BETA);
+    } finally {
+      await fixture.cleanup();
+    }
+  }, TEST_TIMEOUT_MS);
 });
 
 // ── publication: nodes and revisions, plus derived evidence ────────────────
@@ -518,18 +565,29 @@ describe("publication and evidence: colliding node_id + revision_id across works
       const parsed = await drive(
         fixture,
         [
+          // Distinguishing titles, so the two workspaces' accepted content --
+          // and therefore content_digest -- genuinely differ despite the
+          // colliding node_id and revision_id.
           pub("publishRevision", {
             operation_id: "op-alpha2",
-            content: revisionEnvelope(ALPHA, alpha, nodeId),
+            content: revisionEnvelope(ALPHA, alpha, nodeId, { title: "alpha assoc title" }),
           }),
           pub("publishRevision", {
             operation_id: "op-beta2",
-            content: revisionEnvelope(BETA, beta, nodeId),
+            content: revisionEnvelope(BETA, beta, nodeId, { title: "beta assoc title" }),
           }),
           ev("getRevisionAssociations", getAssociationsRequest(ALPHA, { node_id: nodeId, revision_id: null })),
           ev("getRevisionAssociations", getAssociationsRequest(BETA, { node_id: nodeId, revision_id: null })),
           ev("reconcileRevisionAssociations", reconcileRequest(ALPHA, { node_id: nodeId, revision_id: revId })),
           ev("reconcileRevisionAssociations", reconcileRequest(BETA, { node_id: nodeId, revision_id: revId })),
+          // Raw readback of the TABLE reconcile actually wrote to, since
+          // getRevisionAssociations deliberately never queries it (its own
+          // documented READ INVARIANT): this is the only way through this
+          // file to prove the persisted node_revision_terms rows themselves
+          // are scoped, not merely the outcome object reconcile returned.
+          hx("readRawRows", { table: "node_revision_terms", predicate: `revision_id = '${revId}'` }),
+          hx("readRawRows", { table: "node_revision_terms", predicate: `workspace_name = '${ALPHA}' AND revision_id = '${revId}'` }),
+          hx("readRawRows", { table: "node_revision_terms", predicate: `workspace_name = '${BETA}' AND revision_id = '${revId}'` }),
         ],
         { revisionIds: [revId, revId] },
       );
@@ -539,12 +597,55 @@ describe("publication and evidence: colliding node_id + revision_id across works
       const betaAssoc = ok(parsed.op3, "beta assoc");
       expect(alphaAssoc.workspace_name).toBe(ALPHA);
       expect(betaAssoc.workspace_name).toBe(BETA);
-      // Both derived independently, from each workspace's OWN snapshot, under
-      // the identical revision_id.
+      // Different content under the identical node_id/revision_id must
+      // produce genuinely different digests -- a leaked/merged read would
+      // either match the wrong one or coincide.
+      expect(alphaAssoc.content_digest).not.toBe(betaAssoc.content_digest);
+
+      // Both derived and persisted independently, from each workspace's OWN
+      // snapshot, under the identical revision_id. Asserted on ACTUAL scoped
+      // content -- workspace_name, node/revision identity, digest, and the
+      // exact reconciled counts -- not merely that a value came back.
       const alphaReconcile = ok(parsed.op4, "alpha reconcile");
       const betaReconcile = ok(parsed.op5, "beta reconcile");
-      expect(alphaReconcile).toBeDefined();
-      expect(betaReconcile).toBeDefined();
+      expect(alphaReconcile.outcome).toBe("reconciled");
+      expect(betaReconcile.outcome).toBe("reconciled");
+      expect(alphaReconcile.workspace_name).toBe(ALPHA);
+      expect(betaReconcile.workspace_name).toBe(BETA);
+      expect(alphaReconcile.node_id).toBe(nodeId);
+      expect(betaReconcile.node_id).toBe(nodeId);
+      expect(alphaReconcile.revision_id).toBe(revId);
+      expect(betaReconcile.revision_id).toBe(revId);
+      // Reconcile's own digest must agree with the INDEPENDENTLY-derived one
+      // getRevisionAssociations already reported for the SAME workspace, and
+      // the two workspaces' digests must stay distinct here too.
+      expect(alphaReconcile.content_digest).toBe(alphaAssoc.content_digest);
+      expect(betaReconcile.content_digest).toBe(betaAssoc.content_digest);
+      expect(alphaReconcile.content_digest).not.toBe(betaReconcile.content_digest);
+      // Exactly one type-term assignment each (revisionEnvelope's default
+      // term_snapshot), no links.
+      expect(alphaReconcile.terms).toEqual({ action: "filled", count: "1" });
+      expect(betaReconcile.terms).toEqual({ action: "filled", count: "1" });
+      expect(alphaReconcile.links).toEqual({ action: "unchanged", count: "0" });
+      expect(betaReconcile.links).toEqual({ action: "unchanged", count: "0" });
+
+      // The raw table itself: TWO rows total under the colliding revision_id
+      // (one per workspace, never merged into one or dropped), and each
+      // workspace-scoped slice holds EXACTLY its own row, carrying its own
+      // reserved "type" term id -- which the fixture seeds distinctly per
+      // workspace, so a swapped or unscoped read is visibly wrong here too.
+      const allRows = ok(parsed.op6, "raw node_revision_terms, both workspaces");
+      expect(allRows).toHaveLength(2);
+      expect(allRows.map((r: any) => r.workspace_name).sort()).toEqual([ALPHA, BETA].sort());
+      const alphaRawRows = ok(parsed.op7, "raw node_revision_terms, alpha only");
+      const betaRawRows = ok(parsed.op8, "raw node_revision_terms, beta only");
+      expect(alphaRawRows).toHaveLength(1);
+      expect(betaRawRows).toHaveLength(1);
+      expect(alphaRawRows[0].workspace_name).toBe(ALPHA);
+      expect(betaRawRows[0].workspace_name).toBe(BETA);
+      expect(alphaRawRows[0].term_id).toBe(alpha.term_ids.type.note.id);
+      expect(betaRawRows[0].term_id).toBe(beta.term_ids.type.note.id);
+      expect(alphaRawRows[0].term_id).not.toBe(betaRawRows[0].term_id);
     } finally {
       await fixture.cleanup();
     }
