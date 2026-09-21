@@ -17,21 +17,22 @@
  * Contract: app/docs/contracts/context-ingestion-v1.md
  *
  * THIN BARREL: this file is now only a re-export surface. The implementation
- * lives one function per file under `./context/` -- see that directory for
- * the request grammar, stored-row codec, and their private helpers.
+ * lives one function per file, each named `context.<functionName>.ts` beside
+ * this barrel -- see those files for the request grammar, stored-row codec,
+ * and their private helpers.
  */
 
-export { MAX_ITEMS, type AppendItem, type AppendMessagesRequest, parseAppendMessages } from "./context/parse-append-messages";
-export { MAX_RESULT_WIRE_BYTES } from "./context/constants";
-export { MAX_PAGE_LIMIT, type ListMessagesRequest, parseListMessages } from "./context/parse-list-messages";
-export { PEER_FIELDS, encodePeerRow } from "./context/encode-peer-row";
-export { SESSION_FIELDS, encodeSessionRow } from "./context/encode-session-row";
-export { SESSION_PEER_FIELDS, encodeSessionPeerRow } from "./context/encode-session-peer-row";
-export { MESSAGE_FIELDS, encodeMessageRow } from "./context/encode-message-row";
-export { type RegisterPeerRequest, parseRegisterPeer } from "./context/parse-register-peer";
-export { type RegisterSessionRequest, parseRegisterSession } from "./context/parse-register-session";
-export { type JoinSessionRequest, parseJoinSession } from "./context/parse-join-session";
-export { type GetPeerRequest, parseGetPeer } from "./context/parse-get-peer";
-export { type GetSessionRequest, parseGetSession } from "./context/parse-get-session";
-export { type GetMessageRequest, parseGetMessage } from "./context/parse-get-message";
-export { rowWireBytes } from "./context/row-wire-bytes";
+export { MAX_ITEMS, type AppendItem, type AppendMessagesRequest, parseAppendMessages } from "./context.parseAppendMessages";
+export { MAX_RESULT_WIRE_BYTES } from "./context.constants";
+export { MAX_PAGE_LIMIT, type ListMessagesRequest, parseListMessages } from "./context.parseListMessages";
+export { PEER_FIELDS, encodePeerRow } from "./context.encodePeerRow";
+export { SESSION_FIELDS, encodeSessionRow } from "./context.encodeSessionRow";
+export { SESSION_PEER_FIELDS, encodeSessionPeerRow } from "./context.encodeSessionPeerRow";
+export { MESSAGE_FIELDS, encodeMessageRow } from "./context.encodeMessageRow";
+export { type RegisterPeerRequest, parseRegisterPeer } from "./context.parseRegisterPeer";
+export { type RegisterSessionRequest, parseRegisterSession } from "./context.parseRegisterSession";
+export { type JoinSessionRequest, parseJoinSession } from "./context.parseJoinSession";
+export { type GetPeerRequest, parseGetPeer } from "./context.parseGetPeer";
+export { type GetSessionRequest, parseGetSession } from "./context.parseGetSession";
+export { type GetMessageRequest, parseGetMessage } from "./context.parseGetMessage";
+export { rowWireBytes } from "./context.rowWireBytes";
