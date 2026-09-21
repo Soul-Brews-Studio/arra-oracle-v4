@@ -67,8 +67,39 @@ let handle: Awaited<ReturnType<typeof connect>> | null = null;
 /** Fixed sanitized counter for fold-write failures; never exception text. */
 let foldFailures = 0;
 
+/**
+ * Latch for "this store has no `connections` table".
+ *
+ * A store that lacks the table will lack it for every subsequent request too,
+ * so retrying per call buys nothing and costs a log line each time. The
+ * DEFAULT `ARRA_DATA_DIR` (`../data`) is exactly this case -- measured: 0
+ * tables -- so without the latch an ordinary deployment prints
+ * `fold_write_failed` on every audited request forever. The suite printed it
+ * 18 times in one run.
+ *
+ * Deliberately NOT "create the table if missing": that is a schema write into
+ * an operator's store from the request path, which is not this module's
+ * authority to take.
+ */
+let tableAbsent = false;
+
 export function connectionFoldFailureCount(): number {
   return foldFailures;
+}
+
+/**
+ * Test seam: clears the latch, the cached connection and the failure count.
+ *
+ * It does NOT re-point the store. `DATA_DIR` is captured from the environment
+ * at module load (`storage.ts`), so setting `ARRA_DATA_DIR` after import has
+ * no effect -- a test that needs a different store must run in its own
+ * process with the variable already set. Learned by writing a probe that
+ * reset the state, changed the env var, and kept writing to the old path.
+ */
+export function resetConnectionFoldState(): void {
+  handle = null;
+  tableAbsent = false;
+  foldFailures = 0;
 }
 
 async function table() {
@@ -92,6 +123,7 @@ async function table() {
  * direction: this row can never claim more traffic than actually happened.
  */
 export async function foldConnection(event: ConnectionEvent): Promise<void> {
+  if (tableAbsent) return;
   try {
     const tbl = await table();
     await tbl.checkoutLatest(); // a Table handle pins a version — see db.ts
@@ -158,11 +190,20 @@ export async function foldConnection(event: ConnectionEvent): Promise<void> {
       await tbl.delete(`id = ${quote(id)}`);
       await tbl.add([row]);
     }
-  } catch {
+  } catch (error) {
     // Best-effort and deliberately NOT transactional with the request it
     // describes: that request already happened and is not rolled back here.
     // Same discipline as `calls.ts` — a fixed sanitized marker only, never raw
     // exception text, which could carry store internals into the logs.
+    //
+    // "Table absent" is reported ONCE and then latched off. It is a standing
+    // configuration fact, not an incident, and repeating it per request would
+    // bury the transient failures that ARE incidents.
+    if (error instanceof Error && /was not found|Table '.*' was not found/i.test(error.message)) {
+      tableAbsent = true;
+      console.error("[connections] fold_disabled_table_absent");
+      return;
+    }
     foldFailures += 1;
     console.error("[connections] fold_write_failed");
   }
