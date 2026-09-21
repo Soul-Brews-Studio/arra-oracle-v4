@@ -1,5 +1,5 @@
 import { requireExactColumns } from "./search-chunk.requireExactColumns";
-import { storedEmbeddingMustBeNull } from "./search-chunk.storedEmbeddingMustBeNull";
+import { storedEmbedding } from "./search-chunk.storedEmbedding";
 import { storedInt64Text } from "./search-chunk.storedInt64Text";
 import { storedNullableText } from "./search-chunk.storedNullableText";
 import { storedNullableTimestamp } from "./search-chunk.storedNullableTimestamp";
@@ -35,16 +35,19 @@ export const SEARCH_CHUNK_FIELDS = [
  * One stored row to its wire fields, in physical order minus `embedding`.
  *
  * `embedding` is DELIBERATELY OMITTED from the returned object rather than
- * emitted as `null`: the instruction is "omitted or null on the wire", and
- * omission is the cheaper, unambiguous choice -- a caller checking `"embedding"
- * in row` gets a real answer instead of one that depends on which sender it
- * saw.
+ * emitted as `null` or as a 384-float array: the instruction is "omitted or
+ * null on the wire", and omission is the cheaper, unambiguous choice -- a
+ * caller checking `"embedding" in row` gets a real answer instead of one that
+ * depends on which sender it saw. This holds whether the stored value is
+ * null or populated -- #90 gave this writer a real path to a populated
+ * vector, but did not change what this wire codec exposes.
  */
 export function encodeSearchChunkRow(row: Record<string, unknown>): Record<string, unknown> {
   requireExactColumns(row, SEARCH_CHUNK_FIELDS);
   // Validated for shape even though it is not emitted: a corrupt embedding
-  // column is still stored corruption, whether or not the wire ever shows it.
-  storedEmbeddingMustBeNull(row.embedding);
+  // column -- null or populated -- is still stored corruption, whether or
+  // not the wire ever shows it.
+  storedEmbedding(row.embedding);
   return {
     id: storedText(row.id),
     workspace_name: storedText(row.workspace_name),

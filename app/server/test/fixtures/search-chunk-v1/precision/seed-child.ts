@@ -146,6 +146,15 @@ const harness: Record<string, (request: any) => Promise<unknown>> = {
           out[k] = null;
         } else if (Array.isArray(v)) {
           out[k] = v.map((item) => (item === null ? null : String(item)));
+        } else if (k === "embedding") {
+          // #90: a populated `embedding` raw-reads as an Arrow Vector too
+          // (MEASURED, same shape as `term_ids` below) -- `toArray()` hands
+          // back the ACTUAL float32-rounded numbers, kept as JSON numbers
+          // (not stringified) so the precision test can compare them exactly
+          // against `Math.fround` of the values it wrote.
+          out[k] = typeof (v as { toArray?: unknown }).toArray === "function"
+            ? Array.from((v as { toArray(): unknown[] }).toArray())
+            : String(v);
         } else if (k === "term_ids") {
           out.term_ids_raw_shape = {
             typeofValue: typeof v,
