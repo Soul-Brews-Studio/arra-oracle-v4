@@ -150,6 +150,10 @@ type ListSpec = {
 // defaulting every OTHER request to `true` would make the ordinary
 // page-purity/chain-walk assertions exercise an extra scoped-count code
 // path they have no need of.
+/** Every listing method now takes `include_total` (PR #99 made the two
+ *  activity methods match the other three). `listMcpCalls` additionally
+ *  requires `tool` and `status` -- closed grammar, so "not filtering" is an
+ *  explicit null, never an omission. */
 const ORDINARY_REQUEST = { include_total: false };
 
 const SPECS: ListSpec[] = [
@@ -191,6 +195,7 @@ const SPECS: ListSpec[] = [
     cursorReqKey: "after_id",
     cursorRespKey: "next_after_id",
     identityField: "id",
+    defaultRequest: { ...ORDINARY_REQUEST, tool: null, status: null },
   },
   {
     name: "listConnections",
@@ -199,6 +204,7 @@ const SPECS: ListSpec[] = [
     cursorReqKey: "after_id",
     cursorRespKey: "next_after_id",
     identityField: "id",
+    defaultRequest: ORDINARY_REQUEST,
   },
 ];
 

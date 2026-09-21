@@ -110,7 +110,10 @@ slowest first:
 
 14 of 24 kernels are under 10s. The other 10 — every kernel whose files span
 `ownership`/`precision`/`recovery`/`service` (or the nested `fixtures/*-v1/`
-equivalent) — run 46s to 196s, because that's where the real fd-42 writer
+equivalent) — run roughly 50s to 100s measured as a single invocation (the census's
+summed per-file figures -- 196s, 153s, 142s, 123s -- are upper bounds, since
+each file there pays startup separately; `test:publication` is 99.1s and
+`test:context` 50.5s run as one command), because that's where the real fd-42 writer
 gate and real-SIGKILL recovery tests live. `test:publication`,
 `test:taxonomy`, `test:read-cursor`, and `test:association` (the four asked
 about explicitly) are all in that slow group: 196s, 153s, 142s, and 123s
