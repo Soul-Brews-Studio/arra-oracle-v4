@@ -2,16 +2,54 @@
 //
 // Adapted from ../../read-cursor-v1/core/gated-cursor.ts: same ops-array
 // dispatch over the real `context` facade, same boundary trace recording.
-// No dataset surgery harness is needed here -- every case this smoke test
-// covers is reachable through the real API alone.
+// A small `harness` facade is also available, same as gated-cursor.ts's,
+// for the ONE case not reachable through the real API alone: planting a
+// non-contiguous stored `trace_hits.position` to prove the read path (TR-3)
+// refuses it rather than silently serving a gap.
 const [, , datasetRoot, payloadJson] = Bun.argv;
 const payload = JSON.parse(payloadJson ?? "{}") as {
-  ops: Array<{ facade?: "context" | "publication" | "taxonomy"; method: string; request: any }>;
+  ops: Array<{ facade?: "context" | "publication" | "taxonomy" | "harness"; method: string; request: any }>;
   clockMs?: number | number[] | "throw";
 };
 
+const { connect } = await import("@lancedb/lancedb");
+const { tableFromArrays } = await import("apache-arrow");
 const servicePath = new URL("../../../../src/publication/service.ts", import.meta.url).pathname;
 const { openContextWriter } = await import(servicePath);
+
+let harnessConn: Awaited<ReturnType<typeof connect>> | null = null;
+const harnessTable = async (name: string) => {
+  harnessConn ??= await connect(datasetRoot!, { readConsistencyInterval: 0 });
+  const tbl = await harnessConn.openTable(name);
+  await tbl.checkoutLatest();
+  return tbl;
+};
+
+const harness: Record<string, (request: any) => Promise<unknown>> = {
+  /** Plant one `trace_hits` row directly, bypassing `createTrace` entirely --
+   *  the only way to reach a stored position the real write path can never
+   *  produce (it always assigns 0..n-1 contiguously). */
+  async insertRawHit(request) {
+    const tbl = await harnessTable("trace_hits");
+    await tbl.add(
+      tableFromArrays({
+        workspace_name: [request.workspace_name],
+        trace_id: [request.trace_id],
+        kind: [request.kind],
+        ref: [request.ref],
+        target: [request.target],
+        line_start: [request.line_start ?? null],
+        line_end: [request.line_end ?? null],
+        excerpt: [request.excerpt ?? null],
+        content_hash: [request.content_hash ?? null],
+        captured_at: [request.captured_at_micros != null ? BigInt(request.captured_at_micros) : null],
+        note: [request.note ?? null],
+        position: [BigInt(request.position)],
+      } as never) as never,
+    );
+    return { planted: true };
+  },
+};
 
 const trace: string[] = [];
 const results: Record<string, unknown> = {};
@@ -58,6 +96,14 @@ const service = await openContextWriter(datasetRoot!, {
 try {
   for (const [index, op] of payload.ops.entries()) {
     const label = `op${index}`;
+    if (op.facade === "harness") {
+      try {
+        results[label] = { ok: true, value: await harness[op.method]!(op.request) };
+      } catch (error) {
+        results[label] = { ok: false, ...describeError(error) };
+      }
+      continue;
+    }
     const facade = (service as Record<string, Record<string, (b: Uint8Array) => Promise<unknown>>>)[
       op.facade ?? "context"
     ];

@@ -34,6 +34,7 @@ import {
   requireNanoid21,
   requireNonemptyString,
   requireNonNegativeInt64String,
+  requireTimestampString,
   type Tokens,
 } from "../contracts/common";
 import { fail } from "../contracts/errors";
@@ -49,7 +50,7 @@ import {
   type TargetKind,
 } from "../contracts/evidence-v1";
 import { failPublication } from "./errors";
-import { microsToTimestamp, timestampToMicros } from "./rows";
+import { microsToTimestamp } from "./rows";
 
 const MAX_REQUEST_BYTES = 1048576;
 const MAX_REQUEST_DEPTH = 64;
@@ -255,29 +256,29 @@ function nullableOpaqueText(value: JcsValue | undefined, tokens: Tokens): string
   return v;
 }
 
+/**
+ * Both `session_from_ts`/`session_to_ts` (millisecond storage) and
+ * `captured_at` (microsecond storage) share the SAME wire grammar: exact
+ * UTC-ms text, years 1..9999. `requireTimestampString` (-> `v1.parseTimestamp`)
+ * is the ACCEPTED governed check for that grammar and, critically, rejects a
+ * leading "0000" year that the length+regex+round-trip checks in this
+ * module's own `timestampToMillis` and `./rows`' `timestampToMicros` do NOT
+ * reject on their own -- those two converters check SHAPE, not the calendar
+ * floor. Validating through the governed helper HERE, before either
+ * unit-specific converter ever runs, is what keeps a year-0000 value from
+ * reaching a write at all: it fails invalid_value at the FIELD POINTER,
+ * never integrity_failure at root, and never inside the post-write window.
+ */
 function nullableTimestamp(value: JcsValue | undefined, tokens: Tokens): string | null {
   const v = value ?? null;
   if (v === null) return null;
-  if (typeof v !== "string") fail("invalid_type", tokens, "expected string");
-  // Delegate range/shape checking to the SAME millisecond converter used for
-  // storage, so the request grammar and the encoder agree on what "valid"
-  // means; see `millisToTimestamp` / `timestampToMillis` below.
-  timestampToMillis(v, tokens);
-  return v;
+  return requireTimestampString(v, tokens);
 }
 
 function nullableCapturedAt(value: JcsValue | undefined, tokens: Tokens): string | null {
   const v = value ?? null;
   if (v === null) return null;
-  if (typeof v !== "string") fail("invalid_type", tokens, "expected string");
-  // This one really is MICROS storage: validate through the micros converter,
-  // never the millisecond one, to keep the trap from leaking into requests.
-  try {
-    timestampToMicros(v);
-  } catch {
-    fail("invalid_value", tokens, "expected exact UTC-ms timestamp text");
-  }
-  return v;
+  return requireTimestampString(v, tokens);
 }
 
 function nullableFriction(value: JcsValue | undefined, tokens: Tokens): number | null {
@@ -506,7 +507,18 @@ export function timestampToMillis(text: unknown, tokens: Tokens = []): bigint {
   if (!Number.isFinite(millis)) fail("invalid_value", tokens, "timestamp does not parse");
   const parsed = new Date(millis);
   if (parsed.toISOString() !== text) fail("invalid_value", tokens, "timestamp is not canonical");
-  return BigInt(millis);
+  const value = BigInt(millis);
+  // DEFENSE IN DEPTH, not the only guard: `requireTimestampString` at the
+  // request-grammar call site (`nullableTimestamp`) already rejects a
+  // leading "0000" year via `v1.parseTimestamp`. This second, independent
+  // check is what stops a DIRECT caller of this exported converter --
+  // shape+round-trip alone accepts "0000-06-15T12:00:00.000Z" (Date.parse
+  // round-trips it identically), which is BELOW MIN_EPOCH_MS. Governed
+  // invalid_value at the field pointer, never integrity_failure at root.
+  if (value < MIN_EPOCH_MS || value > MAX_EPOCH_MS) {
+    fail("invalid_value", tokens, "timestamp must be within years 1..9999");
+  }
+  return value;
 }
 
 /** RAW storage milliseconds (bigint or safe-integer number), required. */

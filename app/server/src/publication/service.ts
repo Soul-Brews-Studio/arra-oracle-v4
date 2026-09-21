@@ -42,6 +42,7 @@ import {
   timestampToMillis,
   TRACE_FIELDS,
   TRACE_HIT_FIELDS,
+  type CreateTraceHitInput,
 } from "./trace";
 import { targetOp } from "../contracts/evidence-v1";
 import {
@@ -2907,12 +2908,20 @@ function createContextReadMethods(reader: DatasetAdapter) {
         request.limit + 1,
       );
 
+      // TR-3: `position` is contractually contiguous 0..n-1 per trace
+      // (trace.ts). Enforced here against the KEYSET cursor itself -- the
+      // first position seen must be exactly one past `after` (0 when
+      // `after` is absent), and every following one must be its immediate
+      // successor. A gap, a duplicate or an out-of-order value is stored
+      // corruption, never a caller mismatch: integrity_failure at ROOT.
       const positions: bigint[] = [];
+      let expectedNext = after === null ? 0n : after + 1n;
       for (const row of selected) {
         const position = row.position;
         if (typeof position !== "bigint") failPublication("integrity_failure", "");
-        if (positions.some((p) => p === position)) failPublication("integrity_failure", "");
+        if (position !== expectedNext) failPublication("integrity_failure", "");
         positions.push(position);
+        expectedNext = position + 1n;
       }
 
       const page = positions.slice(0, request.limit);
@@ -3291,9 +3300,30 @@ function createContextWriterService(
           `${contextScope(request.workspace_name)} AND id = ${quote(request.id)}`,
         );
 
+        // A hit-shape mismatch, PER FIELD. Shared by the full-match check
+        // (already_satisfied) and the prefix check (TR-2, below): both need
+        // exactly the same notion of "this stored hit IS the requested one".
+        const hitMatches = (
+          stored: Record<string, unknown>,
+          wanted: { input: CreateTraceHitInput; target_json: string },
+        ): boolean =>
+          stored.kind === wanted.input.kind &&
+          stored.ref === wanted.input.ref &&
+          stored.target === wanted.target_json &&
+          stored.line_start === wanted.input.line_start &&
+          stored.line_end === wanted.input.line_end &&
+          stored.excerpt === wanted.input.excerpt &&
+          stored.content_hash === wanted.input.content_hash &&
+          stored.captured_at === wanted.input.captured_at &&
+          stored.note === wanted.input.note;
+
         if (existing !== null) {
           const encodedExisting = encodeTraceRow(existing);
           await writer.refresh(TRACE_HITS);
+          // Enough rows to tell "exactly N" (possible full match), "fewer
+          // than N" (TR-2: a prior write may be an ambiguous PARTIAL) and
+          // "more than N" (a real payload mismatch) apart -- never a
+          // whole-table audit.
           const existingHitRows = await writer.query(
             TRACE_HITS,
             `${contextScope(request.workspace_name)} AND trace_id = ${quote(request.id)}`,
@@ -3320,26 +3350,23 @@ function createContextWriterService(
             encodedExisting.h_metadata === request.h_metadata &&
             encodedExisting.internal_metadata === request.internal_metadata;
 
-          let sameHits = existingHitRows.length === normalizedHits.length;
-          let existingHitsEncoded: Record<string, unknown>[] = [];
+          const existingHitsEncoded = existingHitRows
+            .map((row) => encodeTraceHitRow(row))
+            .sort((a, b) => Number(BigInt(a.position as string) - BigInt(b.position as string)));
+
+          // TR-3: `position` is contractually contiguous 0..n-1 per trace
+          // (trace.ts). A gap or a duplicate here is STORED corruption, not
+          // a caller mismatch -- decided BEFORE any payload comparison, same
+          // precedence rule this kernel already uses everywhere else for
+          // stored-state faults.
+          for (let i = 0; i < existingHitsEncoded.length; i++) {
+            if (existingHitsEncoded[i]!.position !== String(i)) failPublication("integrity_failure", "");
+          }
+
+          let sameHits = existingHitsEncoded.length === normalizedHits.length;
           if (sameHits) {
-            existingHitsEncoded = existingHitRows
-              .map((row) => encodeTraceHitRow(row))
-              .sort((a, b) => Number(BigInt(a.position as string) - BigInt(b.position as string)));
             for (let i = 0; i < normalizedHits.length; i++) {
-              const stored = existingHitsEncoded[i]!;
-              const wanted = normalizedHits[i]!;
-              if (
-                stored.kind !== wanted.input.kind ||
-                stored.ref !== wanted.input.ref ||
-                stored.target !== wanted.target_json ||
-                stored.line_start !== wanted.input.line_start ||
-                stored.line_end !== wanted.input.line_end ||
-                stored.excerpt !== wanted.input.excerpt ||
-                stored.content_hash !== wanted.input.content_hash ||
-                stored.captured_at !== wanted.input.captured_at ||
-                stored.note !== wanted.input.note
-              ) {
+              if (!hitMatches(existingHitsEncoded[i]!, normalizedHits[i]!)) {
                 sameHits = false;
                 break;
               }
@@ -3353,6 +3380,26 @@ function createContextWriterService(
               hits: existingHitsEncoded,
             };
           }
+
+          // TR-2: a retry against a FRESH, unpoisoned owner (e.g. after a
+          // process restart) can land here even though the PRIOR attempt was
+          // an ambiguous partial write: the trace row and some PREFIX of its
+          // hits landed, then the process died before the rest were
+          // appended. That is incomplete stored state, not a conflicting
+          // payload, and the byte-identical caller must not be blamed for
+          // it. Recognized ONLY as an EXACT element-wise prefix -- never a
+          // superset, never a reordering -- of the requested hits.
+          if (sameTrace && existingHitsEncoded.length < normalizedHits.length) {
+            let isPrefix = true;
+            for (let i = 0; i < existingHitsEncoded.length; i++) {
+              if (!hitMatches(existingHitsEncoded[i]!, normalizedHits[i]!)) {
+                isPrefix = false;
+                break;
+              }
+            }
+            if (isPrefix) failPublication("recovery_required", "");
+          }
+
           return { outcome: "conflict" as const, reason: "payload" as const };
         }
 
@@ -3380,6 +3427,33 @@ function createContextWriterService(
           if (prev === null) failPublication("invalid_reference", "/prev_id");
           await assertTraceChain(writer, request.workspace_name, prev, "prev_id");
         }
+
+        // TR-1(b): build EVERY physical hit row -- INCLUDING running it
+        // through `encodeTraceHitRow`'s own shape check -- in a PRE-WRITE
+        // pass, before the trace row's `writeRow` call below starts the
+        // ambiguous post-write window. A hit-shaping fault must refuse the
+        // WHOLE request atomically, before anything is durable: once the
+        // trace row lands there is no way to attach hits to it after the
+        // fact (v1 is immutable, no append-hits method), so any hit fault
+        // discovered only INSIDE that window would strand an orphan trace
+        // row and poison the owner for an ordinary caller mistake.
+        const preparedHits = normalizedHits.map(({ input, target_json }, i) => {
+          const physicalHit: Record<string, unknown> = {
+            workspace_name: request.workspace_name,
+            trace_id: request.id,
+            kind: input.kind,
+            ref: input.ref,
+            target: target_json,
+            line_start: input.line_start === null ? null : BigInt(input.line_start),
+            line_end: input.line_end === null ? null : BigInt(input.line_end),
+            excerpt: input.excerpt,
+            content_hash: input.content_hash,
+            captured_at: input.captured_at === null ? null : timestampToMicros(input.captured_at),
+            note: input.note,
+            position: BigInt(i),
+          };
+          return { physicalHit, expectedHit: encodeTraceHitRow(physicalHit) };
+        });
 
         // ONLY a real creation samples the clock.
         const sampled = options.clock();
@@ -3441,23 +3515,8 @@ function createContextWriterService(
         );
 
         const storedHits: Record<string, unknown>[] = [];
-        for (let i = 0; i < normalizedHits.length; i++) {
-          const { input, target_json } = normalizedHits[i]!;
-          const physicalHit: Record<string, unknown> = {
-            workspace_name: request.workspace_name,
-            trace_id: request.id,
-            kind: input.kind,
-            ref: input.ref,
-            target: target_json,
-            line_start: input.line_start === null ? null : BigInt(input.line_start),
-            line_end: input.line_end === null ? null : BigInt(input.line_end),
-            excerpt: input.excerpt,
-            content_hash: input.content_hash,
-            captured_at: input.captured_at === null ? null : timestampToMicros(input.captured_at),
-            note: input.note,
-            position: BigInt(i),
-          };
-          const expectedHit = encodeTraceHitRow(physicalHit);
+        for (let i = 0; i < preparedHits.length; i++) {
+          const { physicalHit, expectedHit } = preparedHits[i]!;
           // `wroteAlready: true` from the FIRST hit onward (and for the very
           // first one, because the trace row itself already landed): once
           // anything is durably written this operation is in the ambiguous

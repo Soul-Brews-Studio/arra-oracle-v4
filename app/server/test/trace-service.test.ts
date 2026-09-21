@@ -29,6 +29,7 @@ describe("real persistence: trace + trace_hit inside the real gate", () => {
     return JSON.parse(line);
   };
   const ctx = (method: string, request: unknown) => ({ facade: "context", method, request });
+  const hx = (method: string, request: unknown) => ({ facade: "harness", method, request });
 
   test("create with two hits, read both back, exact ms/micros round trip, then replay is already_satisfied", async () => {
     const fixture = await createTraceFixture([ALPHA]);
@@ -130,6 +131,67 @@ describe("real persistence: trace + trace_hit inside the real gate", () => {
       expect(parsed.op0.value.outcome).toBe("created");
       expect(parsed.op1.ok).toBe(true);
       expect(parsed.op1.value.outcome).toBe("conflict");
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 300_000);
+
+  test("TR-1: a year-0000 captured_at is refused at its field pointer, writes nothing, and does NOT poison the owner", async () => {
+    const fixture = await createTraceFixture([ALPHA]);
+    try {
+      const bad = createTraceRequest(ALPHA, {
+        id: TRACE1,
+        hits: [hitInput({ ref: "hit-0", captured_at: "0000-06-15T12:00:00.000Z" })],
+      });
+      const good = createTraceRequest(ALPHA, { id: traceId("trace2"), hits: [] });
+      const parsed = await drive(fixture.datasetRoot, [
+        ctx("createTrace", bad),
+        // The owner must still be USABLE afterwards: a poisoned owner would
+        // fail this with recovery_required regardless of payload.
+        ctx("createTrace", good),
+        ctx("getTrace", { workspace_name: ALPHA, id: TRACE1 }),
+      ]);
+
+      const rejected = parsed.op0;
+      expect(rejected.ok, JSON.stringify(rejected)).toBe(false);
+      expect(rejected.code).toBe("invalid_value");
+      expect(rejected.path).toBe("/hits/0/captured_at");
+
+      const stillWorks = parsed.op1;
+      expect(stillWorks.ok, JSON.stringify(stillWorks)).toBe(true);
+      expect(stillWorks.value.outcome).toBe("created");
+
+      // No orphan trace row: the rejected request wrote NOTHING.
+      expect(parsed.op2.value).toBeNull();
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 300_000);
+
+  test("TR-3: a non-contiguous stored position is refused on the read path", async () => {
+    const fixture = await createTraceFixture([ALPHA]);
+    try {
+      const request = createTraceRequest(ALPHA, { id: TRACE1, hits: [hitInput({ ref: "hit-0" })] });
+      const parsed = await drive(fixture.datasetRoot, [
+        ctx("createTrace", request),
+        // Plant a SECOND hit at position 5: the real write path can never
+        // produce this gap, so this is the only way to reach it.
+        hx("insertRawHit", {
+          workspace_name: ALPHA,
+          trace_id: TRACE1,
+          kind: "url",
+          ref: "hit-gap",
+          target: '{"url":"https://example.com/gap"}',
+          position: 5,
+        }),
+        ctx("listTraceHits", { workspace_name: ALPHA, trace_id: TRACE1, after_position: null, limit: 10 }),
+      ]);
+      expect(parsed.op0.ok).toBe(true);
+      expect(parsed.op1.ok).toBe(true);
+
+      const listed = parsed.op2;
+      expect(listed.ok, JSON.stringify(listed)).toBe(false);
+      expect(listed.code).toBe("integrity_failure");
     } finally {
       await fixture.cleanup();
     }
