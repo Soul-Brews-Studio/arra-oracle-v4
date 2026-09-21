@@ -33,6 +33,18 @@ import {
   validateWorkspaceRow,
 } from "./read-cursor";
 import {
+  CHUNK_STATUSES,
+  chunkText,
+  deriveChunkId,
+  deriveContentHash,
+  EMBEDDING_DIMENSION,
+  encodeSearchChunkRow,
+  MAX_RECONCILE_REVISIONS,
+  parseIndexRevision,
+  parseListChunks,
+  parseReconcileSearch,
+} from "./search-chunk";
+import {
   classifyMessageDestinationReplay,
   prepareNewMessage,
 } from "../contracts/source-ingestion-v1";
@@ -105,7 +117,18 @@ import {
 } from "./rows";
 import { closeSync } from "node:fs";
 import { connect } from "@lancedb/lancedb";
-import { tableFromArrays } from "apache-arrow";
+import {
+  Field as ArrowField,
+  FixedSizeList,
+  Float32,
+  List as ArrowList,
+  makeData,
+  Table as ArrowTable,
+  tableFromArrays,
+  Utf8,
+  Vector as ArrowVector,
+  vectorFromArray,
+} from "apache-arrow";
 import {
   assertInheritedGate,
   assertLocalDatasetRoot,
@@ -257,6 +280,72 @@ function makeAdapter(connection: Connection, onRelease: () => void): DatasetAdap
       const columns: Record<string, unknown[]> = {};
       for (const row of rows) {
         for (const key of Object.keys(row)) (columns[key] ??= []).push(row[key]);
+      }
+      if (table === "search_chunks_v1") {
+        // MEASURED: blind inference cannot handle this table's two nested/
+        // typed columns.
+        //
+        // `term_ids` is a `list<utf8?>`. Inferring a nested string array
+        // dictionary-encodes it, and the inferrer's own self-check
+        // recursively infers the SAME array a second time to compare types --
+        // two independently-constructed Dictionary instances compare UNEQUAL
+        // to each other even though they are structurally identical, so the
+        // check fails and inference falls through every case to a throw.
+        //
+        // `embedding` is `fixed_size_list<float32?>[384]`, always null on
+        // this write path. A wholly-null column infers as a bare Float64
+        // scalar, which LanceDB then refuses against the real physical
+        // column.
+        //
+        // LanceDB's own returned `tbl.schema()` field types are NOT plain
+        // instances of this package's DataType classes (measured: passing
+        // them into `vectorFromArray` here throws "Unrecognized type 'NONE'"
+        // from this package's own visitor dispatch), so the fix builds the
+        // two types explicitly from this package's constructors instead of
+        // borrowing LanceDB's -- every other column here still goes through
+        // ordinary inference, unchanged.
+        const vecs: Record<string, unknown> = {};
+        for (const [key, values] of Object.entries(columns)) {
+          if (key === "term_ids") {
+            vecs[key] = vectorFromArray(
+              values as never,
+              new ArrowList(new ArrowField("item", new Utf8(), true)) as never,
+            );
+          } else if (key === "embedding") {
+            // `vectorFromArray` builds a ZERO-length child float buffer for an
+            // all-null column (MEASURED: LanceDB's native reader then rejects
+            // it -- "Values length 0 is less than the length (N) multiplied
+            // by the value size (384)" -- because a FixedSizeList's physical
+            // layout always reserves the full N*384 slots regardless of which
+            // ones the validity bitmap marks null). Built by hand instead: a
+            // real (unread) zero-filled float buffer of the right size, with
+            // every row's validity bit left at 0 (null).
+            if (!values.every((value) => value === null || value === undefined)) {
+              // This write path never populates embedding; a populated value
+              // reaching here would need real float validation this branch
+              // deliberately does not implement.
+              failPublication("integrity_failure", "");
+            }
+            const rowCount = values.length;
+            const child = makeData({
+              type: new Float32(),
+              data: new Float32Array(rowCount * EMBEDDING_DIMENSION),
+            });
+            const listData = makeData({
+              type: new FixedSizeList(EMBEDDING_DIMENSION, new ArrowField("item", new Float32(), true)),
+              length: rowCount,
+              nullCount: rowCount,
+              // All-zero bitmap: every bit unset means every row is null.
+              nullBitmap: new Uint8Array(Math.ceil(rowCount / 8)),
+              child,
+            });
+            vecs[key] = new ArrowVector([listData]);
+          } else {
+            vecs[key] = vectorFromArray(values as never);
+          }
+        }
+        await tbl.add(new ArrowTable(vecs as never) as never);
+        return tbl.version();
       }
       await tbl.add(tableFromArrays(columns as never) as never);
       return tbl.version();
@@ -2518,6 +2607,7 @@ const SESSIONS = "sessions";
 const SESSION_PEERS = "session_peers";
 const MESSAGES = "messages";
 const READ_CURSORS = "read_cursors";
+const SEARCH_CHUNKS = "search_chunks_v1";
 
 const INT64_CEILING = 2n ** 63n - 1n;
 
@@ -2850,6 +2940,33 @@ function createContextReadMethods(reader: DatasetAdapter) {
       const current = await selectCursorRow(reader, request);
       return current === null ? null : current.encoded;
     },
+
+    /**
+     * Every chunk row PROJECTED for one revision, ordered by chunk_index.
+     *
+     * This is a materialized-table read: it says nothing about whether the
+     * revision itself is still accepted, still current, or exists at all. A
+     * caller that needs that guarantee resolves the revision separately
+     * (e.g. through `getRevisionAssociations`) before trusting the rows here.
+     */
+    async listSearchChunks(requestBytes: Uint8Array): Promise<Record<string, unknown>[]> {
+      const request = parseListChunks(requestBytes);
+      await requireWorkspace(request.workspace_name);
+      await reader.refresh(SEARCH_CHUNKS);
+      const rows = await reader.query(
+        SEARCH_CHUNKS,
+        `${contextScope(request.workspace_name)} AND revision_id = ${quote(request.revision_id)}`,
+      );
+      const encoded = rows.map((row) => encodeSearchChunkRow(row));
+      // LanceDB gives no ordering guarantee; chunk_index is the only thing a
+      // caller can rely on to reassemble the original sequence.
+      encoded.sort((a, b) => {
+        const left = BigInt(a.chunk_index as string);
+        const right = BigInt(b.chunk_index as string);
+        return left < right ? -1 : left > right ? 1 : 0;
+      });
+      return encoded;
+    },
   };
 }
 
@@ -3152,6 +3269,235 @@ function createContextWriterService(
           row: stored,
         };
       });
+    },
+
+    /**
+     * Derive and persist PENDING search-chunk rows for one accepted revision.
+     *
+     * Embedding is deliberately absent from this path: rows land with
+     * `status: "pending"` and `embedding: null`, and no model or network call
+     * happens anywhere in here. A separate, not-yet-implemented method is the
+     * only thing allowed to populate `embedding`.
+     *
+     * Idempotent by construction: `deriveChunkId` is a pure function of
+     * (revision_id, chunker_version, embedding_profile, chunk_index), so
+     * retrying the same request proposes the SAME ids. There is no operation
+     * journal because none is needed.
+     */
+    indexRevisionChunks: (requestBytes: Uint8Array) => {
+      const request = parseIndexRevision(requestBytes);
+      return mutate(async () => {
+        await requireWorkspaceRow(request.workspace_name);
+        await writer.refresh("nodes");
+        const node = await findNode(writer, request.workspace_name, request.node_id);
+        if (node === null) failPublication("invalid_reference", "/node_id");
+
+        await writer.refresh("node_revisions");
+        const resolved = await selectAcceptedRevision(
+          writer,
+          request.workspace_name,
+          request.node_id,
+          request.revision_id,
+        );
+        if (resolved === null) failPublication("invalid_reference", "/revision_id");
+        const selected = resolved.selected;
+
+        // type_term_id and term_ids come from the revision's OWN immutable
+        // snapshot, exactly like the association evidence path -- never from
+        // a live join against node_revision_terms, which is a derived,
+        // rebuildable projection.
+        const snapshot = parseSnapshotArray(selected.term_snapshot_json, "");
+        let typeTermId: string | null = null;
+        const termIds: string[] = [];
+        for (const entry of snapshot) {
+          const termId = (entry as Record<string, unknown>).term_id;
+          if (typeof termId !== "string") failPublication("integrity_failure", "");
+          termIds.push(termId);
+          if ((entry as Record<string, unknown>).vocabulary_name_snapshot === RESERVED_TYPE_VOCABULARY) {
+            typeTermId = termId;
+          }
+        }
+        // publishRevision requires EXACTLY one reserved-type assignment
+        // before a revision is ever accepted, so an accepted revision without
+        // one here is stored corruption, not a caller mistake.
+        if (typeTermId === null) failPublication("integrity_failure", "");
+
+        const title = selected.title;
+        const body = selected.body;
+        if (typeof title !== "string" || typeof body !== "string") failPublication("integrity_failure", "");
+        const derivedText = `${title}\n\n${body}`;
+        const embeddingProfileName = request.embedding_profile.name;
+        const pieces = chunkText(derivedText);
+
+        const targets = pieces.map((piece, index) => {
+          const chunkIndex = BigInt(index);
+          const id = deriveChunkId(
+            request.revision_id,
+            request.chunker_version,
+            embeddingProfileName,
+            chunkIndex,
+          );
+          const physical: Record<string, unknown> = {
+            id,
+            workspace_name: request.workspace_name,
+            node_id: request.node_id,
+            revision_id: request.revision_id,
+            chunk_index: chunkIndex,
+            text: piece,
+            content_hash: deriveContentHash(piece),
+            chunker_version: request.chunker_version,
+            embedding_profile: embeddingProfileName,
+            // Off the authoritative write path, always: see the method doc.
+            embedding: null,
+            type_term_id: typeTermId,
+            // STALE-ABLE copies of the snapshot at index time, never a live
+            // join and never an authorization substitute: a caller filtering
+            // search_chunks_v1 on these columns is filtering a projection
+            // that can drift from the revision's current term assignments,
+            // not re-deriving access control.
+            term_ids: termIds,
+            observer_peer_name: (selected.observer_peer_name as string | null) ?? null,
+            subject_peer_name: (selected.subject_peer_name as string | null) ?? null,
+            session_name: (selected.session_name as string | null) ?? null,
+            status: CHUNK_STATUSES[0],
+            attempts: 0n,
+            last_attempt_at: null,
+            embedded_at: null,
+            error_code: null,
+          };
+          return { id, physical };
+        });
+
+        await writer.refresh(SEARCH_CHUNKS);
+        const scope =
+          `${contextScope(request.workspace_name)} AND revision_id = ${quote(request.revision_id)}` +
+          ` AND chunker_version = ${quote(request.chunker_version)}` +
+          ` AND embedding_profile = ${quote(embeddingProfileName)}`;
+        const existing = await writer.query(SEARCH_CHUNKS, scope);
+        const existingById = new Map(existing.map((row) => [row.id as string, row]));
+
+        if (targets.length > 0 && targets.every((target) => existingById.has(target.id))) {
+          return {
+            outcome: "already_satisfied" as const,
+            rows: targets.map((target) => encodeSearchChunkRow(existingById.get(target.id)!)),
+          };
+        }
+
+        const toWrite = targets.filter((target) => !existingById.has(target.id));
+
+        await core.contextBoundary("before_write", false);
+        core.markAttemptedWrite();
+        if (toWrite.length > 0) {
+          try {
+            await writer.append(
+              SEARCH_CHUNKS,
+              toWrite.map((target) => target.physical),
+            );
+          } catch {
+            core.poison();
+            failPublication("recovery_required", "");
+          }
+        }
+        await core.contextBoundary("after_write", true);
+
+        const stored = await core.afterWrite(async () => {
+          await writer.refresh(SEARCH_CHUNKS);
+          const rows: Record<string, unknown>[] = [];
+          for (const target of targets) {
+            const row = await contextOne(writer, SEARCH_CHUNKS, `id = ${quote(target.id)}`);
+            if (row === null) {
+              core.poison();
+              failPublication("recovery_required", "");
+            }
+            rows.push(encodeSearchChunkRow(row));
+          }
+          return rows;
+        });
+        await core.contextBoundary("after_readback", true);
+        return { outcome: "indexed" as const, rows: stored };
+      });
+    },
+
+    /**
+     * Bounded sweep, correctness-scoped exception to "no corpus audit".
+     *
+     * "An accepted revision with no chunk row at all" is not expressible as a
+     * predicate over `search_chunks_v1` -- absence is not queryable there --
+     * so this walks the OTHER side (this workspace's nodes, each already
+     * bounded to its own accepted head) and checks each head's chunk rows,
+     * rather than scanning the chunk table for what it does not contain.
+     *
+     * Bounded at `MAX_RECONCILE_REVISIONS` (1024) nodes visited per call,
+     * matching the request grammar's own cap; a caller that needs more pages
+     * through with a fresh call rather than being handed an unbounded scan.
+     */
+    reconcileSearchChunks: async (
+      requestBytes: Uint8Array,
+    ): Promise<{
+      visited: number;
+      missing: number;
+      missing_revisions: { node_id: string; revision_id: string }[];
+      stale: number;
+      exhausted: boolean;
+    }> => {
+      const request = parseReconcileSearch(requestBytes);
+      await requireWorkspaceRow(request.workspace_name);
+      await writer.refresh("nodes");
+      const fetched = await writer.orderedProjection(
+        "nodes",
+        contextScope(request.workspace_name),
+        ["id"],
+        { column: "id", ascending: true },
+        request.limit + 1,
+      );
+      const visited = fetched.slice(0, request.limit);
+      // Defensive, not reachable through the grammar today: `request.limit`
+      // is already capped at MAX_RECONCILE_REVISIONS by parseReconcileSearch.
+      // Kept as the documented bounded exception's own hard stop, in case
+      // that cap is ever loosened without this one moving too.
+      if (visited.length > MAX_RECONCILE_REVISIONS) failPublication("limit_exceeded", "");
+
+      await writer.refresh("node_revisions");
+      await writer.refresh(SEARCH_CHUNKS);
+      let missing = 0;
+      let stale = 0;
+      const missingRevisions: { node_id: string; revision_id: string }[] = [];
+      for (const row of visited) {
+        const nodeId = row.id;
+        if (typeof nodeId !== "string") failPublication("integrity_failure", "");
+        const resolved = await selectAcceptedRevision(writer, request.workspace_name, nodeId, null);
+        // Every node reached here was just selected FROM the nodes table, so
+        // an unresolvable head is stored corruption, not a caller mistake.
+        if (resolved === null) failPublication("integrity_failure", "");
+        const revisionId = resolved.head;
+        const present = await writer.query(
+          SEARCH_CHUNKS,
+          `${contextScope(request.workspace_name)} AND revision_id = ${quote(revisionId)}`,
+          1,
+        );
+        if (present.length === 0) {
+          missing += 1;
+          missingRevisions.push({ node_id: nodeId, revision_id: revisionId });
+          continue;
+        }
+        // STALE: chunk rows survive under this node for a revision that is no
+        // longer the accepted head. Never deleted here -- this method only
+        // reports, it does not reclaim.
+        const staleRows = await writer.query(
+          SEARCH_CHUNKS,
+          `${contextScope(request.workspace_name)} AND node_id = ${quote(nodeId)} AND revision_id != ${quote(revisionId)}`,
+          1,
+        );
+        if (staleRows.length > 0) stale += 1;
+      }
+
+      return {
+        visited: visited.length,
+        missing,
+        missing_revisions: missingRevisions,
+        stale,
+        exhausted: fetched.length <= request.limit,
+      };
     },
 
     registerPeer: (requestBytes: Uint8Array): Promise<ContextRegistration> =>
