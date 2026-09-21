@@ -33,6 +33,14 @@ import {
   validateWorkspaceRow,
 } from "./read-cursor";
 import {
+  encodeSupersedeLogRow,
+  parseGetRecallEligibility,
+  parseListLifecycleHistory,
+  parseRetireNode,
+  parseSupersedeNode,
+  SUPERSEDE_LOG_FIELDS,
+} from "./lifecycle";
+import {
   classifyMessageDestinationReplay,
   prepareNewMessage,
 } from "../contracts/source-ingestion-v1";
@@ -101,6 +109,7 @@ import {
   revisionWireBytes,
   microsToTimestamp,
   timestampToMicros,
+  toInt64Text,
   utf8ByteLength,
 } from "./rows";
 import { closeSync } from "node:fs";
@@ -329,7 +338,7 @@ export type PublishOutcome =
       node_created_at: string;
       revision_created_at: string;
     }
-  | { outcome: "conflict"; reason: "operation_digest" | "node_id" | "stale_base" };
+  | { outcome: "conflict"; reason: "operation_digest" | "node_id" | "stale_base" | "node_retired" };
 
 export type Clock = () => number;
 
@@ -1317,6 +1326,20 @@ function createPublicationWriterService(
     const headId = encodedNode.current_revision_id;
     if (typeof headId !== "string") failPublication("integrity_failure");
     if (headId !== baseRevisionId) return { outcome: "conflict", reason: "stale_base" };
+
+    // #29 lifecycle refusal. Reached ONLY when `publish` found no existing
+    // operation for this key -- a genuinely NEW revision, never a replay --
+    // so an already-accepted retry of a publish that predates retirement
+    // still returns idempotent above and never reaches this check.
+    await writer.refresh(SUPERSEDE_LOG);
+    const terminalEvents = await writer.query(
+      SUPERSEDE_LOG,
+      `workspace_name = ${quote(workspace)} AND old_id = ${quote(nodeId)}`,
+      2,
+    );
+    if (terminalEvents.length > 1) failPublication("integrity_failure");
+    if (terminalEvents.length === 1) return { outcome: "conflict", reason: "node_retired" };
+
     await validateNewContent(writer, workspace, nodeId, encodeEnvelopeForChecks(validated, envelope));
     return await appendRevision(validated, envelope, workspace, nodeId, headId, encodedNode, operationId);
   };
@@ -2518,8 +2541,75 @@ const SESSIONS = "sessions";
 const SESSION_PEERS = "session_peers";
 const MESSAGES = "messages";
 const READ_CURSORS = "read_cursors";
+const NODES = "nodes";
+const NODE_REVISIONS = "node_revisions";
+const SUPERSEDE_LOG = "supersede_log";
 
 const INT64_CEILING = 2n ** 63n - 1n;
+
+/** Bounded forward-walk cap for the replacement chain (#29). */
+const MAX_CHAIN_WALK = 1024;
+
+/**
+ * Walk the supersede_log chain forward from `startId`, following each
+ * `new_id` link, up to MAX_CHAIN_WALK hops.
+ *
+ * A repeated id met during the walk is a CYCLE ALREADY PRESENT in stored
+ * data -- corruption, at root. Exceeding the bound without terminating is a
+ * limit, not corruption: the chain may be healthy and merely long. Both are
+ * distinct from the caller's own immediate self-reference, which is checked
+ * before this walk ever runs and reported against the request instead.
+ */
+async function walkForwardChain(
+  adapter: DatasetAdapter,
+  workspace: string,
+  startId: string,
+): Promise<Set<string>> {
+  const visited = new Set<string>();
+  let cursor: string | null = startId;
+  while (cursor !== null) {
+    if (visited.has(cursor)) failPublication("integrity_failure", "");
+    visited.add(cursor);
+    if (visited.size > MAX_CHAIN_WALK) failPublication("limit_exceeded", "");
+    const row = await contextOne(
+      adapter,
+      SUPERSEDE_LOG,
+      `workspace_name = ${quote(workspace)} AND old_id = ${quote(cursor)}`,
+    );
+    if (row === null) break;
+    const encoded = encodeSupersedeLogRow(row);
+    cursor = encoded.new_id as string | null;
+  }
+  return visited;
+}
+
+/**
+ * The "type" a node's head revision carries, derived from the reserved
+ * `type` entry inside `node_revisions.term_snapshot_json`.
+ *
+ * There is no `new_type`/`old_type` origin anywhere else in the schema: this
+ * is the ONLY place that value ever comes from. Publication already enforces
+ * exactly one `type` assignment per accepted revision, so anything else found
+ * here is stored corruption, not a request error.
+ */
+function deriveNodeType(encodedRevision: Record<string, unknown>): string {
+  const raw = encodedRevision.term_snapshot_json;
+  if (typeof raw !== "string") failPublication("integrity_failure", "");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return failPublication("integrity_failure", "");
+  }
+  if (!Array.isArray(parsed)) failPublication("integrity_failure", "");
+  const typeEntries = (parsed as Record<string, unknown>[]).filter(
+    (entry) => entry !== null && typeof entry === "object" && entry.vocabulary_name_snapshot === RESERVED_TYPE_VOCABULARY,
+  );
+  if (typeEntries.length !== 1) failPublication("integrity_failure", "");
+  const termName = typeEntries[0]!.term_name_snapshot;
+  if (typeof termName !== "string") failPublication("integrity_failure", "");
+  return termName;
+}
 
 /** Exactly one row at a scoped identity, or null. Never a first-match guess. */
 async function contextOne(
@@ -2850,6 +2940,104 @@ function createContextReadMethods(reader: DatasetAdapter) {
       const current = await selectCursorRow(reader, request);
       return current === null ? null : current.encoded;
     },
+
+    /**
+     * Binary eligible/ineligible, computed from the latest supersede_log
+     * event for this node, AS OF the highest int64 event id consulted.
+     *
+     * Readers take no clock (#28/#29 measured fact): there is no
+     * `evaluated_at` here, only the witness event id that proves how current
+     * the answer is. A node with no terminal event is eligible as of
+     * whatever the table's current global maximum id is -- "0" when the
+     * table holds nothing at all, matching the allocator's own base.
+     */
+    async getRecallEligibility(
+      requestBytes: Uint8Array,
+    ): Promise<{ eligible: boolean; witness_event_id: string }> {
+      const request = parseGetRecallEligibility(requestBytes);
+      await requireWorkspace(request.workspace_name);
+      await reader.refresh(NODES);
+      const node = await contextOne(
+        reader,
+        NODES,
+        `${contextScope(request.workspace_name)} AND id = ${quote(request.node_id)}`,
+      );
+      if (node === null) failPublication("invalid_reference", "/node_id");
+
+      await reader.refresh(SUPERSEDE_LOG);
+      const maxId = await selectedMaximum(reader, SUPERSEDE_LOG, "id", "true");
+      const witness = maxId === null ? 0n : maxId;
+
+      const own = await reader.query(
+        SUPERSEDE_LOG,
+        `${contextScope(request.workspace_name)} AND old_id = ${quote(request.node_id)}`,
+        2,
+      );
+      if (own.length > 1) failPublication("integrity_failure", "");
+
+      return { eligible: own.length === 0, witness_event_id: toInt64Text(witness) };
+    },
+
+    /**
+     * Keyset history of lifecycle events for one node, oldest first.
+     *
+     * limit+1 lookahead detects continuation without paging by position; a
+     * duplicate event id straddling the page is integrity_failure at ROOT,
+     * the same rule listMessages applies to seq_in_session.
+     */
+    async listLifecycleHistory(
+      requestBytes: Uint8Array,
+    ): Promise<{ rows: Record<string, unknown>[]; next_after_event_id: string | null }> {
+      const request = parseListLifecycleHistory(requestBytes);
+      await requireWorkspace(request.workspace_name);
+      await reader.refresh(NODES);
+      const node = await contextOne(
+        reader,
+        NODES,
+        `${contextScope(request.workspace_name)} AND id = ${quote(request.node_id)}`,
+      );
+      if (node === null) failPublication("invalid_reference", "/node_id");
+
+      await reader.refresh(SUPERSEDE_LOG);
+      const after = request.after_event_id === null ? null : BigInt(request.after_event_id);
+      const scope =
+        `${contextScope(request.workspace_name)} AND old_id = ${quote(request.node_id)}` +
+        (after === null ? "" : ` AND id > ${after.toString(10)}`);
+
+      const selected = await reader.orderedProjection(
+        SUPERSEDE_LOG,
+        scope,
+        ["id"],
+        { column: "id", ascending: true },
+        request.limit + 1,
+      );
+
+      const keys: bigint[] = [];
+      for (const row of selected) {
+        const id = row.id;
+        if (typeof id !== "bigint") failPublication("integrity_failure", "");
+        if (keys.some((k) => k === id)) failPublication("integrity_failure", "");
+        keys.push(id);
+      }
+
+      const page = keys.slice(0, request.limit);
+      const rows: Record<string, unknown>[] = [];
+      for (const id of page) {
+        const row = await contextOne(
+          reader,
+          SUPERSEDE_LOG,
+          `${contextScope(request.workspace_name)} AND old_id = ${quote(request.node_id)} AND id = ${id.toString(10)}`,
+        );
+        if (row === null) failPublication("integrity_failure", "");
+        rows.push(encodeSupersedeLogRow(row));
+      }
+
+      const hasMore = keys.length > request.limit;
+      return {
+        rows,
+        next_after_event_id: hasMore && page.length > 0 ? page[page.length - 1]!.toString(10) : null,
+      };
+    },
   };
 }
 
@@ -2859,6 +3047,193 @@ export type ContextBoundaryHook = (boundary: ContextBoundary) => Promise<void>;
 type ContextRegistration =
   | { outcome: "created" | "already_satisfied"; row: Record<string, unknown> }
   | { outcome: "conflict"; reason: "id" | "name" | "membership" };
+
+/* ------------------------------------------------------------------ *
+ * #29 node lifecycle. Append-only: no restore, no update, no delete, no
+ * supersede-back. supersedeNode and retireNode share every rule except the
+ * successor payload, so both funnel through writeLifecycleEvent below.
+ * ------------------------------------------------------------------ */
+
+type LifecycleSuccessor = { new_id: string; new_revision_id: string; new_title: string };
+
+type LifecycleEventInput = {
+  workspace_name: string;
+  node_id: string;
+  expected_revision_id: string;
+  reason: string;
+  peer_name: string | null;
+  operation_id: string;
+  /** null for a retirement; both ids and the successor's title for a supersession. */
+  successor: LifecycleSuccessor | null;
+};
+
+export type LifecycleWriteOutcome =
+  | { outcome: "accepted"; row: Record<string, unknown> }
+  | { outcome: "idempotent"; row: Record<string, unknown> }
+  | {
+      outcome: "conflict";
+      reason: "operation_digest" | "stale_pin" | "already_terminal";
+      row: Record<string, unknown> | null;
+    };
+
+/**
+ * One retire/supersede event, shared by both write entrypoints.
+ *
+ * Idempotency key is (workspace_name, operation_id): an EXACT replay of the
+ * same payload returns the retained event with no clock sample and no write.
+ * The same key under a DIFFERENT payload is a returned conflict, never
+ * thrown, never poisoning. The pin (`expected_revision_id`) must equal the
+ * node's CURRENT accepted head, else a returned conflict -- and a node that
+ * already carries a terminal event refuses a second one, append-only.
+ */
+async function writeLifecycleEvent(
+  writer: DatasetAdapter,
+  core: OwnerCore,
+  options: { clock: Clock },
+  requireWorkspaceRow: (workspace: string) => Promise<void>,
+  writeRow: (
+    table: string,
+    row: Record<string, unknown>,
+    verify: () => Promise<Record<string, unknown>>,
+    expected: Record<string, unknown>,
+    fields: readonly string[],
+    wroteAlready: boolean,
+  ) => Promise<Record<string, unknown>>,
+  input: LifecycleEventInput,
+): Promise<LifecycleWriteOutcome> {
+  await writer.refresh(SUPERSEDE_LOG);
+  const existingOperation = await contextOne(
+    writer,
+    SUPERSEDE_LOG,
+    `workspace_name = ${quote(input.workspace_name)} AND operation_id = ${quote(input.operation_id)}`,
+  );
+  if (existingOperation !== null) {
+    const encoded = encodeSupersedeLogRow(existingOperation);
+    const successorMatches =
+      input.successor === null
+        ? encoded.new_id === null && encoded.new_revision_id === null
+        : encoded.new_id === input.successor.new_id &&
+          encoded.new_revision_id === input.successor.new_revision_id;
+    const matches =
+      encoded.old_id === input.node_id &&
+      encoded.old_revision_id === input.expected_revision_id &&
+      encoded.reason === input.reason &&
+      encoded.peer_name === input.peer_name &&
+      successorMatches;
+    // Exact replay: the ORIGINAL row, no clock sample, no write.
+    if (matches) return { outcome: "idempotent", row: encoded };
+    // Same key, different payload: a classification, not invalid bytes.
+    return { outcome: "conflict", reason: "operation_digest", row: encoded };
+  }
+
+  await requireWorkspaceRow(input.workspace_name);
+  await writer.refresh(NODES);
+  const node = await contextOne(
+    writer,
+    NODES,
+    `workspace_name = ${quote(input.workspace_name)} AND id = ${quote(input.node_id)}`,
+  );
+  if (node === null) failPublication("invalid_reference", "/node_id");
+  const encodedNode = encodeNodeRow(node);
+  const headId = encodedNode.current_revision_id;
+  if (typeof headId !== "string") failPublication("integrity_failure", "");
+  // The pin is FORCED, not optional: old_revision_id is NOT NULL. A pin that
+  // does not name the current head is an ordinary returned conflict.
+  if (headId !== input.expected_revision_id) {
+    return { outcome: "conflict", reason: "stale_pin", row: null };
+  }
+
+  // Append-only: a node that already carries a terminal event refuses a
+  // second one. The head cannot have moved since (publishRevision refuses
+  // new revisions once this row exists), so the pin above always still
+  // agrees -- this is a SEPARATE business rule, not corruption.
+  const priorEvent = await contextOne(
+    writer,
+    SUPERSEDE_LOG,
+    `workspace_name = ${quote(input.workspace_name)} AND old_id = ${quote(input.node_id)}`,
+  );
+  if (priorEvent !== null) {
+    return { outcome: "conflict", reason: "already_terminal", row: encodeSupersedeLogRow(priorEvent) };
+  }
+
+  await writer.refresh(NODE_REVISIONS);
+  const revision = await contextOne(
+    writer,
+    NODE_REVISIONS,
+    `workspace_name = ${quote(input.workspace_name)} AND id = ${quote(input.expected_revision_id)}` +
+      ` AND node_id = ${quote(input.node_id)}`,
+  );
+  if (revision === null) failPublication("integrity_failure", "");
+  const encodedRevision = encodeRevisionRow(revision);
+  const oldTitle = encodedRevision.title as string;
+  const oldType = deriveNodeType(encodedRevision);
+
+  // Allocation under the gate + serial queue, NOT CAS: the same pattern as
+  // the message id/seq allocator. `id` is int64, so the ceiling is guarded
+  // exactly as there.
+  const maxId = await selectedMaximum(writer, SUPERSEDE_LOG, "id", "true");
+  const nextId = (maxId === null || maxId < 0n ? 0n : maxId) + 1n;
+  if (nextId > INT64_CEILING) failPublication("integrity_failure", "");
+  const idTaken = await writer.query(SUPERSEDE_LOG, `id = ${nextId.toString(10)}`, 2);
+  if (idTaken.length !== 0) failPublication("integrity_failure", "");
+
+  // ONLY a real new event samples the clock.
+  const sampled = options.clock();
+  if (typeof sampled !== "number" || !Number.isSafeInteger(sampled)) {
+    failPublication("invalid_request", "");
+  }
+  const micros = BigInt(sampled) * 1000n;
+  try {
+    // Rendering is the range check: no second copy of the Gregorian grammar.
+    microsToTimestamp(micros);
+  } catch (error) {
+    if (!(error instanceof PublicationError)) throw error;
+    // The clock is operator configuration, not a caller field: ROOT.
+    return failPublication("invalid_request", "");
+  }
+
+  const physical: Record<string, unknown> = {
+    id: nextId,
+    workspace_name: input.workspace_name,
+    old_id: input.node_id,
+    old_revision_id: input.expected_revision_id,
+    old_title: oldTitle,
+    old_type: oldType,
+    // No origin anywhere in the schema for either *_source column.
+    old_source: null,
+    new_id: input.successor === null ? null : input.successor.new_id,
+    new_revision_id: input.successor === null ? null : input.successor.new_revision_id,
+    new_title: input.successor === null ? null : input.successor.new_title,
+    new_source: null,
+    reason: input.reason,
+    peer_name: input.peer_name,
+    superseded_at: micros,
+    operation_id: input.operation_id,
+    h_metadata: null,
+  };
+  const expected = encodeSupersedeLogRow(physical);
+
+  const stored = await writeRow(
+    SUPERSEDE_LOG,
+    physical,
+    async () => {
+      const found = await contextOne(
+        writer,
+        SUPERSEDE_LOG,
+        `workspace_name = ${quote(input.workspace_name)} AND operation_id = ${quote(input.operation_id)}`,
+      );
+      if (found === null) {
+        core.poison();
+        failPublication("recovery_required", "");
+      }
+      return encodeSupersedeLogRow(found);
+    },
+    expected,
+    SUPERSEDE_LOG_FIELDS,
+    false,
+  );
+  return { outcome: "accepted", row: stored };
+}
 
 function createContextWriterService(
   writer: DatasetAdapter,
@@ -3151,6 +3526,90 @@ function createContextWriterService(
           outcome: current === null ? ("created" as const) : ("advanced" as const),
           row: stored,
         };
+      });
+    },
+
+    /**
+     * Retire one node: an append-only terminal event with new_id/new_revision_id
+     * both null.
+     *
+     * Idempotency key is (workspace_name, operation_id): an exact replay
+     * returns the retained event with no clock sample and no write; the same
+     * key under a different payload is a returned conflict, never thrown,
+     * never poisoning. The pin (`expected_revision_id`) must equal the node's
+     * CURRENT accepted head, else a returned conflict. Once a node already
+     * carries a terminal event this refuses a second one -- append-only,
+     * never a restore, an update or a supersede-back.
+     */
+    retireNode: (requestBytes: Uint8Array): Promise<LifecycleWriteOutcome> => {
+      const request = parseRetireNode(requestBytes);
+      return mutate(() =>
+        writeLifecycleEvent(writer, core, options, requireWorkspaceRow, writeRow, {
+          workspace_name: request.workspace_name,
+          node_id: request.node_id,
+          expected_revision_id: request.expected_revision_id,
+          reason: request.reason,
+          peer_name: request.peer_name,
+          operation_id: request.operation_id,
+          successor: null,
+        }),
+      );
+    },
+
+    /**
+     * Supersede one node with an already-accepted successor: an append-only
+     * terminal event with new_id/new_revision_id both non-null.
+     *
+     * Same idempotency and pin rules as retireNode. Additionally refuses an
+     * immediate self-reference (new_node_id === node_id) and any multi-hop
+     * cycle the successor's own forward chain would already close back onto
+     * this node -- both invalid_request, decided against the REQUEST, never
+     * thrown as stored corruption.
+     */
+    supersedeNode: (requestBytes: Uint8Array): Promise<LifecycleWriteOutcome> => {
+      const request = parseSupersedeNode(requestBytes);
+      if (request.new_node_id === request.node_id) {
+        failPublication("invalid_request", "/new_node_id");
+      }
+      return mutate(async () => {
+        const chain = await walkForwardChain(writer, request.workspace_name, request.new_node_id);
+        if (chain.has(request.node_id)) failPublication("invalid_request", "/new_node_id");
+
+        await writer.refresh(NODES);
+        const successorNode = await contextOne(
+          writer,
+          NODES,
+          `${contextScope(request.workspace_name)} AND id = ${quote(request.new_node_id)}`,
+        );
+        if (successorNode === null) failPublication("invalid_reference", "/new_node_id");
+        const encodedSuccessorNode = encodeNodeRow(successorNode);
+        if (encodedSuccessorNode.current_revision_id !== request.new_revision_id) {
+          failPublication("invalid_reference", "/new_revision_id");
+        }
+
+        await writer.refresh(NODE_REVISIONS);
+        const successorRevision = await contextOne(
+          writer,
+          NODE_REVISIONS,
+          `workspace_name = ${quote(request.workspace_name)} AND id = ${quote(request.new_revision_id)}` +
+            ` AND node_id = ${quote(request.new_node_id)}`,
+        );
+        if (successorRevision === null) failPublication("integrity_failure", "");
+        const encodedSuccessorRevision = encodeRevisionRow(successorRevision);
+
+        return writeLifecycleEvent(writer, core, options, requireWorkspaceRow, writeRow, {
+          workspace_name: request.workspace_name,
+          node_id: request.node_id,
+          expected_revision_id: request.expected_revision_id,
+          reason: request.reason,
+          peer_name: request.peer_name,
+          operation_id: request.operation_id,
+          successor: {
+            new_id: request.new_node_id,
+            new_revision_id: request.new_revision_id,
+            new_title: encodedSuccessorRevision.title as string,
+          },
+        });
       });
     },
 
