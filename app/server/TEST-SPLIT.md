@@ -1,0 +1,177 @@
+# Test split — clusters, census, and `test:fast`
+
+Companion to `test.census.tsv` (raw data), `test-census.sh` (regenerates it),
+and `test.order.ts` (consumes it). Written 2026-09-21 on `v4/test-split`,
+based on `origin/main` at `63e1db0`.
+
+## The problem
+
+The full suite is 1022 tests across 66 files in 712.87s (measured, single
+combined `bun run test:full` run). A one-line change to a pure codec waited
+behind ~400s of gate-serialized, multi-process, real-SIGKILL recovery tests
+before it knew whether it broke anything.
+
+## Per-kernel scripts
+
+Derived from the actual filenames in `test/` (61 flat files, plus 4 more
+nested under `test/fixtures/{context,publication}-v1/*.test.ts` that a
+non-recursive scan had been silently skipping — see below), not assumed from
+a list. 24 clusters, one `test:<kernel>` script each, covering all 66 files
+(65 under `test/` + `../cli.test.ts`) exactly once — verified
+programmatically, no gaps, no file in two scripts:
+
+| Cluster | Files | Script |
+|---|---|---|
+| association | 4 | `test:association` |
+| auth | 4 | `test:auth` |
+| batch-worker | 1 | `test:batch-worker` |
+| chat | 4 | `test:chat` |
+| cli | 1 (`../cli.test.ts`) | `test:cli` |
+| context | 3 + 1 nested (`fixtures/context-v1/precision.test.ts`) | `test:context` |
+| contract | 2 | `test:contract` |
+| evidence | 1 | `test:evidence` |
+| jcs | 1 | `test:jcs` |
+| knowledge-chat | 2 | `test:knowledge-chat` |
+| lifecycle | 4 | `test:lifecycle` |
+| mcp | 1 | `test:mcp` |
+| publication | 3 + 3 nested (`fixtures/publication-v1/*.test.ts`) | `test:publication` |
+| read-cursor | 4 | `test:read-cursor` |
+| replay | 1 | `test:replay` |
+| revision | 2 | `test:revision` |
+| search-chunk | 4 | `test:search-chunk` |
+| session-link | 4 | `test:session-link` |
+| source-ingestion | 1 | `test:source-ingestion` |
+| target-schema | 1 | `test:target-schema` |
+| taxonomy | 3 | `test:taxonomy` |
+| trace | 4 | `test:trace` |
+| transport | 4 | `test:transport` |
+| ui-scope | 1 | `test:ui-scope` |
+| workspace-isolation | 2 | `test:workspace-isolation` |
+
+No file resisted classification — every file's prefix maps cleanly to one
+kernel, including the four single-file kernels (`batch-worker`, `evidence`,
+`mcp`, and the standalone `cli.test.ts`) and the two-tier
+`ownership`/`precision`/`recovery`/`service` naming most kernels share.
+
+## The `test.order.ts` own-goal, found while building this
+
+`test.order.ts` scanned `test/` with a non-recursive `readdirSync`. Four real
+test files live nested one level deeper, under
+`test/fixtures/{context,publication}-v1/`, and were silently dropped from
+`bun run test` (which reads `test.order.ts`'s output) while `bun run
+test:full` (which hands the whole `test` directory to `bun test`, recursing
+by default) still ran them:
+
+- `test/fixtures/context-v1/precision.test.ts` — 12 tests
+- `test/fixtures/publication-v1/references.test.ts` — 7 tests
+- `test/fixtures/publication-v1/limits-integrity.test.ts` — 4 tests
+- `test/fixtures/publication-v1/precision.test.ts` — 1 test
+
+A green `bun run test` meant nothing for these — they never ran. Fixed:
+`test.order.ts` now scans recursively, with an independent manual-walk
+cross-check that throws if the two scan methods ever disagree (see the file
+for the full comment). `test.order.txt` went from 61 to 65 lines. Folded into
+`test:context` / `test:publication` above so per-kernel coverage stayed
+exact.
+
+## Timing census — measured, not guessed
+
+`test-census.sh` runs every one of the 66 files as its own bare `bun test`
+invocation and records wall-clock seconds. **Caveat, load-bearing**: each
+invocation pays its own process startup + module load + fixture setup that a
+single combined run amortises across all files. So these numbers are an
+upper bound on each file's share of a real run, and their sum is expected to
+be — and is — MORE than one combined run's wall clock:
+
+- Summed per-file census: **1068.74s**
+- Single combined `bun run test:full` baseline: **712.87s**
+- Ratio: **1.50x**
+
+That ratio is the evidence the census script now checks automatically
+(`test-census.sh` refuses to write `test.census.tsv` if the summed time is
+under half the baseline — the signature of every file failing fast on a
+missing dependency, which is exactly what happened on the first attempt in
+this session: a worktree with neither `app/server/node_modules` nor
+`app/migrate-py/.venv` installed produced a "complete" 66-row census summing
+to ~3 seconds. Both are now preflight-checked and refused-to-run-without, not
+just fixed once).
+
+### Top 15 slowest (standalone)
+
+| File | Standalone time | Tests |
+|---|---|---|
+| `test/publication-recovery.test.ts` | 65.33s | 26 |
+| `test/taxonomy-service.test.ts` | 59.16s | 61 |
+| `test/read-cursor-precision.test.ts` | 56.19s | 21 |
+| `test/association-recovery.test.ts` | 53.48s | 17 |
+| `test/taxonomy-recovery.test.ts` | 51.23s | 17 |
+| `test/fixtures/publication-v1/references.test.ts` | 44.72s | 7 |
+| `test/read-cursor-recovery.test.ts` | 43.99s | 17 |
+| `test/workspace-isolation.test.ts` | 42.94s | 19 |
+| `test/taxonomy-ownership.test.ts` | 42.79s | 13 |
+| `test/trace-precision.test.ts` | 40.30s | 11 |
+| `test/publication-service.test.ts` | 31.76s | 29 |
+| `test/context-service.test.ts` | 30.32s | 49 |
+| `test/association-query.test.ts` | 29.66s | 20 |
+| `test/association-service.test.ts` | 29.60s | 36 |
+| `test/session-link-recovery.test.ts` | 28.95s | 11 |
+
+Every file in the census reported `0` failures — the suite is green
+file-by-file as well as in aggregate (pass total 1022, fail total 0).
+
+### Every file ran standalone — no inherited-gate isolation failures
+
+All 66 files, including every `ownership`/`recovery` file that spawns a real
+child process and holds/contends the fd-42 writer gate, ran clean alone with
+no dependency on state left behind by another file. That means a per-file
+(or per-kernel) `test:` target is viable for every file — nothing in this
+suite requires the shared setup a combined `bun test <many files>` run
+provides. This is a real finding, not an absence of evidence: the census
+ran each file as a cold, isolated `bun test <file>` process and 1022/1022
+tests passed.
+
+### The `isSlow` regex vs measured reality
+
+`test.order.ts` previously ordered files with a name heuristic:
+`isSlow = /recovery|ownership/`. The census shows that heuristic is close to
+noise. Examples of files it puts in the "fast" bucket that are actually among
+the slowest 10, and files it defers as "slow" that are actually near-instant:
+
+| File | `isSlow` says | Measured | Actually |
+|---|---|---|---|
+| `taxonomy-service.test.ts` | fast | 59.16s | slowest tier |
+| `read-cursor-precision.test.ts` | fast | 56.19s | slowest tier |
+| `fixtures/publication-v1/references.test.ts` | fast | 44.72s | slowest tier |
+| `workspace-isolation.test.ts` | fast | 42.94s | slowest tier |
+| `trace-precision.test.ts` | fast | 40.30s | slowest tier |
+| `transport-ownership.test.ts` | slow | 0.32s | near-instant |
+| `transport-recovery.test.ts` | slow | 6.34s | fast |
+
+`test.order.ts` now sorts by the measured time in `test.census.tsv`
+directly, falling back to this same regex — slow-biased — only for a file
+that has no census entry yet (new since the last regeneration). See the
+"missing entries are not silent" note in `test.order.ts` and
+`test.census.tsv`'s header.
+
+## `test:fast`
+
+Files below `SLOW_CENSUS_CUTOFF_SECONDS = 35` (see `test.order.ts` for how
+that constant was chosen from the measured gap between 31.76s and 40.30s —
+the largest gap in the top 20, ~8.5s versus 1-3s neighbours). Regenerated
+into `test.fast.txt` by `bun run test:order`, consumed by `bun run
+test:fast`.
+
+- **56 of 66 files** (55 from `test/` + `../cli.test.ts`), **813 of 1022
+  tests (79.6%)**.
+- Excludes exactly the 10-file slow tier in the table above (209 tests,
+  20.4%).
+- Real measured wall-clock time for `bun run test:fast` (one combined run,
+  same measurement method as the 712.87s baseline, not summed standalone
+  numbers): **see the run this session reported alongside this file** —
+  filled in once the timed run completed.
+
+`test` and `test:full` are unchanged in behaviour: `test` still runs the
+full measured order with `--bail`, `test:full` still runs everything via a
+directory arg. Existing callers of either see no difference except that
+`test` now genuinely covers all 66 files instead of 62 (see the own-goal
+section above).

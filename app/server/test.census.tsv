@@ -1,0 +1,86 @@
+# test.census.tsv — per-file wall-clock time, measured 2026-09-21 on v4/test-split.
+# Each row is ONE bare-metal `bun test <file>` invocation, timed alone (not inside
+# the shared `bun test <list-of-files>` process the normal `test`/`test:full`
+# scripts use). That means every row pays its own process startup + module load +
+# fixture setup that a single combined run amortises — these numbers are an UPPER
+# BOUND on each file's share of a real run, and they sum to MORE than a real run's
+# wall clock (measured: 1068.74s summed here vs 712.87s for one combined run of
+# the same 66 files/1022 tests on main at 63e1db0). Use this file to ORDER and
+# BUCKET files by relative cost, not to predict absolute suite time.
+#
+# Columns: path(relative to app/server)  seconds  exit_code  pass_count  fail_count
+#
+# Regenerate with ./test-census.sh (~18 minutes: runs every *.test.ts file under
+# test/, plus ../cli.test.ts, as its own bun test invocation). Re-run after adding,
+# removing, or materially changing test files so test.order.ts's ordering and
+# test.fast.txt's split stay honest. A file with NO entry here (new since the last
+# census) is not silently ignored: test.order.ts warns on stderr and falls back to
+# the old name-based isSlow() heuristic for that file only, biased slow so an
+# unmeasured file can never masquerade as fast; test:fast excludes it until it has
+# a real measurement.
+test/association-ownership.test.ts	10.724	0	7	0
+test/association-query.test.ts	29.662	0	20	0
+test/association-recovery.test.ts	53.480	0	17	0
+test/association-service.test.ts	29.601	0	36	0
+test/auth-integration.test.ts	0.449	0	46	0
+test/auth-loader.test.ts	0.212	0	13	0
+test/auth-policy.test.ts	0.075	0	78	0
+test/auth-transport.test.ts	0.327	0	20	0
+test/batch-worker.test.ts	1.576	0	12	0
+test/chat-ownership.test.ts	8.012	0	6	0
+test/chat-precision.test.ts	0.044	0	22	0
+test/chat-recovery.test.ts	10.705	0	7	0
+test/chat-service.test.ts	5.083	0	6	0
+test/context-ownership.test.ts	19.411	0	10	0
+test/context-recovery.test.ts	23.945	0	10	0
+test/context-service.test.ts	30.324	0	49	0
+test/contract-cross-language.test.ts	1.725	0	3	0
+test/contract-v1.test.ts	0.031	0	6	0
+test/evidence-v1.test.ts	0.035	0	11	0
+test/fixtures/context-v1/precision.test.ts	16.865	0	12	0
+test/fixtures/publication-v1/limits-integrity.test.ts	19.794	0	4	0
+test/fixtures/publication-v1/precision.test.ts	17.998	0	9	0
+test/fixtures/publication-v1/references.test.ts	44.722	0	7	0
+test/jcs-v1.test.ts	0.078	0	11	0
+test/knowledge-chat-transport.test.ts	0.319	0	5	0
+test/knowledge-chat-writer-gate.test.ts	0.368	0	3	0
+test/lifecycle-ownership.test.ts	9.583	0	4	0
+test/lifecycle-precision.test.ts	14.491	0	6	0
+test/lifecycle-recovery.test.ts	19.958	0	8	0
+test/lifecycle-service.test.ts	7.189	0	5	0
+test/mcp-correctness.test.ts	0.970	0	24	0
+test/publication-ownership.test.ts	16.389	0	21	0
+test/publication-recovery.test.ts	65.329	0	26	0
+test/publication-service.test.ts	31.759	0	29	0
+test/read-cursor-ownership.test.ts	24.774	0	9	0
+test/read-cursor-precision.test.ts	56.187	0	21	0
+test/read-cursor-recovery.test.ts	43.988	0	17	0
+test/read-cursor-service.test.ts	16.708	0	36	0
+test/replay-v1.test.ts	0.030	0	6	0
+test/revision-persisted.test.ts	2.678	0	3	0
+test/revision-v1.test.ts	0.065	0	9	0
+test/search-chunk-ownership.test.ts	7.491	0	4	0
+test/search-chunk-precision.test.ts	14.708	0	17	0
+test/search-chunk-recovery.test.ts	12.513	0	9	0
+test/search-chunk-service.test.ts	11.492	0	12	0
+test/session-link-ownership.test.ts	7.077	0	6	0
+test/session-link-precision.test.ts	15.681	0	5	0
+test/session-link-recovery.test.ts	28.951	0	11	0
+test/session-link-service.test.ts	22.448	0	11	0
+test/source-ingestion-v1.test.ts	0.077	0	39	0
+test/target-schema-cross-language.test.ts	4.325	0	4	0
+test/taxonomy-ownership.test.ts	42.789	0	13	0
+test/taxonomy-recovery.test.ts	51.235	0	17	0
+test/taxonomy-service.test.ts	59.156	0	61	0
+test/trace-ownership.test.ts	9.265	0	5	0
+test/trace-precision.test.ts	40.303	0	11	0
+test/trace-recovery.test.ts	24.114	0	10	0
+test/trace-service.test.ts	15.376	0	9	0
+test/transport-ownership.test.ts	0.317	0	16	0
+test/transport-precision.test.ts	0.034	0	13	0
+test/transport-recovery.test.ts	6.338	0	4	0
+test/transport-service.test.ts	0.480	0	7	0
+test/ui-scope.test.ts	0.093	0	13	0
+test/workspace-isolation-supersede.test.ts	13.975	0	3	0
+test/workspace-isolation.test.ts	42.935	0	19	0
+../cli.test.ts	1.904	0	49	0

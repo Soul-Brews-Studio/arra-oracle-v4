@@ -11,6 +11,8 @@
     "build": "bun build src/index.ts --target=bun --packages=external --outdir .tmp/build",
     "test:order": "bun test.order.ts",
     "test:full": "bun test test ../cli.test.ts",
+    "test:fast": "bun test.order.ts && bun test --bail $(cat test.fast.txt) ../cli.test.ts",
+    "test:census": "./test-census.sh",
     "test:association": "bun test test/association-*.test.ts",
     "test:auth": "bun test test/auth-*.test.ts",
     "test:batch-worker": "bun test test/batch-worker.test.ts",
