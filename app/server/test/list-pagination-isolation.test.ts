@@ -70,11 +70,13 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { createFixture, runGated, type Fixture } from "./helpers/publication-fixture";
 import {
   interleaved,
+  interleavedIds,
   EPOCH_MS_FIELDS,
   workspaceRow,
   peerRow,
   sessionRow,
   nodeRow,
+  nodeRevisionRow,
   mcpCallRow,
   connectionRow,
 } from "./helpers/list-isolation-fixture";
@@ -99,6 +101,13 @@ const N = 20;
 /** 1, 2, 3; 5 divides 20 exactly (4 whole pages); 7 does not (7, 7, 6) --
  *  "off-by-one page sizes are where keyset bugs live" (#88). */
 const PAGE_SIZES = [1, 2, 3, 5, 7] as const;
+
+/** Per-workspace count of TYPED nodes (own cohort, separate from the N
+ *  plain nodes above) for `listNodes`'s `type_term` filter proof. Half get
+ *  `type_term: "note"`, half `"decision"` -- so each filtered subset is 10
+ *  rows. 1, 2, 3; 5 divides 10 exactly; 3 does not (3, 3, 3, 1). */
+const TYPED_N = 20;
+const FILTER_PAGE_SIZES = [1, 2, 3, 5] as const;
 const TEST_TIMEOUT_MS = 300_000;
 
 type ListSpec = {
@@ -112,6 +121,21 @@ type ListSpec = {
    *  identity -- `name` for the two `after_name`-cursored methods, `id` for
    *  the three `after_id`-cursored ones. */
   identityField: string;
+  /** Fields every request for this method needs beyond `workspace_name` /
+   *  `limit` / the cursor key, spread FIRST so a per-call override still
+   *  wins. `listNodes` (v4/list-nodes, b386575), verified by actually
+   *  running this file against that branch, treats `include_total` as
+   *  REQUIRED, not optional -- its absence is `invalid_request` at
+   *  `/include_total`, not "no total in the response". The #88 contract
+   *  given for the other four methods says nothing about a required field
+   *  beyond workspace_name/cursor/limit, so they default to none.
+   *
+   *  Also verified by running against v4/list-nodes: closed-key discipline
+   *  ("never an implicit default via omission", per that branch's own
+   *  commit message) means an OMITTED `type_term` is itself
+   *  `invalid_request` -- it must be explicitly `null`, not merely absent,
+   *  for every request that isn't filtering. */
+  defaultRequest?: Record<string, unknown>;
 };
 
 const SPECS: ListSpec[] = [
@@ -138,6 +162,7 @@ const SPECS: ListSpec[] = [
     cursorReqKey: "after_id",
     cursorRespKey: "next_after_id",
     identityField: "id",
+    defaultRequest: { include_total: true, type_term: null },
   },
   {
     name: "listMcpCalls",
@@ -161,9 +186,26 @@ const SPECS: ListSpec[] = [
 
 const peers = interleaved("peer", N);
 const sessions = interleaved("sess", N);
-const nodes = interleaved("node", N);
-const calls = interleaved("call", N);
-const conns = interleaved("conn", N);
+// `nodes`/`calls`/`conns` are `id` fields, re-validated as nanoid21 when
+// echoed back as a cursor (`interleaved` alone isn't shaped for that --
+// see `interleavedIds`'s doc comment).
+const nodes = interleavedIds("node", N);
+const calls = interleavedIds("call", N);
+const conns = interleavedIds("conn", N);
+/** A SEPARATE cohort from `nodes` above -- own interleaved ids, each with a
+ *  real `node_revisions` row carrying a `type_term` -- so the plain
+ *  pagination proof's seed never needs a revision at all. */
+const typedNodes = interleavedIds("tnode", TYPED_N);
+
+/** `i % 2 === 0` -> "note", else "decision". Same rule in both workspaces,
+ *  so each workspace's `note` and `decision` subsets are both COLLIDING
+ *  term NAMES across alpha/beta (both use the reserved `type` vocabulary's
+ *  real "note"/"decision" terms) with DIFFERENT term ids per workspace
+ *  (`export_publication_fixture.py`'s `scoped_id` is workspace-scoped) --
+ *  exactly the leak class named in the #88 follow-up: a name that matches
+ *  in both workspaces but resolves to a different id in each. */
+const typeTermNameFor = (i: number): "note" | "decision" => (i % 2 === 0 ? "note" : "decision");
+const revisionIdFor = (nodeId: string): string => `rev-${nodeId}`;
 
 /** table name -> { a: alpha's own INTERLEAVED identities, b: beta's own }.
  *  Used ONLY to check the interleaving invariant itself -- see
@@ -184,15 +226,24 @@ const INTERLEAVED: Record<string, { a: string[]; b: string[] }> = {
  * one session (`<workspace>-session-1`) of its own, on top of the N
  * interleaved rows this file seeds directly. Those baseline rows are REAL
  * rows in the same table for the same workspace -- a correct `listPeers`/
- * `listSessions` MUST return them too. Populated once `fixture` exists,
- * below; empty for `nodes`/`mcp_calls`/`connections`, which the exporter
- * never touches (`export_publication_fixture.py`: "writes no nodes and no
- * revisions", and mcp_calls/connections are outside its scope entirely).
+ * `listSessions` MUST return them too. Peers/sessions populated once
+ * `fixture` exists, below.
+ *
+ * `nodes` is populated with `typedNodes` RIGHT HERE, not after `fixture`:
+ * `typedNodes` and the plain `nodes` cohort are two id ranges in the SAME
+ * physical `nodes` table for the same workspace, so an unfiltered
+ * `listNodes` genuinely returns both -- treating them as separate expected
+ * sets was this proof's own bug, caught by actually running it against
+ * v4/list-nodes (b386575): the plain cohort's completeness check failed
+ * once `typedNodes` also existed in the table, and passed BEFORE that only
+ * because of an accidental op-ordering artifact (`typedNodes` was seeded
+ * AFTER the plain walk ops in this file's very first draft), not because
+ * the expectation was correct.
  */
 const BASELINE_EXTRA: Record<string, { a: string[]; b: string[] }> = {
   peers: { a: [], b: [] },
   sessions: { a: [], b: [] },
-  nodes: { a: [], b: [] },
+  nodes: { a: [...typedNodes.a], b: [...typedNodes.b] },
   mcp_calls: { a: [], b: [] },
   connections: { a: [], b: [] },
 };
@@ -248,10 +299,13 @@ push("seed.nodes", {
   table: "nodes",
   epochMsFields: EPOCH_MS_FIELDS.nodes,
   rows: [
-    ...nodes.a.map((id, i) => nodeRow(ALPHA, id, SEED_MS + i)),
-    ...nodes.b.map((id, i) => nodeRow(BETA, id, SEED_MS + i)),
+    ...nodes.a.map((id, i) => nodeRow(ALPHA, id, SEED_MS + i, revisionIdFor(id))),
+    ...nodes.b.map((id, i) => nodeRow(BETA, id, SEED_MS + i, revisionIdFor(id))),
   ],
 });
+// This cohort's `node_revisions` (needs the fixture's own `type` vocabulary
+// term ids) are pushed further down, alongside the typed cohort's -- see
+// "seed.plain_node_revisions" near "seed.node_revisions" below.
 push("seed.mcp_calls", {
   kind: "seed",
   table: "mcp_calls",
@@ -274,40 +328,15 @@ push("seed.connections", {
 push("count.peers.alpha", { kind: "count", table: "peers", predicate: `workspace_name = '${ALPHA}'` });
 push("count.peers.beta", { kind: "count", table: "peers", predicate: `workspace_name = '${BETA}'` });
 push("count.sessions.alpha", { kind: "count", table: "sessions", predicate: `workspace_name = '${ALPHA}'` });
-push("count.nodes.alpha", { kind: "count", table: "nodes", predicate: `workspace_name = '${ALPHA}'` });
-push("count.nodes.beta", { kind: "count", table: "nodes", predicate: `workspace_name = '${BETA}'` });
+// `nodes` is counted AFTER the typed cohort below is also seeded (see
+// "count.nodes.alpha"/".beta" further down) -- this table holds both
+// cohorts, so a count taken here would only see the plain one.
 push("count.mcp_calls.alpha", { kind: "count", table: "mcp_calls", predicate: `workspace_name = '${ALPHA}'` });
 push("count.connections.alpha", { kind: "count", table: "connections", predicate: `workspace_name = '${ALPHA}'` });
 
-for (const spec of SPECS) {
-  for (const workspace of [ALPHA, BETA]) {
-    for (const pageSize of PAGE_SIZES) {
-      push(`${spec.name}.walk.${workspace}.${pageSize}`, {
-        kind: "walk",
-        methodNames: spec.methodNames,
-        baseRequest: { workspace_name: workspace, limit: pageSize },
-        cursorReqKey: spec.cursorReqKey,
-        cursorRespKey: spec.cursorRespKey,
-        maxPages: N + 5,
-      });
-    }
-  }
-  // Cross-workspace cursor: alpha's own next-cursor, submitted under beta.
-  push(`${spec.name}.cross`, {
-    kind: "cross",
-    methodNames: spec.methodNames,
-    cursorReqKey: spec.cursorReqKey,
-    cursorRespKey: spec.cursorRespKey,
-    sourceRequest: { workspace_name: ALPHA, limit: 3 },
-    targetWorkspaceName: BETA,
-  });
-  // Empty workspace: exists (seeded above), owns zero rows in this table.
-  push(`${spec.name}.empty`, {
-    kind: "call",
-    methodNames: spec.methodNames,
-    request: { workspace_name: GAMMA, limit: 10, [spec.cursorReqKey]: null },
-  });
-}
+// The standard per-spec walk/cross/empty ops are pushed FURTHER DOWN, after
+// EVERY seed op including the `type_term` cohort's -- see the comment next
+// to that push for why: it is load-bearing, not cosmetic.
 
 // ── run the entire proof once, before any test reads a result ───────────────
 
@@ -340,6 +369,141 @@ BASELINE_EXTRA.sessions = {
   a: [fixture.workspaces[ALPHA]!.session_name],
   b: [fixture.workspaces[BETA]!.session_name],
 };
+
+// ── `listNodes` `type_term` filter proof (v4/list-nodes, b386575) ───────────
+//
+// Pushed here, AFTER `createFixture`, because the term/vocabulary ids used
+// come from the fixture's own SPEC-required reserved `type` vocabulary
+// (`term_ids.type.note` / `.decision`) -- real, workspace-scoped, and
+// already colliding by NAME across alpha/beta with DIFFERENT ids, which is
+// exactly the seeding this leak class needs, for free.
+
+const termIdFor = (workspace: string, name: "note" | "decision"): string =>
+  fixture.workspaces[workspace]!.term_ids.type[name].id;
+const vocabularyIdFor = (workspace: string): string => fixture.workspaces[workspace]!.vocabulary_ids.type;
+const typeTermFor = (workspace: string, name: "note" | "decision") => ({
+  name,
+  termId: termIdFor(workspace, name),
+  vocabularyId: vocabularyIdFor(workspace),
+});
+
+// The PLAIN cohort's own revisions -- every revision needs EXACTLY ONE type
+// term (see `nodeRevisionRow`'s doc comment), even though this cohort is
+// never `type_term`-filtered. Arbitrarily "note" throughout; which term
+// doesn't matter here, only that there is exactly one.
+push("seed.plain_node_revisions", {
+  kind: "seed",
+  table: "node_revisions",
+  epochMsFields: EPOCH_MS_FIELDS.node_revisions,
+  rows: [
+    ...nodes.a.map((id, i) => nodeRevisionRow(ALPHA, revisionIdFor(id), id, typeTermFor(ALPHA, "note"), SEED_MS + i)),
+    ...nodes.b.map((id, i) => nodeRevisionRow(BETA, revisionIdFor(id), id, typeTermFor(BETA, "note"), SEED_MS + i)),
+  ],
+});
+
+push("seed.typed_nodes", {
+  kind: "seed",
+  table: "nodes",
+  epochMsFields: EPOCH_MS_FIELDS.nodes,
+  rows: [
+    ...typedNodes.a.map((id, i) => nodeRow(ALPHA, id, SEED_MS + i, revisionIdFor(id))),
+    ...typedNodes.b.map((id, i) => nodeRow(BETA, id, SEED_MS + i, revisionIdFor(id))),
+  ],
+});
+push("seed.node_revisions", {
+  kind: "seed",
+  table: "node_revisions",
+  epochMsFields: EPOCH_MS_FIELDS.node_revisions,
+  rows: [
+    ...typedNodes.a.map((id, i) =>
+      nodeRevisionRow(ALPHA, revisionIdFor(id), id, typeTermFor(ALPHA, typeTermNameFor(i)), SEED_MS + i),
+    ),
+    ...typedNodes.b.map((id, i) =>
+      nodeRevisionRow(BETA, revisionIdFor(id), id, typeTermFor(BETA, typeTermNameFor(i)), SEED_MS + i),
+    ),
+  ],
+});
+push("count.node_revisions.alpha", { kind: "count", table: "node_revisions", predicate: `workspace_name = '${ALPHA}'` });
+push("count.node_revisions.beta", { kind: "count", table: "node_revisions", predicate: `workspace_name = '${BETA}'` });
+push("count.nodes.alpha", { kind: "count", table: "nodes", predicate: `workspace_name = '${ALPHA}'` });
+push("count.nodes.beta", { kind: "count", table: "nodes", predicate: `workspace_name = '${BETA}'` });
+
+const LIST_NODES = SPECS.find((s) => s.name === "listNodes")!;
+for (const workspace of [ALPHA, BETA]) {
+  for (const term of ["note", "decision"] as const) {
+    for (const pageSize of FILTER_PAGE_SIZES) {
+      push(`listNodes.typeTerm.${workspace}.${term}.${pageSize}`, {
+        kind: "walk",
+        methodNames: LIST_NODES.methodNames,
+        baseRequest: { ...LIST_NODES.defaultRequest, workspace_name: workspace, limit: pageSize, type_term: term },
+        cursorReqKey: LIST_NODES.cursorReqKey,
+        cursorRespKey: LIST_NODES.cursorRespKey,
+        maxPages: N + TYPED_N + 10,
+      });
+    }
+  }
+}
+// "if the filter ever accepts an id": beta, filtered by ALPHA's real
+// `note` term id (a string that is emphatically not a term NAME) -- must
+// not resolve to anything, and must not leak alpha's rows.
+push("listNodes.typeTerm.idNotName", {
+  kind: "call",
+  methodNames: LIST_NODES.methodNames,
+  request: {
+    ...LIST_NODES.defaultRequest,
+    workspace_name: BETA,
+    limit: TYPED_N,
+    [LIST_NODES.cursorReqKey]: null,
+    type_term: termIdFor(ALPHA, "note"),
+  },
+});
+
+// ── the standard per-spec walk/cross/empty ops, for ALL FIVE methods ────────
+//
+// Pushed HERE -- last, after every seed op above, including the `type_term`
+// cohort's -- and not where they were first drafted (right after the early
+// seed ops, before `createFixture`). `ops` execute in ARRAY ORDER inside ONE
+// child process: pushing these early meant listNodes' own PLAIN walk ran
+// BEFORE `seed.plain_node_revisions` existed in the array, so it examined
+// nodes with a `current_revision_id` pointing at a revision that had not
+// been seeded YET -- an `integrity_failure` this proof caused by its own
+// op ordering, not a bug in what was under test. Caught by actually running
+// this file against v4/list-nodes: the isolated worktree copy failed with
+// "revision null for headId" on the very first plain node examined, every
+// run, deterministically -- not flaky, which is what made it traceable.
+for (const spec of SPECS) {
+  for (const workspace of [ALPHA, BETA]) {
+    for (const pageSize of PAGE_SIZES) {
+      push(`${spec.name}.walk.${workspace}.${pageSize}`, {
+        kind: "walk",
+        methodNames: spec.methodNames,
+        baseRequest: { ...spec.defaultRequest, workspace_name: workspace, limit: pageSize },
+        cursorReqKey: spec.cursorReqKey,
+        cursorRespKey: spec.cursorRespKey,
+        maxPages: N + TYPED_N + 10,
+      });
+    }
+  }
+  // Cross-workspace cursor: alpha's own next-cursor, submitted under beta.
+  push(`${spec.name}.cross`, {
+    kind: "cross",
+    methodNames: spec.methodNames,
+    cursorReqKey: spec.cursorReqKey,
+    cursorRespKey: spec.cursorRespKey,
+    // Closed-key discipline (verified against v4/list-nodes): the cursor
+    // key must be explicitly present -- `null` for "no cursor yet" -- never
+    // simply omitted, same as every other request this file builds.
+    sourceRequest: { ...spec.defaultRequest, workspace_name: ALPHA, limit: 3, [spec.cursorReqKey]: null },
+    targetWorkspaceName: BETA,
+  });
+  // Empty workspace: exists (seeded above), owns zero rows in this table.
+  push(`${spec.name}.empty`, {
+    kind: "call",
+    methodNames: spec.methodNames,
+    request: { ...spec.defaultRequest, workspace_name: GAMMA, limit: 10, [spec.cursorReqKey]: null },
+  });
+}
+
 combined = await driveOnce();
 
 const op = (key: string): any => {
@@ -356,7 +520,17 @@ afterAll(async () => {
 
 describe("setup: the interleaved seed genuinely exists, per table, per workspace, before any listing method runs", () => {
   test("every seed op wrote real rows through the real DatasetAdapter", () => {
-    for (const key of ["seed.workspaces", "seed.peers", "seed.sessions", "seed.nodes", "seed.mcp_calls", "seed.connections"]) {
+    for (const key of [
+      "seed.workspaces",
+      "seed.peers",
+      "seed.sessions",
+      "seed.nodes",
+      "seed.plain_node_revisions",
+      "seed.mcp_calls",
+      "seed.connections",
+      "seed.typed_nodes",
+      "seed.node_revisions",
+    ]) {
       const result = op(key);
       expect(result.ok, `${key}: ${JSON.stringify(result).slice(0, 500)}`).toBe(true);
     }
@@ -366,10 +540,16 @@ describe("setup: the interleaved seed genuinely exists, per table, per workspace
     expect(op("count.peers.alpha").value).toBe(N + BASELINE_EXTRA.peers!.a.length);
     expect(op("count.peers.beta").value).toBe(N + BASELINE_EXTRA.peers!.b.length);
     expect(op("count.sessions.alpha").value).toBe(N + BASELINE_EXTRA.sessions!.a.length);
-    expect(op("count.nodes.alpha").value).toBe(N);
-    expect(op("count.nodes.beta").value).toBe(N);
+    // `nodes` holds BOTH cohorts (plain + typed) in the same table.
+    expect(op("count.nodes.alpha").value).toBe(N + BASELINE_EXTRA.nodes!.a.length);
+    expect(op("count.nodes.beta").value).toBe(N + BASELINE_EXTRA.nodes!.b.length);
     expect(op("count.mcp_calls.alpha").value).toBe(N);
     expect(op("count.connections.alpha").value).toBe(N);
+    // Both cohorts' revisions are in this table by the time this count runs
+    // (plain cohort's revisions are seeded earlier, typed cohort's later,
+    // this count op later still): N plain + TYPED_N typed.
+    expect(op("count.node_revisions.alpha").value).toBe(N + TYPED_N);
+    expect(op("count.node_revisions.beta").value).toBe(N + TYPED_N);
   });
 
   test("identities genuinely interleave: alpha[k] < beta[k] < alpha[k+1] for every k, in every table", () => {
@@ -448,18 +628,22 @@ for (const spec of SPECS) {
         }
         const combinedCount = expected.length + other.length;
         for (const total of totals) {
-          expect(total, `${spec.name} ${workspace} total`).toBe(expected.length);
+          // `listNodes` (v4/list-nodes) returns `total` as a STRING --
+          // this codebase's Int64-as-text convention throughout (matches
+          // `revision_no`, `duration_ms`, etc. elsewhere) -- so compare by
+          // value, not by JS type.
+          expect(String(total), `${spec.name} ${workspace} total`).toBe(String(expected.length));
           expect(
-            total,
+            String(total),
             `${spec.name} ${workspace} total counted BOTH workspaces (a scan with no workspace predicate)`,
-          ).not.toBe(combinedCount);
+          ).not.toBe(String(combinedCount));
         }
       });
     }
 
     test("a cursor from alpha, submitted under beta's workspace name, never returns an alpha row and never corrupts beta's own set", () => {
       const result = op(`${spec.name}.cross`);
-      expect(result.ok).toBe(true);
+      expect(result.ok, `${spec.name} cross: ${JSON.stringify(result).slice(0, 500)}`).toBe(true);
       expect(result.sourceCursor, "alpha's first page must itself have had a next cursor to test with").not.toBeNull();
 
       const target = result.target;
@@ -496,5 +680,105 @@ for (const spec of SPECS) {
       expect(value.rows ?? []).toEqual([]);
       expect(value[spec.cursorRespKey] ?? null).toBeNull();
     });
+
+    // ── listNodes only: `type_term` filter (v4/list-nodes, b386575) ─────────
+    //
+    // `type_term` is a NAME match against `node_revisions.term_snapshot_json`
+    // (`deriveNodeType`). Both workspaces here use the SAME reserved `type`
+    // vocabulary's real "note"/"decision" term NAMES but DIFFERENT term ids
+    // (`scoped_id` is workspace-scoped) -- a colliding name, different id,
+    // by construction. Filtering widens the scan to `MAX_SCANNED_NODES`
+    // candidates and `next_after_id` points at the last node EXAMINED, not
+    // the last MATCHED -- both are exercised for free by re-running the same
+    // purity/completeness walk with a filter applied.
+    if (spec.name === "listNodes") {
+      for (const workspace of [ALPHA, BETA]) {
+        for (const term of ["note", "decision"] as const) {
+          // The PLAIN cohort (never itself under test here) is ALSO tagged
+          // "note" throughout (see "seed.plain_node_revisions" -- "which
+          // term doesn't matter, only that there is exactly one"). A
+          // `type_term: "note"` filter genuinely, correctly matches it too
+          // -- found by running this file against v4/list-nodes: the first
+          // draft's `expected` set only counted the typed cohort and
+          // (wrongly) flagged the plain cohort's real "note" rows as a
+          // leak.
+          const plainThisWorkspace = term === "note" ? (workspace === ALPHA ? nodes.a : nodes.b) : [];
+          const plainOtherWorkspace = term === "note" ? (workspace === ALPHA ? nodes.b : nodes.a) : [];
+
+          const expected = [
+            ...(workspace === ALPHA ? typedNodes.a : typedNodes.b).filter((_, i) => typeTermNameFor(i) === term),
+            ...plainThisWorkspace,
+          ];
+          const other = [
+            ...(workspace === ALPHA ? typedNodes.b : typedNodes.a).filter((_, i) => typeTermNameFor(i) === term),
+            ...plainOtherWorkspace,
+          ];
+          // The OTHER term's rows, same workspace -- a filter that matched
+          // on vocabulary but not term name would leak these instead. The
+          // plain cohort is never "decision", so it never contributes here.
+          const sameWorkspaceOtherTerm = (workspace === ALPHA ? typedNodes.a : typedNodes.b).filter(
+            (_, i) => typeTermNameFor(i) !== term,
+          );
+
+          for (const pageSize of FILTER_PAGE_SIZES) {
+            test(`type_term="${term}", page size ${pageSize}, ${workspace}: filtered page is pure and complete, next_after_id does not skip or re-scan across the boundary`, () => {
+              const result = op(`listNodes.typeTerm.${workspace}.${term}.${pageSize}`);
+              expect(result.ok, `listNodes typeTerm ${workspace}/${term} @${pageSize}: ${JSON.stringify(result).slice(0, 500)}`).toBe(
+                true,
+              );
+              expect(
+                result.terminated,
+                `listNodes typeTerm ${workspace}/${term} @${pageSize} did not terminate (next_after_id -- the last EXAMINED node, not the last matched -- looping instead of advancing past a run of non-matching nodes is exactly this failure mode)`,
+              ).toBe(true);
+
+              const pages: Array<Record<string, unknown>[]> = result.pages;
+              const flat: string[] = [];
+              for (const [pageNo, page] of pages.entries()) {
+                for (const row of page) {
+                  const identity = String(row.id);
+                  expect(
+                    other.includes(identity),
+                    `listNodes typeTerm ${workspace}/${term} @${pageSize} page ${pageNo}: leaked "${identity}" -- a node from the OTHER workspace whose type term NAME happens to collide`,
+                  ).toBe(false);
+                  expect(
+                    sameWorkspaceOtherTerm.includes(identity),
+                    `listNodes typeTerm ${workspace}/${term} @${pageSize} page ${pageNo}: "${identity}" belongs to this workspace's OWN "${term === "note" ? "decision" : "note"}" cohort -- the filter matched vocabulary but not term name`,
+                  ).toBe(false);
+                  flat.push(identity);
+                }
+              }
+
+              // Filtered pagination completeness: the boundary moved (wider
+              // scan window, cursor = last examined) but the SET returned
+              // must still be exactly this workspace's own matching subset,
+              // no row skipped by an over-eager cursor, no row repeated by
+              // a cursor that failed to advance.
+              expect(new Set(flat).size, "duplicate row across filtered pages").toBe(flat.length);
+              expect([...flat].sort()).toEqual([...expected].sort());
+
+              // `include_total: true` + `type_term` deliberately returns
+              // `total: null` (v4/list-nodes) -- never a count that could
+              // itself leak the other workspace's size.
+              for (const total of result.totals as unknown[]) {
+                expect(total, `listNodes typeTerm ${workspace}/${term} @${pageSize}: total must be null when type_term is set`).toBeNull();
+              }
+            });
+          }
+        }
+      }
+
+      test('type_term given an ALPHA term ID (not a name) while listing BETA resolves to nothing -- never alpha rows, never a crash treating an id as a name match', () => {
+        const result = op("listNodes.typeTerm.idNotName");
+        expect(result.ok, `listNodes typeTerm id-not-name: ${JSON.stringify(result).slice(0, 500)}`).toBe(true);
+        const rows: Record<string, unknown>[] = result.value.rows ?? [];
+        const alphaAll = [...typedNodes.a];
+        for (const row of rows) {
+          const identity = String(row.id);
+          expect(alphaAll.includes(identity), `listNodes: alpha's term id, used as type_term under beta, returned alpha's own row "${identity}"`).toBe(
+            false,
+          );
+        }
+      });
+    }
   });
 }
