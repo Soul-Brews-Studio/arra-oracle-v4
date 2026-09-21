@@ -10,7 +10,9 @@
 // and every form of revoke (§7.4). A hallucinated `delete_bank` must have no
 // path to exist.
 
-export const TOOLS = [
+import { KNOWLEDGE_METHOD_NAMES } from "../knowledge/registry";
+
+export const MEMORY_TOOLS = [
   {
     name: "remember",
     description:
@@ -102,5 +104,32 @@ export const TOOLS = [
     inputSchema: { type: "object", properties: {} },
   },
 ] as const;
+
+/**
+ * #31 knowledge-transport tools — one per `knowledge/registry.ts` entry.
+ *
+ * Data-driven ON PURPOSE: adding a publication/taxonomy/context/evidence
+ * method is a registry change, not a new tool definition here. `payload` is
+ * the exact JSON body `POST /api/knowledge/:bank/<method>` expects; the
+ * dispatcher in `mcp/index.ts` re-encodes it to bytes and hands it to the
+ * SAME registry entry the HTTP transport uses, so both surfaces share one
+ * parser and one validator.
+ */
+export const KNOWLEDGE_TOOLS = KNOWLEDGE_METHOD_NAMES.map((method) => ({
+  name: `kb_${method}`,
+  description: `Publication/taxonomy/context/evidence kernel method "${method}", scoped to this connection's bank.`,
+  inputSchema: {
+    type: "object",
+    properties: {
+      payload: {
+        type: "object",
+        description: "The exact request body this method's HTTP route expects.",
+      },
+    },
+    required: ["payload"],
+  },
+}));
+
+export const TOOLS = [...MEMORY_TOOLS, ...KNOWLEDGE_TOOLS];
 
 export const TOOL_NAMES = TOOLS.map((t) => t.name);

@@ -13,6 +13,7 @@
 
 import { createRequire } from "node:module";
 import { createOperationService, type OperationService, type StoreDependencies } from "./auth/service";
+import { createKnowledgeAccess, type KnowledgeAccess } from "./knowledge/transport";
 
 export type RuntimeConfig = {
   readonly policyPath: string;
@@ -147,6 +148,25 @@ export async function composeService(config: RuntimeConfig): Promise<OperationSe
   };
 
   return createOperationService({ policyPath: config.policyPath }, deps);
+}
+
+/**
+ * #31 knowledge dataset access, built from environment configuration.
+ *
+ * `ARRA_KNOWLEDGE_DATASET_ROOT` is optional: an existing deployment that has
+ * not adopted the publication/taxonomy/context/evidence dataset yet keeps
+ * starting up exactly as before, and every `/api/knowledge/*` route (and
+ * every `kb_*` MCP tool) answers a fixed `unsupported_dataset` envelope
+ * instead of trying to open a dataset that was never configured. Reads and
+ * the writer are still opened lazily inside `createKnowledgeAccess` — this
+ * function only decides WHERE, never whether a connection is attempted yet.
+ */
+export function composeKnowledgeAccess(env: NodeJS.ProcessEnv = process.env): KnowledgeAccess {
+  const datasetRoot = env.ARRA_KNOWLEDGE_DATASET_ROOT;
+  return createKnowledgeAccess({
+    datasetRoot: typeof datasetRoot === "string" && datasetRoot.trim() ? datasetRoot : undefined,
+    env,
+  });
 }
 
 /**
