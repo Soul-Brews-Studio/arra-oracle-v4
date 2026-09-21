@@ -506,10 +506,11 @@ describe("real persistence: registration, shapes and reads", () => {
       // (`{ ...reads, ...writeOnly }`), so this is that union, not just the
       // eleven write-only methods.
       expect(parsed.contextMethods).toEqual([
-        "advanceReadCursor", "appendMessages", "createSessionLink", "createTrace", "getMessage", "getPeer",
-        "getReadCursor", "getRecallEligibility", "getSession", "getTrace", "indexRevisionChunks", "joinSession",
-        "listLifecycleHistory", "listMessages", "listSearchChunks", "listSessionLinks", "listTraceHits",
-        "reconcileSearchChunks", "registerPeer", "registerSession", "retireNode", "supersedeNode",
+        "advanceReadCursor", "answerChat", "appendMessages", "createSessionLink", "createTrace", "getContext",
+        "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
+        "indexRevisionChunks", "joinSession", "listLifecycleHistory", "listMessages", "listSearchChunks",
+        "listSessionLinks", "listTraceHits", "reconcileSearchChunks", "registerPeer", "registerSession",
+        "retireNode", "supersedeNode",
       ]);
       // Only the BUNDLE closes the owner.
       expect(parsed.publicationKeys).not.toContain("close");
@@ -1000,7 +1001,7 @@ describe("core: the sourced path and the reader bundle", () => {
     }
   }, 300_000);
 
-  test("the READER bundle has exactly three facades and eleven context methods", async () => {
+  test("the READER bundle has exactly three facades and twelve context methods", async () => {
     const fixture = await createContextFixture([ALPHA]);
     try {
       const parsed = await drive(
@@ -1009,9 +1010,9 @@ describe("core: the sourced path and the reader bundle", () => {
         { freshReader: true },
       );
       expect(parsed.readerKeys).toEqual(["context", "publication", "taxonomy"]);
-      // Exactly the eleven READ methods; no mutator reachable from a reader.
+      // Exactly the twelve READ methods; no mutator reachable from a reader.
       expect(parsed.readerContextMethods).toEqual([
-        "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
+        "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
         "listLifecycleHistory", "listMessages", "listSearchChunks", "listSessionLinks", "listTraceHits",
       ]);
       // A gateless reader works AFTER the writer released its gate.

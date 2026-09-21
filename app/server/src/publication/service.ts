@@ -115,6 +115,20 @@ import {
   SESSION_PEER_FIELDS as SESSION_PEER_FIELDS_LOCAL,
 } from "./context";
 import {
+  contextItemWireBytes,
+  MAX_CONTEXT_WIRE_BYTES,
+  MAX_LINKED_SESSIONS,
+  mapModelFailure,
+  parseAnswerChat,
+  parseGetContext,
+  projectContextItem,
+  renderContextText,
+  type ChatContextItem,
+  type ChatModelFn,
+  type ContextResult,
+  type ExcludedContextItem,
+} from "./chat";
+import {
   encodeTermRow,
   encodeVocabularyRow,
   failTaxonomy,
@@ -3527,6 +3541,135 @@ function createContextReadMethods(reader: DatasetAdapter) {
       }
       return encoded;
     },
+
+    /**
+     * Model-free, deterministic context assembly for one requester.
+     *
+     * Retrieval ONLY -- no model call anywhere in this path
+     * (`chat-service.test.ts` proves it with a fail-if-used stub). Candidates
+     * are the requested session's own messages PLUS messages from any
+     * session LINKED from it (`session_links.from_session_name`): #32 asks
+     * for evidence-grounded context, not one session's transcript alone.
+     *
+     * EVERY candidate is authorized INDIVIDUALLY, before it is ever added to
+     * `items`: `requireCurrentMembership` (this file) decides whether
+     * `request.peer_name` may see that item's OWN session, reusing the exact
+     * primitive `appendMessages` already trusts for write-side authorization.
+     * A candidate that fails is EXCLUDED -- never merged into `items` and
+     * filtered afterward; there is no step where its content exists anywhere
+     * but the rejected candidate.
+     *
+     * Coverage is reported STRUCTURALLY: `"partial"` plus one `excluded`
+     * entry per dropped candidate, whenever the requested item count or the
+     * wire budget stops an authorized candidate from being included --
+     * mirroring `listMessages`'s own "refuse or report, never truncate
+     * silently" discipline, surfaced as a field instead of a thrown
+     * `limit_exceeded` because a chat caller needs to keep going with what it
+     * has, not be refused outright.
+     */
+    async getContext(requestBytes: Uint8Array): Promise<ContextResult> {
+      const request = parseGetContext(requestBytes);
+      await requireWorkspace(request.workspace_name);
+      await reader.refresh(SESSIONS);
+      const session = await contextOne(
+        reader,
+        SESSIONS,
+        `${contextScope(request.workspace_name)} AND name = ${quote(request.session_name)}`,
+      );
+      if (session === null) failPublication("invalid_reference", "/session_name");
+      // The requester itself must hold a real, CURRENT membership in the
+      // requested session: context assembly is not a backdoor around the
+      // same membership rule appendMessages already enforces.
+      await requireCurrentMembership(
+        reader,
+        request.workspace_name,
+        request.session_name,
+        request.peer_name,
+        "/peer_name",
+      );
+
+      await reader.refresh(SESSION_LINKS);
+      const linkRows = await reader.orderedProjection(
+        SESSION_LINKS,
+        `${contextScope(request.workspace_name)} AND from_session_name = ${quote(request.session_name)}`,
+        SESSION_LINK_FIELDS as unknown as string[],
+        { column: "id", ascending: true },
+        MAX_LINKED_SESSIONS + 1,
+      );
+      const linkedSessions = new Set<string>();
+      for (const row of linkRows.slice(0, MAX_LINKED_SESSIONS)) {
+        const encodedLink = encodeSessionLinkRow(row);
+        linkedSessions.add(encodedLink.to_session_name as string);
+      }
+      const candidateSessions = [request.session_name, ...linkedSessions];
+
+      await reader.refresh(MESSAGES);
+      type Candidate = { row: Record<string, unknown>; sessionName: string };
+      const candidates: Candidate[] = [];
+      for (const sessionName of candidateSessions) {
+        const rows = await reader.orderedProjection(
+          MESSAGES,
+          `${contextScope(request.workspace_name)} AND session_name = ${quote(sessionName)}`,
+          MESSAGE_FIELDS_LOCAL as unknown as string[],
+          { column: "seq_in_session", ascending: false },
+          request.max_items + 1,
+        );
+        for (const row of rows) candidates.push({ row, sessionName });
+      }
+      // Most recent overall first. `created_at` is the only column
+      // comparable ACROSS sessions; `seq_in_session` is scoped to one
+      // session only. Ties break on `public_id` for a deterministic order.
+      candidates.sort((a, b) => {
+        const av = a.row.created_at;
+        const bv = b.row.created_at;
+        if (typeof av !== "bigint" || typeof bv !== "bigint") failPublication("integrity_failure", "");
+        if (av !== bv) return bv > av ? 1 : -1;
+        const ap = a.row.public_id;
+        const bp = b.row.public_id;
+        if (typeof ap !== "string" || typeof bp !== "string") failPublication("integrity_failure", "");
+        return ap < bp ? -1 : ap > bp ? 1 : 0;
+      });
+
+      const items: ChatContextItem[] = [];
+      const excluded: ExcludedContextItem[] = [];
+      let budget = 2; // brackets, matching the rest of this file's convention.
+      let budgetExceeded = false;
+      for (const candidate of candidates) {
+        const encoded = encodeMessageRow(candidate.row);
+        const publicId = encoded.public_id as string;
+        if (items.length >= request.max_items) {
+          budgetExceeded = true;
+          excluded.push({ reason: "budget_exceeded", session_name: candidate.sessionName, public_id: publicId });
+          continue;
+        }
+        // PER-ITEM authorization, BEFORE this candidate is ever added to
+        // `items` -- never merge-then-filter.
+        try {
+          await requireCurrentMembership(
+            reader,
+            request.workspace_name,
+            candidate.sessionName,
+            request.peer_name,
+            "/peer_name",
+          );
+        } catch (error) {
+          if (!(error instanceof PublicationError) || error.code !== "invalid_reference") throw error;
+          excluded.push({ reason: "unauthorized", session_name: candidate.sessionName, public_id: publicId });
+          continue;
+        }
+        const item = projectContextItem(encoded);
+        const wireBytes = contextItemWireBytes(item) + 1;
+        if (budget + wireBytes > MAX_CONTEXT_WIRE_BYTES) {
+          budgetExceeded = true;
+          excluded.push({ reason: "budget_exceeded", session_name: candidate.sessionName, public_id: publicId });
+          continue;
+        }
+        budget += wireBytes;
+        items.push(item);
+      }
+
+      return { items, coverage: budgetExceeded ? "partial" : "full", excluded };
+    },
   };
 }
 
@@ -3803,13 +3946,20 @@ function sameEncodedValue(a: unknown, b: unknown): boolean {
 function createContextWriterService(
   writer: DatasetAdapter,
   core: OwnerCore,
-  options: { clock: Clock; sourceNamespace: string | null },
+  options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn },
 ) {
   const reads = createContextReadMethods(writer);
 
   /** Mutations run on the SHARED queue, so a context failure poisons the
    *  publication and taxonomy facades too, and vice versa. */
   const mutate = <T>(work: () => Promise<T>): Promise<T> => core.serial(work);
+
+  /**
+   * The chat model call, injected exactly like `clock` above: absent means
+   * `answerChat` is unavailable and maps through `mapModelFailure` on first
+   * use, never a network call this module reaches for on its own.
+   */
+  const model: ChatModelFn = options.model ?? (() => mapModelFailure());
 
   const requireWorkspaceRow = async (workspace: string): Promise<void> => {
     await writer.refresh(WORKSPACES);
@@ -5342,6 +5492,59 @@ function createContextWriterService(
         };
       }
     },
+
+    /**
+     * Compose one chat answer from AUTHORIZED context only.
+     *
+     * `reads.getContext` (this file, above) does the ENTIRE retrieval and
+     * per-item authorization pass FIRST; only its own `items` -- already
+     * filtered -- are ever handed to `renderContextText` and the model. An
+     * excluded item's content is therefore never rendered and never sent,
+     * regardless of what the model call does with its input.
+     *
+     * Never wrapped in `mutate()`/`core.serial`: nothing here is durably
+     * written, so this must not share the write queue or the poison state
+     * that guards actual persistence -- a slow or failing model call must
+     * not block or fail an unrelated append.
+     *
+     * The model call is INJECTED (`model`, above), exactly the way `clock`
+     * is injected on every other writer in this file: a caller under test
+     * supplies a stub, and this method never imports an SDK or reaches a
+     * network itself. See `chat.ts`'s `mapModelFailure` for exactly how a
+     * model exception (timeout, rate limit, truncated stream, anything) is
+     * mapped onto the closed publication code set.
+     */
+    answerChat: (requestBytes: Uint8Array) => {
+      // STATIC validation precedes any retrieval, the same discipline every
+      // other mutation's request parse follows.
+      const request = parseAnswerChat(requestBytes);
+      return (async () => {
+        const contextBytes = new TextEncoder().encode(
+          JSON.stringify({
+            workspace_name: request.workspace_name,
+            peer_name: request.peer_name,
+            session_name: request.session_name,
+            max_items: request.max_items,
+          }),
+        );
+        const contextResult = await reads.getContext(contextBytes);
+        const contextText = renderContextText(contextResult.items);
+        let answer: string;
+        try {
+          answer = await model({ question: request.question, context_text: contextText, items: contextResult.items });
+        } catch {
+          // Neither existing envelope fits a MODEL failure; see chat.ts's
+          // `mapModelFailure` for the documented mapping decision.
+          return mapModelFailure();
+        }
+        return {
+          answer,
+          coverage: contextResult.coverage,
+          excluded: contextResult.excluded,
+          items_used: contextResult.items.map((item) => item.public_id),
+        };
+      })();
+    },
   };
 }
 
@@ -5517,6 +5720,10 @@ export type ContextOptions = KnowledgeOptions & {
    *  an authorization credential. */
   sourceNamespace: string | null;
   onContextBoundary?: ContextBoundaryHook;
+  /** #32 chat's model call, injected exactly like `clock`. Absent means
+   *  `answerChat` is unavailable (mapped through `mapModelFailure` on first
+   *  use); never a network call this module makes on its own. */
+  model?: ChatModelFn;
 };
 
 /**
@@ -5598,7 +5805,7 @@ export async function openContextWriter(
     publication: Object.freeze(publicationData),
     taxonomy: Object.freeze(createTaxonomyWriterService(adapter, core, { clock })),
     context: Object.freeze(
-      createContextWriterService(adapter, core, { clock, sourceNamespace: options.sourceNamespace }),
+      createContextWriterService(adapter, core, { clock, sourceNamespace: options.sourceNamespace, model: options.model }),
     ),
     close: core.close,
   });
@@ -6443,7 +6650,7 @@ export async function openEvidenceWriter(
     publication: Object.freeze(publicationData),
     taxonomy: Object.freeze(createTaxonomyWriterService(adapter, core, { clock })),
     context: Object.freeze(
-      createContextWriterService(adapter, core, { clock, sourceNamespace: options.sourceNamespace }),
+      createContextWriterService(adapter, core, { clock, sourceNamespace: options.sourceNamespace, model: options.model }),
     ),
     evidence: Object.freeze(createEvidenceWriterService(adapter, core)),
     close: core.close,

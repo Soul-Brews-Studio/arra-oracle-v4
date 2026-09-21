@@ -50,13 +50,13 @@ const READER_KEYS = "context,publication,taxonomy";
 /** §8: context writer has exactly these twenty-two (its own eleven plus the
  *  eleven reader methods it spreads in); the reader exactly the eleven. */
 const CONTEXT_WRITE_METHODS =
-  "advanceReadCursor,appendMessages,createSessionLink,createTrace,getMessage,getPeer,getReadCursor," +
-  "getRecallEligibility,getSession,getTrace,indexRevisionChunks,joinSession,listLifecycleHistory," +
-  "listMessages,listSearchChunks,listSessionLinks,listTraceHits,reconcileSearchChunks,registerPeer," +
-  "registerSession,retireNode,supersedeNode";
+  "advanceReadCursor,answerChat,appendMessages,createSessionLink,createTrace,getContext,getMessage," +
+  "getPeer,getReadCursor,getRecallEligibility,getSession,getTrace,indexRevisionChunks,joinSession," +
+  "listLifecycleHistory,listMessages,listSearchChunks,listSessionLinks,listTraceHits," +
+  "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode";
 const CONTEXT_READ_METHODS =
-  "getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace,listLifecycleHistory," +
-  "listMessages,listSearchChunks,listSessionLinks,listTraceHits";
+  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
+  "listLifecycleHistory,listMessages,listSearchChunks,listSessionLinks,listTraceHits";
 /** Existing facades keep their exact key sets and carry no close. */
 const PUBLICATION_WRITE_METHODS = "getAcceptedHead,listAcceptedHistory,publishRevision";
 const PUBLICATION_READ_METHODS = "getAcceptedHead,listAcceptedHistory";

@@ -66,13 +66,13 @@ const RUNTIME_EXPORTS = [
  *  eleven reader methods it spreads in), eleven on every context READER
  *  facade. */
 const CONTEXT_WRITE_METHODS =
-  "advanceReadCursor,appendMessages,createSessionLink,createTrace,getMessage,getPeer,getReadCursor," +
-  "getRecallEligibility,getSession,getTrace,indexRevisionChunks,joinSession,listLifecycleHistory," +
-  "listMessages,listSearchChunks,listSessionLinks,listTraceHits,reconcileSearchChunks,registerPeer," +
-  "registerSession,retireNode,supersedeNode";
+  "advanceReadCursor,answerChat,appendMessages,createSessionLink,createTrace,getContext,getMessage," +
+  "getPeer,getReadCursor,getRecallEligibility,getSession,getTrace,indexRevisionChunks,joinSession," +
+  "listLifecycleHistory,listMessages,listSearchChunks,listSessionLinks,listTraceHits," +
+  "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode";
 const CONTEXT_READ_METHODS =
-  "getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace,listLifecycleHistory," +
-  "listMessages,listSearchChunks,listSessionLinks,listTraceHits";
+  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
+  "listLifecycleHistory,listMessages,listSearchChunks,listSessionLinks,listTraceHits";
 /** Bundle keys are unchanged by this slice; nested facades never carry close. */
 const CONTEXT_WRITER_KEYS = "close,context,publication,taxonomy";
 const EVIDENCE_WRITER_KEYS = "close,context,evidence,publication,taxonomy";
