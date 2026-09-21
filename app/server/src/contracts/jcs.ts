@@ -16,30 +16,31 @@
  *
  * Contract: app/docs/contracts/revision-evidence-v1.md §2.
  *
- * This file is a thin barrel: the implementation lives in `./jcs/`, split one
- * function per file. Canonicalization is cryptographically load-bearing
- * (contract digests are computed over `canonicalize`'s output), so every
- * function below was moved BYTE-FOR-BYTE — no reformatting, no reordering of
- * operations, no renamed locals. See `./jcs/` for the actual logic.
+ * This file is a thin barrel: the implementation lives beside it as
+ * `jcs.<functionName>.ts`, one function per file. Canonicalization is
+ * cryptographically load-bearing (contract digests are computed over
+ * `canonicalize`'s output), so every function below was moved BYTE-FOR-BYTE
+ * — no reformatting, no reordering of operations, no renamed locals. See
+ * those files for the actual logic.
  */
 
-export { LIMITS } from "./jcs/constants";
-export type { JcsObject, JcsValue } from "./jcs/types";
-export { utf8ByteLength } from "./jcs/utf8-byte-length";
-export { decodeUtf8Strict } from "./jcs/decode-utf8-strict";
-export { hasOnlyPairedSurrogates } from "./jcs/has-only-paired-surrogates";
-export type { SpanSink } from "./jcs/parser";
-export { parseStrict } from "./jcs/parse-strict";
-export { parseStrictBytes } from "./jcs/parse-strict-bytes";
-export { parseObjectText } from "./jcs/parse-object-text";
-export { canonicalNumber } from "./jcs/canonical-number";
-export { canonicalString } from "./jcs/canonical-string";
-export { compareUtf16 } from "./jcs/compare-utf16";
-export { canonicalize } from "./jcs/canonicalize";
-export { canonicalizeText } from "./jcs/canonicalize-text";
-export { canonicalBytes } from "./jcs/canonical-bytes";
-export { jsonByteLength } from "./jcs/json-byte-length";
-export { jcsEqual } from "./jcs/jcs-equal";
-export { obj } from "./jcs/obj";
+export { LIMITS } from "./jcs.constants";
+export type { JcsObject, JcsValue } from "./jcs.types";
+export { utf8ByteLength } from "./jcs.utf8ByteLength";
+export { decodeUtf8Strict } from "./jcs.decodeUtf8Strict";
+export { hasOnlyPairedSurrogates } from "./jcs.hasOnlyPairedSurrogates";
+export type { SpanSink } from "./jcs.Parser";
+export { parseStrict } from "./jcs.parseStrict";
+export { parseStrictBytes } from "./jcs.parseStrictBytes";
+export { parseObjectText } from "./jcs.parseObjectText";
+export { canonicalNumber } from "./jcs.canonicalNumber";
+export { canonicalString } from "./jcs.canonicalString";
+export { compareUtf16 } from "./jcs.compareUtf16";
+export { canonicalize } from "./jcs.canonicalize";
+export { canonicalizeText } from "./jcs.canonicalizeText";
+export { canonicalBytes } from "./jcs.canonicalBytes";
+export { jsonByteLength } from "./jcs.jsonByteLength";
+export { jcsEqual } from "./jcs.jcsEqual";
+export { obj } from "./jcs.obj";
 
 export { ContractError, pointer, reanchor } from "./errors";

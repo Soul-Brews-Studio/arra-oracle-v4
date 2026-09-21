@@ -21,12 +21,12 @@
  *
  * Contract: app/docs/contracts/source-ingestion-v1.md §8–§10.
  *
- * This file is a thin barrel: the implementation lives in
- * `./source-ingestion-v1/`, split one function per file. Nothing here
- * changes behaviour.
+ * This file is a thin barrel: the implementation lives beside it as
+ * `source-ingestion-v1.<functionName>.ts`, one function per file. Nothing
+ * here changes behaviour.
  */
 
-export { prepareNewMessage } from "./source-ingestion-v1/prepare-new-message";
-export { validateStoredSourceState } from "./source-ingestion-v1/validate-stored-source-state";
-export { mapLegacyMessageBoundary } from "./source-ingestion-v1/map-legacy-message-boundary";
-export { classifyMessageDestinationReplay } from "./source-ingestion-v1/classify-message-destination-replay";
+export { prepareNewMessage } from "./source-ingestion-v1.prepareNewMessage";
+export { validateStoredSourceState } from "./source-ingestion-v1.validateStoredSourceState";
+export { mapLegacyMessageBoundary } from "./source-ingestion-v1.mapLegacyMessageBoundary";
+export { classifyMessageDestinationReplay } from "./source-ingestion-v1.classifyMessageDestinationReplay";
