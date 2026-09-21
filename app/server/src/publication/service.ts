@@ -33,6 +33,18 @@ import {
   validateWorkspaceRow,
 } from "./read-cursor";
 import {
+  encodeTraceHitRow,
+  encodeTraceRow,
+  millisToTimestamp,
+  parseCreateTrace,
+  parseGetTrace,
+  parseListTraceHits,
+  timestampToMillis,
+  TRACE_FIELDS,
+  TRACE_HIT_FIELDS,
+} from "./trace";
+import { targetOp } from "../contracts/evidence-v1";
+import {
   classifyMessageDestinationReplay,
   prepareNewMessage,
 } from "../contracts/source-ingestion-v1";
@@ -2518,6 +2530,8 @@ const SESSIONS = "sessions";
 const SESSION_PEERS = "session_peers";
 const MESSAGES = "messages";
 const READ_CURSORS = "read_cursors";
+const TRACES = "traces";
+const TRACE_HITS = "trace_hits";
 
 const INT64_CEILING = 2n ** 63n - 1n;
 
@@ -2850,6 +2864,75 @@ function createContextReadMethods(reader: DatasetAdapter) {
       const current = await selectCursorRow(reader, request);
       return current === null ? null : current.encoded;
     },
+
+    async getTrace(requestBytes: Uint8Array): Promise<Record<string, unknown> | null> {
+      const request = parseGetTrace(requestBytes);
+      await requireWorkspace(request.workspace_name);
+      await reader.refresh(TRACES);
+      const row = await contextOne(
+        reader,
+        TRACES,
+        `${contextScope(request.workspace_name)} AND id = ${quote(request.id)}`,
+      );
+      // Absent is null, NOT not_found: that code's fixed message is node-specific.
+      return row === null ? null : encodeTraceRow(row);
+    },
+
+    async listTraceHits(
+      requestBytes: Uint8Array,
+    ): Promise<{ rows: Record<string, unknown>[]; next_after_position: string | null }> {
+      const request = parseListTraceHits(requestBytes);
+      await requireWorkspace(request.workspace_name);
+      await reader.refresh(TRACES);
+      const trace = await contextOne(
+        reader,
+        TRACES,
+        `${contextScope(request.workspace_name)} AND id = ${quote(request.trace_id)}`,
+      );
+      if (trace === null) failPublication("invalid_reference", "/trace_id");
+
+      await reader.refresh(TRACE_HITS);
+      const after = request.after_position === null ? null : BigInt(request.after_position);
+      const scope =
+        `${contextScope(request.workspace_name)} AND trace_id = ${quote(request.trace_id)}` +
+        (after === null ? "" : ` AND position > ${after.toString(10)}`);
+
+      // KEYSET, never offset: limit+1 detects continuation without paging by
+      // position, which would skip or repeat rows as the table grows.
+      const selected = await reader.orderedProjection(
+        TRACE_HITS,
+        scope,
+        ["position"],
+        { column: "position", ascending: true },
+        request.limit + 1,
+      );
+
+      const positions: bigint[] = [];
+      for (const row of selected) {
+        const position = row.position;
+        if (typeof position !== "bigint") failPublication("integrity_failure", "");
+        if (positions.some((p) => p === position)) failPublication("integrity_failure", "");
+        positions.push(position);
+      }
+
+      const page = positions.slice(0, request.limit);
+      const rows: Record<string, unknown>[] = [];
+      for (const position of page) {
+        const row = await contextOne(
+          reader,
+          TRACE_HITS,
+          `${contextScope(request.workspace_name)} AND trace_id = ${quote(request.trace_id)} AND position = ${position.toString(10)}`,
+        );
+        if (row === null) failPublication("integrity_failure", "");
+        rows.push(encodeTraceHitRow(row));
+      }
+
+      const hasMore = positions.length > request.limit;
+      return {
+        rows,
+        next_after_position: hasMore && page.length > 0 ? page[page.length - 1]!.toString(10) : null,
+      };
+    },
   };
 }
 
@@ -3151,6 +3234,258 @@ function createContextWriterService(
           outcome: current === null ? ("created" as const) : ("advanced" as const),
           row: stored,
         };
+      });
+    },
+
+    /**
+     * Create one trace AND all of its hits, in ONE serialized turn.
+     *
+     * No multi-table transaction is claimed here: the trace row and each hit
+     * row are separate `writeRow` calls, each with its own before_write /
+     * after_write / after_readback boundary triple. If the trace row lands
+     * and a later hit fails, that is an AMBIGUOUS partial write -- the owner
+     * poisons and reports `recovery_required`, exactly as `writeRow` already
+     * does for any single-row mismatch. There is no rollback: rows here are
+     * immutable and evidence-preserving by the same principle as everywhere
+     * else in this kernel.
+     */
+    createTrace: (requestBytes: Uint8Array) => {
+      // STATIC validation precedes owner work, as with every other mutation.
+      const request = parseCreateTrace(requestBytes);
+      return mutate(async () => {
+        await requireWorkspaceRow(request.workspace_name);
+
+        if (request.session_name !== null) {
+          await writer.refresh(SESSIONS);
+          const session = await contextOne(
+            writer,
+            SESSIONS,
+            `${contextScope(request.workspace_name)} AND name = ${quote(request.session_name)}`,
+          );
+          if (session === null) failPublication("invalid_reference", "/session_name");
+        }
+        if (request.peer_name !== null) {
+          await writer.refresh(PEERS);
+          const peer = await contextOne(
+            writer,
+            PEERS,
+            `${contextScope(request.workspace_name)} AND name = ${quote(request.peer_name)}`,
+          );
+          if (peer === null) failPublication("invalid_reference", "/peer_name");
+        }
+
+        // Every hit's target is normalized against the RESOLVED workspace,
+        // once, whether this turns out to be a fresh create or a replay
+        // comparison. `target_json` is the exact canonical text that would be
+        // stored; a hit's `target_key` is never persisted (no such column).
+        const normalizedHits = request.hits.map((hit, index) => ({
+          input: hit,
+          target_json: targetOp(request.workspace_name, hit.kind, hit.target, ["hits", index, "target"])
+            .target_json,
+        }));
+
+        await writer.refresh(TRACES);
+        const existing = await contextOne(
+          writer,
+          TRACES,
+          `${contextScope(request.workspace_name)} AND id = ${quote(request.id)}`,
+        );
+
+        if (existing !== null) {
+          const encodedExisting = encodeTraceRow(existing);
+          await writer.refresh(TRACE_HITS);
+          const existingHitRows = await writer.query(
+            TRACE_HITS,
+            `${contextScope(request.workspace_name)} AND trace_id = ${quote(request.id)}`,
+            normalizedHits.length + 1,
+          );
+
+          const sameTrace =
+            encodedExisting.name === request.name &&
+            encodedExisting.session_name === request.session_name &&
+            encodedExisting.peer_name === request.peer_name &&
+            encodedExisting.query === request.query &&
+            encodedExisting.mode === request.mode &&
+            encodedExisting.session_id === request.session_id &&
+            encodedExisting.session_from_ts ===
+              (request.session_from_ts === null ? null : millisToTimestamp(timestampToMillis(request.session_from_ts))) &&
+            encodedExisting.session_to_ts ===
+              (request.session_to_ts === null ? null : millisToTimestamp(timestampToMillis(request.session_to_ts))) &&
+            encodedExisting.friction_score === request.friction_score &&
+            encodedExisting.confidence === request.confidence &&
+            encodedExisting.parent_id === request.parent_id &&
+            encodedExisting.prev_id === request.prev_id &&
+            encodedExisting.depth === request.depth &&
+            encodedExisting.status === request.status &&
+            encodedExisting.h_metadata === request.h_metadata &&
+            encodedExisting.internal_metadata === request.internal_metadata;
+
+          let sameHits = existingHitRows.length === normalizedHits.length;
+          let existingHitsEncoded: Record<string, unknown>[] = [];
+          if (sameHits) {
+            existingHitsEncoded = existingHitRows
+              .map((row) => encodeTraceHitRow(row))
+              .sort((a, b) => Number(BigInt(a.position as string) - BigInt(b.position as string)));
+            for (let i = 0; i < normalizedHits.length; i++) {
+              const stored = existingHitsEncoded[i]!;
+              const wanted = normalizedHits[i]!;
+              if (
+                stored.kind !== wanted.input.kind ||
+                stored.ref !== wanted.input.ref ||
+                stored.target !== wanted.target_json ||
+                stored.line_start !== wanted.input.line_start ||
+                stored.line_end !== wanted.input.line_end ||
+                stored.excerpt !== wanted.input.excerpt ||
+                stored.content_hash !== wanted.input.content_hash ||
+                stored.captured_at !== wanted.input.captured_at ||
+                stored.note !== wanted.input.note
+              ) {
+                sameHits = false;
+                break;
+              }
+            }
+          }
+
+          if (sameTrace && sameHits) {
+            return {
+              outcome: "already_satisfied" as const,
+              row: encodedExisting,
+              hits: existingHitsEncoded,
+            };
+          }
+          return { outcome: "conflict" as const, reason: "payload" as const };
+        }
+
+        // A caller-supplied parent_id / prev_id must resolve in THIS
+        // workspace -- invalid_reference at its own pointer. Anything wrong
+        // DEEPER in that chain is stored corruption or a bound, never the
+        // caller's fault, which is why the walk below reports differently.
+        if (request.parent_id !== null) {
+          await writer.refresh(TRACES);
+          const parent = await contextOne(
+            writer,
+            TRACES,
+            `${contextScope(request.workspace_name)} AND id = ${quote(request.parent_id)}`,
+          );
+          if (parent === null) failPublication("invalid_reference", "/parent_id");
+          await assertTraceChain(writer, request.workspace_name, parent, "parent_id");
+        }
+        if (request.prev_id !== null) {
+          await writer.refresh(TRACES);
+          const prev = await contextOne(
+            writer,
+            TRACES,
+            `${contextScope(request.workspace_name)} AND id = ${quote(request.prev_id)}`,
+          );
+          if (prev === null) failPublication("invalid_reference", "/prev_id");
+          await assertTraceChain(writer, request.workspace_name, prev, "prev_id");
+        }
+
+        // ONLY a real creation samples the clock.
+        const sampled = options.clock();
+        if (typeof sampled !== "number" || !Number.isSafeInteger(sampled)) {
+          failPublication("invalid_request", "");
+        }
+        // RAW MILLISECONDS. NOT `* 1000n`: `traces.created_at` is already
+        // milliseconds, unlike the micros columns elsewhere in this kernel.
+        const millis = BigInt(sampled);
+        try {
+          millisToTimestamp(millis);
+        } catch (error) {
+          if (!(error instanceof PublicationError)) throw error;
+          return failPublication("invalid_request", "");
+        }
+
+        const physicalTrace: Record<string, unknown> = {
+          id: request.id,
+          name: request.name,
+          workspace_name: request.workspace_name,
+          session_name: request.session_name,
+          peer_name: request.peer_name,
+          query: request.query,
+          mode: request.mode,
+          session_id: request.session_id,
+          session_from_ts: request.session_from_ts === null ? null : timestampToMillis(request.session_from_ts),
+          session_to_ts: request.session_to_ts === null ? null : timestampToMillis(request.session_to_ts),
+          friction_score: request.friction_score,
+          confidence: request.confidence,
+          parent_id: request.parent_id,
+          prev_id: request.prev_id,
+          depth: BigInt(request.depth),
+          status: request.status,
+          h_metadata: request.h_metadata,
+          internal_metadata: request.internal_metadata,
+          // updated_at === created_at on every fresh write, by construction.
+          created_at: millis,
+          updated_at: millis,
+        };
+        const expectedTrace = encodeTraceRow(physicalTrace);
+        const storedTrace = await writeRow(
+          TRACES,
+          physicalTrace,
+          async () => {
+            const found = await contextOne(
+              writer,
+              TRACES,
+              `${contextScope(request.workspace_name)} AND id = ${quote(request.id)}`,
+            );
+            if (found === null) {
+              core.poison();
+              failPublication("recovery_required", "");
+            }
+            return encodeTraceRow(found);
+          },
+          expectedTrace,
+          TRACE_FIELDS,
+          false,
+        );
+
+        const storedHits: Record<string, unknown>[] = [];
+        for (let i = 0; i < normalizedHits.length; i++) {
+          const { input, target_json } = normalizedHits[i]!;
+          const physicalHit: Record<string, unknown> = {
+            workspace_name: request.workspace_name,
+            trace_id: request.id,
+            kind: input.kind,
+            ref: input.ref,
+            target: target_json,
+            line_start: input.line_start === null ? null : BigInt(input.line_start),
+            line_end: input.line_end === null ? null : BigInt(input.line_end),
+            excerpt: input.excerpt,
+            content_hash: input.content_hash,
+            captured_at: input.captured_at === null ? null : timestampToMicros(input.captured_at),
+            note: input.note,
+            position: BigInt(i),
+          };
+          const expectedHit = encodeTraceHitRow(physicalHit);
+          // `wroteAlready: true` from the FIRST hit onward (and for the very
+          // first one, because the trace row itself already landed): once
+          // anything is durably written this operation is in the ambiguous
+          // window, and a hook failure here must poison rather than merely
+          // refuse the request.
+          const storedHit = await writeRow(
+            TRACE_HITS,
+            physicalHit,
+            async () => {
+              const found = await contextOne(
+                writer,
+                TRACE_HITS,
+                `${contextScope(request.workspace_name)} AND trace_id = ${quote(request.id)} AND position = ${i}`,
+              );
+              if (found === null) {
+                core.poison();
+                failPublication("recovery_required", "");
+              }
+              return encodeTraceHitRow(found);
+            },
+            expectedHit,
+            TRACE_HIT_FIELDS,
+            true,
+          );
+          storedHits.push(storedHit);
+        }
+
+        return { outcome: "created" as const, row: storedTrace, hits: storedHits };
       });
     },
 
@@ -3704,6 +4039,41 @@ async function assertReplyChain(
       MESSAGES,
       `workspace_name = ${quote(workspace)} AND session_name = ${quote(session)} AND public_id = ${quote(next)}`,
     );
+    if (cursor === null) failPublication("integrity_failure", "");
+  }
+}
+
+/**
+ * Walk an existing trace ancestry chain, bounded, over EITHER pointer column.
+ *
+ * Mirrors `assertReplyChain`. `start` is the row the caller's `parent_id` or
+ * `prev_id` ALREADY resolved to -- an invalid_reference at that pointer is
+ * decided by the caller before this runs. Everything found from here on is
+ * STORED state: a broken link, a self-referencing cycle or a chain longer
+ * than 1024 stored ancestors is corruption or a limit, never the caller's
+ * invalid_reference. The row being created is not yet in the table and is
+ * not counted.
+ */
+async function assertTraceChain(
+  adapter: DatasetAdapter,
+  workspace: string,
+  start: Record<string, unknown>,
+  pointerField: "parent_id" | "prev_id",
+): Promise<void> {
+  let cursor: Record<string, unknown> | null = start;
+  let visited = 0;
+  const seen = new Set<string>();
+  while (cursor !== null) {
+    visited += 1;
+    if (visited > 1024) failPublication("limit_exceeded", "");
+    const encoded = encodeTraceRow(cursor);
+    const id = encoded.id as string;
+    if (seen.has(id)) failPublication("integrity_failure", "");
+    seen.add(id);
+    if (encoded.workspace_name !== workspace) failPublication("integrity_failure", "");
+    const next = encoded[pointerField] as string | null;
+    if (next === null) return;
+    cursor = await contextOne(adapter, TRACES, `${contextScope(workspace)} AND id = ${quote(next)}`);
     if (cursor === null) failPublication("integrity_failure", "");
   }
 }
