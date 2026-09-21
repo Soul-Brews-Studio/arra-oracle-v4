@@ -13,14 +13,15 @@
  *
  * The accepted `microsToTimestamp` / `timestampToMicros` helpers in `./rows`
  * are MICROS-ONLY. Reusing them on a `traces` millisecond column would
- * silently mis-scale the value by 1000x. This module therefore defines its
- * OWN millisecond converters (`millisToTimestamp` / `timestampToMillis`)
- * below, and uses the `./rows` micros converters ONLY for `trace_hits.captured_at`.
+ * silently mis-scale the value by 1000x. This kernel therefore defines its
+ * OWN millisecond converters (`millisToTimestamp` in `trace.millisToTimestamp.ts`,
+ * `timestampToMillis` in `trace.timestampToMillis.ts`), and uses the `./rows`
+ * micros converters ONLY for `trace_hits.captured_at`.
  * One writer spans two units in one serialized turn -- do not blur them.
  * =====================================================================
  *
  * `trace_hits` is AUTHORITATIVE, not derived: no accepted snapshot contains
- * hits and nothing can rebuild them. This module defines no materializer and
+ * hits and nothing can rebuild them. This kernel defines no materializer and
  * no scoped-delete authority over it.
  *
  * Traces and hits are IMMUTABLE in v1: there is no update method here, and

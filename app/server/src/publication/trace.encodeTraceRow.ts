@@ -49,7 +49,8 @@ export function encodeTraceRow(row: Record<string, unknown>): Record<string, unk
     // differ -- tightened to match TR-11.
     mode: storedNullableNonemptyText(row.mode),
     session_id: storedNullableNonemptyText(row.session_id),
-    // Raw MILLISECONDS. NOT the ./rows micros helper -- see file header.
+    // Raw MILLISECONDS. NOT the ./rows micros helper -- see the unit-trap
+    // header comment in `trace.ts`.
     session_from_ts: storedNullableMillisTimestamp(row.session_from_ts),
     session_to_ts: storedNullableMillisTimestamp(row.session_to_ts),
     friction_score: storedFloat64OrNull(row.friction_score),

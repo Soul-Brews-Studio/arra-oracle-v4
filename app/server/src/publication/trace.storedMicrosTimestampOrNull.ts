@@ -2,7 +2,7 @@ import { failPublication } from "./errors";
 import { microsToTimestamp } from "./rows";
 
 /** RAW storage MICROSECONDS (bigint or safe-integer number), nullable. This
- *  is the ONLY place in this module that touches `./rows`' micros helpers,
+ *  is the ONLY place in this kernel that touches `./rows`' micros helpers,
  *  and it is used for `trace_hits.captured_at` exclusively. */
 export function storedMicrosTimestampOrNull(value: unknown): string | null {
   if (value === null) return null;

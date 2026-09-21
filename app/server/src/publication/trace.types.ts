@@ -9,15 +9,16 @@ export type TraceStatus = (typeof TRACE_STATUSES)[number];
 /**
  * One caller-supplied hit, PRE-write. `position` is deliberately absent from
  * this shape: the physical position of a hit is its index in the `hits`
- * array of the SAME createTrace request, assigned by this module, so it is
- * contiguous 0..n-1 by construction rather than by a separate check of a
- * caller-supplied number that could disagree with the array order.
+ * array of the SAME createTrace request, assigned by `parseCreateTrace` in
+ * `trace.parseCreateTrace.ts`, so it is contiguous 0..n-1 by construction
+ * rather than by a separate check of a caller-supplied number that could
+ * disagree with the array order.
  */
 export type CreateTraceHitInput = {
   kind: TargetKind;
   /** The RAW target value, not yet normalized. Normalization happens against
    *  the trace's own workspace_name at write time, in `service.ts`, because
-   *  the target_key domain includes workspace_name and this module has no
+   *  the target_key domain includes workspace_name and this kernel has no
    *  authority to assume which workspace a request will finally land in
    *  before the full request is parsed. */
   target: JcsValue;
