@@ -9,7 +9,9 @@ import { SidebarShell } from "./components/SidebarShell";
 import { SessionRail } from "./components/SessionRail";
 import { Transcript } from "./components/Transcript";
 import { WorkspaceBar } from "./components/WorkspaceBar";
+import { KnowledgeView } from "./KnowledgeView";
 import { useMemory } from "./state/useMemory";
+import { useRoute } from "./state/useRoute";
 
 /** Three columns, matching what the data actually is:
  *
@@ -25,6 +27,16 @@ export function App() {
   const m = useMemory();
   const [health, setHealth] = useState<number | null>(null);
   const [railCollapsed, setRailCollapsed] = useState(false);
+  // Two halves of one system, and the tab says which you are looking at.
+  // `messages` is Honcho's model -- peers, sessions, context, dialectic.
+  // `knowledge` is arra-oracle-v3's -- nodes, immutable revisions, a
+  // controlled type vocabulary and tags. They share a bank and a workspace
+  // and nothing else, which is why they are tabs rather than one screen.
+  // View and selection live in the URL, so a refresh restores where you were
+  // and Back steps through what you clicked. See state/useRoute.
+  const { route, push } = useRoute();
+  const view = route.view;
+  const setView = (v: "messages" | "knowledge") => push({ view: v });
 
   // Verify the saved roster once per bank/workspace change: a bookmark that
   // has gone stale should announce itself on arrival, not the first time you
@@ -38,6 +50,15 @@ export function App() {
     void m.actions.refreshContext();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [m.peer, m.session]);
+
+  // The URL is the source of truth for the selection, not the click handler:
+  // that is what makes a pasted link and the Back button behave the same as
+  // clicking, instead of only the click path working.
+  useEffect(() => {
+    if (route.peer !== m.peer) m.setPeer(route.peer);
+    if (route.session !== m.session) m.setSession(route.session);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route.peer, route.session]);
 
   // The dialectic answer names the exact messages it was allowed to read.
   // Marking those in the transcript is the whole point of showing both at
@@ -69,6 +90,34 @@ export function App() {
         healthStatus={health}
       />
 
+      <nav className="flex gap-1 border-b border-edge px-4 py-1.5">
+        {(["messages", "knowledge"] as const).map((v) => (
+          <button
+            key={v}
+            onClick={() => setView(v)}
+            title={
+              v === "messages"
+                ? "Honcho's model: peers, sessions, messages, assembled context, dialectic"
+                : "arra-oracle-v3's model: nodes, immutable revisions, type vocabulary, tags"
+            }
+            className={`rounded px-2.5 py-1 text-xs ${
+              view === v
+                ? "bg-accent/15 text-accent"
+                : "text-muted hover:text-slate-200"
+            }`}
+          >
+            {v}
+          </button>
+        ))}
+      </nav>
+
+      {view === "knowledge" ? (
+        <KnowledgeView
+          bank={{ bank: m.bank, token: m.token, workspace: m.workspace }}
+          nodeId={route.node}
+          onSelectNode={(id) => push({ node: id })}
+        />
+      ) : (
       <div className="flex min-h-0 flex-1">
         <SidebarShell
           collapsed={railCollapsed}
@@ -79,7 +128,7 @@ export function App() {
           <PeerRail
             entries={m.roster.peers}
             selected={m.peer}
-            onSelect={m.setPeer}
+            onSelect={(name) => push({ peer: name })}
             onAdd={m.actions.addPeer}
             onRemove={m.actions.removePeer}
             onRegister={(n) => void m.actions.registerPeer(n)}
@@ -88,7 +137,7 @@ export function App() {
           <SessionRail
             entries={m.roster.sessions}
             selected={m.session}
-            onSelect={m.setSession}
+            onSelect={(name) => push({ session: name })}
             onAdd={m.actions.addSession}
             onRemove={m.actions.removeSession}
             onRegister={(n) => void m.actions.registerSession(n)}
@@ -145,6 +194,7 @@ export function App() {
           )}
         </aside>
       </div>
+      )}
     </div>
   );
 }

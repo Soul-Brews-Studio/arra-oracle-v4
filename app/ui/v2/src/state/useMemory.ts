@@ -25,6 +25,7 @@ import {
 } from "../api/memory";
 import { type ApiResult } from "../api/client";
 import { type Roster, addName, loadRoster, removeName, saveRoster, setState } from "./roster";
+import { useToken } from "./useToken";
 
 /** One place to turn any failed ApiResult into display text. The error
  *  envelope's `code` is the useful part; the HTTP status alone is not, because
@@ -52,7 +53,9 @@ function rows(body: unknown): MessageRow[] {
 export function useMemory() {
   const [bank, setBank] = useState("default");
   const [workspace, setWorkspace] = useState("default");
-  const [token, setToken] = useState("");
+  // Unlockable from `?token=` / `?key=`; see useToken for why the URL is
+  // rewritten the instant it is read.
+  const [token, setToken] = useToken();
   const b: Bank = useMemo(() => ({ bank, token, workspace }), [bank, token, workspace]);
 
   const [roster, setRoster] = useState<Roster>(() => loadRoster("default"));
