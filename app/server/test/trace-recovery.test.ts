@@ -872,10 +872,14 @@ recoveryTest("F1 a real SDK failure poisons, and a REPAIRED traces table does no
     path: "",
   });
 
-  // A fresh owner proves the dataset is usable and converges.
+  // A fresh owner proves the dataset is usable and converges. Pinned to
+  // "created", not a disjunction with "already_satisfied": `lockTree` chmods
+  // BEFORE `child.resume()`, so `writer.append` itself fails on BOTH poisoned
+  // attempts (permission denied on the real SDK call) -- no row was ever
+  // durably written by either one. A fresh owner is therefore doing a
+  // genuinely first write, deterministically "created".
   const fresh = await run(plan(root, [request]), "f1-fresh");
-  const recovered = okValue(fresh, 0);
-  expect(["created", "already_satisfied"]).toContain(recovered.outcome);
+  expect(okValue(fresh, 0).outcome).toBe("created");
 });
 
 // ── G. the parent's own bounds are refutable ────────────────────────────────

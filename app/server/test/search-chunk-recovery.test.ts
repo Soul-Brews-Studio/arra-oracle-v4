@@ -687,8 +687,13 @@ recoveryTest("C1 a real SDK failure poisons, and a REPAIRED table does not un-po
     path: "",
   });
 
+  // Pinned to "indexed", not a disjunction with "already_satisfied":
+  // `lockTree` chmods BEFORE `child.resume()`, so `writer.append` itself
+  // fails on BOTH poisoned attempts (permission denied on the real SDK
+  // call) -- `toWrite` was never durably appended by either one. A fresh
+  // owner is therefore doing a genuinely first write.
   const fresh = await run(plan(fixture.root, [request]), "c1-fresh");
-  expect(["indexed", "already_satisfied"]).toContain(okValue(fresh, 0).outcome);
+  expect(okValue(fresh, 0).outcome).toBe("indexed");
 });
 
 // ── D/E. post-readback corrupt state, by instrumented in-process interleave ─
@@ -816,23 +821,45 @@ recoveryTest(
     // "not pageable" and "exhausted reports honestly" at a scale a unit test
     // can actually seed — the literal 1024-node bound is exercised for its
     // GRAMMAR cap only, in F1 above, not reseeded here.
+    //
+    // ORDERING, stated precisely and BITE-TESTED, not assumed: `service.ts`'s
+    // `reconcileSearchChunks` does NOT call a bare `query()` (which carries no
+    // order in this codebase) -- it calls `writer.orderedProjection("nodes",
+    // ..., { column: "id", ascending: true }, ...)`, and `orderedProjection`
+    // (service.ts's DatasetAdapter, ~line 263) issues a REAL `.orderBy([{
+    // columnName: "id", ascending: true }])` against the query before
+    // `.toArrow()`. The visit order is therefore a genuine, explicit contract
+    // -- ascending by node `id` -- not an accident of storage layout.
+    //
+    // To prove this is really what's exercised here (not merely a
+    // coincidence of creation order, which happens to equal id order unless
+    // deliberately decoupled): `nodeFirst` is PUBLISHED first but has the
+    // LEXICALLY LARGER id; `nodeSecond` is published second but has the
+    // LEXICALLY SMALLER id, and is the one that gets indexed. If the real
+    // order were creation-order (or unordered), a limit-1 sweep would visit
+    // `nodeFirst` (unindexed) and report `missing: 1`. Because the real order
+    // is ascending id, it visits `nodeSecond` (indexed) and reports
+    // `missing: 0` -- so this test WOULD fail loudly if that ordering
+    // guarantee ever regressed to creation-order or to no order at all.
     const created = await createFixture([ALPHA]);
     createdRoots.push({ path: created.datasetRoot, cleanup: created.cleanup });
     const seeded = created.workspaces[ALPHA]!;
-    const nodeA = pad("f2-nodeA");
-    const nodeB = pad("f2-nodeB");
-    const revA = pad("f2-revA");
-    const revB = pad("f2-revB");
+    const nodeFirst = pad("f2-nodeZZZ"); // published 1st, lexically LARGER id
+    const nodeSecond = pad("f2-nodeAAA"); // published 2nd, lexically SMALLER id
+    expect(nodeSecond < nodeFirst).toBe(true); // the premise this test relies on
+    const revFirst = pad("f2-revFirst");
+    const revSecond = pad("f2-revSecond");
 
     const published = await run(
       plan(
         created.datasetRoot,
         [
-          { facade: "publication", method: "publishRevision", request: { operation_id: "f2-op-a", content: revisionEnvelope(ALPHA, seeded, nodeA) } },
-          { facade: "publication", method: "publishRevision", request: { operation_id: "f2-op-b", content: revisionEnvelope(ALPHA, seeded, nodeB) } },
-          indexStep(nodeA, revA),
+          { facade: "publication", method: "publishRevision", request: { operation_id: "f2-op-first", content: revisionEnvelope(ALPHA, seeded, nodeFirst) } },
+          { facade: "publication", method: "publishRevision", request: { operation_id: "f2-op-second", content: revisionEnvelope(ALPHA, seeded, nodeSecond) } },
+          // Only the lexically SMALLER (second-published) node is indexed.
+          indexStep(nodeSecond, revSecond),
         ],
-        { revisionIds: [revA, revB] },
+        { revisionIds: [revFirst, revSecond] },
       ),
       "f2-setup",
     );
@@ -845,24 +872,22 @@ recoveryTest(
       method: "reconcileSearchChunks",
       request: { workspace_name: ALPHA, limit: 1 },
     });
-    // `pad` shares the "f2-node" prefix for both, diverging only at the
-    // final letter (A < B), so ascending node-id order is deterministic:
-    // nodeA sorts first and is the one node this limit-1 sweep visits.
-    expect([nodeA, nodeB].sort()).toEqual([nodeA, nodeB]);
 
     const first = await run(plan(created.datasetRoot, [reconcileStep()]), "f2-first");
     const firstValue = okValue(first, 0);
     expect(firstValue).toEqual({
       visited: 1,
-      // nodeA WAS indexed above (op2 == "indexed"), so the one visited node
-      // is not missing.
+      // The visited node is the ASCENDING-ID-FIRST one (`nodeSecond`), which
+      // WAS indexed -- not `nodeFirst`, which was published first but sorts
+      // after it and was never visited by this limit-1 call.
       missing: 0,
       missing_revisions: [],
       stale: 0,
       exhausted: false,
     });
 
-    // A second call, SAME limit: the SAME node, not the next one.
+    // A second call, SAME limit: the SAME node (still `nodeSecond`), not the
+    // next one (`nodeFirst`) -- proving the sweep does not advance.
     const second = await run(plan(created.datasetRoot, [reconcileStep()]), "f2-second");
     expect(okValue(second, 0)).toEqual(firstValue);
   },
