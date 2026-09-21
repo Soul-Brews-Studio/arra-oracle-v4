@@ -414,5 +414,31 @@ export function createApp(
 
   return options.assets === undefined
     ? app
-    : app.use(staticPlugin({ assets: options.assets, prefix: "/" }));
+    : app.use(
+        staticPlugin({
+          assets: options.assets,
+          prefix: "/",
+          // `maxAge: 0` because the default is 86400 -- one day -- and it was
+          // applied to index.html as well as to content-hashed assets.
+          // Measured: `Cache-Control: public, max-age=86400` on
+          // /v2/index.html. A built SPA writes a NEW hashed asset every
+          // build but the same index.html, so a cached entry point loads
+          // yesterday's JavaScript against today's HTML for up to 24 hours.
+          // It presents as "my change did nothing", and it cost three
+          // debugging detours here before it was recognised.
+          //
+          // Zero does not mean "re-download everything": ETag is still sent,
+          // so a revalidation answers 304 with no body when nothing changed.
+          // The cost is one conditional request per asset; the alternative is
+          // a UI that silently serves stale code after every deploy.
+          maxAge: 0,
+          // Keep the ETag. `maxAge: 0` omits Cache-Control entirely, and an
+          // absent header lets a browser cache heuristically off
+          // Last-Modified -- the same staleness by a quieter route. An ETag
+          // gives the browser something to revalidate against, so an
+          // unchanged file costs a 304 with no body while a changed one can
+          // never be served from cache.
+          etag: true,
+        }),
+      );
 }
