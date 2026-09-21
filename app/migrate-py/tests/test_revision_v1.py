@@ -13,6 +13,7 @@ evidence of correct canonical bytes.
 
 import hashlib
 import json
+import re
 import shutil
 import tempfile
 import textwrap
@@ -448,7 +449,10 @@ class IsolationTests(unittest.TestCase):
     # Exactly the modules allowed to reuse the contract helpers. This is an
     # allow-LIST of specific files, never a blanket `auth/` exclusion: a new
     # module must be added here deliberately, with review.
-    HELPER_REUSE_ALLOWED = (
+    #: Reviewed BARRELS. Each entry is an exact file that was reviewed for
+    #: governed-helper reuse. `HELPER_REUSE_ALLOWED` below derives the split
+    #: siblings from this tuple -- add new modules HERE, deliberately.
+    HELPER_REUSE_BARRELS = (
         TS_ROOT / "auth" / "policy.ts",
         TS_ROOT / "auth" / "loader.ts",
         TS_ROOT / "app.ts",
@@ -476,6 +480,43 @@ class IsolationTests(unittest.TestCase):
         TS_ROOT / "publication" / "lifecycle.ts",
         TS_ROOT / "publication" / "trace.ts",
         TS_ROOT / "publication" / "search-chunk.ts",
+        # The #31 knowledge transport reuses the governed ContractError and the
+        # governed strict parser (`parseStrictBytes`) for the same reason every
+        # kernel above does: the HTTP/MCP edge must not carry a SECOND parser
+        # or a second error envelope, or the wire shape would diverge from the
+        # kernel's. Reviewed and listed as exact files, deliberately.
+        #
+        # This entry is overdue: `knowledge/` arrived with #31 and did not exist
+        # at f600636, so this test began failing the moment that merged, and was
+        # not noticed because the Python suite was not run on that merge. The
+        # test was right and unheeded, not wrong.
+        TS_ROOT / "knowledge" / "transport.ts",
+        TS_ROOT / "knowledge" / "registry.ts",
+        TS_ROOT / "mcp" / "tools.ts",
+        TS_ROOT / "composition.ts",
+        # The #32 chat kernel is a PURE half like every other kernel above and
+        # reuses the same governed grammar helpers rather than carrying a second
+        # parser. Same overdue-entry note as the #31 files: it arrived with #32
+        # and this test has been failing since that merge, unnoticed because the
+        # Python suite was not run on it.
+        TS_ROOT / "publication" / "chat.ts",
+    )
+
+    #: A pure-move split extracted every barrel above into flat
+    #: `<barrel>.<functionName>.ts` siblings, each holding one function moved
+    #: character-for-character out of the reviewed file. The siblings reuse the
+    #: governed helpers for exactly the reason their barrel was allowed to --
+    #: the code did not change, only the file it lives in.
+    #:
+    #: Derived from HELPER_REUSE_BARRELS rather than hardcoded, and STILL NOT a
+    #: blanket `publication/` exclusion: a genuinely new module under
+    #: publication/ is not a sibling of any reviewed barrel, so it fails this
+    #: test until it is added to HELPER_REUSE_BARRELS and reviewed. That is the
+    #: property the original comment was protecting, and it is preserved.
+    HELPER_REUSE_ALLOWED = HELPER_REUSE_BARRELS + tuple(
+        sibling
+        for barrel in HELPER_REUSE_BARRELS
+        for sibling in sorted(barrel.parent.glob(f"{barrel.stem}.*.ts"))
     )
 
     #: The publication kernel is internal: no active source may import it.
@@ -561,23 +602,55 @@ class IsolationTests(unittest.TestCase):
                 with self.subTest(file=path.name, pattern=pattern):
                     self.assertNotIn(f'from "{pattern}"', text)
 
+    #: The ONLY files permitted to import the publication kernel from outside
+    #: it. #31's whole purpose is exposing that kernel over HTTP/MCP, so the
+    #: transport edge and the composition root necessarily import it -- this
+    #: test's original premise ("nothing imports publication") was written
+    #: before any transport existed.
+    #:
+    #: Kept as an EXACT list, deliberately: it says "these reviewed files are
+    #: the kernel's only doorway", which is a materially different and weaker
+    #: claim than the original. Anything else importing publication still
+    #: fails, which is the containment this test exists to enforce.
+    PUBLICATION_CONSUMERS = (
+        TS_ROOT / "knowledge" / "transport.ts",
+        TS_ROOT / "knowledge" / "registry.ts",
+        TS_ROOT / "composition.ts",
+    )
+
     def test_no_active_server_source_imports_the_publication_kernel(self):
-        """Nothing outside the four publication files may import them.
+        """Only the kernel files and its reviewed consumers may import it.
 
         Bounded source-text check over server sources plus the CLI: it reports
         absence of enumerated substrings. It is NOT module resolution and does
         not prove a dynamic `import(expr)` is impossible.
         """
-        publication = set(self.PUBLICATION_FILES)
+        publication = set(self.PUBLICATION_FILES) | set(self.PUBLICATION_CONSUMERS)
         scanned = [p for p in self.TS_ROOT.rglob("*.ts") if p not in publication] + [self.CLI]
         self.assertGreaterEqual(len(scanned), 8, f"scan collapsed: {len(scanned)} files")
         for path in self.PUBLICATION_FILES:
             self.assertNotIn(path, scanned)
+        # Scan IMPORT/EXPORT SOURCE STRINGS, not raw file text. A bare
+        # substring scan cannot tell an import from prose, and several files
+        # legitimately NAME the kernel in a comment -- e.g. app.ts's
+        # "#31: publication/taxonomy/context/evidence transport" is a
+        # description of what the transport covers, not a dependency. Matching
+        # those would force the file onto the consumer list and quietly retire
+        # a real containment rule to accommodate a sentence.
+        #
+        # Still a bounded source-text check: it reports absence of enumerated
+        # substrings inside quoted module specifiers. It is NOT module
+        # resolution and does not prove a dynamic `import(expr)` is impossible.
+        specifier = re.compile(r"""(?:import|export)[^;]*?from\s*["']([^"']+)["']""", re.S)
         for path in scanned:
             text = path.read_text(encoding="utf-8")
+            specifiers = specifier.findall(text)
             for pattern in self.PUBLICATION_IMPORT_PATTERNS:
                 with self.subTest(file=path.name, pattern=pattern):
-                    self.assertNotIn(pattern, text)
+                    self.assertFalse(
+                        [s for s in specifiers if pattern in s],
+                        f"{path.name} imports the publication kernel via {pattern!r}",
+                    )
 
     def test_no_active_python_source_imports_the_writer_gate(self):
         """`writer_gate` is an operator/fixture tool, not a migrator import."""
