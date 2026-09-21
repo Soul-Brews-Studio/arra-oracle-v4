@@ -16,8 +16,22 @@
  * table rather than naming methods individually.
  *
  * Deliberately excludes session-link, lifecycle, trace and search-chunk
- * kernels: they are mid-integration elsewhere and their method lists are
- * still moving (issue #31 scope note).
+ * kernels — NOT because they are mid-integration (as of the v4/ui-33 merge
+ * of 2ce45b4+f600636, `service.ts` imports and wires all four: they carry
+ * core + ownership + recovery lanes, and three of the four already have
+ * frozen contract docs). The real reason is narrower and still holds:
+ *   - Their WRITE surfaces (e.g. anything shaped like publishRevision's
+ *     node/revision/domain-reference envelope, or a lifecycle transition)
+ *     are deep enough that wiring a route for them here, untested against a
+ *     real dataset, risks a transport that accepts and forwards
+ *     wrong-shaped requests nobody has exercised end to end.
+ *   - Their READ surfaces have no enumeration method to browse by (this
+ *     transport is get-by-name/get-by-id throughout; see knowledge.html's
+ *     Configuration tab for the same limitation on the kernels already
+ *     exposed below), so exposing a route here would not yet enable any
+ *     UI or caller to discover a valid id to call it with.
+ * Revisit kernel-by-kernel once each has a route author who has verified it
+ * against a real dataset, not as a batch.
  */
 
 import type { EvidenceReaderBundle, EvidenceWriterBundle } from "../publication/service";
@@ -34,6 +48,17 @@ export type KnowledgeMethod = {
   /** Tokens to the object carrying `workspace_name`. `[]` means top-level. */
   readonly scopePath: readonly string[];
   readonly call: (bundle: KnowledgeBundle, bytes: Uint8Array) => Promise<unknown>;
+  /**
+   * True for a `content:write`-gated method that is defined only on the
+   * writer facade but PERSISTS NOTHING (currently only `answerChat`). The
+   * transport (`knowledge/transport.ts`'s `handleKnowledgeRequest`) opens a
+   * fresh, uncached writer for these instead of the process-lifetime cached
+   * one, and closes it when the request ends -- otherwise the FIRST call
+   * would seize the exclusive dataset writer gate for the rest of the
+   * process over a call that can never durably write. Absent/false means the
+   * ordinary cached-writer path, unchanged for every other write method.
+   */
+  readonly ephemeralWrite?: boolean;
 };
 
 /** A reader bundle's `publication` facade has no `publishRevision`. */
@@ -111,6 +136,26 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
     action: "content:write",
     scopePath: [],
     call: (b, x) => writer(b).context.advanceReadCursor(x),
+  },
+  // #33: evidence-grounded chat (#32). `getContext` is retrieval-only and
+  // lives on the reader facade, matching every other content:read method
+  // above. `answerChat` is defined only on the writer facade (it needs the
+  // injected `model` the writer alone carries) so it must run as
+  // content:write even though it persists nothing -- but "runs as
+  // content:write" here means ONLY the authorization action: `ephemeralWrite`
+  // below tells the transport to open an uncached, per-request writer for it
+  // rather than the process-lifetime cached one every other `content:write`
+  // method shares, precisely because a persisting write must not be blocked
+  // for the rest of the process by a call that persists nothing. With no
+  // model configured at this deployment (`composeKnowledgeAccess` passes
+  // none), it currently always answers `writer_unavailable` -- a real,
+  // honestly-surfaced state, not a fabricated success.
+  getContext: { action: "content:read", scopePath: [], call: (b, x) => b.context.getContext(x) },
+  answerChat: {
+    action: "content:write",
+    scopePath: [],
+    ephemeralWrite: true,
+    call: (b, x) => writer(b).context.answerChat(x),
   },
 
   // ── evidence ─────────────────────────────────────────────────────────

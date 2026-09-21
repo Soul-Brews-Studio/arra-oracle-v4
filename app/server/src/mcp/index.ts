@@ -108,8 +108,25 @@ async function dispatchKnowledgeTool(name: string, args: Record<string, unknown>
     throw new Error("payload workspace_name must match the connected bank");
   }
   if (knowledgeAccess === null) throw new Error("knowledge transport is not configured");
-  const bundle = await knowledgeAccess.getBundle(entry.action);
   const bytes = new TextEncoder().encode(JSON.stringify(payload));
+  // Same gate discipline as the HTTP transport (`knowledge/transport.ts`'s
+  // `handleKnowledgeRequest`): an `ephemeralWrite` method (currently only
+  // `answerChat`) must never share the process-lifetime cached writer, or
+  // `kb_answerChat` would seize the exclusive dataset gate on its first MCP
+  // call and hold it for the rest of the process -- a call that persists
+  // nothing and, at this deployment, cannot even succeed.
+  if (entry.ephemeralWrite === true) {
+    if (knowledgeAccess.getEphemeralWriter === undefined) {
+      throw new Error("knowledge transport cannot open an ephemeral writer");
+    }
+    const opened = await knowledgeAccess.getEphemeralWriter();
+    try {
+      return await entry.call(opened, bytes);
+    } finally {
+      await opened.close().catch(() => undefined);
+    }
+  }
+  const bundle = await knowledgeAccess.getBundle(entry.action);
   return entry.call(bundle, bytes);
 }
 
