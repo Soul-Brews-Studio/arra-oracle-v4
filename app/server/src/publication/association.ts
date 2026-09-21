@@ -1,7 +1,8 @@
 /**
  * Association request grammar, cursor validation and physical row derivation.
  *
- * PURE by contract. No SDK import, and nothing here acquires, retains or
+ * PURE by contract. This module (this barrel plus its `association.*.ts`
+ * siblings) has no SDK import, and nothing in it acquires, retains or
  * returns a connection, table, adapter or owner. Materialization and evidence
  * persistence stay private in service.ts, so this module can be exercised
  * without a dataset and cannot become a back door to one.
@@ -15,8 +16,8 @@
  *
  * Contract: app/docs/contracts/association-evidence-v1.md
  *
- * This file is a thin barrel: one function/type per file under
- * ./association/, re-exported here so every importer keeps working unchanged.
+ * This file is a thin barrel: one function/type per `association.<name>.ts`
+ * sibling file, re-exported here so every importer keeps working unchanged.
  */
 
 export {
@@ -30,21 +31,21 @@ export {
   TERM_FIELDS,
   LINK_FIELDS,
   CURSOR_KEYS,
-} from "./association/constants";
+} from "./association.constants";
 
 export {
   type GetRevisionAssociationsRequest,
   parseGetRevisionAssociations,
-} from "./association/parse-get-revision-associations";
+} from "./association.parseGetRevisionAssociations";
 export {
   type ReconcileRequest,
   parseReconcileRevisionAssociations,
-} from "./association/parse-reconcile-revision-associations";
-export { type ScanCursor } from "./association/types";
+} from "./association.parseReconcileRevisionAssociations";
+export { type ScanCursor } from "./association.types";
 export {
   type ScanDependentsRequest,
   parseScanDependents,
-} from "./association/parse-scan-dependents";
+} from "./association.parseScanDependents";
 
-export { deriveTermRows } from "./association/derive-term-rows";
-export { deriveLinkRows } from "./association/derive-link-rows";
+export { deriveTermRows } from "./association.deriveTermRows";
+export { deriveLinkRows } from "./association.deriveLinkRows";
