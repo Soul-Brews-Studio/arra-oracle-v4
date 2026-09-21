@@ -502,9 +502,13 @@ describe("real persistence: registration, shapes and reads", () => {
     try {
       const parsed = await drive(fixture.datasetRoot, [op("registerPeer", peerRequest(ALPHA))]);
       expect(parsed.writerKeys).toEqual(["close", "context", "publication", "taxonomy"]);
+      // The writer's context facade spreads the full read-method set in
+      // (`{ ...reads, ...writeOnly }`), so this is that union, not just the
+      // eleven write-only methods.
       expect(parsed.contextMethods).toEqual([
         "advanceReadCursor", "appendMessages", "createSessionLink", "createTrace", "getMessage", "getPeer",
-        "getReadCursor", "getSession", "indexRevisionChunks", "joinSession", "listMessages",
+        "getReadCursor", "getRecallEligibility", "getSession", "getTrace", "indexRevisionChunks", "joinSession",
+        "listLifecycleHistory", "listMessages", "listSearchChunks", "listSessionLinks", "listTraceHits",
         "reconcileSearchChunks", "registerPeer", "registerSession", "retireNode", "supersedeNode",
       ]);
       // Only the BUNDLE closes the owner.

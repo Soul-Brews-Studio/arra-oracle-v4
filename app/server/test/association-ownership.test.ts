@@ -69,8 +69,13 @@ const TAXONOMY_WRITE_METHODS =
   "createTerm,createVocabulary,getTerm,getVocabulary,renameTerm,reparentTerm,retireTerm,seedReservedVocabularies";
 const TAXONOMY_READ_METHODS = "getTerm,getVocabulary";
 const CONTEXT_WRITE_METHODS =
-  "advanceReadCursor,appendMessages,getMessage,getPeer,getReadCursor,getSession,joinSession,listMessages,registerPeer,registerSession";
-const CONTEXT_READ_METHODS = "getMessage,getPeer,getReadCursor,getSession,listMessages";
+  "advanceReadCursor,appendMessages,createSessionLink,createTrace,getMessage,getPeer,getReadCursor," +
+  "getRecallEligibility,getSession,getTrace,indexRevisionChunks,joinSession,listLifecycleHistory," +
+  "listMessages,listSearchChunks,listSessionLinks,listTraceHits,reconcileSearchChunks,registerPeer," +
+  "registerSession,retireNode,supersedeNode";
+const CONTEXT_READ_METHODS =
+  "getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace,listLifecycleHistory," +
+  "listMessages,listSearchChunks,listSessionLinks,listTraceHits";
 const LEGACY = {
   publication: { keys: "close,getAcceptedHead,listAcceptedHistory,publishRevision", nested: {} },
   knowledge: {

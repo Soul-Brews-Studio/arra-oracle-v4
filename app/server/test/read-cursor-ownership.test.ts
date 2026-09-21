@@ -62,10 +62,17 @@ const RUNTIME_EXPORTS = [
   "openPublicationReader",
   "openPublicationWriter",
 ].join(",");
-/** §1: ten on every context WRITER facade, five on every context READER facade. */
+/** §1: twenty-two on every context WRITER facade (its own eleven plus the
+ *  eleven reader methods it spreads in), eleven on every context READER
+ *  facade. */
 const CONTEXT_WRITE_METHODS =
-  "advanceReadCursor,appendMessages,getMessage,getPeer,getReadCursor,getSession,joinSession,listMessages,registerPeer,registerSession";
-const CONTEXT_READ_METHODS = "getMessage,getPeer,getReadCursor,getSession,listMessages";
+  "advanceReadCursor,appendMessages,createSessionLink,createTrace,getMessage,getPeer,getReadCursor," +
+  "getRecallEligibility,getSession,getTrace,indexRevisionChunks,joinSession,listLifecycleHistory," +
+  "listMessages,listSearchChunks,listSessionLinks,listTraceHits,reconcileSearchChunks,registerPeer," +
+  "registerSession,retireNode,supersedeNode";
+const CONTEXT_READ_METHODS =
+  "getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace,listLifecycleHistory," +
+  "listMessages,listSearchChunks,listSessionLinks,listTraceHits";
 /** Bundle keys are unchanged by this slice; nested facades never carry close. */
 const CONTEXT_WRITER_KEYS = "close,context,publication,taxonomy";
 const EVIDENCE_WRITER_KEYS = "close,context,evidence,publication,taxonomy";
@@ -392,7 +399,7 @@ afterAll(async () => {
 
 describe.skipIf(!READY)(`context facades across all four factories [${PENDING}]`, () => {
   test(
-    "each writer facade carries ten methods and each reader facade five, with exports unchanged",
+    "each writer facade carries twenty-two methods and each reader facade eleven, with exports unchanged",
     async () => {
       const root = await freshDataset("facades");
       // One writer per gated child: closing releases fd 42, so a second open in

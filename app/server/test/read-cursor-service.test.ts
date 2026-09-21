@@ -106,14 +106,18 @@ describe("real persistence: cursors inside the real gate", () => {
   ];
   const SEED = 4;
 
-  test("BOTH writer factories expose the sixteen context methods, with no nested close", async () => {
+  test("BOTH writer factories expose the twenty-two context methods, with no nested close", async () => {
     for (const factory of ["context", "evidence"] as const) {
       const fixture = await createReadCursorFixture([ALPHA]);
       try {
         const parsed = await drive(fixture.datasetRoot, [], { factory });
+        // The writer's context facade spreads the full read-method set in
+        // (`{ ...reads, ...writeOnly }`), so this is that union, not just the
+        // eleven write-only methods.
         expect(parsed.contextMethods).toEqual([
           "advanceReadCursor", "appendMessages", "createSessionLink", "createTrace", "getMessage", "getPeer",
-          "getReadCursor", "getSession", "indexRevisionChunks", "joinSession", "listMessages",
+          "getReadCursor", "getRecallEligibility", "getSession", "getTrace", "indexRevisionChunks", "joinSession",
+          "listLifecycleHistory", "listMessages", "listSearchChunks", "listSessionLinks", "listTraceHits",
           "reconcileSearchChunks", "registerPeer", "registerSession", "retireNode", "supersedeNode",
         ]);
         expect(parsed.contextHasClose).toBe(false);
