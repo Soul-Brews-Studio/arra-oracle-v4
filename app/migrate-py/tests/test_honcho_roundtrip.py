@@ -26,7 +26,9 @@ from datetime import datetime, timezone
 
 from arra_migrate.honcho_roundtrip.bundle import (
     LOSSY_FIELDS,
+    LOSSY_FIELDS_BY_CONSTRUCTION,
     Tier1Bundle,
+    confirm_fields_absent_from_export,
     export_from_honcho,
     export_to_honcho,
     verify_round_trip,
@@ -40,9 +42,12 @@ def _fixture_bundle() -> Tier1Bundle:
     """Deterministic tier-1 rows in v4's own field shape (see
     arra_migrate.models.{workspace,peer,session,session_peer,message}).
     Includes: Thai content, the four +v4 nullable message columns (role,
-    in_reply_to, read, read_at), and a non-empty session_peers row -- every
-    field this round trip claims is lossy needs at least one non-null
-    source value or the claim is untested, not confirmed.
+    in_reply_to, read, read_at), and non-null session_peers columns
+    (joined_at, left_at, configuration, internal_metadata) -- every field
+    this round trip claims is lossy needs at least one non-null source
+    value in THIS fixture, or `confirm_fields_absent_from_export` correctly
+    refuses to confirm it (see that function's docstring / the 2026-09-21
+    audit finding it fixes).
     """
 
     return Tier1Bundle(
@@ -60,14 +65,17 @@ def _fixture_bundle() -> Tier1Bundle:
         ],
         sessions=[
             {"id": "sess-01", "name": "session-one", "workspace_name": "ws-roundtrip",
-             "is_active": True, "h_metadata": '{"room": "test"}', "internal_metadata": None,
+             "is_active": True, "h_metadata": '{"room": "test"}', "internal_metadata": '{"do_not_forward": true}',
              "configuration": None, "created_at": T0},
         ],
         session_peers=[
+            # nat: still in the session -- exercises configuration/internal_metadata non-null.
             {"workspace_name": "ws-roundtrip", "session_name": "session-one", "peer_name": "nat",
-             "configuration": None, "internal_metadata": None, "joined_at": T0, "left_at": None},
+             "configuration": '{"pinned": true}', "internal_metadata": '{"joined_via": "test"}',
+             "joined_at": T0, "left_at": None},
+            # neo: LEFT the session -- exercises left_at non-null (Principle 1: leaving is a timestamp).
             {"workspace_name": "ws-roundtrip", "session_name": "session-one", "peer_name": "neo",
-             "configuration": None, "internal_metadata": None, "joined_at": T0, "left_at": None},
+             "configuration": None, "internal_metadata": None, "joined_at": T0, "left_at": T0},
         ],
         messages=[
             {"id": 1, "public_id": "msg-pub-01", "workspace_name": "ws-roundtrip",
@@ -101,16 +109,69 @@ class TestExecutedFixtureRoundTrip(unittest.TestCase):
         self.assertEqual(report.problems, [], report.problems)
 
     def test_every_declared_lossy_field_is_actually_confirmed_not_just_asserted(self) -> None:
-        """A LOSSY_FIELDS entry that no fixture ever exercises is a claim,
-        not a measurement. This fails if any entry goes unconfirmed.
+        """A LOSSY_FIELDS entry must be either MEASURED against this
+        fixture's actual data (`lossy_fields_confirmed`) or explicitly
+        marked as unmeasurable by construction (`lossy_fields_by_construction`,
+        exactly `LOSSY_FIELDS_BY_CONSTRUCTION` -- nothing "confirmed" is
+        allowed to double as "by construction", or the distinction is
+        meaningless). Fails if any declared entry is covered by neither.
         """
         export_to_honcho(self.target, self.bundle)
         first = export_from_honcho(self.target, self.workspace_id, self.session_ids)
         second = export_from_honcho(self.target, self.workspace_id, self.session_ids)
         report = verify_round_trip(self.bundle, first, second)
         declared = {(f.table, f.field) for f in LOSSY_FIELDS}
-        missing = declared - report.lossy_fields_confirmed
+        covered = report.lossy_fields_confirmed | report.lossy_fields_by_construction
+        missing = declared - covered
         self.assertEqual(missing, set(), f"declared lossy but never exercised by this fixture: {missing}")
+        overlap = report.lossy_fields_confirmed & report.lossy_fields_by_construction
+        self.assertEqual(overlap, set(), f"a field cannot be both measured and unmeasurable-by-construction: {overlap}")
+        self.assertEqual(report.lossy_fields_by_construction, LOSSY_FIELDS_BY_CONSTRUCTION)
+
+    def test_bite_confirmation_requires_a_real_non_null_source_value(self) -> None:
+        """The 2026-09-21 audit finding, made concrete: an earlier version of
+        `verify_round_trip` added workspaces.mission (and eight other
+        entries) to `lossy_fields_confirmed` UNCONDITIONALLY, regardless of
+        whether the fixture had a real value to lose. Break the precondition
+        here -- null out every optional field the confirmed-by-measurement
+        path depends on -- and prove the SAME check this test suite relies on
+        would then correctly refuse to confirm them.
+        """
+        impoverished = _fixture_bundle()
+        impoverished.workspaces[0]["mission"] = None
+        impoverished.workspaces[0]["internal_metadata"] = None
+        impoverished.sessions[0]["internal_metadata"] = None
+        for sp in impoverished.session_peers:
+            sp["left_at"] = None
+            sp["configuration"] = None
+            sp["internal_metadata"] = None
+
+        confirmed = confirm_fields_absent_from_export(impoverished)
+
+        broken_by_null_source = {
+            ("workspaces", "mission"),
+            ("workspaces", "internal_metadata"),
+            ("sessions", "internal_metadata"),
+            ("session_peers", "left_at"),
+            ("session_peers", "configuration"),
+            ("session_peers", "internal_metadata"),
+        }
+        still_present = confirmed & broken_by_null_source
+        self.assertEqual(still_present, set(), f"confirmed a field with no real source value to lose: {still_present}")
+
+        # And the exhaustiveness test WOULD fail on this impoverished bundle
+        # -- proving the assertion in
+        # test_every_declared_lossy_field_is_actually_confirmed_not_just_asserted
+        # has teeth, not just against a hypothetical, against the exact
+        # mechanism this file uses.
+        export_to_honcho(self.target, impoverished)
+        first = export_from_honcho(self.target, self.workspace_id, self.session_ids)
+        second = export_from_honcho(self.target, self.workspace_id, self.session_ids)
+        report = verify_round_trip(impoverished, first, second)
+        declared = {(f.table, f.field) for f in LOSSY_FIELDS}
+        covered = report.lossy_fields_confirmed | report.lossy_fields_by_construction
+        missing = declared - covered
+        self.assertTrue(missing & broken_by_null_source, f"expected the impoverished bundle to leave {broken_by_null_source} unconfirmed, got missing={missing}")
 
     def test_folded_v4_message_fields_survive_inside_metadata(self) -> None:
         export_to_honcho(self.target, self.bundle)

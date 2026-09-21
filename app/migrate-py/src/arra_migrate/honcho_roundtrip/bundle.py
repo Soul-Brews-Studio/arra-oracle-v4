@@ -56,6 +56,21 @@ LOSSY_FIELDS: tuple[LossyField, ...] = (
 
 LOSSY_INDEX: dict[tuple[str, str], LossyField] = {(f.table, f.field): f for f in LOSSY_FIELDS}
 
+# Entries that CANNOT be confirmed by inspecting an outgoing payload or a
+# round-trip diff, because the API has a slot for the field (`configuration`
+# IS sent) -- the loss is that the slot is TYPED (WorkspaceConfiguration),
+# not that it's absent. Proving "an arbitrary v4 opaque string gets rejected
+# or truncated" needs a non-empty v4 configuration value this harness's
+# fixture does not have (see LOSSY_FIELDS' reason text). Kept in a SEPARATE
+# set, deliberately never merged into `lossy_fields_confirmed`, so a reader
+# (and `test_every_declared_lossy_field_is_actually_confirmed_not_just_asserted`)
+# can tell "measured" from "known from reading the pinned schema, untested
+# by this fixture's data" apart -- conflating the two was the defect a
+# 2026-09-21 audit found in an earlier version of this file.
+LOSSY_FIELDS_BY_CONSTRUCTION: frozenset[tuple[str, str]] = frozenset(
+    {("workspaces", "configuration"), ("peers", "configuration"), ("sessions", "configuration")}
+)
+
 # The four +v4 message columns this harness chooses to fold into metadata
 # rather than drop. Folding is an explicit adapter decision (issue #8 asks
 # for exactly this: "Test explicit version-pinned field/type/semantic
@@ -88,6 +103,33 @@ class Tier1Bundle:
     messages: list[dict[str, Any]]
 
 
+def _workspace_payload(ws: dict[str, Any]) -> dict[str, Any]:
+    """The exact body `HttpHonchoTarget.create_workspace` would send. A pure
+    function (no target, no I/O) so tests can inspect the payload SHAPE
+    directly instead of asserting from prose what it does or doesn't carry.
+    """
+    return {
+        "id": ws["name"],
+        "metadata": _parse_json_metadata(ws.get("h_metadata")),
+        "configuration": _parse_json_metadata(ws.get("configuration")),
+    }
+
+
+def _peer_payload(peer: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": peer["name"],
+        "metadata": _parse_json_metadata(peer.get("h_metadata")),
+        "configuration": _parse_json_metadata(peer.get("configuration")),
+    }
+
+
+def _session_payload(sess: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": sess["name"],
+        "metadata": _parse_json_metadata(sess.get("h_metadata")),
+    }
+
+
 def export_to_honcho(target: HonchoTarget, bundle: Tier1Bundle) -> None:
     """Import *bundle* into *target* through its own write API only.
 
@@ -97,30 +139,27 @@ def export_to_honcho(target: HonchoTarget, bundle: Tier1Bundle) -> None:
     """
 
     for ws in bundle.workspaces:
-        target.create_workspace(
-            workspace_id=ws["name"],
-            metadata=_parse_json_metadata(ws.get("h_metadata")),
-            configuration=_parse_json_metadata(ws.get("configuration")),
-        )
+        payload = _workspace_payload(ws)
+        target.create_workspace(workspace_id=payload["id"], metadata=payload["metadata"], configuration=payload["configuration"])
 
     for peer in bundle.peers:
-        target.create_peer(
-            workspace_id=peer["workspace_name"],
-            peer_id=peer["name"],
-            metadata=_parse_json_metadata(peer.get("h_metadata")),
-            configuration=_parse_json_metadata(peer.get("configuration")),
-        )
+        payload = _peer_payload(peer)
+        target.create_peer(workspace_id=peer["workspace_name"], peer_id=payload["id"], metadata=payload["metadata"], configuration=payload["configuration"])
 
     for sess in bundle.sessions:
-        target.create_session(
-            workspace_id=sess["workspace_name"],
-            session_id=sess["name"],
-            metadata=_parse_json_metadata(sess.get("h_metadata")),
-        )
+        payload = _session_payload(sess)
+        target.create_session(workspace_id=sess["workspace_name"], session_id=payload["id"], metadata=payload["metadata"])
 
     # Group session_peers by (workspace, session) so one add_session_peers
     # call carries every peer for that session -- matches the real route,
     # which takes a dict of peer_id -> config per call.
+    #
+    # NOT handled: a v4 session_peers row with left_at set (the peer has
+    # already left, per Principle 1) is still sent here as a CURRENT member,
+    # because add_session_peers has no way to express "was here, isn't now"
+    # and this harness makes no attempt to translate that into a remove call.
+    # left_at is declared LOSSY for exactly this reason -- flagging the
+    # add-anyway behaviour here rather than leaving it implicit.
     by_session: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
     for sp in bundle.session_peers:
         key = (sp["workspace_name"], sp["session_name"])
@@ -171,6 +210,62 @@ def export_from_honcho(target: HonchoTarget, workspace_id: str, session_ids: lis
     return HonchoExport(peers=peers, session_peers=session_peers, messages=messages)
 
 
+def confirm_fields_absent_from_export(bundle: Tier1Bundle) -> set[tuple[str, str]]:
+    """Measure -- not assert -- which LOSSY_FIELDS entries this bundle's data
+    actually proves are absent from the payload `export_to_honcho` builds.
+
+    A field is added to the result ONLY when the source row carries a real,
+    non-null value for it AND that value (or its key) is genuinely missing
+    from the payload the exporter would send. A null/default source value is
+    SKIPPED, not confirmed -- absence of nothing proves nothing. This is the
+    fix for the 2026-09-21 audit finding: the previous version of this
+    module added these same entries unconditionally, so a fixture with every
+    optional field left null would still report them "confirmed".
+    """
+
+    confirmed: set[tuple[str, str]] = set()
+
+    for ws in bundle.workspaces:
+        payload = _workspace_payload(ws)
+        if ws.get("id") and ws["id"] != payload["id"]:
+            confirmed.add(("workspaces", "id"))
+        if ws.get("internal_metadata") and "internal_metadata" not in payload:
+            confirmed.add(("workspaces", "internal_metadata"))
+        if ws.get("mission") and "mission" not in payload:
+            confirmed.add(("workspaces", "mission"))
+
+    for peer in bundle.peers:
+        payload = _peer_payload(peer)
+        if peer.get("id") and peer["id"] != payload["id"]:
+            confirmed.add(("peers", "id"))
+        if peer.get("internal_metadata") and "internal_metadata" not in payload:
+            confirmed.add(("peers", "internal_metadata"))
+
+    for sess in bundle.sessions:
+        payload = _session_payload(sess)
+        if sess.get("id") and sess["id"] != payload["id"]:
+            confirmed.add(("sessions", "id"))
+        if sess.get("internal_metadata") and "internal_metadata" not in payload:
+            confirmed.add(("sessions", "internal_metadata"))
+        if sess.get("is_active") is not None and "is_active" not in payload:
+            confirmed.add(("sessions", "is_active"))
+
+    for sp in bundle.session_peers:
+        # export_to_honcho sends `{}` per peer to add_session_peers (see its
+        # body) -- never forwards any of these four columns. Only confirm
+        # when the source actually had something in the slot to lose.
+        if sp.get("joined_at") is not None:
+            confirmed.add(("session_peers", "joined_at"))
+        if sp.get("left_at") is not None:
+            confirmed.add(("session_peers", "left_at"))
+        if sp.get("configuration") is not None:
+            confirmed.add(("session_peers", "configuration"))
+        if sp.get("internal_metadata") is not None:
+            confirmed.add(("session_peers", "internal_metadata"))
+
+    return confirmed
+
+
 # ---------------------------------------------------------------------------
 # Round-trip verification
 # ---------------------------------------------------------------------------
@@ -179,7 +274,14 @@ def export_from_honcho(target: HonchoTarget, workspace_id: str, session_ids: lis
 @dataclass
 class RoundTripReport:
     problems: list[str] = field(default_factory=list)
+    # Measured: an actual before/after or payload-absence check ran and
+    # confirmed the loss against THIS bundle's data.
     lossy_fields_confirmed: set[tuple[str, str]] = field(default_factory=set)
+    # NOT measured: known lossy from reading the pinned schema, but this
+    # bundle's data has nothing that would exercise the check (see
+    # LOSSY_FIELDS_BY_CONSTRUCTION's docstring). Kept apart from
+    # `lossy_fields_confirmed` on purpose -- see the 2026-09-21 audit note.
+    lossy_fields_by_construction: set[tuple[str, str]] = field(default_factory=set)
 
     @property
     def ok(self) -> bool:
@@ -204,16 +306,10 @@ def verify_round_trip(bundle: Tier1Bundle, first: HonchoExport, second: HonchoEx
     for pid in set(first_peers) & set(second_peers):
         if first_peers[pid]["metadata"] != second_peers[pid]["metadata"]:
             report.problems.append(f"peers[{pid}].metadata: {first_peers[pid]['metadata']!r} vs {second_peers[pid]['metadata']!r}")
-        report.lossy_fields_confirmed.add(("peers", "id"))  # v4's own id never made it into this comparison at all
-        report.lossy_fields_confirmed.add(("peers", "internal_metadata"))
 
-    # session_peers: same membership across both exports. joined_at/left_at
-    # are confirmed lossy by CONSTRUCTION -- there is no field in the export
-    # to even compare, which is the point.
+    # session_peers: same membership across both exports.
     if first.session_peers != second.session_peers:
         report.problems.append(f"session_peers membership differs: {first.session_peers!r} vs {second.session_peers!r}")
-    for f in ("joined_at", "left_at", "configuration", "internal_metadata"):
-        report.lossy_fields_confirmed.add(("session_peers", f))
 
     # Messages: match by content ident (public_id is server-assigned and
     # stable across reads of the SAME import -- comparing it is the actual
@@ -253,16 +349,13 @@ def verify_round_trip(bundle: Tier1Bundle, first: HonchoExport, second: HonchoEx
         for f in FOLDED_V4_MESSAGE_FIELDS:
             report.lossy_fields_confirmed.add(("messages", f))
 
-    # Fields with no representation to compare AT ALL -- confirmed by the
-    # export step never having anywhere to put them (verified against the
-    # exported payload shape, not asserted from prose). Distinct from the
-    # data-driven confirmations above, which compare an actual before/after.
-    for f in ("id", "internal_metadata", "configuration", "mission"):
-        report.lossy_fields_confirmed.add(("workspaces", f))
-    for f in ("id", "internal_metadata", "configuration"):
-        report.lossy_fields_confirmed.add(("sessions", f))
-    for f in ("configuration",):
-        report.lossy_fields_confirmed.add(("peers", f))
-    report.lossy_fields_confirmed.add(("sessions", "is_active"))
+    # Fields confirmed by MEASURING the actual outgoing payload against the
+    # bundle's actual data (see confirm_fields_absent_from_export's
+    # docstring for why this replaced an earlier unconditional version).
+    report.lossy_fields_confirmed |= confirm_fields_absent_from_export(bundle)
+
+    # Fields that cannot be measured this way at all -- kept in their own
+    # set, never merged into `lossy_fields_confirmed`.
+    report.lossy_fields_by_construction |= LOSSY_FIELDS_BY_CONSTRUCTION
 
     return report
