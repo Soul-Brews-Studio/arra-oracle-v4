@@ -26,6 +26,56 @@ import { ENVELOPE_KEYS, revisionOp, verifyRevisionOp, type RevisionResult } from
 import { ContractError, fail as failGoverned } from "../contracts/errors";
 import { failPublication, isContractError, PublicationError } from "./errors";
 import {
+  encodeReadCursorRow,
+  parseAdvanceReadCursor,
+  parseGetReadCursor,
+  READ_CURSOR_FIELDS,
+  validateWorkspaceRow,
+} from "./read-cursor";
+import {
+  encodeSessionLinkRow,
+  parseCreateSessionLink,
+  parseListSessionLinks,
+  MAX_CYCLE_VISITED,
+  MAX_RESULT_WIRE_BYTES as MAX_SESSION_LINK_WIRE_BYTES,
+  SESSION_LINK_FIELDS,
+  type SessionRelation,
+} from "./session-link";
+import {
+  encodeSupersedeLogRow,
+  parseGetRecallEligibility,
+  parseListLifecycleHistory,
+  parseRetireNode,
+  parseSupersedeNode,
+  SUPERSEDE_LOG_FIELDS,
+} from "./lifecycle";
+import {
+  encodeTraceHitRow,
+  encodeTraceRow,
+  millisToTimestamp,
+  parseCreateTrace,
+  parseGetTrace,
+  parseListTraceHits,
+  timestampToMillis,
+  TRACE_FIELDS,
+  TRACE_HIT_FIELDS,
+  type CreateTraceHitInput,
+} from "./trace";
+import { targetOp } from "../contracts/evidence-v1";
+import {
+  CHUNK_STATUSES,
+  chunkText,
+  deriveChunkId,
+  deriveContentHash,
+  EMBEDDING_DIMENSION,
+  encodeSearchChunkRow,
+  MAX_RECONCILE_REVISIONS,
+  parseIndexRevision,
+  parseListChunks,
+  parseReconcileSearch,
+  SEARCH_CHUNK_FIELDS,
+} from "./search-chunk";
+import {
   classifyMessageDestinationReplay,
   prepareNewMessage,
 } from "../contracts/source-ingestion-v1";
@@ -65,6 +115,20 @@ import {
   SESSION_PEER_FIELDS as SESSION_PEER_FIELDS_LOCAL,
 } from "./context";
 import {
+  contextItemWireBytes,
+  MAX_CONTEXT_WIRE_BYTES,
+  MAX_LINKED_SESSIONS,
+  mapModelFailure,
+  parseAnswerChat,
+  parseGetContext,
+  projectContextItem,
+  renderContextText,
+  type ChatContextItem,
+  type ChatModelFn,
+  type ContextResult,
+  type ExcludedContextItem,
+} from "./chat";
+import {
   encodeTermRow,
   encodeVocabularyRow,
   failTaxonomy,
@@ -94,11 +158,23 @@ import {
   revisionWireBytes,
   microsToTimestamp,
   timestampToMicros,
+  toInt64Text,
   utf8ByteLength,
 } from "./rows";
 import { closeSync } from "node:fs";
 import { connect } from "@lancedb/lancedb";
-import { tableFromArrays } from "apache-arrow";
+import {
+  Field as ArrowField,
+  FixedSizeList,
+  Float32,
+  List as ArrowList,
+  makeData,
+  Table as ArrowTable,
+  tableFromArrays,
+  Utf8,
+  Vector as ArrowVector,
+  vectorFromArray,
+} from "apache-arrow";
 import {
   assertInheritedGate,
   assertLocalDatasetRoot,
@@ -251,6 +327,80 @@ function makeAdapter(connection: Connection, onRelease: () => void): DatasetAdap
       for (const row of rows) {
         for (const key of Object.keys(row)) (columns[key] ??= []).push(row[key]);
       }
+      if (table === "search_chunks_v1") {
+        // MEASURED: blind inference cannot handle this table's two nested/
+        // typed columns.
+        //
+        // `term_ids` is a `list<utf8?>`. Inferring a nested string array
+        // dictionary-encodes it, and the inferrer's own self-check
+        // recursively infers the SAME array a second time to compare types --
+        // two independently-constructed Dictionary instances compare UNEQUAL
+        // to each other even though they are structurally identical, so the
+        // check fails and inference falls through every case to a throw.
+        //
+        // `embedding` is `fixed_size_list<float32?>[384]`, always null on
+        // this write path. A wholly-null column infers as a bare Float64
+        // scalar -- true of ANY wholly-null column here, not just this one.
+        // For a plain scalar physical column (`utf8`, `timestamp[us]`, an
+        // int64) LanceDB casts that inferred Float64 down without complaint;
+        // `last_attempt_at`, `embedded_at` and `error_code` all take that
+        // cast on every row of this write path and are NOT special-cased
+        // below. It is specifically `fixed_size_list` that LanceDB's native
+        // reader refuses a Float64 against (MEASURED error below), because a
+        // fixed-size list's physical layout has no scalar-to-list cast to
+        // fall back on. That is the ONLY reason `embedding` -- and not the
+        // other three all-null columns -- needs the hand-built vector here.
+        //
+        // LanceDB's own returned `tbl.schema()` field types are NOT plain
+        // instances of this package's DataType classes (measured: passing
+        // them into `vectorFromArray` here throws "Unrecognized type 'NONE'"
+        // from this package's own visitor dispatch), so the fix builds the
+        // two types explicitly from this package's constructors instead of
+        // borrowing LanceDB's -- every other column here still goes through
+        // ordinary inference, unchanged.
+        const vecs: Record<string, unknown> = {};
+        for (const [key, values] of Object.entries(columns)) {
+          if (key === "term_ids") {
+            vecs[key] = vectorFromArray(
+              values as never,
+              new ArrowList(new ArrowField("item", new Utf8(), true)) as never,
+            );
+          } else if (key === "embedding") {
+            // `vectorFromArray` builds a ZERO-length child float buffer for an
+            // all-null column (MEASURED: LanceDB's native reader then rejects
+            // it -- "Values length 0 is less than the length (N) multiplied
+            // by the value size (384)" -- because a FixedSizeList's physical
+            // layout always reserves the full N*384 slots regardless of which
+            // ones the validity bitmap marks null). Built by hand instead: a
+            // real (unread) zero-filled float buffer of the right size, with
+            // every row's validity bit left at 0 (null).
+            if (!values.every((value) => value === null || value === undefined)) {
+              // This write path never populates embedding; a populated value
+              // reaching here would need real float validation this branch
+              // deliberately does not implement.
+              failPublication("integrity_failure", "");
+            }
+            const rowCount = values.length;
+            const child = makeData({
+              type: new Float32(),
+              data: new Float32Array(rowCount * EMBEDDING_DIMENSION),
+            });
+            const listData = makeData({
+              type: new FixedSizeList(EMBEDDING_DIMENSION, new ArrowField("item", new Float32(), true)),
+              length: rowCount,
+              nullCount: rowCount,
+              // All-zero bitmap: every bit unset means every row is null.
+              nullBitmap: new Uint8Array(Math.ceil(rowCount / 8)),
+              child,
+            });
+            vecs[key] = new ArrowVector([listData]);
+          } else {
+            vecs[key] = vectorFromArray(values as never);
+          }
+        }
+        await tbl.add(new ArrowTable(vecs as never) as never);
+        return tbl.version();
+      }
       await tbl.add(tableFromArrays(columns as never) as never);
       return tbl.version();
     },
@@ -322,7 +472,7 @@ export type PublishOutcome =
       node_created_at: string;
       revision_created_at: string;
     }
-  | { outcome: "conflict"; reason: "operation_digest" | "node_id" | "stale_base" };
+  | { outcome: "conflict"; reason: "operation_digest" | "node_id" | "stale_base" | "node_retired" };
 
 export type Clock = () => number;
 
@@ -1239,6 +1389,24 @@ function createPublicationWriterService(
     const node = await findNode(writer, workspace, nodeId);
     const storedBase = encoded.base_revision_id;
 
+    // #29 lifecycle refusal, same probe as publishFresh's. A resuming orphan
+    // is still NEW publication for reference purposes (see the docstring
+    // above), and retirement IS present policy: a node that already carries
+    // a terminal event refuses resumption too, not only a fresh append. This
+    // never touches the exact-replay guarantee -- resumeOrphan is reached
+    // only for a revision NOT reachable from the head, i.e. one that was
+    // never successfully published; a publish that succeeded before
+    // retirement returns idempotent earlier in `publish` and never reaches
+    // here.
+    await writer.refresh(SUPERSEDE_LOG);
+    const terminalEvents = await writer.query(
+      SUPERSEDE_LOG,
+      `workspace_name = ${quote(workspace)} AND old_id = ${quote(nodeId)}`,
+      2,
+    );
+    if (terminalEvents.length > 1) failPublication("integrity_failure");
+    if (terminalEvents.length === 1) return { outcome: "conflict", reason: "node_retired" };
+
     if (node === null) {
       if (storedBase !== null) failPublication("integrity_failure");
       // Resume ONLY if no OTHER revision claims this node id.
@@ -1310,6 +1478,20 @@ function createPublicationWriterService(
     const headId = encodedNode.current_revision_id;
     if (typeof headId !== "string") failPublication("integrity_failure");
     if (headId !== baseRevisionId) return { outcome: "conflict", reason: "stale_base" };
+
+    // #29 lifecycle refusal. Reached ONLY when `publish` found no existing
+    // operation for this key -- a genuinely NEW revision, never a replay --
+    // so an already-accepted retry of a publish that predates retirement
+    // still returns idempotent above and never reaches this check.
+    await writer.refresh(SUPERSEDE_LOG);
+    const terminalEvents = await writer.query(
+      SUPERSEDE_LOG,
+      `workspace_name = ${quote(workspace)} AND old_id = ${quote(nodeId)}`,
+      2,
+    );
+    if (terminalEvents.length > 1) failPublication("integrity_failure");
+    if (terminalEvents.length === 1) return { outcome: "conflict", reason: "node_retired" };
+
     await validateNewContent(writer, workspace, nodeId, encodeEnvelopeForChecks(validated, envelope));
     return await appendRevision(validated, envelope, workspace, nodeId, headId, encodedNode, operationId);
   };
@@ -2510,8 +2692,75 @@ const PEERS = "peers";
 const SESSIONS = "sessions";
 const SESSION_PEERS = "session_peers";
 const MESSAGES = "messages";
+const READ_CURSORS = "read_cursors";
+const SESSION_LINKS = "session_links";
+const NODES = "nodes";
+const NODE_REVISIONS = "node_revisions";
+const SUPERSEDE_LOG = "supersede_log";
+const TRACES = "traces";
+const TRACE_HITS = "trace_hits";
+const SEARCH_CHUNKS = "search_chunks_v1";
 
 const INT64_CEILING = 2n ** 63n - 1n;
+
+/** Bounded forward-walk cap for the replacement chain (#29). */
+const MAX_CHAIN_WALK = 1024;
+
+/**
+ * Walk the supersede_log chain forward from `startId`, following each
+ * `new_id` link, up to MAX_CHAIN_WALK hops.
+ *
+ * A repeated id met during the walk is a CYCLE ALREADY PRESENT in stored
+ * data -- corruption, at root. Exceeding the bound without terminating is a
+ * limit, not corruption: the chain may be healthy and merely long. Both are
+ * distinct from the caller's own immediate self-reference, which is checked
+ * before this walk ever runs and reported against the request instead.
+ */
+async function walkForwardChain(
+  adapter: DatasetAdapter,
+  workspace: string,
+  startId: string,
+): Promise<Set<string>> {
+  const visited = new Set<string>();
+  let cursor: string | null = startId;
+  while (cursor !== null) {
+    if (visited.has(cursor)) failPublication("integrity_failure", "");
+    visited.add(cursor);
+    if (visited.size > MAX_CHAIN_WALK) failPublication("limit_exceeded", "");
+    const row = await contextOne(
+      adapter,
+      SUPERSEDE_LOG,
+      `workspace_name = ${quote(workspace)} AND old_id = ${quote(cursor)}`,
+    );
+    if (row === null) break;
+    const encoded = encodeSupersedeLogRow(row);
+    cursor = encoded.new_id as string | null;
+  }
+  return visited;
+}
+
+/**
+ * The "type" a node's head revision carries, derived from the reserved
+ * `type` entry inside `node_revisions.term_snapshot_json`.
+ *
+ * There is no `new_type`/`old_type` origin anywhere else in the schema: this
+ * is the ONLY place that value ever comes from. Publication already enforces
+ * exactly one `type` assignment per accepted revision, so anything else found
+ * here is stored corruption, not a request error.
+ */
+function deriveNodeType(encodedRevision: Record<string, unknown>): string {
+  // Delegates to the accepted snapshot parser rather than re-running the
+  // same string/JSON.parse/array checks locally: a second copy is how the
+  // two drift.
+  const parsed = parseSnapshotArray(encodedRevision.term_snapshot_json, "");
+  const typeEntries = parsed.filter(
+    (entry) => entry !== null && typeof entry === "object" && entry.vocabulary_name_snapshot === RESERVED_TYPE_VOCABULARY,
+  );
+  if (typeEntries.length !== 1) failPublication("integrity_failure", "");
+  const termName = typeEntries[0]!.term_name_snapshot;
+  if (typeof termName !== "string") failPublication("integrity_failure", "");
+  return termName;
+}
 
 /** Exactly one row at a scoped identity, or null. Never a first-match guess. */
 async function contextOne(
@@ -2564,6 +2813,286 @@ async function selectedMaximum(
 
 function contextScope(workspace: string): string {
   return `workspace_name = ${quote(workspace)}`;
+}
+
+/* ------------------------------------------------------------------ *
+ * Read cursors. Shared by the reader and the writer so one definition of
+ * "a valid cursor" serves both; a second definition is how the two drift.
+ * ------------------------------------------------------------------ */
+
+const cursorKey = (workspace: string, peer: string, session: string): string =>
+  `${contextScope(workspace)} AND peer_name = ${quote(peer)} AND session_name = ${quote(session)}`;
+
+/**
+ * Resolve the three request references, IN ORDER, each at its own pointer.
+ *
+ * An inactive session and a departed membership do NOT forbid reading or
+ * recording progress: retained history stays addressable. No membership row is
+ * required for the observing peer and none is created, which is a deliberate
+ * difference from appendMessages, whose active-membership rule is untouched.
+ */
+async function resolveCursorScope(
+  adapter: DatasetAdapter,
+  request: { workspace_name: string; peer_name: string; session_name: string },
+): Promise<void> {
+  await adapter.refresh(WORKSPACES);
+  const workspace = await contextOne(
+    adapter,
+    WORKSPACES,
+    `name = ${quote(request.workspace_name)}`,
+  );
+  if (workspace === null) failPublication("invalid_reference", "/workspace_name");
+  // A malformed retained workspace is corruption at ROOT, decided BEFORE the
+  // peer lookup so a broken workspace is never reported as a missing peer.
+  const validated = validateWorkspaceRow(workspace);
+  if (validated.name !== request.workspace_name) failPublication("integrity_failure", "");
+
+  // Each reference is resolved AND validated before the next is looked up.
+  // Deferring validation would let a malformed peer be reported as a missing
+  // session, which names the wrong reference to whoever has to fix it.
+  await adapter.refresh(PEERS);
+  const peer = await contextOne(
+    adapter,
+    PEERS,
+    `${contextScope(request.workspace_name)} AND name = ${quote(request.peer_name)}`,
+  );
+  if (peer === null) failPublication("invalid_reference", "/peer_name");
+  // Full ACCEPTED encoder: a structurally broken peer is stored corruption
+  // even when this operation would not have read its fields.
+  encodePeerRow(peer);
+
+  await adapter.refresh(SESSIONS);
+  const session = await contextOne(
+    adapter,
+    SESSIONS,
+    `${contextScope(request.workspace_name)} AND name = ${quote(request.session_name)}`,
+  );
+  if (session === null) failPublication("invalid_reference", "/session_name");
+  encodeSessionRow(session);
+}
+
+/**
+ * Select one message by the declared namespace and prove its identity.
+ *
+ * `fault` separates the two callers: a REQUEST pointer that does not resolve
+ * is the caller's invalid_reference, while a RETAINED pointer that does not
+ * resolve is stored corruption at root. Same lookup, different authorship.
+ */
+async function selectCursorMessage(
+  adapter: DatasetAdapter,
+  workspace: string,
+  sessionName: string,
+  publicId: string,
+  fault: { code: "invalid_reference" | "integrity_failure" | "recovery_required"; path: string },
+): Promise<{ encoded: Record<string, unknown>; seq: bigint }> {
+  await adapter.refresh(MESSAGES);
+  // limit 2 inside contextOne: a duplicate public_id is integrity_failure, not
+  // a first-match guess.
+  const row = await contextOne(
+    adapter,
+    MESSAGES,
+    `${contextScope(workspace)} AND public_id = ${quote(publicId)}`,
+  );
+  if (row === null) failPublication(fault.code, fault.path);
+  const encoded = encodeMessageRow(row);
+  // The message must belong to the REQUESTED session. A cross-session pointer
+  // is not a cursor into this session's history.
+  if (encoded.session_name !== sessionName) failPublication(fault.code, fault.path);
+
+  const seqText = encoded.seq_in_session;
+  if (typeof seqText !== "string") failPublication("integrity_failure", "");
+  const seq = BigInt(seqText);
+  // The selected ORDINAL must also be unique and must name the same row.
+  // Only selected identities are checked: no corpus audit, no global max.
+  const bySeq = await contextOne(
+    adapter,
+    MESSAGES,
+    `${contextScope(workspace)} AND session_name = ${quote(sessionName)} AND seq_in_session = ${seq.toString(10)}`,
+  );
+  if (bySeq === null) failPublication("integrity_failure", "");
+  // Exactly ONE SAME row, compared on its FULL encoded state rather than a
+  // single field: a second row agreeing on public_id while differing in its
+  // legacy id, author or content is still two different messages.
+  const bySeqEncoded = encodeMessageRow(bySeq);
+  for (const field of Object.keys(encoded)) {
+    if (bySeqEncoded[field] !== encoded[field]) failPublication("integrity_failure", "");
+  }
+  return { encoded, seq };
+}
+
+/**
+ * The current cursor: raw micros retained alongside the wire row.
+ *
+ * The raw value is kept because the clock comparison is defined on
+ * MICROSECONDS. Comparing rendered millisecond text would silently accept a
+ * regression smaller than the rendering can show.
+ */
+async function selectCursorRow(
+  adapter: DatasetAdapter,
+  request: { workspace_name: string; peer_name: string; session_name: string },
+): Promise<{ encoded: Record<string, unknown>; rawMicros: bigint; seq: bigint | null } | null> {
+  await adapter.refresh(READ_CURSORS);
+  const row = await contextOne(
+    adapter,
+    READ_CURSORS,
+    cursorKey(request.workspace_name, request.peer_name, request.session_name),
+  );
+  if (row === null) return null;
+  const encoded = encodeReadCursorRow(row);
+  const raw = row.last_read_at;
+  const rawMicros =
+    typeof raw === "bigint"
+      ? raw
+      : typeof raw === "number" && Number.isSafeInteger(raw)
+        ? BigInt(raw)
+        : failPublication("integrity_failure", "");
+  let seq: bigint | null = null;
+  if (encoded.last_read_message_id !== null) {
+    // A retained pointer is dereferenced and fully validated. An orphan is
+    // terminal through this interface rather than quietly readable.
+    const message = await selectCursorMessage(
+      adapter,
+      request.workspace_name,
+      request.session_name,
+      encoded.last_read_message_id as string,
+      { code: "integrity_failure", path: "" },
+    );
+    seq = message.seq;
+  }
+  return { encoded, rawMicros, seq };
+}
+
+/* ------------------------------------------------------------------ *
+ * Session links, for `createSessionLink`. Reference resolution and the
+ * cycle walk below are used ONLY by the writer: `listSessionLinks` (the
+ * reader) does its own single-session existence check inline and never
+ * checks acyclicity, so nothing here is shared across the two facades.
+ * ------------------------------------------------------------------ */
+
+/**
+ * Resolve both endpoints, IN ORDER, each at its own pointer. EXISTENCE ONLY:
+ * an inactive or historical session is a legitimate endpoint, exactly as read
+ * cursors permit historical access -- session links are annotations about a
+ * relationship, not new conversational content, so appendMessages' active-
+ * membership rule is deliberately NOT inherited here.
+ */
+async function resolveSessionLinkEndpoints(
+  adapter: DatasetAdapter,
+  workspace: string,
+  fromSession: string,
+  toSession: string,
+): Promise<void> {
+  await adapter.refresh(SESSIONS);
+  const from = await contextOne(
+    adapter,
+    SESSIONS,
+    `${contextScope(workspace)} AND name = ${quote(fromSession)}`,
+  );
+  if (from === null) failPublication("invalid_reference", "/from_session_name");
+  encodeSessionRow(from);
+
+  const to = await contextOne(
+    adapter,
+    SESSIONS,
+    `${contextScope(workspace)} AND name = ${quote(toSession)}`,
+  );
+  if (to === null) failPublication("invalid_reference", "/to_session_name");
+  encodeSessionRow(to);
+}
+
+/**
+ * Bounded FORWARD reachability walk for the `continues`/`forked_from` cycle
+ * policy. `related_to` is symmetric and calls none of this -- no traversal,
+ * no bound.
+ *
+ * Starting from `toSession` (the parent side of the edge being proposed),
+ * follow the SAME directed relation FORWARD over its OUT-edges: at each
+ * visited session, find its own outgoing edge(s) of this relation
+ * (`from_session_name = current`) and continue to their `to_session_name`.
+ * This is reachability FROM `toSession`, not ancestry back to it.
+ *
+ * A session can have MULTIPLE outgoing edges of the same relation, so this is
+ * a real DAG walk, not a single-parent chain: a revisited node is ordinarily
+ * legal (X->Y, X->Z, Y->W, Z->W is a diamond, not a cycle). A proper
+ * gray/black DFS -- explicit stack, not recursion, so a frame can be closed
+ * on its way back out -- tells the two apart:
+ *   - `onPath` (gray) marks a node currently on the active DFS path. Popping
+ *     an unexpanded frame already in `onPath` is a BACK EDGE: a real
+ *     directed cycle, `integrity_failure` at ROOT, whether it was already
+ *     stored or only completed by this request.
+ *   - `black` marks a node whose whole subtree already finished clean.
+ *     Popping an unexpanded frame already in `black` is a legitimate
+ *     reconvergence (a cross/forward edge in a legal DAG) and is silently
+ *     skipped -- it is proven acyclic already.
+ * Reaching `fromSession` itself (the child side of the PROPOSED edge) is a
+ * distinct, simpler fault, checked first: the caller asked for an edge that
+ * closes a loop back onto its own new child. That is the caller's bad
+ * request, not stored corruption, so it is `invalid_request` at
+ * `/to_session_name` -- the same precedent `assertAncestryIsSafe` (taxonomy)
+ * already sets for reaching the term being moved.
+ *
+ * Each out-edge query is itself bounded and UNORDERED (`DatasetAdapter.query`
+ * has no ordering guarantee): a wide node with more than `MAX_CYCLE_VISITED`
+ * out-edges of this relation would let the query return an ARBITRARY subset,
+ * silently defeating the walk on exactly the row that would have proven a
+ * cycle. That is refused outright rather than walked partially, exactly as
+ * `listMessages` never truncates a page it cannot prove complete. 1024
+ * distinct finished (`black`) sessions is allowed; the 1025th, or any single
+ * node with more than 1024 out-edges of this relation, is `limit_exceeded`
+ * at ROOT -- the same bound as reply chains and revision ancestry.
+ */
+async function assertSessionLinkAcyclic(
+  writer: DatasetAdapter,
+  workspace: string,
+  fromSession: string,
+  toSession: string,
+  rel: SessionRelation,
+): Promise<void> {
+  if (rel === "related_to") return;
+  await writer.refresh(SESSION_LINKS);
+  const onPath = new Set<string>();
+  const black = new Set<string>();
+  const stack: Array<{ node: string; expanded: boolean }> = [{ node: toSession, expanded: false }];
+
+  while (stack.length > 0) {
+    const frame = stack.pop()!;
+    if (frame.expanded) {
+      // Closing the frame: this node's whole subtree finished clean.
+      onPath.delete(frame.node);
+      black.add(frame.node);
+      if (black.size > MAX_CYCLE_VISITED) failPublication("limit_exceeded", "");
+      continue;
+    }
+
+    const node = frame.node;
+    // The PROPOSED edge's own child, reached while walking its parent's
+    // reachable set: the request itself would close the loop. Caller fault,
+    // checked before anything that would name this stored state instead.
+    if (node === fromSession) failPublication("invalid_request", "/to_session_name");
+    // On the active path: a genuine back edge, whether it was already
+    // stored or only completed by the edge this request proposes.
+    if (onPath.has(node)) failPublication("integrity_failure", "");
+    // Fully finished already: a legal reconvergence (a DAG diamond), not a
+    // cycle. Silently skipped -- this subtree is proven acyclic already.
+    if (black.has(node)) continue;
+
+    onPath.add(node);
+    stack.push({ node, expanded: true });
+
+    const rows = await writer.query(
+      SESSION_LINKS,
+      `${contextScope(workspace)} AND from_session_name = ${quote(node)} AND relation = ${quote(rel)}`,
+      MAX_CYCLE_VISITED + 1,
+    );
+    // UNORDERED and limited: more rows than the bound means the query itself
+    // cannot prove it saw every out-edge, so this refuses rather than walking
+    // an arbitrary, possibly cycle-hiding, subset.
+    if (rows.length > MAX_CYCLE_VISITED) failPublication("limit_exceeded", "");
+    for (const row of rows) {
+      const encoded = encodeSessionLinkRow(row);
+      stack.push({ node: encoded.to_session_name as string, expanded: false });
+    }
+  }
 }
 
 function createContextReadMethods(reader: DatasetAdapter) {
@@ -2687,6 +3216,460 @@ function createContextReadMethods(reader: DatasetAdapter) {
         next_after_seq: hasMore && page.length > 0 ? page[page.length - 1]!.toString(10) : null,
       };
     },
+
+    async getReadCursor(requestBytes: Uint8Array): Promise<Record<string, unknown> | null> {
+      const request = parseGetReadCursor(requestBytes);
+      await resolveCursorScope(reader, request);
+      // Absent is null, never not_found: there is no cursor to have lost.
+      const current = await selectCursorRow(reader, request);
+      return current === null ? null : current.encoded;
+    },
+
+    /**
+     * Keyset ordered by `id` ONLY -- `created_at` is not unique (one clock
+     * sample per serialized turn can be shared by concurrent creates), so `id`
+     * is the only deterministic total order this table can offer. NOT
+     * chronological order: a stated limitation, not a silent one. `direction`
+     * is exactly one of the two column predicates; a caller wanting both
+     * directions issues two independent paginated reads.
+     */
+    async listSessionLinks(
+      requestBytes: Uint8Array,
+    ): Promise<{ rows: Record<string, unknown>[]; next_cursor: string | null }> {
+      const request = parseListSessionLinks(requestBytes);
+      await requireWorkspace(request.workspace_name);
+      await reader.refresh(SESSIONS);
+      const session = await contextOne(
+        reader,
+        SESSIONS,
+        `${contextScope(request.workspace_name)} AND name = ${quote(request.session_name)}`,
+      );
+      if (session === null) failPublication("invalid_reference", "/session_name");
+
+      await reader.refresh(SESSION_LINKS);
+      const column = request.direction === "from" ? "from_session_name" : "to_session_name";
+      const scope =
+        `${contextScope(request.workspace_name)} AND ${column} = ${quote(request.session_name)}` +
+        (request.cursor === null ? "" : ` AND id > ${quote(request.cursor)}`);
+
+      // KEYSET, never offset: limit+1 detects continuation and the lookahead
+      // row is validated for a duplicate id straddling the page edge.
+      const selected = await reader.orderedProjection(
+        SESSION_LINKS,
+        scope,
+        SESSION_LINK_FIELDS as unknown as string[],
+        { column: "id", ascending: true },
+        request.limit + 1,
+      );
+
+      const ids: string[] = [];
+      for (const row of selected) {
+        const encoded = encodeSessionLinkRow(row);
+        const id = encoded.id as string;
+        if (ids.includes(id)) failPublication("integrity_failure", "");
+        ids.push(id);
+      }
+
+      const page = ids.slice(0, request.limit);
+      const rows: Record<string, unknown>[] = [];
+      // Brackets plus one comma per row: sum + n + 1.
+      let budget = 1;
+      for (const id of page) {
+        const row = await contextOne(
+          reader,
+          SESSION_LINKS,
+          `${contextScope(request.workspace_name)} AND id = ${quote(id)}`,
+        );
+        if (row === null) failPublication("integrity_failure", "");
+        const encoded = encodeSessionLinkRow(row);
+        budget += rowWireBytes(encoded) + 1;
+        if (budget > MAX_SESSION_LINK_WIRE_BYTES) failPublication("limit_exceeded", "");
+        rows.push(encoded);
+      }
+
+      const hasMore = ids.length > request.limit;
+      return {
+        rows,
+        next_cursor: hasMore && page.length > 0 ? page[page.length - 1]! : null,
+      };
+    },
+
+    /**
+     * Binary eligible/ineligible, computed from the latest supersede_log
+     * event for this node, AS OF the highest int64 event id consulted.
+     *
+     * Readers take no clock (#28/#29 measured fact): there is no
+     * `evaluated_at` here, only the witness event id that proves how current
+     * the answer is. A node with no terminal event is eligible as of
+     * whatever THIS WORKSPACE's current maximum id is -- "0" when the
+     * workspace holds no lifecycle events at all, matching the allocator's
+     * own base.
+     *
+     * The witness is scoped to the requesting workspace, deliberately: `id`
+     * is allocated globally (the same max+1 pattern as the message
+     * allocator), so a per-workspace maximum is still monotone and still a
+     * valid watermark. Scoping to `"true"` instead would leak one
+     * workspace's lifecycle event COUNT to a reader holding only another
+     * workspace, and would let a duplicated maximum id anywhere in the
+     * dataset break eligibility reads in every workspace rather than only
+     * the corrupted one.
+     */
+    async getRecallEligibility(
+      requestBytes: Uint8Array,
+    ): Promise<{ eligible: boolean; witness_event_id: string }> {
+      const request = parseGetRecallEligibility(requestBytes);
+      await requireWorkspace(request.workspace_name);
+      await reader.refresh(NODES);
+      const node = await contextOne(
+        reader,
+        NODES,
+        `${contextScope(request.workspace_name)} AND id = ${quote(request.node_id)}`,
+      );
+      if (node === null) failPublication("invalid_reference", "/node_id");
+
+      await reader.refresh(SUPERSEDE_LOG);
+      const maxId = await selectedMaximum(
+        reader,
+        SUPERSEDE_LOG,
+        "id",
+        contextScope(request.workspace_name),
+      );
+      const witness = maxId === null ? 0n : maxId;
+
+      const own = await reader.query(
+        SUPERSEDE_LOG,
+        `${contextScope(request.workspace_name)} AND old_id = ${quote(request.node_id)}`,
+        2,
+      );
+      if (own.length > 1) failPublication("integrity_failure", "");
+
+      return { eligible: own.length === 0, witness_event_id: toInt64Text(witness) };
+    },
+
+    /**
+     * Keyset history of lifecycle events for one node, oldest first.
+     *
+     * limit+1 lookahead detects continuation without paging by position; a
+     * duplicate event id straddling the page is integrity_failure at ROOT,
+     * the same rule listMessages applies to seq_in_session.
+     *
+     * By construction this returns AT MOST ONE row: `old_id` is scoped
+     * unique per workspace, because `writeLifecycleEvent`'s "already_terminal"
+     * check refuses a second event for the same `old_id` (append-only, no
+     * supersede-back). The full keyset shape -- lookahead, per-page duplicate
+     * check, `after_event_id`, `MAX_HISTORY_LIMIT` -- is kept anyway rather
+     * than collapsed to a single lookup, so this method needs no reshaping if
+     * "already_terminal" is ever relaxed to allow more than one event per
+     * node (e.g. widening the scope to `old_id = N OR new_id = N` to show a
+     * node's full lineage), and so it matches every other list method's
+     * shape in this facade rather than being the one exception.
+     */
+    async listLifecycleHistory(
+      requestBytes: Uint8Array,
+    ): Promise<{ rows: Record<string, unknown>[]; next_after_event_id: string | null }> {
+      const request = parseListLifecycleHistory(requestBytes);
+      await requireWorkspace(request.workspace_name);
+      await reader.refresh(NODES);
+      const node = await contextOne(
+        reader,
+        NODES,
+        `${contextScope(request.workspace_name)} AND id = ${quote(request.node_id)}`,
+      );
+      if (node === null) failPublication("invalid_reference", "/node_id");
+
+      await reader.refresh(SUPERSEDE_LOG);
+      const after = request.after_event_id === null ? null : BigInt(request.after_event_id);
+      const scope =
+        `${contextScope(request.workspace_name)} AND old_id = ${quote(request.node_id)}` +
+        (after === null ? "" : ` AND id > ${after.toString(10)}`);
+
+      const selected = await reader.orderedProjection(
+        SUPERSEDE_LOG,
+        scope,
+        ["id"],
+        { column: "id", ascending: true },
+        request.limit + 1,
+      );
+
+      const keys: bigint[] = [];
+      for (const row of selected) {
+        const id = row.id;
+        if (typeof id !== "bigint") failPublication("integrity_failure", "");
+        if (keys.some((k) => k === id)) failPublication("integrity_failure", "");
+        keys.push(id);
+      }
+
+      const page = keys.slice(0, request.limit);
+      const rows: Record<string, unknown>[] = [];
+      for (const id of page) {
+        const row = await contextOne(
+          reader,
+          SUPERSEDE_LOG,
+          `${contextScope(request.workspace_name)} AND old_id = ${quote(request.node_id)} AND id = ${id.toString(10)}`,
+        );
+        if (row === null) failPublication("integrity_failure", "");
+        rows.push(encodeSupersedeLogRow(row));
+      }
+
+      const hasMore = keys.length > request.limit;
+      return {
+        rows,
+        next_after_event_id: hasMore && page.length > 0 ? page[page.length - 1]!.toString(10) : null,
+      };
+    },
+
+    async getTrace(requestBytes: Uint8Array): Promise<Record<string, unknown> | null> {
+      const request = parseGetTrace(requestBytes);
+      await requireWorkspace(request.workspace_name);
+      await reader.refresh(TRACES);
+      const row = await contextOne(
+        reader,
+        TRACES,
+        `${contextScope(request.workspace_name)} AND id = ${quote(request.id)}`,
+      );
+      // Absent is null, NOT not_found: that code's fixed message is node-specific.
+      return row === null ? null : encodeTraceRow(row);
+    },
+
+    async listTraceHits(
+      requestBytes: Uint8Array,
+    ): Promise<{ rows: Record<string, unknown>[]; next_after_position: string | null }> {
+      const request = parseListTraceHits(requestBytes);
+      await requireWorkspace(request.workspace_name);
+      await reader.refresh(TRACES);
+      const trace = await contextOne(
+        reader,
+        TRACES,
+        `${contextScope(request.workspace_name)} AND id = ${quote(request.trace_id)}`,
+      );
+      if (trace === null) failPublication("invalid_reference", "/trace_id");
+
+      await reader.refresh(TRACE_HITS);
+      const after = request.after_position === null ? null : BigInt(request.after_position);
+      const scope =
+        `${contextScope(request.workspace_name)} AND trace_id = ${quote(request.trace_id)}` +
+        (after === null ? "" : ` AND position > ${after.toString(10)}`);
+
+      // KEYSET, never offset: limit+1 detects continuation without paging by
+      // position, which would skip or repeat rows as the table grows.
+      const selected = await reader.orderedProjection(
+        TRACE_HITS,
+        scope,
+        ["position"],
+        { column: "position", ascending: true },
+        request.limit + 1,
+      );
+
+      // TR-3: `position` is contractually contiguous 0..n-1 per trace
+      // (trace.ts). Enforced here against the KEYSET cursor itself -- the
+      // first position seen must be exactly one past `after` (0 when
+      // `after` is absent), and every following one must be its immediate
+      // successor. A gap, a duplicate or an out-of-order value is stored
+      // corruption, never a caller mismatch: integrity_failure at ROOT.
+      const positions: bigint[] = [];
+      let expectedNext = after === null ? 0n : after + 1n;
+      for (const row of selected) {
+        const position = row.position;
+        if (typeof position !== "bigint") failPublication("integrity_failure", "");
+        if (position !== expectedNext) failPublication("integrity_failure", "");
+        positions.push(position);
+        expectedNext = position + 1n;
+      }
+
+      const page = positions.slice(0, request.limit);
+      const rows: Record<string, unknown>[] = [];
+      for (const position of page) {
+        const row = await contextOne(
+          reader,
+          TRACE_HITS,
+          `${contextScope(request.workspace_name)} AND trace_id = ${quote(request.trace_id)} AND position = ${position.toString(10)}`,
+        );
+        if (row === null) failPublication("integrity_failure", "");
+        rows.push(encodeTraceHitRow(row));
+      }
+
+      const hasMore = positions.length > request.limit;
+      return {
+        rows,
+        next_after_position: hasMore && page.length > 0 ? page[page.length - 1]!.toString(10) : null,
+      };
+    },
+
+    /**
+     * Every chunk row PROJECTED for one (revision, chunker_version,
+     * embedding_profile), ordered by chunk_index.
+     *
+     * `indexRevisionChunks` is explicitly re-callable for the SAME revision
+     * under different chunker versions and embedding profiles -- that is
+     * what the chunk id derivation keys on. Scoping on all three of
+     * (revision_id, chunker_version, embedding_profile) is what makes
+     * chunk_index a UNIQUE sort key within the result; scoping on
+     * revision_id alone would merge rows from unrelated indexing runs and
+     * sort on a non-unique key, which cannot support a stable ordering.
+     *
+     * This is a materialized-table read: it says nothing about whether the
+     * revision itself is still accepted, still current, or exists at all. A
+     * caller that needs that guarantee resolves the revision separately
+     * (e.g. through `getRevisionAssociations`) before trusting the rows here.
+     */
+    async listSearchChunks(requestBytes: Uint8Array): Promise<Record<string, unknown>[]> {
+      const request = parseListChunks(requestBytes);
+      await requireWorkspace(request.workspace_name);
+      await reader.refresh(SEARCH_CHUNKS);
+      const rows = await reader.query(
+        SEARCH_CHUNKS,
+        `${contextScope(request.workspace_name)}` +
+          ` AND revision_id = ${quote(request.revision_id)}` +
+          ` AND chunker_version = ${quote(request.chunker_version)}` +
+          ` AND embedding_profile = ${quote(request.embedding_profile)}`,
+      );
+      const encoded = rows.map((row) => encodeSearchChunkRow(row));
+      // chunk_index is unique within this scope (see above), so this is a
+      // real total order, not a tie-break over a non-unique key.
+      encoded.sort((a, b) => {
+        const left = BigInt(a.chunk_index as string);
+        const right = BigInt(b.chunk_index as string);
+        return left < right ? -1 : left > right ? 1 : 0;
+      });
+      // Cumulative wire budget, matching listMessages: over budget fails, it
+      // never truncates, which would hand back a short page indistinguishable
+      // from a real one.
+      let budget = EMPTY_ARRAY_BYTES;
+      for (const row of encoded) {
+        budget += rowWireBytes(row) + 1;
+        if (budget > MAX_RESULT_WIRE_BYTES) failPublication("limit_exceeded", "");
+      }
+      return encoded;
+    },
+
+    /**
+     * Model-free, deterministic context assembly for one requester.
+     *
+     * Retrieval ONLY -- no model call anywhere in this path
+     * (`chat-service.test.ts` proves it with a fail-if-used stub). Candidates
+     * are the requested session's own messages PLUS messages from any
+     * session LINKED from it (`session_links.from_session_name`): #32 asks
+     * for evidence-grounded context, not one session's transcript alone.
+     *
+     * EVERY candidate is authorized INDIVIDUALLY, before it is ever added to
+     * `items`: `requireCurrentMembership` (this file) decides whether
+     * `request.peer_name` may see that item's OWN session, reusing the exact
+     * primitive `appendMessages` already trusts for write-side authorization.
+     * A candidate that fails is EXCLUDED -- never merged into `items` and
+     * filtered afterward; there is no step where its content exists anywhere
+     * but the rejected candidate.
+     *
+     * Coverage is reported STRUCTURALLY: `"partial"` plus one `excluded`
+     * entry per dropped candidate, whenever the requested item count or the
+     * wire budget stops an authorized candidate from being included --
+     * mirroring `listMessages`'s own "refuse or report, never truncate
+     * silently" discipline, surfaced as a field instead of a thrown
+     * `limit_exceeded` because a chat caller needs to keep going with what it
+     * has, not be refused outright.
+     */
+    async getContext(requestBytes: Uint8Array): Promise<ContextResult> {
+      const request = parseGetContext(requestBytes);
+      await requireWorkspace(request.workspace_name);
+      await reader.refresh(SESSIONS);
+      const session = await contextOne(
+        reader,
+        SESSIONS,
+        `${contextScope(request.workspace_name)} AND name = ${quote(request.session_name)}`,
+      );
+      if (session === null) failPublication("invalid_reference", "/session_name");
+      // The requester itself must hold a real, CURRENT membership in the
+      // requested session: context assembly is not a backdoor around the
+      // same membership rule appendMessages already enforces.
+      await requireCurrentMembership(
+        reader,
+        request.workspace_name,
+        request.session_name,
+        request.peer_name,
+        "/peer_name",
+      );
+
+      await reader.refresh(SESSION_LINKS);
+      const linkRows = await reader.orderedProjection(
+        SESSION_LINKS,
+        `${contextScope(request.workspace_name)} AND from_session_name = ${quote(request.session_name)}`,
+        SESSION_LINK_FIELDS as unknown as string[],
+        { column: "id", ascending: true },
+        MAX_LINKED_SESSIONS + 1,
+      );
+      const linkedSessions = new Set<string>();
+      for (const row of linkRows.slice(0, MAX_LINKED_SESSIONS)) {
+        const encodedLink = encodeSessionLinkRow(row);
+        linkedSessions.add(encodedLink.to_session_name as string);
+      }
+      const candidateSessions = [request.session_name, ...linkedSessions];
+
+      await reader.refresh(MESSAGES);
+      type Candidate = { row: Record<string, unknown>; sessionName: string };
+      const candidates: Candidate[] = [];
+      for (const sessionName of candidateSessions) {
+        const rows = await reader.orderedProjection(
+          MESSAGES,
+          `${contextScope(request.workspace_name)} AND session_name = ${quote(sessionName)}`,
+          MESSAGE_FIELDS_LOCAL as unknown as string[],
+          { column: "seq_in_session", ascending: false },
+          request.max_items + 1,
+        );
+        for (const row of rows) candidates.push({ row, sessionName });
+      }
+      // Most recent overall first. `created_at` is the only column
+      // comparable ACROSS sessions; `seq_in_session` is scoped to one
+      // session only. Ties break on `public_id` for a deterministic order.
+      candidates.sort((a, b) => {
+        const av = a.row.created_at;
+        const bv = b.row.created_at;
+        if (typeof av !== "bigint" || typeof bv !== "bigint") failPublication("integrity_failure", "");
+        if (av !== bv) return bv > av ? 1 : -1;
+        const ap = a.row.public_id;
+        const bp = b.row.public_id;
+        if (typeof ap !== "string" || typeof bp !== "string") failPublication("integrity_failure", "");
+        return ap < bp ? -1 : ap > bp ? 1 : 0;
+      });
+
+      const items: ChatContextItem[] = [];
+      const excluded: ExcludedContextItem[] = [];
+      let budget = 2; // brackets, matching the rest of this file's convention.
+      let budgetExceeded = false;
+      for (const candidate of candidates) {
+        const encoded = encodeMessageRow(candidate.row);
+        const publicId = encoded.public_id as string;
+        if (items.length >= request.max_items) {
+          budgetExceeded = true;
+          excluded.push({ reason: "budget_exceeded", session_name: candidate.sessionName, public_id: publicId });
+          continue;
+        }
+        // PER-ITEM authorization, BEFORE this candidate is ever added to
+        // `items` -- never merge-then-filter.
+        try {
+          await requireCurrentMembership(
+            reader,
+            request.workspace_name,
+            candidate.sessionName,
+            request.peer_name,
+            "/peer_name",
+          );
+        } catch (error) {
+          if (!(error instanceof PublicationError) || error.code !== "invalid_reference") throw error;
+          excluded.push({ reason: "unauthorized", session_name: candidate.sessionName, public_id: publicId });
+          continue;
+        }
+        const item = projectContextItem(encoded);
+        const wireBytes = contextItemWireBytes(item) + 1;
+        if (budget + wireBytes > MAX_CONTEXT_WIRE_BYTES) {
+          budgetExceeded = true;
+          excluded.push({ reason: "budget_exceeded", session_name: candidate.sessionName, public_id: publicId });
+          continue;
+        }
+        budget += wireBytes;
+        items.push(item);
+      }
+
+      return { items, coverage: budgetExceeded ? "partial" : "full", excluded };
+    },
   };
 }
 
@@ -2697,16 +3680,286 @@ type ContextRegistration =
   | { outcome: "created" | "already_satisfied"; row: Record<string, unknown> }
   | { outcome: "conflict"; reason: "id" | "name" | "membership" };
 
+/* ------------------------------------------------------------------ *
+ * #29 node lifecycle. Append-only: no restore, no update, no delete, no
+ * supersede-back. supersedeNode and retireNode share every rule except the
+ * successor payload: retireNode calls writeLifecycleEvent directly (classify
+ * then, on a fresh key, write); supersedeNode calls the same two halves
+ * SEPARATELY -- classifyLifecycleReplay first, then its own chain walk and
+ * successor resolution, then writeLifecycleEventFresh -- so a replay is
+ * classified before any successor state is ever read (see
+ * classifyLifecycleReplay's docstring).
+ * ------------------------------------------------------------------ */
+
+type LifecycleSuccessor = { new_id: string; new_revision_id: string; new_title: string };
+
+type LifecycleEventInput = {
+  workspace_name: string;
+  node_id: string;
+  expected_revision_id: string;
+  reason: string;
+  peer_name: string | null;
+  operation_id: string;
+  /** null for a retirement; both ids and the successor's title for a supersession. */
+  successor: LifecycleSuccessor | null;
+};
+
+export type LifecycleWriteOutcome =
+  | { outcome: "accepted"; row: Record<string, unknown> }
+  | { outcome: "idempotent"; row: Record<string, unknown> }
+  | {
+      outcome: "conflict";
+      reason: "operation_digest" | "stale_pin" | "already_terminal";
+      row: Record<string, unknown> | null;
+    };
+
+type LifecycleReplayClassification =
+  | { replay: true; outcome: LifecycleWriteOutcome }
+  | { replay: false };
+
+/**
+ * Classify (workspace_name, operation_id) BEFORE any other state check runs.
+ *
+ * Contract precedence is request validity, WORKSPACE, scoped target
+ * identity, stored integrity, foreign refs, expected value, persistence
+ * (registerNamed's own rule) -- so the workspace check runs first, above the
+ * operation lookup, not after it.
+ *
+ * The operation lookup then OUTRANKS every other state check, exactly as
+ * `publish` states for its own replay (service.ts: "Operation lookup
+ * OUTRANKS a stale current base on an accepted retry"): an exact replay must
+ * return the retained event with no clock sample and no write regardless of
+ * what has happened to the successor, the pin or anything else since the
+ * original write. `supersedeNode` calls this FIRST, before walking the
+ * replacement chain or resolving the successor -- otherwise a successor that
+ * later gains a new revision, grows its chain past the bound, or sits behind
+ * a stored cycle elsewhere would turn an idempotent replay into a thrown
+ * fault, naming a field the caller got right at the time.
+ */
+async function classifyLifecycleReplay(
+  writer: DatasetAdapter,
+  requireWorkspaceRow: (workspace: string) => Promise<void>,
+  input: LifecycleEventInput,
+): Promise<LifecycleReplayClassification> {
+  await requireWorkspaceRow(input.workspace_name);
+  await writer.refresh(SUPERSEDE_LOG);
+  const existingOperation = await contextOne(
+    writer,
+    SUPERSEDE_LOG,
+    `workspace_name = ${quote(input.workspace_name)} AND operation_id = ${quote(input.operation_id)}`,
+  );
+  if (existingOperation === null) return { replay: false };
+
+  const encoded = encodeSupersedeLogRow(existingOperation);
+  const successorMatches =
+    input.successor === null
+      ? encoded.new_id === null && encoded.new_revision_id === null
+      : encoded.new_id === input.successor.new_id &&
+        encoded.new_revision_id === input.successor.new_revision_id;
+  const matches =
+    encoded.old_id === input.node_id &&
+    encoded.old_revision_id === input.expected_revision_id &&
+    encoded.reason === input.reason &&
+    encoded.peer_name === input.peer_name &&
+    successorMatches;
+  // Exact replay: the ORIGINAL row, no clock sample, no write.
+  if (matches) return { replay: true, outcome: { outcome: "idempotent", row: encoded } };
+  // Same key, different payload: a classification, not invalid bytes.
+  return { replay: true, outcome: { outcome: "conflict", reason: "operation_digest", row: encoded } };
+}
+
+/**
+ * The genuinely-fresh half of one retire/supersede event.
+ *
+ * Callable ONLY after `classifyLifecycleReplay` has already returned
+ * `{ replay: false }` for this exact input: everything here assumes no prior
+ * event under this operation_id exists, so it never re-checks that. The pin
+ * (`expected_revision_id`) must equal the node's CURRENT accepted head, else
+ * a returned conflict -- and a node that already carries a terminal event
+ * refuses a second one, append-only.
+ */
+async function writeLifecycleEventFresh(
+  writer: DatasetAdapter,
+  core: OwnerCore,
+  options: { clock: Clock },
+  writeRow: (
+    table: string,
+    row: Record<string, unknown>,
+    verify: () => Promise<Record<string, unknown>>,
+    expected: Record<string, unknown>,
+    fields: readonly string[],
+    wroteAlready: boolean,
+  ) => Promise<Record<string, unknown>>,
+  input: LifecycleEventInput,
+): Promise<LifecycleWriteOutcome> {
+  await writer.refresh(NODES);
+  const node = await contextOne(
+    writer,
+    NODES,
+    `workspace_name = ${quote(input.workspace_name)} AND id = ${quote(input.node_id)}`,
+  );
+  if (node === null) failPublication("invalid_reference", "/node_id");
+  const encodedNode = encodeNodeRow(node);
+  const headId = encodedNode.current_revision_id;
+  if (typeof headId !== "string") failPublication("integrity_failure", "");
+  // The pin is FORCED, not optional: old_revision_id is NOT NULL. A pin that
+  // does not name the current head is an ordinary returned conflict.
+  if (headId !== input.expected_revision_id) {
+    return { outcome: "conflict", reason: "stale_pin", row: null };
+  }
+
+  // Append-only: a node that already carries a terminal event refuses a
+  // second one. The head cannot have moved since (publishRevision refuses
+  // new revisions once this row exists), so the pin above always still
+  // agrees -- this is a SEPARATE business rule, not corruption.
+  const priorEvent = await contextOne(
+    writer,
+    SUPERSEDE_LOG,
+    `workspace_name = ${quote(input.workspace_name)} AND old_id = ${quote(input.node_id)}`,
+  );
+  if (priorEvent !== null) {
+    return { outcome: "conflict", reason: "already_terminal", row: encodeSupersedeLogRow(priorEvent) };
+  }
+
+  await writer.refresh(NODE_REVISIONS);
+  const revision = await contextOne(
+    writer,
+    NODE_REVISIONS,
+    `workspace_name = ${quote(input.workspace_name)} AND id = ${quote(input.expected_revision_id)}` +
+      ` AND node_id = ${quote(input.node_id)}`,
+  );
+  if (revision === null) failPublication("integrity_failure", "");
+  const encodedRevision = encodeRevisionRow(revision);
+  const oldTitle = encodedRevision.title as string;
+  const oldType = deriveNodeType(encodedRevision);
+
+  // Allocation under the gate + serial queue, NOT CAS: the same pattern as
+  // the message id/seq allocator. `id` is int64, so the ceiling is guarded
+  // exactly as there.
+  const maxId = await selectedMaximum(writer, SUPERSEDE_LOG, "id", "true");
+  const nextId = (maxId === null || maxId < 0n ? 0n : maxId) + 1n;
+  if (nextId > INT64_CEILING) failPublication("integrity_failure", "");
+  const idTaken = await writer.query(SUPERSEDE_LOG, `id = ${nextId.toString(10)}`, 2);
+  if (idTaken.length !== 0) failPublication("integrity_failure", "");
+
+  // ONLY a real new event samples the clock.
+  const sampled = options.clock();
+  if (typeof sampled !== "number" || !Number.isSafeInteger(sampled)) {
+    failPublication("invalid_request", "");
+  }
+  const micros = BigInt(sampled) * 1000n;
+  try {
+    // Rendering is the range check: no second copy of the Gregorian grammar.
+    microsToTimestamp(micros);
+  } catch (error) {
+    if (!(error instanceof PublicationError)) throw error;
+    // The clock is operator configuration, not a caller field: ROOT.
+    return failPublication("invalid_request", "");
+  }
+
+  const physical: Record<string, unknown> = {
+    id: nextId,
+    workspace_name: input.workspace_name,
+    old_id: input.node_id,
+    old_revision_id: input.expected_revision_id,
+    old_title: oldTitle,
+    old_type: oldType,
+    // No origin anywhere in the schema for either *_source column.
+    old_source: null,
+    new_id: input.successor === null ? null : input.successor.new_id,
+    new_revision_id: input.successor === null ? null : input.successor.new_revision_id,
+    new_title: input.successor === null ? null : input.successor.new_title,
+    new_source: null,
+    reason: input.reason,
+    peer_name: input.peer_name,
+    superseded_at: micros,
+    operation_id: input.operation_id,
+    h_metadata: null,
+  };
+  const expected = encodeSupersedeLogRow(physical);
+
+  const stored = await writeRow(
+    SUPERSEDE_LOG,
+    physical,
+    async () => {
+      const found = await contextOne(
+        writer,
+        SUPERSEDE_LOG,
+        `workspace_name = ${quote(input.workspace_name)} AND operation_id = ${quote(input.operation_id)}`,
+      );
+      if (found === null) {
+        core.poison();
+        failPublication("recovery_required", "");
+      }
+      return encodeSupersedeLogRow(found);
+    },
+    expected,
+    SUPERSEDE_LOG_FIELDS,
+    false,
+  );
+  return { outcome: "accepted", row: stored };
+}
+
+/**
+ * retireNode's entrypoint: classify the replay first, then run the fresh
+ * path only when no prior event under this operation_id exists. retireNode
+ * has no successor to resolve and no chain to walk, so there is nothing
+ * between the two steps -- unlike supersedeNode, which must classify FIRST
+ * and only then resolve its successor on the genuinely-fresh path.
+ */
+async function writeLifecycleEvent(
+  writer: DatasetAdapter,
+  core: OwnerCore,
+  options: { clock: Clock },
+  requireWorkspaceRow: (workspace: string) => Promise<void>,
+  writeRow: (
+    table: string,
+    row: Record<string, unknown>,
+    verify: () => Promise<Record<string, unknown>>,
+    expected: Record<string, unknown>,
+    fields: readonly string[],
+    wroteAlready: boolean,
+  ) => Promise<Record<string, unknown>>,
+  input: LifecycleEventInput,
+): Promise<LifecycleWriteOutcome> {
+  const classified = await classifyLifecycleReplay(writer, requireWorkspaceRow, input);
+  if (classified.replay) return classified.outcome;
+  return writeLifecycleEventFresh(writer, core, options, writeRow, input);
+}
+
+/**
+ * Field-for-field equality for one ENCODED wire value, array-aware.
+ *
+ * Every other readback comparison in this file compares scalar wire fields
+ * with `!==`, which is correct for them -- none of their encoded values is an
+ * array. `search_chunks_v1.term_ids` is: a bare `!==` would compare two
+ * distinct array references and never agree, which is not what "the row
+ * holds what was asked for" means for a list column.
+ */
+function sameEncodedValue(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((value, index) => value === b[index]);
+  }
+  return a === b;
+}
+
 function createContextWriterService(
   writer: DatasetAdapter,
   core: OwnerCore,
-  options: { clock: Clock; sourceNamespace: string | null },
+  options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn },
 ) {
   const reads = createContextReadMethods(writer);
 
   /** Mutations run on the SHARED queue, so a context failure poisons the
    *  publication and taxonomy facades too, and vice versa. */
   const mutate = <T>(work: () => Promise<T>): Promise<T> => core.serial(work);
+
+  /**
+   * The chat model call, injected exactly like `clock` above: absent means
+   * `answerChat` is unavailable and maps through `mapModelFailure` on first
+   * use, never a network call this module reaches for on its own.
+   */
+  const model: ChatModelFn = options.model ?? (() => mapModelFailure());
 
   const requireWorkspaceRow = async (workspace: string): Promise<void> => {
     await writer.refresh(WORKSPACES);
@@ -2804,6 +4057,1004 @@ function createContextWriterService(
 
   return {
     ...reads,
+
+    /**
+     * Advance one reader's progress, or say precisely why it did not move.
+     *
+     * A conflict is a RETURNED value, not a thrown error: a stale guard or a
+     * backward request is an ordinary answer about state, and it never
+     * poisons. Only real persistence faults do.
+     */
+    advanceReadCursor: (requestBytes: Uint8Array) => {
+      // STATIC validation precedes owner work. Parsing inside the queued turn
+      // would make a malformed request an owner event.
+      const request = parseAdvanceReadCursor(requestBytes);
+      return mutate(async () => {
+        await resolveCursorScope(writer, request);
+
+        // Stored corruption is decided BEFORE any ordinary conflict: a corrupt
+        // cursor must not be reported as a mere guard mismatch.
+        const current = await selectCursorRow(writer, request);
+        const desired = await selectCursorMessage(
+          writer,
+          request.workspace_name,
+          request.session_name,
+          request.last_read_message_id,
+          { code: "invalid_reference", path: "/last_read_message_id" },
+        );
+
+        // 1. Already there: the retained row and its ORIGINAL timestamp, with
+        //    no guard comparison, no clock sample and no mutation.
+        if (current !== null && current.encoded.last_read_message_id === request.last_read_message_id) {
+          return { outcome: "already_satisfied" as const, row: current.encoded };
+        }
+
+        // 2. Backward, by signed BigInt ordinal only. Never lexical, never a
+        //    Number, never a timestamp, and never clamped at zero: retained
+        //    negatives, gaps and values beyond 2^53 all order correctly.
+        if (current !== null && current.seq !== null && desired.seq < current.seq) {
+          return { outcome: "conflict" as const, reason: "backward" as const, row: current.encoded };
+        }
+
+        // 3. The guard names the exact prior state: absent, present-with-null,
+        //    or present-with-pointer. An expected pointer is an old VALUE, so
+        //    it is compared, never dereferenced.
+        const guardMatches =
+          request.expected === null
+            ? current === null
+            : current !== null &&
+              current.encoded.last_read_message_id === request.expected.last_read_message_id;
+        if (!guardMatches) {
+          return {
+            outcome: "conflict" as const,
+            reason: "expected" as const,
+            row: current === null ? null : current.encoded,
+          };
+        }
+
+        // 4. ONLY a real creation or advance samples the clock.
+        const sampled = options.clock();
+        if (typeof sampled !== "number" || !Number.isSafeInteger(sampled)) {
+          failPublication("invalid_request", "");
+        }
+        const micros = BigInt(sampled) * 1000n;
+        let renderedAt: string;
+        try {
+          // Rendering is the range check: no second copy of the Gregorian
+          // grammar, and an unrenderable sample never reaches the store.
+          renderedAt = microsToTimestamp(micros);
+        } catch (error) {
+          if (!(error instanceof PublicationError)) throw error;
+          // The clock is operator configuration, not a caller field: ROOT.
+          return failPublication("invalid_request", "");
+        }
+        if (current !== null && micros < current.rawMicros) {
+          // Raw MICROSECOND comparison. Equality is allowed; a regression
+          // writes nothing at all, including no table version change.
+          failPublication("invalid_request", "");
+        }
+
+        // 5. Build the complete target BEFORE anything is attempted, so no
+        //    conversion can fail after the owner is marked.
+        const target: Record<string, unknown> = {
+          workspace_name: request.workspace_name,
+          peer_name: request.peer_name,
+          session_name: request.session_name,
+          last_read_message_id: request.last_read_message_id,
+          last_read_at: renderedAt,
+        };
+        const physical: Record<string, unknown> = {
+          workspace_name: request.workspace_name,
+          peer_name: request.peer_name,
+          session_name: request.session_name,
+          last_read_message_id: request.last_read_message_id,
+          // Arrow needs BigInt microseconds; a JS Number silently corrupts.
+          last_read_at: micros,
+        };
+        const key = cursorKey(request.workspace_name, request.peer_name, request.session_name);
+
+        await core.contextBoundary("before_write", false);
+        core.markAttemptedWrite();
+        if (current === null) {
+          await core.afterWrite(async () => {
+            await writer.append(READ_CURSORS, [physical]);
+          });
+        } else {
+          const { rowsUpdated } = await core.afterWrite(async () =>
+            writer.updateWhere(
+              READ_CURSORS,
+              // The logical key AND the expected previous pointer. IS NULL is
+              // the only spelling that matches a retained null pointer.
+              `${key} AND last_read_message_id ${
+                current.encoded.last_read_message_id === null
+                  ? "IS NULL"
+                  : `= ${quote(current.encoded.last_read_message_id as string)}`
+              }`,
+              {
+                last_read_message_id: quote(request.last_read_message_id),
+                last_read_at: `CAST(${micros.toString(10)} AS TIMESTAMP(6))`,
+              },
+            ),
+          );
+          // An absent or non-number count is mapped to 0 by the adapter and is
+          // NOT a reliable acknowledgment. Anything but exactly one is
+          // ambiguous after a write attempt: fail-stop, never an expected
+          // conflict, never success.
+          if (rowsUpdated !== 1) {
+            core.poison();
+            failPublication("recovery_required", "");
+          }
+        }
+        await core.contextBoundary("after_write", true);
+
+        const stored = await core.afterWrite(async () => {
+          await writer.refresh(READ_CURSORS);
+          // A duplicate logical key here is corruption and propagates as
+          // integrity_failure; afterWrite poisons on the way out.
+          const row = await contextOne(writer, READ_CURSORS, key);
+          if (row === null) {
+            core.poison();
+            failPublication("recovery_required", "");
+          }
+          const encoded = encodeReadCursorRow(row);
+          for (const field of READ_CURSOR_FIELDS) {
+            // Every physical field, not a count and not a decode: decoding
+            // proves structure and says nothing about what was asked for.
+            if (encoded[field] !== target[field]) {
+              core.poison();
+              failPublication("recovery_required", "");
+            }
+          }
+          // The chosen identity must STILL be the one that was selected.
+          //
+          // AFTER a write the classes differ from before it: a target that has
+          // gone missing, or a well-formed row that is no longer the one
+          // chosen, is ambiguity -- recovery_required. A duplicate or
+          // malformed row is corruption and keeps integrity_failure, which
+          // selectCursorMessage raises from within and afterWrite poisons on
+          // the way out.
+          const again = await selectCursorMessage(
+            writer,
+            request.workspace_name,
+            request.session_name,
+            request.last_read_message_id,
+            { code: "recovery_required", path: "" },
+          );
+          if (again.seq !== desired.seq) {
+            core.poison();
+            failPublication("recovery_required", "");
+          }
+          // FULL encoded identity, not public_id and seq alone: a different
+          // legacy id under the same public_id and ordinal would otherwise
+          // pass the readback unnoticed.
+          for (const field of Object.keys(desired.encoded)) {
+            if (again.encoded[field] !== desired.encoded[field]) {
+              core.poison();
+              failPublication("recovery_required", "");
+            }
+          }
+          return encoded;
+        });
+        await core.contextBoundary("after_readback", true);
+
+        return {
+          outcome: current === null ? ("created" as const) : ("advanced" as const),
+          row: stored,
+        };
+      });
+    },
+
+    /**
+     * Create one session link, or say precisely why it already exists.
+     *
+     * `id` is CALLER-STABLE identity, workspace-scoped: an identical-payload
+     * replay is `already_satisfied` with the retained row, no clock sample, no
+     * write; a changed-payload replay is a RETURNED `conflict`, never thrown,
+     * never poisoning. Self-link is `invalid_request` at `/to_session_name`
+     * for ALL THREE relations, checked before anything else -- a distinct,
+     * simpler rule than the cycle policy that follows it for the two directed
+     * relations.
+     */
+    createSessionLink: (requestBytes: Uint8Array) => {
+      // Self-link is decidable from bytes alone, so it is checked by the
+      // parser, OUTSIDE the queue: parsing inside the queued turn would make
+      // a malformed request an owner event, exactly as appendMessages'
+      // static-validation-first discipline requires.
+      const request = parseCreateSessionLink(requestBytes);
+      return mutate(async () => {
+        await requireWorkspaceRow(request.workspace_name);
+        // Reference resolution, IN ORDER: /from_session_name then
+        // /to_session_name. Existence only -- no active-membership rule.
+        await resolveSessionLinkEndpoints(
+          writer,
+          request.workspace_name,
+          request.from_session_name,
+          request.to_session_name,
+        );
+
+        await writer.refresh(SESSION_LINKS);
+        const byId = await contextOne(
+          writer,
+          SESSION_LINKS,
+          `${contextScope(request.workspace_name)} AND id = ${quote(request.id)}`,
+        );
+        if (byId !== null) {
+          const stored = encodeSessionLinkRow(byId);
+          const samePayload =
+            stored.from_session_name === request.from_session_name &&
+            stored.to_session_name === request.to_session_name &&
+            stored.relation === request.relation &&
+            stored.evidence_ref === request.evidence_ref &&
+            stored.created_by_peer_name === request.created_by_peer_name;
+          // EXACT replay: retained row, no clock sample, no write. A changed
+          // payload under the same id is a RETURNED conflict, never thrown.
+          return samePayload
+            ? { outcome: "already_satisfied" as const, row: stored }
+            : { outcome: "conflict" as const, row: stored };
+        }
+
+        // Cycle policy: PRESERVED for the two directed relations. `related_to`
+        // participates in neither traversal nor bound.
+        await assertSessionLinkAcyclic(
+          writer,
+          request.workspace_name,
+          request.from_session_name,
+          request.to_session_name,
+          request.relation,
+        );
+
+        // ONLY a real creation samples the clock.
+        const sampled = options.clock();
+        if (typeof sampled !== "number" || !Number.isSafeInteger(sampled)) {
+          failPublication("invalid_request", "");
+        }
+        const micros = BigInt(sampled) * 1000n;
+        try {
+          // Rendering is the range check: no second copy of the Gregorian
+          // grammar, and an unrenderable sample never reaches the store. The
+          // clock is operator configuration, not a caller field: invalid
+          // clock output is `invalid_request`, not an integrity fault.
+          microsToTimestamp(micros);
+        } catch (error) {
+          if (!(error instanceof PublicationError)) throw error;
+          return failPublication("invalid_request", "");
+        }
+
+        const physical: Record<string, unknown> = {
+          id: request.id,
+          workspace_name: request.workspace_name,
+          from_session_name: request.from_session_name,
+          to_session_name: request.to_session_name,
+          relation: request.relation,
+          evidence_ref: request.evidence_ref,
+          // Decision 2 forbids a membership requirement and decision 6 calls
+          // this a stored fact, not identity -- existence of the named peer
+          // is DELIBERATELY unverified in v1. A dangling peer name is
+          // storable; no lookup is added.
+          created_by_peer_name: request.created_by_peer_name,
+          // Arrow needs BigInt microseconds; a JS Number silently corrupts.
+          created_at: micros,
+        };
+        const expected = encodeSessionLinkRow(physical);
+
+        const stored = await writeRow(
+          SESSION_LINKS,
+          physical,
+          async () => {
+            const found = await contextOne(
+              writer,
+              SESSION_LINKS,
+              `${contextScope(request.workspace_name)} AND id = ${quote(request.id)}`,
+            );
+            if (found === null) {
+              core.poison();
+              failPublication("recovery_required", "");
+            }
+            return encodeSessionLinkRow(found);
+          },
+          expected,
+          SESSION_LINK_FIELDS,
+          false,
+        );
+        return { outcome: "created" as const, row: stored };
+      });
+    },
+
+    /**
+     * Create one trace AND all of its hits, in ONE serialized turn.
+     *
+     * No multi-table transaction is claimed here: the trace row and each hit
+     * row are separate `writeRow` calls, each with its own before_write /
+     * after_write / after_readback boundary triple. If the trace row lands
+     * and a later hit's `writer.append` or readback genuinely fails (an SDK
+     * or verification fault), that is an ambiguous partial write and
+     * `writeRow` poisons the owner and reports `recovery_required`, exactly
+     * as it already does for any single-row mismatch. But if a hit fails
+     * with a SAFE contract error instead -- `encodeTraceHitRow` raising
+     * `integrity_failure`, say -- `serial`'s classification (this file,
+     * `isSafeContractError`) PRESERVES that code rather than collapsing it:
+     * the owner still poisons (once anything is durable, every later fault
+     * is inside the ambiguous window), but the caller sees `integrity_failure`,
+     * not `recovery_required`. TR-1(b) below moves everything reachable as
+     * `integrity_failure` into a pre-write pass specifically so that class of
+     * fault cannot occur AFTER the trace row lands in the first place. There
+     * is no rollback: rows here are immutable and evidence-preserving by the
+     * same principle as everywhere else in this kernel.
+     */
+    createTrace: (requestBytes: Uint8Array) => {
+      // STATIC validation precedes owner work, as with every other mutation.
+      const request = parseCreateTrace(requestBytes);
+      // Target normalization is PURE and needs only this request's own
+      // workspace_name, kind and target -- all fully known now, so it runs
+      // OUTSIDE mutate(), before owner work starts, per the convention
+      // `advanceReadCursor` states: "STATIC validation precedes owner work.
+      // Parsing inside the queued turn would make a malformed request an
+      // owner event." `target_json` is the exact canonical text that would
+      // be stored; a hit's `target_key` is never persisted (no such column).
+      //
+      // Tokens are `["hits", index]`, NOT `["hits", index, "target"]`:
+      // `targetOp` appends its own `workspace_name` / `target_kind` / `target`
+      // suffixes internally, so the base must be the HIT's own pointer for
+      // the one sub-error that is actually reachable here (a malformed
+      // `target`) to land at `/hits/<i>/target` rather than
+      // `/hits/<i>/target/target`. The other two sub-errors `targetOp` can
+      // raise (`workspace_name`, `target_kind`) are structurally unreachable
+      // at this call site -- `parseCreateTrace` already validated both --
+      // so their mis-anchored pointers are latent, not live.
+      const normalizedHits = request.hits.map((hit, index) => ({
+        input: hit,
+        target_json: targetOp(request.workspace_name, hit.kind, hit.target, ["hits", index]).target_json,
+      }));
+      return mutate(async () => {
+        await requireWorkspaceRow(request.workspace_name);
+
+        if (request.session_name !== null) {
+          await writer.refresh(SESSIONS);
+          const session = await contextOne(
+            writer,
+            SESSIONS,
+            `${contextScope(request.workspace_name)} AND name = ${quote(request.session_name)}`,
+          );
+          if (session === null) failPublication("invalid_reference", "/session_name");
+        }
+        if (request.peer_name !== null) {
+          await writer.refresh(PEERS);
+          const peer = await contextOne(
+            writer,
+            PEERS,
+            `${contextScope(request.workspace_name)} AND name = ${quote(request.peer_name)}`,
+          );
+          if (peer === null) failPublication("invalid_reference", "/peer_name");
+        }
+
+        await writer.refresh(TRACES);
+        const existing = await contextOne(
+          writer,
+          TRACES,
+          `${contextScope(request.workspace_name)} AND id = ${quote(request.id)}`,
+        );
+
+        // A hit-shape mismatch, PER FIELD. Shared by the full-match check
+        // (already_satisfied) and the prefix check (TR-2, below): both need
+        // exactly the same notion of "this stored hit IS the requested one".
+        const hitMatches = (
+          stored: Record<string, unknown>,
+          wanted: { input: CreateTraceHitInput; target_json: string },
+        ): boolean =>
+          stored.kind === wanted.input.kind &&
+          stored.ref === wanted.input.ref &&
+          stored.target === wanted.target_json &&
+          stored.line_start === wanted.input.line_start &&
+          stored.line_end === wanted.input.line_end &&
+          stored.excerpt === wanted.input.excerpt &&
+          stored.content_hash === wanted.input.content_hash &&
+          stored.captured_at === wanted.input.captured_at &&
+          stored.note === wanted.input.note;
+
+        if (existing !== null) {
+          const encodedExisting = encodeTraceRow(existing);
+          await writer.refresh(TRACE_HITS);
+          // Enough rows to tell "exactly N" (possible full match), "fewer
+          // than N" (TR-2: a prior write may be an ambiguous PARTIAL) and
+          // "more than N" (a real payload mismatch) apart -- never a
+          // whole-table audit.
+          const existingHitRows = await writer.query(
+            TRACE_HITS,
+            `${contextScope(request.workspace_name)} AND trace_id = ${quote(request.id)}`,
+            normalizedHits.length + 1,
+          );
+
+          const sameTrace =
+            encodedExisting.name === request.name &&
+            encodedExisting.session_name === request.session_name &&
+            encodedExisting.peer_name === request.peer_name &&
+            encodedExisting.query === request.query &&
+            encodedExisting.mode === request.mode &&
+            encodedExisting.session_id === request.session_id &&
+            encodedExisting.session_from_ts ===
+              (request.session_from_ts === null ? null : millisToTimestamp(timestampToMillis(request.session_from_ts))) &&
+            encodedExisting.session_to_ts ===
+              (request.session_to_ts === null ? null : millisToTimestamp(timestampToMillis(request.session_to_ts))) &&
+            encodedExisting.friction_score === request.friction_score &&
+            encodedExisting.confidence === request.confidence &&
+            encodedExisting.parent_id === request.parent_id &&
+            encodedExisting.prev_id === request.prev_id &&
+            encodedExisting.depth === request.depth &&
+            encodedExisting.status === request.status &&
+            encodedExisting.h_metadata === request.h_metadata &&
+            encodedExisting.internal_metadata === request.internal_metadata;
+
+          const existingHitsEncoded = existingHitRows
+            .map((row) => encodeTraceHitRow(row))
+            .sort((a, b) => Number(BigInt(a.position as string) - BigInt(b.position as string)));
+
+          // TR-3: `position` is contractually contiguous 0..n-1 per trace
+          // (trace.ts). A gap or a duplicate here is STORED corruption, not
+          // a caller mismatch -- decided BEFORE any payload comparison, same
+          // precedence rule this kernel already uses everywhere else for
+          // stored-state faults.
+          for (let i = 0; i < existingHitsEncoded.length; i++) {
+            if (existingHitsEncoded[i]!.position !== String(i)) failPublication("integrity_failure", "");
+          }
+
+          let sameHits = existingHitsEncoded.length === normalizedHits.length;
+          if (sameHits) {
+            for (let i = 0; i < normalizedHits.length; i++) {
+              if (!hitMatches(existingHitsEncoded[i]!, normalizedHits[i]!)) {
+                sameHits = false;
+                break;
+              }
+            }
+          }
+
+          if (sameTrace && sameHits) {
+            return {
+              outcome: "already_satisfied" as const,
+              row: encodedExisting,
+              hits: existingHitsEncoded,
+            };
+          }
+
+          // TR-2: a retry against a FRESH, unpoisoned owner (e.g. after a
+          // process restart) can land here even though the PRIOR attempt was
+          // an ambiguous partial write: the trace row and some PREFIX of its
+          // hits landed, then the process died before the rest were
+          // appended. That is incomplete stored state, not a conflicting
+          // payload, and the byte-identical caller must not be blamed for
+          // it. Recognized ONLY as an EXACT element-wise prefix -- never a
+          // superset, never a reordering -- of the requested hits.
+          if (sameTrace && existingHitsEncoded.length < normalizedHits.length) {
+            let isPrefix = true;
+            for (let i = 0; i < existingHitsEncoded.length; i++) {
+              if (!hitMatches(existingHitsEncoded[i]!, normalizedHits[i]!)) {
+                isPrefix = false;
+                break;
+              }
+            }
+            if (isPrefix) failPublication("recovery_required", "");
+          }
+
+          return { outcome: "conflict" as const, reason: "payload" as const };
+        }
+
+        // A caller-supplied parent_id / prev_id must resolve in THIS
+        // workspace -- invalid_reference at its own pointer. Anything wrong
+        // DEEPER in that chain is stored corruption or a bound, never the
+        // caller's fault, which is why the walk below reports differently.
+        if (request.parent_id !== null) {
+          await writer.refresh(TRACES);
+          const parent = await contextOne(
+            writer,
+            TRACES,
+            `${contextScope(request.workspace_name)} AND id = ${quote(request.parent_id)}`,
+          );
+          if (parent === null) failPublication("invalid_reference", "/parent_id");
+          await assertTraceChain(writer, request.workspace_name, parent, "parent_id");
+        }
+        if (request.prev_id !== null) {
+          await writer.refresh(TRACES);
+          const prev = await contextOne(
+            writer,
+            TRACES,
+            `${contextScope(request.workspace_name)} AND id = ${quote(request.prev_id)}`,
+          );
+          if (prev === null) failPublication("invalid_reference", "/prev_id");
+          await assertTraceChain(writer, request.workspace_name, prev, "prev_id");
+        }
+
+        // TR-1(b): build EVERY physical hit row -- INCLUDING running it
+        // through `encodeTraceHitRow`'s own shape check -- in a PRE-WRITE
+        // pass, before the trace row's `writeRow` call below starts the
+        // ambiguous post-write window. A hit-shaping fault must refuse the
+        // WHOLE request atomically, before anything is durable: once the
+        // trace row lands there is no way to attach hits to it after the
+        // fact (v1 is immutable, no append-hits method), so any hit fault
+        // discovered only INSIDE that window would strand an orphan trace
+        // row and poison the owner for an ordinary caller mistake.
+        const preparedHits = normalizedHits.map(({ input, target_json }, i) => {
+          const physicalHit: Record<string, unknown> = {
+            workspace_name: request.workspace_name,
+            trace_id: request.id,
+            kind: input.kind,
+            ref: input.ref,
+            target: target_json,
+            line_start: input.line_start === null ? null : BigInt(input.line_start),
+            line_end: input.line_end === null ? null : BigInt(input.line_end),
+            excerpt: input.excerpt,
+            content_hash: input.content_hash,
+            captured_at: input.captured_at === null ? null : timestampToMicros(input.captured_at),
+            note: input.note,
+            position: BigInt(i),
+          };
+          return { physicalHit, expectedHit: encodeTraceHitRow(physicalHit) };
+        });
+
+        // ONLY a real creation samples the clock.
+        const sampled = options.clock();
+        if (typeof sampled !== "number" || !Number.isSafeInteger(sampled)) {
+          failPublication("invalid_request", "");
+        }
+        // RAW MILLISECONDS. NOT `* 1000n`: `traces.created_at` is already
+        // milliseconds, unlike the micros columns elsewhere in this kernel.
+        const millis = BigInt(sampled);
+        try {
+          millisToTimestamp(millis);
+        } catch (error) {
+          if (!(error instanceof PublicationError)) throw error;
+          return failPublication("invalid_request", "");
+        }
+
+        const physicalTrace: Record<string, unknown> = {
+          id: request.id,
+          name: request.name,
+          workspace_name: request.workspace_name,
+          session_name: request.session_name,
+          peer_name: request.peer_name,
+          query: request.query,
+          mode: request.mode,
+          session_id: request.session_id,
+          session_from_ts: request.session_from_ts === null ? null : timestampToMillis(request.session_from_ts),
+          session_to_ts: request.session_to_ts === null ? null : timestampToMillis(request.session_to_ts),
+          friction_score: request.friction_score,
+          confidence: request.confidence,
+          parent_id: request.parent_id,
+          prev_id: request.prev_id,
+          depth: BigInt(request.depth),
+          status: request.status,
+          h_metadata: request.h_metadata,
+          internal_metadata: request.internal_metadata,
+          // updated_at === created_at on every fresh write, by construction.
+          created_at: millis,
+          updated_at: millis,
+        };
+        const expectedTrace = encodeTraceRow(physicalTrace);
+        const storedTrace = await writeRow(
+          TRACES,
+          physicalTrace,
+          async () => {
+            const found = await contextOne(
+              writer,
+              TRACES,
+              `${contextScope(request.workspace_name)} AND id = ${quote(request.id)}`,
+            );
+            if (found === null) {
+              core.poison();
+              failPublication("recovery_required", "");
+            }
+            return encodeTraceRow(found);
+          },
+          expectedTrace,
+          TRACE_FIELDS,
+          false,
+        );
+
+        const storedHits: Record<string, unknown>[] = [];
+        for (let i = 0; i < preparedHits.length; i++) {
+          const { physicalHit, expectedHit } = preparedHits[i]!;
+          // `wroteAlready: true` from the FIRST hit onward (and for the very
+          // first one, because the trace row itself already landed): once
+          // anything is durably written this operation is in the ambiguous
+          // window, and a hook failure here must poison rather than merely
+          // refuse the request.
+          const storedHit = await writeRow(
+            TRACE_HITS,
+            physicalHit,
+            async () => {
+              const found = await contextOne(
+                writer,
+                TRACE_HITS,
+                `${contextScope(request.workspace_name)} AND trace_id = ${quote(request.id)} AND position = ${i}`,
+              );
+              if (found === null) {
+                core.poison();
+                failPublication("recovery_required", "");
+              }
+              return encodeTraceHitRow(found);
+            },
+            expectedHit,
+            TRACE_HIT_FIELDS,
+            true,
+          );
+          storedHits.push(storedHit);
+        }
+
+        return { outcome: "created" as const, row: storedTrace, hits: storedHits };
+      });
+    },
+
+    /**
+     * Retire one node: an append-only terminal event with new_id/new_revision_id
+     * both null.
+     *
+     * Idempotency key is (workspace_name, operation_id): an exact replay
+     * returns the retained event with no clock sample and no write; the same
+     * key under a different payload is a returned conflict, never thrown,
+     * never poisoning. The pin (`expected_revision_id`) must equal the node's
+     * CURRENT accepted head, else a returned conflict. Once a node already
+     * carries a terminal event this refuses a second one -- append-only,
+     * never a restore, an update or a supersede-back.
+     */
+    retireNode: (requestBytes: Uint8Array): Promise<LifecycleWriteOutcome> => {
+      const request = parseRetireNode(requestBytes);
+      return mutate(() =>
+        writeLifecycleEvent(writer, core, options, requireWorkspaceRow, writeRow, {
+          workspace_name: request.workspace_name,
+          node_id: request.node_id,
+          expected_revision_id: request.expected_revision_id,
+          reason: request.reason,
+          peer_name: request.peer_name,
+          operation_id: request.operation_id,
+          successor: null,
+        }),
+      );
+    },
+
+    /**
+     * Supersede one node with an already-accepted successor: an append-only
+     * terminal event with new_id/new_revision_id both non-null.
+     *
+     * Same idempotency and pin rules as retireNode. Additionally refuses an
+     * immediate self-reference (new_node_id === node_id) and any multi-hop
+     * cycle the successor's own forward chain would already close back onto
+     * this node -- both invalid_request, decided against the REQUEST, never
+     * thrown as stored corruption.
+     */
+    supersedeNode: (requestBytes: Uint8Array): Promise<LifecycleWriteOutcome> => {
+      const request = parseSupersedeNode(requestBytes);
+      if (request.new_node_id === request.node_id) {
+        failPublication("invalid_request", "/new_node_id");
+      }
+      return mutate(async () => {
+        // `new_title` plays no part in the replay comparison, so the empty
+        // placeholder here is never observed: it is overwritten with the
+        // real value below on the genuinely-fresh path only.
+        const baseInput: LifecycleEventInput = {
+          workspace_name: request.workspace_name,
+          node_id: request.node_id,
+          expected_revision_id: request.expected_revision_id,
+          reason: request.reason,
+          peer_name: request.peer_name,
+          operation_id: request.operation_id,
+          successor: { new_id: request.new_node_id, new_revision_id: request.new_revision_id, new_title: "" },
+        };
+        // Classification FIRST, before ANY successor state is read. An exact
+        // replay must return the retained event with no clock sample and no
+        // write even if the successor has since gained a new revision, its
+        // forward chain has grown past the bound, or a stored cycle exists
+        // somewhere else in the dataset -- none of that may turn an
+        // idempotent replay into a thrown fault.
+        const classified = await classifyLifecycleReplay(writer, requireWorkspaceRow, baseInput);
+        if (classified.replay) return classified.outcome;
+
+        const chain = await walkForwardChain(writer, request.workspace_name, request.new_node_id);
+        if (chain.has(request.node_id)) failPublication("invalid_request", "/new_node_id");
+
+        await writer.refresh(NODES);
+        const successorNode = await contextOne(
+          writer,
+          NODES,
+          `${contextScope(request.workspace_name)} AND id = ${quote(request.new_node_id)}`,
+        );
+        if (successorNode === null) failPublication("invalid_reference", "/new_node_id");
+        const encodedSuccessorNode = encodeNodeRow(successorNode);
+        if (encodedSuccessorNode.current_revision_id !== request.new_revision_id) {
+          failPublication("invalid_reference", "/new_revision_id");
+        }
+
+        await writer.refresh(NODE_REVISIONS);
+        const successorRevision = await contextOne(
+          writer,
+          NODE_REVISIONS,
+          `workspace_name = ${quote(request.workspace_name)} AND id = ${quote(request.new_revision_id)}` +
+            ` AND node_id = ${quote(request.new_node_id)}`,
+        );
+        if (successorRevision === null) failPublication("integrity_failure", "");
+        const encodedSuccessorRevision = encodeRevisionRow(successorRevision);
+
+        return writeLifecycleEventFresh(writer, core, options, writeRow, {
+          ...baseInput,
+          successor: {
+            new_id: request.new_node_id,
+            new_revision_id: request.new_revision_id,
+            new_title: encodedSuccessorRevision.title as string,
+          },
+        });
+      });
+    },
+
+    /**
+     * Derive and persist PENDING search-chunk rows for one accepted revision.
+     *
+     * Embedding is deliberately absent from this path: rows land with
+     * `status: "pending"` and `embedding: null`, and no model or network call
+     * happens anywhere in here. A separate, not-yet-implemented method is the
+     * only thing allowed to populate `embedding`.
+     *
+     * Idempotent by construction: `deriveChunkId` is a pure function of
+     * (revision_id, chunker_version, embedding_profile, chunk_index), so
+     * retrying the same request proposes the SAME ids. There is no operation
+     * journal because none is needed.
+     */
+    indexRevisionChunks: (requestBytes: Uint8Array) => {
+      const request = parseIndexRevision(requestBytes);
+      return mutate(async () => {
+        await requireWorkspaceRow(request.workspace_name);
+        await writer.refresh("nodes");
+        const node = await findNode(writer, request.workspace_name, request.node_id);
+        if (node === null) failPublication("invalid_reference", "/node_id");
+
+        await writer.refresh("node_revisions");
+        const resolved = await selectAcceptedRevision(
+          writer,
+          request.workspace_name,
+          request.node_id,
+          request.revision_id,
+        );
+        if (resolved === null) failPublication("invalid_reference", "/revision_id");
+        const selected = resolved.selected;
+
+        // type_term_id and term_ids come from the revision's OWN immutable
+        // snapshot, exactly like the association evidence path -- never from
+        // a live join against node_revision_terms, which is a derived,
+        // rebuildable projection.
+        const snapshot = parseSnapshotArray(selected.term_snapshot_json, "");
+        let typeTermId: string | null = null;
+        let typeAssignments = 0;
+        const termIds: string[] = [];
+        for (const entry of snapshot) {
+          const termId = (entry as Record<string, unknown>).term_id;
+          if (typeof termId !== "string") failPublication("integrity_failure", "");
+          termIds.push(termId);
+          if ((entry as Record<string, unknown>).vocabulary_name_snapshot === RESERVED_TYPE_VOCABULARY) {
+            typeAssignments += 1;
+            typeTermId = termId;
+          }
+        }
+        // publishRevision requires EXACTLY one reserved-type assignment
+        // before a revision is ever accepted, so an accepted revision with
+        // zero OR MORE THAN ONE here is stored corruption, not a caller
+        // mistake -- 0/1/>1 are each distinguished, matching the standing
+        // rule that a duplicate logical identity is never a tie to break by
+        // taking the last (or first) match.
+        if (typeAssignments !== 1 || typeTermId === null) failPublication("integrity_failure", "");
+
+        const title = selected.title;
+        const body = selected.body;
+        if (typeof title !== "string" || typeof body !== "string") failPublication("integrity_failure", "");
+        const derivedText = `${title}\n\n${body}`;
+        const embeddingProfileName = request.embedding_profile.name;
+        const pieces = chunkText(derivedText);
+
+        const targets = pieces.map((piece, index) => {
+          const chunkIndex = BigInt(index);
+          const id = deriveChunkId(
+            request.revision_id,
+            request.chunker_version,
+            embeddingProfileName,
+            chunkIndex,
+          );
+          const physical: Record<string, unknown> = {
+            id,
+            workspace_name: request.workspace_name,
+            node_id: request.node_id,
+            revision_id: request.revision_id,
+            chunk_index: chunkIndex,
+            text: piece,
+            content_hash: deriveContentHash(piece),
+            chunker_version: request.chunker_version,
+            embedding_profile: embeddingProfileName,
+            // Off the authoritative write path, always: see the method doc.
+            embedding: null,
+            type_term_id: typeTermId,
+            // STALE-ABLE copies of the snapshot at index time, never a live
+            // join and never an authorization substitute: a caller filtering
+            // search_chunks_v1 on these columns is filtering a projection
+            // that can drift from the revision's current term assignments,
+            // not re-deriving access control.
+            term_ids: termIds,
+            observer_peer_name: (selected.observer_peer_name as string | null) ?? null,
+            subject_peer_name: (selected.subject_peer_name as string | null) ?? null,
+            session_name: (selected.session_name as string | null) ?? null,
+            status: CHUNK_STATUSES[0],
+            attempts: 0n,
+            last_attempt_at: null,
+            embedded_at: null,
+            error_code: null,
+          };
+          return { id, physical };
+        });
+
+        await writer.refresh(SEARCH_CHUNKS);
+        const scope =
+          `${contextScope(request.workspace_name)} AND revision_id = ${quote(request.revision_id)}` +
+          ` AND chunker_version = ${quote(request.chunker_version)}` +
+          ` AND embedding_profile = ${quote(embeddingProfileName)}`;
+        const existing = await writer.query(SEARCH_CHUNKS, scope);
+        const existingById = new Map(existing.map((row) => [row.id as string, row]));
+
+        if (targets.length > 0 && targets.every((target) => existingById.has(target.id))) {
+          return {
+            outcome: "already_satisfied" as const,
+            rows: targets.map((target) => encodeSearchChunkRow(existingById.get(target.id)!)),
+          };
+        }
+
+        const toWrite = targets.filter((target) => !existingById.has(target.id));
+
+        await core.contextBoundary("before_write", false);
+        core.markAttemptedWrite();
+        if (toWrite.length > 0) {
+          try {
+            await writer.append(
+              SEARCH_CHUNKS,
+              toWrite.map((target) => target.physical),
+            );
+          } catch {
+            core.poison();
+            failPublication("recovery_required", "");
+          }
+        }
+        await core.contextBoundary("after_write", true);
+
+        const stored = await core.afterWrite(async () => {
+          await writer.refresh(SEARCH_CHUNKS);
+          const rows: Record<string, unknown>[] = [];
+          for (const target of targets) {
+            const row = await contextOne(
+              writer,
+              SEARCH_CHUNKS,
+              // SCOPED on the requesting workspace, like every other context
+              // read in this file (`contextScope`) -- an id match alone does
+              // not prove the row landed in the requesting workspace, and a
+              // cross-workspace id collision would otherwise surface as
+              // `contextOne`'s own `>1` integrity_failure rather than as the
+              // scoping fault it actually is.
+              `${contextScope(request.workspace_name)} AND id = ${quote(target.id)}`,
+            );
+            if (row === null) {
+              core.poison();
+              failPublication("recovery_required", "");
+            }
+            const encoded = encodeSearchChunkRow(row);
+            // COMPARE every physical field against what was asked for,
+            // exactly like the accepted `writeRow` convention: decoding
+            // proves structural validity and says nothing about whether the
+            // row holds what was asked for. This is the ONLY write path in
+            // the kernel that hand-constructs Arrow buffers, which is
+            // precisely the construction that could silently write the
+            // wrong value (e.g. an out-of-range bigint landing as a
+            // different in-range one).
+            const expected = encodeSearchChunkRow(target.physical);
+            for (const field of SEARCH_CHUNK_FIELDS) {
+              // `embedding` is validated inside `encodeSearchChunkRow` but
+              // never appears in its returned wire object -- nothing to
+              // compare here beyond the encode call already having succeeded.
+              if (field === "embedding") continue;
+              if (!sameEncodedValue(encoded[field], expected[field])) {
+                core.poison();
+                failPublication("recovery_required", "");
+              }
+            }
+            rows.push(encoded);
+          }
+          return rows;
+        });
+        await core.contextBoundary("after_readback", true);
+        return { outcome: "indexed" as const, rows: stored };
+      });
+    },
+
+    /**
+     * Bounded sweep, correctness-scoped exception to "no corpus audit".
+     *
+     * "An accepted revision with no chunk row at all" is not expressible as a
+     * predicate over `search_chunks_v1` -- absence is not queryable there --
+     * so this walks the OTHER side (this workspace's nodes, each already
+     * bounded to its own accepted head) and checks each head's chunk rows,
+     * rather than scanning the chunk table for what it does not contain.
+     *
+     * Bounded at `MAX_RECONCILE_REVISIONS` (1024) nodes visited per call,
+     * matching the request grammar's own cap.
+     *
+     * This is NOT a pageable sweep: `visited` is always the first `limit`
+     * node ids in ascending order, so a second call with the same (or a
+     * smaller) `limit` re-visits the SAME nodes rather than advancing.
+     * `exhausted` (`fetched.length <= request.limit`) tells a caller whether
+     * this call saw every node in the workspace, but there is no cursor
+     * field to carry forward when it did not -- a workspace over the cap is
+     * NOT fully reconcilable through this method today. A caller with more
+     * than `MAX_RECONCILE_REVISIONS` nodes in one workspace gets a partial,
+     * always-identical answer, distinguishable from complete via
+     * `exhausted: false`, but with no way to reach the remainder.
+     */
+    reconcileSearchChunks: async (
+      requestBytes: Uint8Array,
+    ): Promise<{
+      visited: number;
+      missing: number;
+      missing_revisions: { node_id: string; revision_id: string }[];
+      stale: number;
+      exhausted: boolean;
+    }> => {
+      const request = parseReconcileSearch(requestBytes);
+      await requireWorkspaceRow(request.workspace_name);
+      await writer.refresh("nodes");
+      const fetched = await writer.orderedProjection(
+        "nodes",
+        contextScope(request.workspace_name),
+        ["id"],
+        { column: "id", ascending: true },
+        request.limit + 1,
+      );
+      const visited = fetched.slice(0, request.limit);
+      // Defensive, not reachable through the grammar today: `request.limit`
+      // is already capped at MAX_RECONCILE_REVISIONS by parseReconcileSearch.
+      // Kept as the documented bounded exception's own hard stop, in case
+      // that cap is ever loosened without this one moving too.
+      if (visited.length > MAX_RECONCILE_REVISIONS) failPublication("limit_exceeded", "");
+
+      await writer.refresh("node_revisions");
+      await writer.refresh(SEARCH_CHUNKS);
+      let missing = 0;
+      let stale = 0;
+      const missingRevisions: { node_id: string; revision_id: string }[] = [];
+      for (const row of visited) {
+        const nodeId = row.id;
+        if (typeof nodeId !== "string") failPublication("integrity_failure", "");
+        const resolved = await selectAcceptedRevision(writer, request.workspace_name, nodeId, null);
+        // Every node reached here was just selected FROM the nodes table, so
+        // an unresolvable head is stored corruption, not a caller mistake.
+        if (resolved === null) failPublication("integrity_failure", "");
+        const revisionId = resolved.head;
+        const present = await writer.query(
+          SEARCH_CHUNKS,
+          `${contextScope(request.workspace_name)} AND revision_id = ${quote(revisionId)}`,
+          1,
+        );
+        if (present.length === 0) {
+          missing += 1;
+          missingRevisions.push({ node_id: nodeId, revision_id: revisionId });
+          continue;
+        }
+        // STALE: chunk rows survive under this node for a revision that is no
+        // longer the accepted head. Never deleted here -- this method only
+        // reports, it does not reclaim.
+        const staleRows = await writer.query(
+          SEARCH_CHUNKS,
+          `${contextScope(request.workspace_name)} AND node_id = ${quote(nodeId)} AND revision_id != ${quote(revisionId)}`,
+          1,
+        );
+        if (staleRows.length > 0) stale += 1;
+      }
+
+      return {
+        visited: visited.length,
+        missing,
+        missing_revisions: missingRevisions,
+        stale,
+        exhausted: fetched.length <= request.limit,
+      };
+    },
 
     registerPeer: (requestBytes: Uint8Array): Promise<ContextRegistration> =>
       mutate(async () => {
@@ -3241,6 +5492,59 @@ function createContextWriterService(
         };
       }
     },
+
+    /**
+     * Compose one chat answer from AUTHORIZED context only.
+     *
+     * `reads.getContext` (this file, above) does the ENTIRE retrieval and
+     * per-item authorization pass FIRST; only its own `items` -- already
+     * filtered -- are ever handed to `renderContextText` and the model. An
+     * excluded item's content is therefore never rendered and never sent,
+     * regardless of what the model call does with its input.
+     *
+     * Never wrapped in `mutate()`/`core.serial`: nothing here is durably
+     * written, so this must not share the write queue or the poison state
+     * that guards actual persistence -- a slow or failing model call must
+     * not block or fail an unrelated append.
+     *
+     * The model call is INJECTED (`model`, above), exactly the way `clock`
+     * is injected on every other writer in this file: a caller under test
+     * supplies a stub, and this method never imports an SDK or reaches a
+     * network itself. See `chat.ts`'s `mapModelFailure` for exactly how a
+     * model exception (timeout, rate limit, truncated stream, anything) is
+     * mapped onto the closed publication code set.
+     */
+    answerChat: (requestBytes: Uint8Array) => {
+      // STATIC validation precedes any retrieval, the same discipline every
+      // other mutation's request parse follows.
+      const request = parseAnswerChat(requestBytes);
+      return (async () => {
+        const contextBytes = new TextEncoder().encode(
+          JSON.stringify({
+            workspace_name: request.workspace_name,
+            peer_name: request.peer_name,
+            session_name: request.session_name,
+            max_items: request.max_items,
+          }),
+        );
+        const contextResult = await reads.getContext(contextBytes);
+        const contextText = renderContextText(contextResult.items);
+        let answer: string;
+        try {
+          answer = await model({ question: request.question, context_text: contextText, items: contextResult.items });
+        } catch {
+          // Neither existing envelope fits a MODEL failure; see chat.ts's
+          // `mapModelFailure` for the documented mapping decision.
+          return mapModelFailure();
+        }
+        return {
+          answer,
+          coverage: contextResult.coverage,
+          excluded: contextResult.excluded,
+          items_used: contextResult.items.map((item) => item.public_id),
+        };
+      })();
+    },
   };
 }
 
@@ -3359,6 +5663,41 @@ async function assertReplyChain(
   }
 }
 
+/**
+ * Walk an existing trace ancestry chain, bounded, over EITHER pointer column.
+ *
+ * Mirrors `assertReplyChain`. `start` is the row the caller's `parent_id` or
+ * `prev_id` ALREADY resolved to -- an invalid_reference at that pointer is
+ * decided by the caller before this runs. Everything found from here on is
+ * STORED state: a broken link, a self-referencing cycle or a chain longer
+ * than 1024 stored ancestors is corruption or a limit, never the caller's
+ * invalid_reference. The row being created is not yet in the table and is
+ * not counted.
+ */
+async function assertTraceChain(
+  adapter: DatasetAdapter,
+  workspace: string,
+  start: Record<string, unknown>,
+  pointerField: "parent_id" | "prev_id",
+): Promise<void> {
+  let cursor: Record<string, unknown> | null = start;
+  let visited = 0;
+  const seen = new Set<string>();
+  while (cursor !== null) {
+    visited += 1;
+    if (visited > 1024) failPublication("limit_exceeded", "");
+    const encoded = encodeTraceRow(cursor);
+    const id = encoded.id as string;
+    if (seen.has(id)) failPublication("integrity_failure", "");
+    seen.add(id);
+    if (encoded.workspace_name !== workspace) failPublication("integrity_failure", "");
+    const next = encoded[pointerField] as string | null;
+    if (next === null) return;
+    cursor = await contextOne(adapter, TRACES, `${contextScope(workspace)} AND id = ${quote(next)}`);
+    if (cursor === null) failPublication("integrity_failure", "");
+  }
+}
+
 export type ContextReaderService = ReturnType<typeof createContextReadMethods>;
 export type ContextWriterService = ReturnType<typeof createContextWriterService>;
 
@@ -3381,6 +5720,10 @@ export type ContextOptions = KnowledgeOptions & {
    *  an authorization credential. */
   sourceNamespace: string | null;
   onContextBoundary?: ContextBoundaryHook;
+  /** #32 chat's model call, injected exactly like `clock`. Absent means
+   *  `answerChat` is unavailable (mapped through `mapModelFailure` on first
+   *  use); never a network call this module makes on its own. */
+  model?: ChatModelFn;
 };
 
 /**
@@ -3462,7 +5805,7 @@ export async function openContextWriter(
     publication: Object.freeze(publicationData),
     taxonomy: Object.freeze(createTaxonomyWriterService(adapter, core, { clock })),
     context: Object.freeze(
-      createContextWriterService(adapter, core, { clock, sourceNamespace: options.sourceNamespace }),
+      createContextWriterService(adapter, core, { clock, sourceNamespace: options.sourceNamespace, model: options.model }),
     ),
     close: core.close,
   });
@@ -4307,7 +6650,7 @@ export async function openEvidenceWriter(
     publication: Object.freeze(publicationData),
     taxonomy: Object.freeze(createTaxonomyWriterService(adapter, core, { clock })),
     context: Object.freeze(
-      createContextWriterService(adapter, core, { clock, sourceNamespace: options.sourceNamespace }),
+      createContextWriterService(adapter, core, { clock, sourceNamespace: options.sourceNamespace, model: options.model }),
     ),
     evidence: Object.freeze(createEvidenceWriterService(adapter, core)),
     close: core.close,

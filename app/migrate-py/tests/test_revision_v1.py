@@ -471,6 +471,11 @@ class IsolationTests(unittest.TestCase):
         # to be reviewed rather than inheriting this.
         TS_ROOT / "publication" / "context.ts",
         TS_ROOT / "publication" / "association.ts",
+        TS_ROOT / "publication" / "read-cursor.ts",
+        TS_ROOT / "publication" / "session-link.ts",
+        TS_ROOT / "publication" / "lifecycle.ts",
+        TS_ROOT / "publication" / "trace.ts",
+        TS_ROOT / "publication" / "search-chunk.ts",
     )
 
     #: The publication kernel is internal: no active source may import it.
@@ -482,9 +487,19 @@ class IsolationTests(unittest.TestCase):
         TS_ROOT / "publication" / "taxonomy.ts",
         TS_ROOT / "publication" / "context.ts",
         TS_ROOT / "publication" / "association.ts",
+        TS_ROOT / "publication" / "read-cursor.ts",
+        TS_ROOT / "publication" / "session-link.ts",
+        TS_ROOT / "publication" / "lifecycle.ts",
+        TS_ROOT / "publication" / "trace.ts",
+        TS_ROOT / "publication" / "search-chunk.ts",
     )
     PUBLICATION_IMPORT_PATTERNS = (
         "publication/association",
+        "publication/read-cursor",
+        "publication/session-link",
+        "publication/lifecycle",
+        "publication/trace",
+        "publication/search-chunk",
         "publication/context",
         "publication/taxonomy",
         "publication/service",
@@ -591,6 +606,11 @@ class IsolationTests(unittest.TestCase):
             'import { failTaxonomy } from "src/publication/taxonomy";\n',
             'import { encodeMessageRow } from "src/publication/context";\n',
             'import * as association from "src/publication/association";\n',
+            'import * as readCursor from "src/publication/read-cursor";\n',
+            'import * as sessionLink from "src/publication/session-link";\n',
+            'import * as lifecycle from "src/publication/lifecycle";\n',
+            'import * as trace from "src/publication/trace";\n',
+            'import * as searchChunk from "src/publication/search-chunk";\n',
             'const a = await import("./publication");\n',
             'const b = await import("../publication");\n',
         )

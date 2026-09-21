@@ -1,0 +1,33 @@
+{
+  "_label": "SYNTHETIC -- hand-authored, not held-out. Exercises harness_runner.py end to end. Numbers here demonstrate the harness's plumbing (null baseline, per-method report, RRF as a scored candidate), not any claim about retrieval quality.",
+  "corpus": {
+    "provenance": {
+      "label": "harness-v1 synthetic smoke corpus",
+      "source": "hand-authored for app/benchmarks, issue #7",
+      "created": "2026-09-21"
+    },
+    "document_ids": ["c1", "c2", "c3", "c4", "c5"]
+  },
+  "qrels": {
+    "provenance": {
+      "label": "harness-v1 synthetic smoke qrels",
+      "source": "hand-authored for app/benchmarks, issue #7",
+      "created": "2026-09-21"
+    },
+    "queries": [
+      {"id": "q1", "relevant_ids": ["c1"], "lang": "en", "purpose": "semantic"},
+      {"id": "q2", "relevant_ids": ["c2"], "lang": "en", "purpose": "semantic"}
+    ]
+  },
+  "methods": {
+    "fts": {
+      "q1": ["c1", "c2", "c3", "c4", "c5"],
+      "q2": ["c1", "c2", "c3", "c4", "c5"]
+    },
+    "vector": {
+      "q1": ["c4", "c5", "c1", "c2", "c3"],
+      "q2": ["c4", "c5", "c2", "c1", "c3"]
+    }
+  },
+  "fuse": [["rrf_fts_vector", "fts", "vector"]]
+}

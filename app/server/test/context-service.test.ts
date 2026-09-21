@@ -502,9 +502,15 @@ describe("real persistence: registration, shapes and reads", () => {
     try {
       const parsed = await drive(fixture.datasetRoot, [op("registerPeer", peerRequest(ALPHA))]);
       expect(parsed.writerKeys).toEqual(["close", "context", "publication", "taxonomy"]);
+      // The writer's context facade spreads the full read-method set in
+      // (`{ ...reads, ...writeOnly }`), so this is that union, not just the
+      // eleven write-only methods.
       expect(parsed.contextMethods).toEqual([
-        "appendMessages", "getMessage", "getPeer", "getSession",
-        "joinSession", "listMessages", "registerPeer", "registerSession",
+        "advanceReadCursor", "answerChat", "appendMessages", "createSessionLink", "createTrace", "getContext",
+        "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
+        "indexRevisionChunks", "joinSession", "listLifecycleHistory", "listMessages", "listSearchChunks",
+        "listSessionLinks", "listTraceHits", "reconcileSearchChunks", "registerPeer", "registerSession",
+        "retireNode", "supersedeNode",
       ]);
       // Only the BUNDLE closes the owner.
       expect(parsed.publicationKeys).not.toContain("close");
@@ -995,7 +1001,7 @@ describe("core: the sourced path and the reader bundle", () => {
     }
   }, 300_000);
 
-  test("the READER bundle has exactly three facades and four context methods", async () => {
+  test("the READER bundle has exactly three facades and twelve context methods", async () => {
     const fixture = await createContextFixture([ALPHA]);
     try {
       const parsed = await drive(
@@ -1004,8 +1010,11 @@ describe("core: the sourced path and the reader bundle", () => {
         { freshReader: true },
       );
       expect(parsed.readerKeys).toEqual(["context", "publication", "taxonomy"]);
-      // Exactly the four READ methods; no mutator reachable from a reader.
-      expect(parsed.readerContextMethods).toEqual(["getMessage", "getPeer", "getSession", "listMessages"]);
+      // Exactly the twelve READ methods; no mutator reachable from a reader.
+      expect(parsed.readerContextMethods).toEqual([
+        "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
+        "listLifecycleHistory", "listMessages", "listSearchChunks", "listSessionLinks", "listTraceHits",
+      ]);
       // A gateless reader works AFTER the writer released its gate.
       expect(parsed.freshReaderPeer.name).toBe("peer-a");
     } finally {
