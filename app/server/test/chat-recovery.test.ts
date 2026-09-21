@@ -49,7 +49,7 @@
  * Ownership: this file and `test/fixtures/chat-v1/recovery/**` only.
  */
 import { afterAll, expect, test } from "bun:test";
-import { constants, existsSync, readFileSync } from "node:fs";
+import { constants, existsSync, readFileSync, readdirSync } from "node:fs";
 import { access, chmod, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -72,10 +72,19 @@ const MISSING: string[] = [
   .filter(([path]) => !existsSync(path!))
   .map(([, label]) => label!);
 
+// `service.ts` is a re-export barrel; the facade methods live in sibling
+// `service.<functionName>.ts` files. These symbols were never exported from
+// the barrel -- they are object-literal members -- so grepping the barrel
+// alone finds nothing. Read the barrel plus its siblings as one unit, which
+// is what "in src/publication/service.ts" always meant behaviourally.
 if (existsSync(SERVICE_MODULE)) {
-  const source = readFileSync(SERVICE_MODULE, "utf8");
+  const publicationDir = join(SERVER_DIR, "src/publication");
+  const source = readdirSync(publicationDir)
+    .filter((name) => name === "service.ts" || /^service\..+\.ts$/.test(name))
+    .map((name) => readFileSync(join(publicationDir, name), "utf8"))
+    .join("\n");
   for (const symbol of ["answerChat", "getContext", "model"]) {
-    if (!source.includes(symbol)) MISSING.push(`${symbol} in src/publication/service.ts`);
+    if (!source.includes(symbol)) MISSING.push(`${symbol} in src/publication/service*.ts`);
   }
 }
 
