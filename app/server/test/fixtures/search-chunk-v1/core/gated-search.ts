@@ -12,6 +12,7 @@ const servicePath = new URL("../../../../src/publication/service.ts", import.met
 const { openContextWriter } = await import(servicePath);
 const { rawRows } = await import(new URL("../../../../src/publication/storage.ts", import.meta.url).pathname);
 const { connect } = await import("@lancedb/lancedb");
+const { tableFromArrays } = await import("apache-arrow");
 
 let harnessConn: Awaited<ReturnType<typeof connect>> | null = null;
 const harnessTable = async (name: string) => {
@@ -82,6 +83,25 @@ const harness: Record<string, (request: any) => Promise<unknown>> = {
       }
       return out;
     });
+  },
+  /**
+   * Rewrite ONE revision's `term_snapshot_json`, preserving every other
+   * physical column losslessly. Test-side dataset surgery only: a snapshot
+   * carrying two `type` assignments can never be produced through
+   * `publishRevision` itself (it enforces exactly one), so reaching that
+   * stored state for the F8 test requires planting it directly.
+   */
+  async corruptTermSnapshot(request) {
+    const tbl = await harnessTable("node_revisions");
+    const rows = await rawRows(tbl, `id = '${request.revision_id}'`);
+    if (rows.length !== 1) throw new Error(`expected 1 revision, found ${rows.length}`);
+    const copy: Record<string, unknown> = { ...(rows[0] as Record<string, unknown>) };
+    await tbl.delete(`id = '${request.revision_id}'`);
+    copy.term_snapshot_json = request.term_snapshot_json;
+    const columns: Record<string, unknown[]> = {};
+    for (const key of Object.keys(copy)) columns[key] = [copy[key]];
+    await tbl.add(tableFromArrays(columns as never) as never);
+    return { corrupted: request.revision_id };
   },
 };
 

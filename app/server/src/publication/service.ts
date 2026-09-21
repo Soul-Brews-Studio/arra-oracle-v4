@@ -43,6 +43,7 @@ import {
   parseIndexRevision,
   parseListChunks,
   parseReconcileSearch,
+  SEARCH_CHUNK_FIELDS,
 } from "./search-chunk";
 import {
   classifyMessageDestinationReplay,
@@ -294,8 +295,16 @@ function makeAdapter(connection: Connection, onRelease: () => void): DatasetAdap
         //
         // `embedding` is `fixed_size_list<float32?>[384]`, always null on
         // this write path. A wholly-null column infers as a bare Float64
-        // scalar, which LanceDB then refuses against the real physical
-        // column.
+        // scalar -- true of ANY wholly-null column here, not just this one.
+        // For a plain scalar physical column (`utf8`, `timestamp[us]`, an
+        // int64) LanceDB casts that inferred Float64 down without complaint;
+        // `last_attempt_at`, `embedded_at` and `error_code` all take that
+        // cast on every row of this write path and are NOT special-cased
+        // below. It is specifically `fixed_size_list` that LanceDB's native
+        // reader refuses a Float64 against (MEASURED error below), because a
+        // fixed-size list's physical layout has no scalar-to-list cast to
+        // fall back on. That is the ONLY reason `embedding` -- and not the
+        // other three all-null columns -- needs the hand-built vector here.
         //
         // LanceDB's own returned `tbl.schema()` field types are NOT plain
         // instances of this package's DataType classes (measured: passing
@@ -2942,7 +2951,16 @@ function createContextReadMethods(reader: DatasetAdapter) {
     },
 
     /**
-     * Every chunk row PROJECTED for one revision, ordered by chunk_index.
+     * Every chunk row PROJECTED for one (revision, chunker_version,
+     * embedding_profile), ordered by chunk_index.
+     *
+     * `indexRevisionChunks` is explicitly re-callable for the SAME revision
+     * under different chunker versions and embedding profiles -- that is
+     * what the chunk id derivation keys on. Scoping on all three of
+     * (revision_id, chunker_version, embedding_profile) is what makes
+     * chunk_index a UNIQUE sort key within the result; scoping on
+     * revision_id alone would merge rows from unrelated indexing runs and
+     * sort on a non-unique key, which cannot support a stable ordering.
      *
      * This is a materialized-table read: it says nothing about whether the
      * revision itself is still accepted, still current, or exists at all. A
@@ -2955,16 +2973,27 @@ function createContextReadMethods(reader: DatasetAdapter) {
       await reader.refresh(SEARCH_CHUNKS);
       const rows = await reader.query(
         SEARCH_CHUNKS,
-        `${contextScope(request.workspace_name)} AND revision_id = ${quote(request.revision_id)}`,
+        `${contextScope(request.workspace_name)}` +
+          ` AND revision_id = ${quote(request.revision_id)}` +
+          ` AND chunker_version = ${quote(request.chunker_version)}` +
+          ` AND embedding_profile = ${quote(request.embedding_profile)}`,
       );
       const encoded = rows.map((row) => encodeSearchChunkRow(row));
-      // LanceDB gives no ordering guarantee; chunk_index is the only thing a
-      // caller can rely on to reassemble the original sequence.
+      // chunk_index is unique within this scope (see above), so this is a
+      // real total order, not a tie-break over a non-unique key.
       encoded.sort((a, b) => {
         const left = BigInt(a.chunk_index as string);
         const right = BigInt(b.chunk_index as string);
         return left < right ? -1 : left > right ? 1 : 0;
       });
+      // Cumulative wire budget, matching listMessages: over budget fails, it
+      // never truncates, which would hand back a short page indistinguishable
+      // from a real one.
+      let budget = EMPTY_ARRAY_BYTES;
+      for (const row of encoded) {
+        budget += rowWireBytes(row) + 1;
+        if (budget > MAX_RESULT_WIRE_BYTES) failPublication("limit_exceeded", "");
+      }
       return encoded;
     },
   };
@@ -2976,6 +3005,22 @@ export type ContextBoundaryHook = (boundary: ContextBoundary) => Promise<void>;
 type ContextRegistration =
   | { outcome: "created" | "already_satisfied"; row: Record<string, unknown> }
   | { outcome: "conflict"; reason: "id" | "name" | "membership" };
+
+/**
+ * Field-for-field equality for one ENCODED wire value, array-aware.
+ *
+ * Every other readback comparison in this file compares scalar wire fields
+ * with `!==`, which is correct for them -- none of their encoded values is an
+ * array. `search_chunks_v1.term_ids` is: a bare `!==` would compare two
+ * distinct array references and never agree, which is not what "the row
+ * holds what was asked for" means for a list column.
+ */
+function sameEncodedValue(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((value, index) => value === b[index]);
+  }
+  return a === b;
+}
 
 function createContextWriterService(
   writer: DatasetAdapter,
@@ -3308,19 +3353,24 @@ function createContextWriterService(
         // rebuildable projection.
         const snapshot = parseSnapshotArray(selected.term_snapshot_json, "");
         let typeTermId: string | null = null;
+        let typeAssignments = 0;
         const termIds: string[] = [];
         for (const entry of snapshot) {
           const termId = (entry as Record<string, unknown>).term_id;
           if (typeof termId !== "string") failPublication("integrity_failure", "");
           termIds.push(termId);
           if ((entry as Record<string, unknown>).vocabulary_name_snapshot === RESERVED_TYPE_VOCABULARY) {
+            typeAssignments += 1;
             typeTermId = termId;
           }
         }
         // publishRevision requires EXACTLY one reserved-type assignment
-        // before a revision is ever accepted, so an accepted revision without
-        // one here is stored corruption, not a caller mistake.
-        if (typeTermId === null) failPublication("integrity_failure", "");
+        // before a revision is ever accepted, so an accepted revision with
+        // zero OR MORE THAN ONE here is stored corruption, not a caller
+        // mistake -- 0/1/>1 are each distinguished, matching the standing
+        // rule that a duplicate logical identity is never a tie to break by
+        // taking the last (or first) match.
+        if (typeAssignments !== 1 || typeTermId === null) failPublication("integrity_failure", "");
 
         const title = selected.title;
         const body = selected.body;
@@ -3404,12 +3454,42 @@ function createContextWriterService(
           await writer.refresh(SEARCH_CHUNKS);
           const rows: Record<string, unknown>[] = [];
           for (const target of targets) {
-            const row = await contextOne(writer, SEARCH_CHUNKS, `id = ${quote(target.id)}`);
+            const row = await contextOne(
+              writer,
+              SEARCH_CHUNKS,
+              // SCOPED on the requesting workspace, like every other context
+              // read in this file (`contextScope`) -- an id match alone does
+              // not prove the row landed in the requesting workspace, and a
+              // cross-workspace id collision would otherwise surface as
+              // `contextOne`'s own `>1` integrity_failure rather than as the
+              // scoping fault it actually is.
+              `${contextScope(request.workspace_name)} AND id = ${quote(target.id)}`,
+            );
             if (row === null) {
               core.poison();
               failPublication("recovery_required", "");
             }
-            rows.push(encodeSearchChunkRow(row));
+            const encoded = encodeSearchChunkRow(row);
+            // COMPARE every physical field against what was asked for,
+            // exactly like the accepted `writeRow` convention: decoding
+            // proves structural validity and says nothing about whether the
+            // row holds what was asked for. This is the ONLY write path in
+            // the kernel that hand-constructs Arrow buffers, which is
+            // precisely the construction that could silently write the
+            // wrong value (e.g. an out-of-range bigint landing as a
+            // different in-range one).
+            const expected = encodeSearchChunkRow(target.physical);
+            for (const field of SEARCH_CHUNK_FIELDS) {
+              // `embedding` is validated inside `encodeSearchChunkRow` but
+              // never appears in its returned wire object -- nothing to
+              // compare here beyond the encode call already having succeeded.
+              if (field === "embedding") continue;
+              if (!sameEncodedValue(encoded[field], expected[field])) {
+                core.poison();
+                failPublication("recovery_required", "");
+              }
+            }
+            rows.push(encoded);
           }
           return rows;
         });
@@ -3428,8 +3508,18 @@ function createContextWriterService(
      * rather than scanning the chunk table for what it does not contain.
      *
      * Bounded at `MAX_RECONCILE_REVISIONS` (1024) nodes visited per call,
-     * matching the request grammar's own cap; a caller that needs more pages
-     * through with a fresh call rather than being handed an unbounded scan.
+     * matching the request grammar's own cap.
+     *
+     * This is NOT a pageable sweep: `visited` is always the first `limit`
+     * node ids in ascending order, so a second call with the same (or a
+     * smaller) `limit` re-visits the SAME nodes rather than advancing.
+     * `exhausted` (`fetched.length <= request.limit`) tells a caller whether
+     * this call saw every node in the workspace, but there is no cursor
+     * field to carry forward when it did not -- a workspace over the cap is
+     * NOT fully reconcilable through this method today. A caller with more
+     * than `MAX_RECONCILE_REVISIONS` nodes in one workspace gets a partial,
+     * always-identical answer, distinguishable from complete via
+     * `exhausted: false`, but with no way to reach the remainder.
      */
     reconcileSearchChunks: async (
       requestBytes: Uint8Array,

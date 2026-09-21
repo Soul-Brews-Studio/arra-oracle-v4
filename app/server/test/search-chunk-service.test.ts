@@ -15,9 +15,122 @@ import {
   runGated,
   type SeededWorkspace,
 } from "./helpers/publication-fixture";
-import { deriveChunkId } from "../src/publication/search-chunk";
+import {
+  CHUNKER_VERSION,
+  chunkText,
+  deriveChunkId,
+  encodeSearchChunkRow,
+  parseIndexRevision,
+} from "../src/publication/search-chunk";
+import { ContractError } from "../src/contracts/errors";
+import { PublicationError } from "../src/publication/errors";
 
 const pad = (seed: string) => `${seed}${"0".repeat(Math.max(0, 21 - seed.length))}`.slice(0, 21);
+
+describe("F1: chunkText never splits a surrogate pair", () => {
+  test("an emoji sitting exactly on the 1000-unit boundary stays intact", () => {
+    // "a".repeat(999) is 999 UTF-16 units; the emoji's high surrogate lands
+    // at index 999, exactly where a naive `slice(0, 1000)` would cut.
+    const emoji = "\u{1F600}"; // 😀, a surrogate PAIR: 😀
+    const text = "a".repeat(999) + emoji + "b".repeat(10);
+    const chunks = chunkText(text, 1000);
+    // The pair is never split across two chunks.
+    for (const chunk of chunks) {
+      for (let i = 0; i < chunk.length; i++) {
+        const code = chunk.charCodeAt(i);
+        if (code >= 0xd800 && code <= 0xdbff) {
+          expect(i + 1).toBeLessThan(chunk.length);
+          const next = chunk.charCodeAt(i + 1);
+          expect(next >= 0xdc00 && next <= 0xdfff).toBe(true);
+        } else if (code >= 0xdc00 && code <= 0xdfff) {
+          expect(i).toBeGreaterThan(0);
+          const prev = chunk.charCodeAt(i - 1);
+          expect(prev >= 0xd800 && prev <= 0xdbff).toBe(true);
+        }
+      }
+    }
+    // Concatenating the chunks losslessly reconstructs the original text --
+    // the actual failure mode the review demonstrated (rejoin producing
+    // U+FFFD replacement characters instead of the emoji).
+    expect(chunks.join("")).toBe(text);
+    expect(chunks.join("")).toContain(emoji);
+  });
+});
+
+describe("F3: chunker_version is a closed grammar, not free text", () => {
+  const bytes = (v: unknown) => new TextEncoder().encode(JSON.stringify(v));
+  const request = (overrides: Record<string, unknown> = {}) => ({
+    workspace_name: "alpha-workspace",
+    node_id: pad("node1"),
+    revision_id: pad("rev1"),
+    chunker_version: CHUNKER_VERSION,
+    embedding_profile: { name: "profile-a", dims: 384 },
+    ...overrides,
+  });
+
+  test("the implemented constant is accepted; any other label is refused", () => {
+    expect(parseIndexRevision(bytes(request())).chunker_version).toBe(CHUNKER_VERSION);
+    let error: unknown;
+    try {
+      parseIndexRevision(bytes(request({ chunker_version: "chunker/v2" })));
+      throw new Error("expected a throw, got none");
+    } catch (thrown) {
+      error = thrown;
+    }
+    expect(error).toBeInstanceOf(ContractError);
+    expect((error as ContractError).toJSON()).toMatchObject({
+      code: "invalid_value",
+      path: "/chunker_version",
+    });
+  });
+});
+
+describe("F7: the stored codec accepts explicit null only, never undefined", () => {
+  const validRow = () => ({
+    id: "a".repeat(64),
+    workspace_name: "alpha-workspace",
+    node_id: pad("node1"),
+    revision_id: pad("rev1"),
+    chunk_index: 0n,
+    text: "hello",
+    content_hash: "b".repeat(64),
+    chunker_version: CHUNKER_VERSION,
+    embedding_profile: "profile-a",
+    embedding: null,
+    type_term_id: pad("term1"),
+    term_ids: [pad("term1")],
+    observer_peer_name: null,
+    subject_peer_name: null,
+    session_name: null,
+    status: "pending",
+    attempts: 0n,
+    last_attempt_at: null,
+    embedded_at: null,
+    error_code: null,
+  });
+  const corrupt = (row: Record<string, unknown>) => {
+    let error: unknown;
+    try {
+      encodeSearchChunkRow(row);
+      throw new Error("expected a throw, got none");
+    } catch (thrown) {
+      error = thrown;
+    }
+    expect(error).toBeInstanceOf(PublicationError);
+    expect((error as PublicationError).code).toBe("integrity_failure");
+  };
+
+  test("valid row with explicit nulls encodes fine", () => {
+    expect(encodeSearchChunkRow(validRow()).last_attempt_at).toBeNull();
+  });
+
+  test("undefined is refused, not read as null", () => {
+    corrupt({ ...validRow(), last_attempt_at: undefined });
+    corrupt({ ...validRow(), embedded_at: undefined });
+    corrupt({ ...validRow(), term_ids: [undefined] });
+    corrupt({ ...validRow(), embedding: undefined });
+  });
+});
 
 describe("preflight: the required surface", () => {
   test("the pure module exists and exports its grammar", async () => {
@@ -97,7 +210,12 @@ describe("real persistence: search chunks inside the real gate", () => {
           ctx("indexRevisionChunks", indexRequest(NODE_A, REV_A1)),
           // Re-index: same (revision, chunker_version, embedding_profile).
           ctx("indexRevisionChunks", indexRequest(NODE_A, REV_A1)),
-          ctx("listSearchChunks", { workspace_name: ALPHA, revision_id: REV_A1 }),
+          ctx("listSearchChunks", {
+            workspace_name: ALPHA,
+            revision_id: REV_A1,
+            chunker_version: CHUNKER_VERSION,
+            embedding_profile: PROFILE.name,
+          }),
           hx("readRawRows", {
             table: "search_chunks_v1",
             predicate: `workspace_name = '${ALPHA}' AND revision_id = '${REV_A1}'`,
@@ -162,6 +280,137 @@ describe("real persistence: search chunks inside the real gate", () => {
         hasToArray: true,
       });
       expect(raw[0].term_ids).toEqual([seeded.term_ids.type.note.id]);
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 300_000);
+
+  test("F5: listSearchChunks is scoped to one embedding_profile, not merged across all of them", async () => {
+    const fixture = await createFixture([ALPHA]);
+    try {
+      const seeded = fixture.workspaces[ALPHA]!;
+      const parsed = await drive(
+        fixture.datasetRoot,
+        [
+          publish(seeded, NODE_A, "op-pub-a1"),
+          ctx("indexRevisionChunks", {
+            ...indexRequest(NODE_A, REV_A1),
+            embedding_profile: { name: "profile-a", dims: 384 },
+          }),
+          ctx("indexRevisionChunks", {
+            ...indexRequest(NODE_A, REV_A1),
+            embedding_profile: { name: "profile-b", dims: 384 },
+          }),
+          ctx("listSearchChunks", {
+            workspace_name: ALPHA,
+            revision_id: REV_A1,
+            chunker_version: CHUNKER_VERSION,
+            embedding_profile: "profile-a",
+          }),
+        ],
+        { revisionIds: [REV_A1] },
+      );
+      expect(parsed.op0.ok).toBe(true);
+      expect(parsed.op1.ok, JSON.stringify(parsed.op1)).toBe(true);
+      expect(parsed.op2.ok, JSON.stringify(parsed.op2)).toBe(true);
+
+      // Both indexing runs produced a real row under their OWN profile.
+      expect(parsed.op1.value.rows).toHaveLength(1);
+      expect(parsed.op2.value.rows).toHaveLength(1);
+      expect(parsed.op1.value.rows[0].id).not.toBe(parsed.op2.value.rows[0].id);
+
+      // The list, scoped to profile-a, returns ONLY profile-a's row -- not
+      // both profiles merged under one non-unique chunk_index.
+      const listed = parsed.op3;
+      expect(listed.value).toHaveLength(1);
+      expect(listed.value[0].embedding_profile).toBe("profile-a");
+      expect(listed.value[0].id).toBe(parsed.op1.value.rows[0].id);
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 300_000);
+
+  test("F8: a snapshot with two reserved-type assignments is stored corruption, not a silent last-match pick", async () => {
+    const fixture = await createFixture([ALPHA]);
+    try {
+      const seeded = fixture.workspaces[ALPHA]!;
+      const typeTerm = seeded.term_ids.type.note;
+      const decisionTerm = seeded.term_ids.type.decision;
+      // Two DIFFERENT terms in the SAME reserved "type" vocabulary --
+      // unreachable through publishRevision (which requires exactly one),
+      // planted directly to reach the stored state this guards against.
+      const corruptedSnapshot = JSON.stringify([
+        {
+          term_id: typeTerm.id,
+          vocabulary_id: typeTerm.vocabulary_id,
+          vocabulary_name_snapshot: typeTerm.vocabulary_name,
+          term_name_snapshot: typeTerm.name,
+          label_snapshot: null,
+          position: "0",
+        },
+        {
+          term_id: decisionTerm.id,
+          vocabulary_id: decisionTerm.vocabulary_id,
+          vocabulary_name_snapshot: decisionTerm.vocabulary_name,
+          term_name_snapshot: decisionTerm.name,
+          label_snapshot: null,
+          position: "1",
+        },
+      ]);
+      const parsed = await drive(
+        fixture.datasetRoot,
+        [
+          publish(seeded, NODE_A, "op-pub-a1"),
+          hx("corruptTermSnapshot", { revision_id: REV_A1, term_snapshot_json: corruptedSnapshot }),
+          ctx("indexRevisionChunks", indexRequest(NODE_A, REV_A1)),
+        ],
+        { revisionIds: [REV_A1] },
+      );
+      expect(parsed.op0.ok).toBe(true);
+      expect(parsed.op1.ok, JSON.stringify(parsed.op1)).toBe(true);
+      const indexed = parsed.op2;
+      expect(indexed.ok).toBe(false);
+      expect(indexed).toMatchObject({ code: "integrity_failure", path: "" });
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 300_000);
+
+  test("F2: the readback is scoped to the requesting workspace, not id alone", async () => {
+    // Two workspaces, same fixture, with the SAME revision id forced in
+    // each -- `deriveChunkId` does not key on workspace_name, so this is
+    // the only way to make an id genuinely collide across workspaces. A
+    // readback that matched on `id` alone would find TWO rows here and
+    // poison with integrity_failure instead of succeeding, scoped, in ALPHA.
+    const BETA = "beta-workspace";
+    const fixture = await createFixture([ALPHA, BETA]);
+    try {
+      const alpha = fixture.workspaces[ALPHA]!;
+      const beta = fixture.workspaces[BETA]!;
+      const parsed = await drive(
+        fixture.datasetRoot,
+        [
+          { facade: "publication", method: "publishRevision", request: {
+            operation_id: "op-pub-beta", content: revisionEnvelope(BETA, beta, NODE_A),
+          } },
+          ctx("indexRevisionChunks", { ...indexRequest(NODE_A, REV_A1), workspace_name: BETA }),
+          publish(alpha, NODE_A, "op-pub-alpha"),
+          ctx("indexRevisionChunks", indexRequest(NODE_A, REV_A1)),
+        ],
+        // Both publishes are handed the SAME revision id on purpose.
+        { revisionIds: [REV_A1, REV_A1] },
+      );
+      expect(parsed.op0.ok, JSON.stringify(parsed.op0)).toBe(true);
+      expect(parsed.op1.ok, JSON.stringify(parsed.op1)).toBe(true);
+      expect(parsed.op1.value.rows[0].workspace_name).toBe(BETA);
+      expect(parsed.op2.ok, JSON.stringify(parsed.op2)).toBe(true);
+      // The colliding id exists in BETA; ALPHA's own indexing still succeeds,
+      // scoped, rather than tripping a spurious integrity_failure.
+      const alphaIndexed = parsed.op3;
+      expect(alphaIndexed.ok, JSON.stringify(alphaIndexed)).toBe(true);
+      expect(alphaIndexed.value.outcome).toBe("indexed");
+      expect(alphaIndexed.value.rows[0].workspace_name).toBe(ALPHA);
+      expect(alphaIndexed.value.rows[0].id).toBe(parsed.op1.value.rows[0].id);
     } finally {
       await fixture.cleanup();
     }

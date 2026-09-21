@@ -93,7 +93,11 @@ const INDEX_KEYS = [
   "embedding_profile",
 ] as const;
 const RECONCILE_KEYS = ["workspace_name", "limit"] as const;
-const LIST_KEYS = ["workspace_name", "revision_id"] as const;
+// scoped on the SAME tuple the chunk id is keyed on: `indexRevisionChunks` is
+// explicitly re-callable for one revision under different chunker versions
+// and embedding profiles, and a list that did not scope on both would merge
+// rows from unrelated indexing runs under one non-unique `chunk_index`.
+const LIST_KEYS = ["workspace_name", "revision_id", "chunker_version", "embedding_profile"] as const;
 const EMBEDDING_PROFILE_KEYS = ["name", "dims"] as const;
 
 export type EmbeddingProfileRequest = { name: string; dims: number };
@@ -114,6 +118,8 @@ export type ReconcileSearchChunksRequest = {
 export type ListChunksRequest = {
   workspace_name: string;
   revision_id: string;
+  chunker_version: string;
+  embedding_profile: string;
 };
 
 function parseRequest(bytes: Uint8Array, tokens: Tokens = []): JcsObject {
@@ -161,13 +167,30 @@ function embeddingProfile(value: JcsValue | undefined, tokens: Tokens): Embeddin
   return { name: profileName, dims: rawDims };
 }
 
+/**
+ * The ONLY implemented chunker label. `chunker_version` is not free text: it
+ * is a content-derived identity input (it keys both the chunk id and the
+ * idempotency check), so an unvalidated string here would let a caller label
+ * v1 output as `"chunker/v2"` -- a real v2 implementation would later derive
+ * the SAME ids for that label and treat the v1 rows as already_satisfied,
+ * forever. Rejecting anything but the one constant this module actually runs
+ * keeps the label and the code that produced it in agreement.
+ */
+function chunkerVersion(value: JcsValue | undefined, tokens: Tokens): string {
+  const text = name(value, tokens);
+  if (text !== CHUNKER_VERSION) {
+    fail("invalid_value", tokens, `expected ${JSON.stringify(CHUNKER_VERSION)}`);
+  }
+  return text;
+}
+
 export function parseIndexRevision(bytes: Uint8Array): IndexRevisionChunksRequest {
   const request = requireClosedObject(parseRequest(bytes), INDEX_KEYS, []);
   return {
     workspace_name: name(request.get("workspace_name"), ["workspace_name"]),
     node_id: nanoidField(request.get("node_id"), ["node_id"]),
     revision_id: nanoidField(request.get("revision_id"), ["revision_id"]),
-    chunker_version: name(request.get("chunker_version"), ["chunker_version"]),
+    chunker_version: chunkerVersion(request.get("chunker_version"), ["chunker_version"]),
     embedding_profile: embeddingProfile(request.get("embedding_profile"), ["embedding_profile"]),
   };
 }
@@ -198,6 +221,8 @@ export function parseListChunks(bytes: Uint8Array): ListChunksRequest {
   return {
     workspace_name: name(request.get("workspace_name"), ["workspace_name"]),
     revision_id: nanoidField(request.get("revision_id"), ["revision_id"]),
+    chunker_version: chunkerVersion(request.get("chunker_version"), ["chunker_version"]),
+    embedding_profile: name(request.get("embedding_profile"), ["embedding_profile"]),
   };
 }
 
@@ -241,13 +266,26 @@ export function deriveContentHash(text: string): string {
 }
 
 /**
- * Fixed-size deterministic chunker, by UTF-16 code units.
+ * Fixed-size deterministic chunker, by UTF-16 code units -- EXCEPT that a
+ * boundary is never allowed to land inside a surrogate pair.
  *
  * Simple and deterministic on purpose: this is not a semantic chunker, it is
  * the smallest thing that gives every revision a stable, reproducible set of
  * chunk boundaries so the same content always proposes the same chunks. An
  * empty string still produces exactly one (empty) chunk, so a revision with
  * empty derived text still gets one addressable row rather than none.
+ *
+ * A naive `slice(i, i + size)` can end exactly between a high surrogate and
+ * its low surrogate (e.g. an emoji straddling a multiple of 1000). Both
+ * halves are individually valid UTF-16 strings, so nothing downstream would
+ * reject them at THIS boundary -- but the lone surrogate is not a valid
+ * Unicode scalar, and the eventual UTF-8 encode silently replaces it with
+ * U+FFFD, corrupting `text` and making `content_hash` (computed on the
+ * pre-corruption string) permanently unreproducible from the stored bytes.
+ * A split pair must simply never be produced: when the naive boundary would
+ * fall on a high surrogate that has a following low surrogate, the boundary
+ * is nudged one code unit forward so the pair stays intact in the earlier
+ * chunk.
  */
 export function chunkText(text: string, size: number = CHUNK_SIZE_CHARS): string[] {
   // `size` is an internal constant, never caller-supplied through a request:
@@ -256,8 +294,16 @@ export function chunkText(text: string, size: number = CHUNK_SIZE_CHARS): string
   if (!Number.isInteger(size) || size <= 0) throw new Error("chunkText: size must be a positive integer");
   if (text.length === 0) return [""];
   const chunks: string[] = [];
-  for (let i = 0; i < text.length; i += size) {
-    chunks.push(text.slice(i, i + size));
+  for (let i = 0; i < text.length; ) {
+    let end = Math.min(i + size, text.length);
+    if (end < text.length) {
+      const code = text.charCodeAt(end - 1);
+      // A high surrogate (0xD800-0xDBFF) at the very end of the slice means
+      // the boundary split its pair -- the low surrogate is the next unit.
+      if (code >= 0xd800 && code <= 0xdbff) end += 1;
+    }
+    chunks.push(text.slice(i, end));
+    i = end;
   }
   return chunks;
 }
@@ -312,7 +358,10 @@ function storedInt64Text(value: unknown): string {
 
 /** Raw microseconds to the exact wire millisecond string, or explicit null. */
 function storedNullableTimestamp(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
+  // EXPLICIT null only. `undefined` in a present column is a malformed row,
+  // and reading it as "no timestamp" would invent an absence the data never
+  // stated -- the same distinction `read-cursor.ts`'s `storedPointer` draws.
+  if (value === null) return null;
   if (typeof value === "bigint") return microsToTimestamp(value);
   if (typeof value === "number") {
     if (!Number.isSafeInteger(value)) failPublication("integrity_failure", "");
@@ -353,7 +402,8 @@ function storedTermIds(value: unknown): (string | null)[] {
   }
   if (!Array.isArray(items)) failPublication("integrity_failure", "");
   return items.map((item) => {
-    if (item === null || item === undefined) return null;
+    // EXPLICIT null only -- see `storedNullableTimestamp`.
+    if (item === null) return null;
     return storedText(item);
   });
 }
@@ -367,7 +417,9 @@ function storedTermIds(value: unknown): (string | null)[] {
  * this module could not vouch for its shape.
  */
 function storedEmbeddingMustBeNull(value: unknown): null {
-  if (value !== null && value !== undefined) failPublication("integrity_failure", "");
+  // EXPLICIT null only -- see `storedNullableTimestamp`. A present-but-
+  // `undefined` embedding column is a malformed row, not "not yet embedded".
+  if (value !== null) failPublication("integrity_failure", "");
   return null;
 }
 
