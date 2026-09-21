@@ -26,6 +26,10 @@ const truncate = (v: string | null | undefined): string | null => {
   return v.length > MAX_FIELD ? `${v.slice(0, MAX_FIELD)}…[${v.length} chars]` : v;
 };
 
+/** Same bound, non-null: for columns the schema declares NOT NULL. */
+const truncateRequired = (v: string): string =>
+  v.length > MAX_FIELD ? `${v.slice(0, MAX_FIELD)}…[${v.length} chars]` : v;
+
 const quote = (value: string) => `'${value.replace(/'/g, "''")}'`;
 
 /**
@@ -91,29 +95,31 @@ export async function foldConnection(event: ConnectionEvent): Promise<void> {
   try {
     const tbl = await table();
     await tbl.checkoutLatest(); // a Table handle pins a version — see db.ts
-    const id = foldId(event.workspace_name, event.method, event.principal, event.label);
-    // MICROSECONDS, not milliseconds. `connections.first_seen` / `last_seen`
-    // are `timestamp[us]`, unlike `mcp_calls.created_at` which is a raw int64
-    // of millis -- the two operations tables genuinely differ, and
-    // `context.encodeConnectionRow.ts` says so at the read end.
+    // Truncate BEFORE the key, not after. `label` is client-supplied and
+    // unbounded; storing a trimmed value while keying on the full one would
+    // give two 5000-char labels distinct ids and identical stored text, so the
+    // table would show duplicate-looking rows nobody could tell apart.
+    const label = truncateRequired(event.label);
+    const id = foldId(event.workspace_name, event.method, event.principal, label);
+    // MILLISECONDS, as a plain JS number. This is the ONLY shape that survives
+    // a round trip through a `timestamp[us]` column on this client. Measured,
+    // all four candidates, write-then-read against a real table copy:
     //
-    // Both halves of this were found by running the writer against a real
-    // table copy and then feeding the rows back through the READ encoder.
-    // Both were green at write time and threw `integrity_failure` at read
-    // time -- the same shape as #75, where a kernel is wired and unusable.
+    //   BigInt micros  -> WRITE FAILS: "Invalid mix of BigInt and other type"
+    //   number micros  -> reads back 1790023408801999.8, a float
+    //   new Date(ms)   -> reads back 1790023408802, exact
+    //   number millis  -> reads back 1790023408802, exact
     //
-    //   1. UNIT. `Date.now()` is millis. Stored as micros it is both the
-    //      wrong instant (20 days past the epoch) and not millisecond-aligned,
-    //      and `storedTimestamp` rejects an unaligned microsecond count.
+    // The column is declared `timestamp[us]` but the client stores and returns
+    // MILLIS; writing true microseconds makes it divide by 1000 and lose the
+    // remainder to float. So the declared unit and the actual unit differ, and
+    // `context.storedTimestamp.ts` currently believes the declared one -- which
+    // is why these rows still will not READ. That is #105, it predates this
+    // writer, and it fails on the existing `peers` rows too.
     //
-    //   2. TYPE. `BigInt`, not a JS number. As a plain number the value
-    //      round-tripped through float64 and came back 1790023408801999.8 --
-    //      a non-integer, so rejected again. ~1.8e15 is well inside
-    //      Number.MAX_SAFE_INTEGER, so this is NOT an overflow; the precision
-    //      is lost inside the store's own conversion, and BigInt is what pins
-    //      the int64 path. Measured: as a number 2 of 4 rows failed to encode,
-    //      as BigInt 4 of 4 pass.
-    const now = BigInt(Date.now()) * 1000n;
+    // Writing the exact shape here means #105's fix needs no change in this
+    // file if it rules that a `timestamp[us]` cell is millis (option a).
+    const now = Date.now();
 
     const existing = (await tbl
       .query()
@@ -127,14 +133,14 @@ export async function foldConnection(event: ConnectionEvent): Promise<void> {
     // `first_seen` is the one column a repeat visit must NOT move. Reading it
     // back from the stored row rather than recomputing keeps it honest across
     // restarts; only a genuinely new key gets `now`.
-    const firstSeen = prior === undefined ? now : BigInt(prior.first_seen as number | bigint);
+    const firstSeen = prior === undefined ? now : (prior.first_seen as number);
 
     const row = {
       id,
       workspace_name: event.workspace_name,
       method: event.method,
       principal: event.principal,
-      label: event.label,
+      label,
       user_agent: truncate(event.user_agent),
       remote_ip: truncate(event.remote_ip),
       first_seen: firstSeen,
