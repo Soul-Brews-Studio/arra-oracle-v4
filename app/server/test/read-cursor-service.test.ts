@@ -61,7 +61,8 @@ describe("preflight: the required surface", () => {
         const bundle = await (service as Record<string, any>)[factory](fixture.datasetRoot);
         expect(Object.keys(bundle.context).sort()).toEqual([
           "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
-          "listLifecycleHistory", "listMessages", "listSearchChunks", "listSessionLinks", "listTraceHits",
+          "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listSearchChunks",
+          "listSessionLinks", "listTraceHits",
         ]);
         expect("close" in bundle.context).toBe(false);
       }
@@ -106,20 +107,20 @@ describe("real persistence: cursors inside the real gate", () => {
   ];
   const SEED = 4;
 
-  test("BOTH writer factories expose the twenty-five context methods, with no nested close", async () => {
+  test("BOTH writer factories expose the twenty-seven context methods, with no nested close", async () => {
     for (const factory of ["context", "evidence"] as const) {
       const fixture = await createReadCursorFixture([ALPHA]);
       try {
         const parsed = await drive(fixture.datasetRoot, [], { factory });
         // The writer's context facade spreads the full read-method set in
         // (`{ ...reads, ...writeOnly }`), so this is that union, not just the
-        // twelve write-only methods.
+        // thirteen write-only methods.
         expect(parsed.contextMethods).toEqual([
           "advanceReadCursor", "answerChat", "appendMessages", "createSessionLink", "createTrace", "getContext",
           "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
-          "indexRevisionChunks", "joinSession", "listLifecycleHistory", "listMessages", "listSearchChunks",
-          "listSessionLinks", "listTraceHits", "reconcileSearchChunks", "registerPeer", "registerSession",
-          "retireNode", "supersedeNode", "writeChunkEmbedding",
+          "indexRevisionChunks", "joinSession", "listConnections", "listLifecycleHistory", "listMcpCalls",
+          "listMessages", "listSearchChunks", "listSessionLinks", "listTraceHits", "reconcileSearchChunks",
+          "registerPeer", "registerSession", "retireNode", "supersedeNode", "writeChunkEmbedding",
         ]);
         expect(parsed.contextHasClose).toBe(false);
         // Only the BUNDLE closes the owner; the bundle key set is unchanged.

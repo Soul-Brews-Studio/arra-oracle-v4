@@ -36,3 +36,7 @@ export { type GetPeerRequest, parseGetPeer } from "./context.parseGetPeer";
 export { type GetSessionRequest, parseGetSession } from "./context.parseGetSession";
 export { type GetMessageRequest, parseGetMessage } from "./context.parseGetMessage";
 export { rowWireBytes } from "./context.rowWireBytes";
+export { type ListMcpCallsRequest, parseListMcpCalls } from "./context.parseListMcpCalls";
+export { MCP_CALL_FIELDS, encodeMcpCallRow } from "./context.encodeMcpCallRow";
+export { type ListConnectionsRequest, parseListConnections } from "./context.parseListConnections";
+export { CONNECTION_FIELDS, encodeConnectionRow } from "./context.encodeConnectionRow";

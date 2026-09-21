@@ -72,8 +72,9 @@ const RUNTIME_EXPORTS = [
 const CONTEXT_WRITE_METHODS =
   "advanceReadCursor,answerChat,appendMessages,createSessionLink,createTrace,getContext,getMessage," +
   "getPeer,getReadCursor,getRecallEligibility,getSession,getTrace,indexRevisionChunks,joinSession," +
-  "listLifecycleHistory,listMessages,listSearchChunks,listSessionLinks,listTraceHits," +
-  "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode,writeChunkEmbedding";
+  "listConnections,listLifecycleHistory,listMcpCalls,listMessages,listSearchChunks,listSessionLinks," +
+  "listTraceHits,reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
+  "writeChunkEmbedding";
 const CONTEXT_WRITER_KEYS = "close,context,publication,taxonomy";
 
 const RECOVERY_REQUIRED = "recovery_required";
