@@ -41,10 +41,20 @@ export async function listMcpCalls(reader: DatasetAdapter, requestBytes: Uint8Ar
   await requireWorkspace(reader, request.workspace_name);
   await reader.refresh(MCP_CALLS);
 
-  let scope = contextScope(request.workspace_name);
-  if (request.after_id !== null) scope += ` AND id > ${quote(request.after_id)}`;
-  if (request.tool !== null) scope += ` AND tool = ${quote(request.tool)}`;
-  if (request.status !== null) scope += ` AND status = ${quote(request.status)}`;
+  // Two predicates, deliberately. `countScope` is the SET: workspace plus any
+  // tool/status filter. `scope` is that set narrowed to the current PAGE by
+  // the cursor.
+  //
+  // They were one variable, and the count used it. That made `total` shrink
+  // as you paged -- page three of twenty reported a total of seventeen --
+  // because the cursor had already excluded the rows behind you. A total
+  // that counts a different set than the page walks is worse than no total,
+  // and this one silently agreed with itself on page one.
+  let countScope = contextScope(request.workspace_name);
+  if (request.tool !== null) countScope += ` AND tool = ${quote(request.tool)}`;
+  if (request.status !== null) countScope += ` AND status = ${quote(request.status)}`;
+  const scope =
+    request.after_id === null ? countScope : `${countScope} AND id > ${quote(request.after_id)}`;
 
   // KEYSET, never offset: limit+1 detects continuation without paging by
   // position, which would skip or repeat rows as the table grows.
@@ -100,7 +110,7 @@ export async function listMcpCalls(reader: DatasetAdapter, requestBytes: Uint8Ar
   // than no total at all. Filters (tool/status) stay IN it, because "how many
   // errored" is the question this table exists to answer.
   const total = request.include_total
-    ? (await reader.count(MCP_CALLS, scope)).toString(10)
+    ? (await reader.count(MCP_CALLS, countScope)).toString(10)
     : null;
 
   const hasMore = ids.length > request.limit;
