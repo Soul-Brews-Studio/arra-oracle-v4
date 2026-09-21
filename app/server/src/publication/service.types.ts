@@ -43,6 +43,14 @@ export type DatasetAdapter = {
     limit: number,
   ): Promise<Record<string, unknown>[]>;
   /**
+   * Exact row count at a predicate, via the SDK's own `countRows(filter)` --
+   * NOT a `query`/`orderedProjection` materialization counted in JS. This is
+   * a second full scan of the predicate's rows with no keyset to bound it,
+   * so it is for a caller that asked for a count DELIBERATELY (`total` on
+   * `listPeers`/`listSessions`), never a cost every page fetch pays.
+   */
+  count(table: string, predicate: string): Promise<number>;
+  /**
    * Scoped delete of DERIVED projection rows only.
    *
    * Deliberately NOT a generic delete. The table must be one of the two named

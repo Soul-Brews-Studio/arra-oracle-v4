@@ -119,6 +119,8 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
   getSession: { action: "content:read", scopePath: [], call: (b, x) => b.context.getSession(x) },
   getMessage: { action: "content:read", scopePath: [], call: (b, x) => b.context.getMessage(x) },
   listMessages: { action: "content:read", scopePath: [], call: (b, x) => b.context.listMessages(x) },
+  listPeers: { action: "content:read", scopePath: [], call: (b, x) => b.context.listPeers(x) },
+  listSessions: { action: "content:read", scopePath: [], call: (b, x) => b.context.listSessions(x) },
   getReadCursor: { action: "content:read", scopePath: [], call: (b, x) => b.context.getReadCursor(x) },
   registerPeer: { action: "content:write", scopePath: [], call: (b, x) => writer(b).context.registerPeer(x) },
   registerSession: {

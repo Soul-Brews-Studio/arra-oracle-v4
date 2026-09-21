@@ -25,6 +25,8 @@
 export { MAX_ITEMS, type AppendItem, type AppendMessagesRequest, parseAppendMessages } from "./context.parseAppendMessages";
 export { MAX_RESULT_WIRE_BYTES } from "./context.constants";
 export { MAX_PAGE_LIMIT, type ListMessagesRequest, parseListMessages } from "./context.parseListMessages";
+export { type ListPeersRequest, parseListPeers } from "./context.parseListPeers";
+export { type ListSessionsRequest, parseListSessions } from "./context.parseListSessions";
 export { PEER_FIELDS, encodePeerRow } from "./context.encodePeerRow";
 export { SESSION_FIELDS, encodeSessionRow } from "./context.encodeSessionRow";
 export { SESSION_PEER_FIELDS, encodeSessionPeerRow } from "./context.encodeSessionPeerRow";

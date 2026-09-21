@@ -42,6 +42,8 @@ import {
   parseGetSession,
   parseJoinSession,
   parseListMessages,
+  parseListPeers,
+  parseListSessions,
   parseRegisterPeer,
   parseRegisterSession,
   rowWireBytes,
@@ -167,6 +169,28 @@ describe("request grammar is closed, and keeps the GOVERNED envelope", () => {
     expect(e.toJSON().version).toBe("arra-error/v1");
     expect(e.code).toBe("invalid_value");
     expect(e.path).toBe("/after_seq");
+  });
+
+  test("listPeers/listSessions: limit is 1..100, after_name is a nullable NAME (not Int64), include_total is a required boolean", () => {
+    for (const parse of [parseListPeers, parseListSessions] as const) {
+      const ok = { workspace_name: WS, after_name: null, limit: 50, include_total: false };
+      expect(parse(bytes(ok))).toEqual(ok);
+      expect(parse(bytes({ ...ok, after_name: "peer-a" })).after_name).toBe("peer-a");
+      expect(parse(bytes({ ...ok, include_total: true })).include_total).toBe(true);
+      for (const bad of [0, 101, 1.5, "10"]) {
+        expect(contractErr(() => parse(bytes({ ...ok, limit: bad }))).path).toBe("/limit");
+      }
+      // The cursor is a NAME, not Int64 decimal text -- a bare number is the
+      // wrong grammar for this field, the mirror image of after_seq's own
+      // text-vs-number distinction above.
+      expect(contractErr(() => parse(bytes({ ...ok, after_name: 5 }))).path).toBe("/after_name");
+      // Required, not defaulted by omission: this grammar has no optional
+      // keys anywhere else, so a missing or non-boolean value fails closed
+      // rather than silently defaulting to false.
+      const { include_total: _drop, ...missing } = ok;
+      expect(contractErr(() => parse(bytes(missing))).code).toBe("missing_field");
+      expect(contractErr(() => parse(bytes({ ...ok, include_total: "true" }))).path).toBe("/include_total");
+    }
   });
 
   test("the read requests are closed too", () => {
@@ -508,8 +532,8 @@ describe("real persistence: registration, shapes and reads", () => {
       expect(parsed.contextMethods).toEqual([
         "advanceReadCursor", "answerChat", "appendMessages", "createSessionLink", "createTrace", "getContext",
         "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
-        "indexRevisionChunks", "joinSession", "listLifecycleHistory", "listMessages", "listSearchChunks",
-        "listSessionLinks", "listTraceHits", "reconcileSearchChunks", "registerPeer", "registerSession",
+        "indexRevisionChunks", "joinSession", "listLifecycleHistory", "listMessages", "listPeers", "listSearchChunks",
+        "listSessionLinks", "listSessions", "listTraceHits", "reconcileSearchChunks", "registerPeer", "registerSession",
         "retireNode", "supersedeNode", "writeChunkEmbedding",
       ]);
       // Only the BUNDLE closes the owner.
@@ -651,6 +675,59 @@ describe("real persistence: registration, shapes and reads", () => {
         op("listMessages", { workspace_name: ALPHA, session_name: "sess-a", after_seq: null, limit: 10 }),
       ]);
       expect(parsed.op1.value).toEqual({ rows: [], next_after_seq: null });
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 300_000);
+
+  test("listPeers pages by name ascending, keyset resumes past the cursor, and total is opt-in", async () => {
+    const fixture = await createContextFixture([ALPHA]);
+    try {
+      const parsed = await drive(fixture.datasetRoot, [
+        op("registerPeer", peerRequest(ALPHA, { peer_id: contextId("peer-b"), name: "peer-b" })),
+        op("registerPeer", peerRequest(ALPHA, { peer_id: contextId("peer-a"), name: "peer-a" })),
+        op("registerPeer", peerRequest(ALPHA, { peer_id: contextId("peer-c"), name: "peer-c" })),
+        op("listPeers", { workspace_name: ALPHA, after_name: null, limit: 2, include_total: false }),
+        op("listPeers", { workspace_name: ALPHA, after_name: "peer-b", limit: 2, include_total: false }),
+        op("listPeers", { workspace_name: ALPHA, after_name: null, limit: 2, include_total: true }),
+      ]);
+      const page1 = parsed.op3.value;
+      expect(page1.rows.map((r: any) => r.name)).toEqual(["peer-a", "peer-b"]);
+      expect(page1.next_after_name).toBe("peer-b");
+      expect(page1.total).toBeNull();
+
+      const page2 = parsed.op4.value;
+      expect(page2.rows.map((r: any) => r.name)).toEqual(["peer-c"]);
+      expect(page2.next_after_name).toBeNull();
+      expect(page2.total).toBeNull();
+
+      // include_total counts the FULL workspace scope, unaffected by the
+      // page's own cursor or limit.
+      const withTotal = parsed.op5.value;
+      expect(withTotal.rows.map((r: any) => r.name)).toEqual(["peer-a", "peer-b"]);
+      expect(withTotal.total).toBe("3");
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 300_000);
+
+  test("listSessions pages by name ascending and stays workspace-scoped", async () => {
+    const BETA = "beta-workspace";
+    const fixture = await createContextFixture([ALPHA, BETA]);
+    try {
+      const parsed = await drive(fixture.datasetRoot, [
+        op("registerSession", sessionRequest(ALPHA, { session_id: contextId("sess-b"), name: "sess-b" })),
+        op("registerSession", sessionRequest(ALPHA, { session_id: contextId("sess-a"), name: "sess-a" })),
+        // A same-named session in a DIFFERENT workspace must never appear in
+        // ALPHA's listing or count.
+        op("registerSession", sessionRequest(BETA, { session_id: contextId("sess-a"), name: "sess-a" })),
+        op("listSessions", { workspace_name: ALPHA, after_name: null, limit: 100, include_total: true }),
+      ]);
+      const page = parsed.op3.value;
+      expect(page.rows.map((r: any) => r.name)).toEqual(["sess-a", "sess-b"]);
+      expect(page.rows.every((r: any) => r.workspace_name === ALPHA)).toBe(true);
+      expect(page.next_after_name).toBeNull();
+      expect(page.total).toBe("2");
     } finally {
       await fixture.cleanup();
     }
@@ -1001,7 +1078,7 @@ describe("core: the sourced path and the reader bundle", () => {
     }
   }, 300_000);
 
-  test("the READER bundle has exactly three facades and twelve context methods", async () => {
+  test("the READER bundle has exactly three facades and fourteen context methods", async () => {
     const fixture = await createContextFixture([ALPHA]);
     try {
       const parsed = await drive(
@@ -1010,10 +1087,11 @@ describe("core: the sourced path and the reader bundle", () => {
         { freshReader: true },
       );
       expect(parsed.readerKeys).toEqual(["context", "publication", "taxonomy"]);
-      // Exactly the twelve READ methods; no mutator reachable from a reader.
+      // Exactly the fourteen READ methods; no mutator reachable from a reader.
       expect(parsed.readerContextMethods).toEqual([
         "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
-        "listLifecycleHistory", "listMessages", "listSearchChunks", "listSessionLinks", "listTraceHits",
+        "listLifecycleHistory", "listMessages", "listPeers", "listSearchChunks", "listSessionLinks", "listSessions",
+        "listTraceHits",
       ]);
       // A gateless reader works AFTER the writer released its gate.
       expect(parsed.freshReaderPeer.name).toBe("peer-a");
