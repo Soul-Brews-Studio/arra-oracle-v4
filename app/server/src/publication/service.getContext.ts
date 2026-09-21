@@ -77,12 +77,38 @@ const request = parseGetContext(requestBytes);
       const excluded: ExcludedContextItem[] = [];
       let budget = 2; // brackets, matching the rest of this file's convention.
       let budgetExceeded = false;
+      // `excluded` is measured against the SAME wire budget as `items` (#85).
+      // It was previously unbounded: `items` is capped twice -- by `max_items`
+      // and by MAX_CONTEXT_WIRE_BYTES -- while `excluded` was capped by
+      // neither, so a response could carry ~459 entries (1 anchor + 8 linked
+      // sessions x (max_items+1)) at roughly 340 bytes each. That is ~156 KB
+      // against a 65536-byte cap: 2.4x the bound this module exists to hold.
+      //
+      // Recording an exclusion STOPS at the bound rather than throwing:
+      // `limit_exceeded` is right for the sibling list reads, which owe the
+      // caller a complete page or nothing, but this result is explicitly
+      // allowed to "keep going with what it has". Refusing the whole answer
+      // because the REPORT of what was dropped grew too large would let a
+      // diagnostic field destroy the payload it describes.
+      //
+      // The truncation is not silent: reaching the bound sets `budgetExceeded`,
+      // so `coverage` is already `"partial"` whenever the list is incomplete.
+      let excludedBudget = 2;
+      const recordExcluded = (entry: ExcludedContextItem): void => {
+        const entryBytes = new TextEncoder().encode(JSON.stringify(entry)).length + 1;
+        if (excludedBudget + entryBytes > MAX_CONTEXT_WIRE_BYTES) {
+          budgetExceeded = true;
+          return;
+        }
+        excludedBudget += entryBytes;
+        excluded.push(entry);
+      };
       for (const candidate of candidates) {
         const encoded = encodeMessageRow(candidate.row);
         const publicId = encoded.public_id as string;
         if (items.length >= request.max_items) {
           budgetExceeded = true;
-          excluded.push({ reason: "budget_exceeded", session_name: candidate.sessionName, public_id: publicId });
+          recordExcluded({ reason: "budget_exceeded", session_name: candidate.sessionName, public_id: publicId });
           continue;
         }
         // PER-ITEM authorization, BEFORE this candidate is ever added to
@@ -97,14 +123,14 @@ const request = parseGetContext(requestBytes);
           );
         } catch (error) {
           if (!(error instanceof PublicationError) || error.code !== "invalid_reference") throw error;
-          excluded.push({ reason: "unauthorized", session_name: candidate.sessionName, public_id: publicId });
+          recordExcluded({ reason: "unauthorized", session_name: candidate.sessionName, public_id: publicId });
           continue;
         }
         const item = projectContextItem(encoded);
         const wireBytes = contextItemWireBytes(item) + 1;
         if (budget + wireBytes > MAX_CONTEXT_WIRE_BYTES) {
           budgetExceeded = true;
-          excluded.push({ reason: "budget_exceeded", session_name: candidate.sessionName, public_id: publicId });
+          recordExcluded({ reason: "budget_exceeded", session_name: candidate.sessionName, public_id: publicId });
           continue;
         }
         budget += wireBytes;
