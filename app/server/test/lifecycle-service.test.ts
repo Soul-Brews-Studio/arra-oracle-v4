@@ -24,10 +24,18 @@ const NODE_A = idOf("nodeAlifecycle");
 const NODE_B = idOf("nodeBlifecycle");
 const NODE_C = idOf("nodeClifecycle");
 const NODE_D = idOf("nodeDlifecycle");
+const NODE_E = idOf("nodeElifecycle");
+const NODE_F = idOf("nodeFlifecycle");
+const NODE_G = idOf("nodeGlifecycle");
 const REV_A1 = idOf("revAlifecycle1");
 const REV_B1 = idOf("revBlifecycle1");
 const REV_C1 = idOf("revClifecycle1");
 const REV_D1 = idOf("revDlifecycle1");
+const REV_E1 = idOf("revElifecycle1");
+const REV_F1 = idOf("revFlifecycle1");
+const REV_F2 = idOf("revFlifecycle2");
+const REV_G1 = idOf("revGlifecycle1");
+const REV_G2 = idOf("revGlifecycle2");
 
 const pub = (method: string, request: unknown) => ({ facade: "publication", method, request });
 const ctx = (method: string, request: unknown) => ({ facade: "context", method, request });
@@ -37,10 +45,11 @@ const drive = async (
   fixture: Fixture,
   ops: Array<Record<string, unknown>>,
   revisionIds: string[],
+  extra: Record<string, unknown> = {},
 ): Promise<Record<string, any>> => {
   const result = await runGated(fixture.datasetRoot, CHILD, [
     fixture.datasetRoot,
-    JSON.stringify({ ops, revisionIds, clockMs: CLOCK_MS }),
+    JSON.stringify({ ops, revisionIds, clockMs: CLOCK_MS, ...extra }),
   ]);
   if (result.code !== 0) throw new Error(`child exited ${result.code}: ${result.stderr.slice(0, 700)}`);
   const line = result.stdout.trim().split("\n").filter(Boolean).at(-1);
@@ -216,6 +225,119 @@ describe("real persistence: lifecycle events inside the real gate", () => {
       expect(parsed.op2.value.outcome).toBe("idempotent");
       expect(parsed.op3.ok, JSON.stringify(parsed.op3)).toBe(true);
       expect(parsed.op3.value).toEqual({ outcome: "conflict", reason: "node_retired" });
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 300_000);
+
+  // LC-1 regression: the replay classification must run BEFORE any successor
+  // state is read, so a byte-identical retry of an already-accepted
+  // supersede stays idempotent even after the successor gains a new
+  // revision -- never a thrown invalid_reference naming a field the caller
+  // got right at the time.
+  test("LC-1: an exact supersede replay stays idempotent after the successor's head moves", async () => {
+    const fixture = await createFixture([ALPHA]);
+    try {
+      const alpha = fixture.workspaces[ALPHA]!;
+      const supersedeRequest = {
+        workspace_name: ALPHA,
+        node_id: NODE_E,
+        expected_revision_id: REV_E1,
+        new_node_id: NODE_F,
+        new_revision_id: REV_F1,
+        reason: "superseded",
+        peer_name: null,
+        operation_id: "op-supersede-lc1",
+      };
+
+      const parsed = await drive(
+        fixture,
+        [
+          pub("publishRevision", { operation_id: "op-e1", content: revisionEnvelope(ALPHA, alpha, NODE_E) }),
+          pub("publishRevision", { operation_id: "op-f1", content: revisionEnvelope(ALPHA, alpha, NODE_F) }),
+          ctx("supersedeNode", supersedeRequest),
+          // The successor's head moves AFTER the original supersede.
+          pub("publishRevision", {
+            operation_id: "op-f2",
+            content: revisionEnvelope(ALPHA, alpha, NODE_F, { base_revision_id: REV_F1, title: "second title" }),
+          }),
+          // A byte-identical retry of the ORIGINAL supersede request.
+          ctx("supersedeNode", supersedeRequest),
+        ],
+        [REV_E1, REV_F1, REV_F2],
+      );
+
+      expect(parsed.op2.ok, JSON.stringify(parsed.op2)).toBe(true);
+      expect(parsed.op2.value.outcome).toBe("accepted");
+      expect(parsed.op3.ok, JSON.stringify(parsed.op3)).toBe(true);
+      expect(parsed.op3.value.outcome).toBe("accepted");
+
+      const replay = parsed.op4;
+      expect(replay.ok, JSON.stringify(replay)).toBe(true);
+      expect(replay.value.outcome).toBe("idempotent");
+      expect(replay.value.row).toEqual(parsed.op2.value.row);
+      // Still pins the ORIGINAL successor revision, not the one that moved.
+      expect(replay.value.row.new_revision_id).toBe(REV_F1);
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 300_000);
+
+  // LC-2 regression: resumeOrphan must consult supersede_log too, not only
+  // publishFresh -- a resuming orphan is still new publication for reference
+  // purposes, and retirement is present policy.
+  test("LC-2: an orphan revision cannot resume onto a node retired in the meantime", async () => {
+    const fixture = await createFixture([ALPHA]);
+    try {
+      const alpha = fixture.workspaces[ALPHA]!;
+      const orphanContent = revisionEnvelope(ALPHA, alpha, NODE_G, {
+        base_revision_id: REV_G1,
+        title: "orphan title",
+      });
+
+      // Child #1: create the head, then leave a genuine ORPHAN by commanding
+      // the boundary hook to throw right after the revision row lands but
+      // BEFORE the head moves -- the same ambiguous window a real crash
+      // leaves, without actually crashing the process.
+      const first = await drive(
+        fixture,
+        [
+          pub("publishRevision", { operation_id: "op-g1", content: revisionEnvelope(ALPHA, alpha, NODE_G) }),
+          pub("publishRevision", { operation_id: "op-orphan", content: orphanContent }),
+        ],
+        [REV_G1, REV_G2],
+        { throwAtBoundary: { boundary: "after_revision_append", occurrence: 2 } },
+      );
+      expect(first.op0.ok, JSON.stringify(first.op0)).toBe(true);
+      expect(first.op0.value.outcome).toBe("accepted");
+      expect(first.op1.ok).toBe(false);
+      expect(first.op1.code).toBe("recovery_required");
+
+      // Child #2: a FRESH, unpoisoned owner. Retire the node -- its head
+      // never moved, so the pin still matches -- then retry the orphaned
+      // publish.
+      const second = await drive(
+        fixture,
+        [
+          ctx("retireNode", {
+            workspace_name: ALPHA,
+            node_id: NODE_G,
+            expected_revision_id: REV_G1,
+            reason: "retired while an orphan was pending",
+            peer_name: null,
+            operation_id: "op-retire-g",
+          }),
+          pub("publishRevision", { operation_id: "op-orphan", content: orphanContent }),
+        ],
+        [],
+      );
+      expect(second.op0.ok, JSON.stringify(second.op0)).toBe(true);
+      expect(second.op0.value.outcome).toBe("accepted");
+
+      const resumed = second.op1;
+      expect(resumed.ok, JSON.stringify(resumed)).toBe(true);
+      // MUST be refused, not an advanced head onto a retired node.
+      expect(resumed.value).toEqual({ outcome: "conflict", reason: "node_retired" });
     } finally {
       await fixture.cleanup();
     }

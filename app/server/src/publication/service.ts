@@ -1255,6 +1255,24 @@ function createPublicationWriterService(
     const node = await findNode(writer, workspace, nodeId);
     const storedBase = encoded.base_revision_id;
 
+    // #29 lifecycle refusal, same probe as publishFresh's. A resuming orphan
+    // is still NEW publication for reference purposes (see the docstring
+    // above), and retirement IS present policy: a node that already carries
+    // a terminal event refuses resumption too, not only a fresh append. This
+    // never touches the exact-replay guarantee -- resumeOrphan is reached
+    // only for a revision NOT reachable from the head, i.e. one that was
+    // never successfully published; a publish that succeeded before
+    // retirement returns idempotent earlier in `publish` and never reaches
+    // here.
+    await writer.refresh(SUPERSEDE_LOG);
+    const terminalEvents = await writer.query(
+      SUPERSEDE_LOG,
+      `workspace_name = ${quote(workspace)} AND old_id = ${quote(nodeId)}`,
+      2,
+    );
+    if (terminalEvents.length > 1) failPublication("integrity_failure");
+    if (terminalEvents.length === 1) return { outcome: "conflict", reason: "node_retired" };
+
     if (node === null) {
       if (storedBase !== null) failPublication("integrity_failure");
       // Resume ONLY if no OTHER revision claims this node id.
@@ -2593,16 +2611,11 @@ async function walkForwardChain(
  * here is stored corruption, not a request error.
  */
 function deriveNodeType(encodedRevision: Record<string, unknown>): string {
-  const raw = encodedRevision.term_snapshot_json;
-  if (typeof raw !== "string") failPublication("integrity_failure", "");
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return failPublication("integrity_failure", "");
-  }
-  if (!Array.isArray(parsed)) failPublication("integrity_failure", "");
-  const typeEntries = (parsed as Record<string, unknown>[]).filter(
+  // Delegates to the accepted snapshot parser rather than re-running the
+  // same string/JSON.parse/array checks locally: a second copy is how the
+  // two drift.
+  const parsed = parseSnapshotArray(encodedRevision.term_snapshot_json, "");
+  const typeEntries = parsed.filter(
     (entry) => entry !== null && typeof entry === "object" && entry.vocabulary_name_snapshot === RESERVED_TYPE_VOCABULARY,
   );
   if (typeEntries.length !== 1) failPublication("integrity_failure", "");
@@ -2948,8 +2961,18 @@ function createContextReadMethods(reader: DatasetAdapter) {
      * Readers take no clock (#28/#29 measured fact): there is no
      * `evaluated_at` here, only the witness event id that proves how current
      * the answer is. A node with no terminal event is eligible as of
-     * whatever the table's current global maximum id is -- "0" when the
-     * table holds nothing at all, matching the allocator's own base.
+     * whatever THIS WORKSPACE's current maximum id is -- "0" when the
+     * workspace holds no lifecycle events at all, matching the allocator's
+     * own base.
+     *
+     * The witness is scoped to the requesting workspace, deliberately: `id`
+     * is allocated globally (the same max+1 pattern as the message
+     * allocator), so a per-workspace maximum is still monotone and still a
+     * valid watermark. Scoping to `"true"` instead would leak one
+     * workspace's lifecycle event COUNT to a reader holding only another
+     * workspace, and would let a duplicated maximum id anywhere in the
+     * dataset break eligibility reads in every workspace rather than only
+     * the corrupted one.
      */
     async getRecallEligibility(
       requestBytes: Uint8Array,
@@ -2965,7 +2988,12 @@ function createContextReadMethods(reader: DatasetAdapter) {
       if (node === null) failPublication("invalid_reference", "/node_id");
 
       await reader.refresh(SUPERSEDE_LOG);
-      const maxId = await selectedMaximum(reader, SUPERSEDE_LOG, "id", "true");
+      const maxId = await selectedMaximum(
+        reader,
+        SUPERSEDE_LOG,
+        "id",
+        contextScope(request.workspace_name),
+      );
       const witness = maxId === null ? 0n : maxId;
 
       const own = await reader.query(
@@ -2984,6 +3012,17 @@ function createContextReadMethods(reader: DatasetAdapter) {
      * limit+1 lookahead detects continuation without paging by position; a
      * duplicate event id straddling the page is integrity_failure at ROOT,
      * the same rule listMessages applies to seq_in_session.
+     *
+     * By construction this returns AT MOST ONE row: `old_id` is scoped
+     * unique per workspace, because `writeLifecycleEvent`'s "already_terminal"
+     * check refuses a second event for the same `old_id` (append-only, no
+     * supersede-back). The full keyset shape -- lookahead, per-page duplicate
+     * check, `after_event_id`, `MAX_HISTORY_LIMIT` -- is kept anyway rather
+     * than collapsed to a single lookup, so this method needs no reshaping if
+     * "already_terminal" is ever relaxed to allow more than one event per
+     * node (e.g. widening the scope to `old_id = N OR new_id = N` to show a
+     * node's full lineage), and so it matches every other list method's
+     * shape in this facade rather than being the one exception.
      */
     async listLifecycleHistory(
       requestBytes: Uint8Array,
@@ -3051,7 +3090,12 @@ type ContextRegistration =
 /* ------------------------------------------------------------------ *
  * #29 node lifecycle. Append-only: no restore, no update, no delete, no
  * supersede-back. supersedeNode and retireNode share every rule except the
- * successor payload, so both funnel through writeLifecycleEvent below.
+ * successor payload: retireNode calls writeLifecycleEvent directly (classify
+ * then, on a fresh key, write); supersedeNode calls the same two halves
+ * SEPARATELY -- classifyLifecycleReplay first, then its own chain walk and
+ * successor resolution, then writeLifecycleEventFresh -- so a replay is
+ * classified before any successor state is ever read (see
+ * classifyLifecycleReplay's docstring).
  * ------------------------------------------------------------------ */
 
 type LifecycleSuccessor = { new_id: string; new_revision_id: string; new_title: string };
@@ -3076,21 +3120,75 @@ export type LifecycleWriteOutcome =
       row: Record<string, unknown> | null;
     };
 
+type LifecycleReplayClassification =
+  | { replay: true; outcome: LifecycleWriteOutcome }
+  | { replay: false };
+
 /**
- * One retire/supersede event, shared by both write entrypoints.
+ * Classify (workspace_name, operation_id) BEFORE any other state check runs.
  *
- * Idempotency key is (workspace_name, operation_id): an EXACT replay of the
- * same payload returns the retained event with no clock sample and no write.
- * The same key under a DIFFERENT payload is a returned conflict, never
- * thrown, never poisoning. The pin (`expected_revision_id`) must equal the
- * node's CURRENT accepted head, else a returned conflict -- and a node that
- * already carries a terminal event refuses a second one, append-only.
+ * Contract precedence is request validity, WORKSPACE, scoped target
+ * identity, stored integrity, foreign refs, expected value, persistence
+ * (registerNamed's own rule) -- so the workspace check runs first, above the
+ * operation lookup, not after it.
+ *
+ * The operation lookup then OUTRANKS every other state check, exactly as
+ * `publish` states for its own replay (service.ts: "Operation lookup
+ * OUTRANKS a stale current base on an accepted retry"): an exact replay must
+ * return the retained event with no clock sample and no write regardless of
+ * what has happened to the successor, the pin or anything else since the
+ * original write. `supersedeNode` calls this FIRST, before walking the
+ * replacement chain or resolving the successor -- otherwise a successor that
+ * later gains a new revision, grows its chain past the bound, or sits behind
+ * a stored cycle elsewhere would turn an idempotent replay into a thrown
+ * fault, naming a field the caller got right at the time.
  */
-async function writeLifecycleEvent(
+async function classifyLifecycleReplay(
+  writer: DatasetAdapter,
+  requireWorkspaceRow: (workspace: string) => Promise<void>,
+  input: LifecycleEventInput,
+): Promise<LifecycleReplayClassification> {
+  await requireWorkspaceRow(input.workspace_name);
+  await writer.refresh(SUPERSEDE_LOG);
+  const existingOperation = await contextOne(
+    writer,
+    SUPERSEDE_LOG,
+    `workspace_name = ${quote(input.workspace_name)} AND operation_id = ${quote(input.operation_id)}`,
+  );
+  if (existingOperation === null) return { replay: false };
+
+  const encoded = encodeSupersedeLogRow(existingOperation);
+  const successorMatches =
+    input.successor === null
+      ? encoded.new_id === null && encoded.new_revision_id === null
+      : encoded.new_id === input.successor.new_id &&
+        encoded.new_revision_id === input.successor.new_revision_id;
+  const matches =
+    encoded.old_id === input.node_id &&
+    encoded.old_revision_id === input.expected_revision_id &&
+    encoded.reason === input.reason &&
+    encoded.peer_name === input.peer_name &&
+    successorMatches;
+  // Exact replay: the ORIGINAL row, no clock sample, no write.
+  if (matches) return { replay: true, outcome: { outcome: "idempotent", row: encoded } };
+  // Same key, different payload: a classification, not invalid bytes.
+  return { replay: true, outcome: { outcome: "conflict", reason: "operation_digest", row: encoded } };
+}
+
+/**
+ * The genuinely-fresh half of one retire/supersede event.
+ *
+ * Callable ONLY after `classifyLifecycleReplay` has already returned
+ * `{ replay: false }` for this exact input: everything here assumes no prior
+ * event under this operation_id exists, so it never re-checks that. The pin
+ * (`expected_revision_id`) must equal the node's CURRENT accepted head, else
+ * a returned conflict -- and a node that already carries a terminal event
+ * refuses a second one, append-only.
+ */
+async function writeLifecycleEventFresh(
   writer: DatasetAdapter,
   core: OwnerCore,
   options: { clock: Clock },
-  requireWorkspaceRow: (workspace: string) => Promise<void>,
   writeRow: (
     table: string,
     row: Record<string, unknown>,
@@ -3101,32 +3199,6 @@ async function writeLifecycleEvent(
   ) => Promise<Record<string, unknown>>,
   input: LifecycleEventInput,
 ): Promise<LifecycleWriteOutcome> {
-  await writer.refresh(SUPERSEDE_LOG);
-  const existingOperation = await contextOne(
-    writer,
-    SUPERSEDE_LOG,
-    `workspace_name = ${quote(input.workspace_name)} AND operation_id = ${quote(input.operation_id)}`,
-  );
-  if (existingOperation !== null) {
-    const encoded = encodeSupersedeLogRow(existingOperation);
-    const successorMatches =
-      input.successor === null
-        ? encoded.new_id === null && encoded.new_revision_id === null
-        : encoded.new_id === input.successor.new_id &&
-          encoded.new_revision_id === input.successor.new_revision_id;
-    const matches =
-      encoded.old_id === input.node_id &&
-      encoded.old_revision_id === input.expected_revision_id &&
-      encoded.reason === input.reason &&
-      encoded.peer_name === input.peer_name &&
-      successorMatches;
-    // Exact replay: the ORIGINAL row, no clock sample, no write.
-    if (matches) return { outcome: "idempotent", row: encoded };
-    // Same key, different payload: a classification, not invalid bytes.
-    return { outcome: "conflict", reason: "operation_digest", row: encoded };
-  }
-
-  await requireWorkspaceRow(input.workspace_name);
   await writer.refresh(NODES);
   const node = await contextOne(
     writer,
@@ -3233,6 +3305,33 @@ async function writeLifecycleEvent(
     false,
   );
   return { outcome: "accepted", row: stored };
+}
+
+/**
+ * retireNode's entrypoint: classify the replay first, then run the fresh
+ * path only when no prior event under this operation_id exists. retireNode
+ * has no successor to resolve and no chain to walk, so there is nothing
+ * between the two steps -- unlike supersedeNode, which must classify FIRST
+ * and only then resolve its successor on the genuinely-fresh path.
+ */
+async function writeLifecycleEvent(
+  writer: DatasetAdapter,
+  core: OwnerCore,
+  options: { clock: Clock },
+  requireWorkspaceRow: (workspace: string) => Promise<void>,
+  writeRow: (
+    table: string,
+    row: Record<string, unknown>,
+    verify: () => Promise<Record<string, unknown>>,
+    expected: Record<string, unknown>,
+    fields: readonly string[],
+    wroteAlready: boolean,
+  ) => Promise<Record<string, unknown>>,
+  input: LifecycleEventInput,
+): Promise<LifecycleWriteOutcome> {
+  const classified = await classifyLifecycleReplay(writer, requireWorkspaceRow, input);
+  if (classified.replay) return classified.outcome;
+  return writeLifecycleEventFresh(writer, core, options, writeRow, input);
 }
 
 function createContextWriterService(
@@ -3572,6 +3671,27 @@ function createContextWriterService(
         failPublication("invalid_request", "/new_node_id");
       }
       return mutate(async () => {
+        // `new_title` plays no part in the replay comparison, so the empty
+        // placeholder here is never observed: it is overwritten with the
+        // real value below on the genuinely-fresh path only.
+        const baseInput: LifecycleEventInput = {
+          workspace_name: request.workspace_name,
+          node_id: request.node_id,
+          expected_revision_id: request.expected_revision_id,
+          reason: request.reason,
+          peer_name: request.peer_name,
+          operation_id: request.operation_id,
+          successor: { new_id: request.new_node_id, new_revision_id: request.new_revision_id, new_title: "" },
+        };
+        // Classification FIRST, before ANY successor state is read. An exact
+        // replay must return the retained event with no clock sample and no
+        // write even if the successor has since gained a new revision, its
+        // forward chain has grown past the bound, or a stored cycle exists
+        // somewhere else in the dataset -- none of that may turn an
+        // idempotent replay into a thrown fault.
+        const classified = await classifyLifecycleReplay(writer, requireWorkspaceRow, baseInput);
+        if (classified.replay) return classified.outcome;
+
         const chain = await walkForwardChain(writer, request.workspace_name, request.new_node_id);
         if (chain.has(request.node_id)) failPublication("invalid_request", "/new_node_id");
 
@@ -3597,13 +3717,8 @@ function createContextWriterService(
         if (successorRevision === null) failPublication("integrity_failure", "");
         const encodedSuccessorRevision = encodeRevisionRow(successorRevision);
 
-        return writeLifecycleEvent(writer, core, options, requireWorkspaceRow, writeRow, {
-          workspace_name: request.workspace_name,
-          node_id: request.node_id,
-          expected_revision_id: request.expected_revision_id,
-          reason: request.reason,
-          peer_name: request.peer_name,
-          operation_id: request.operation_id,
+        return writeLifecycleEventFresh(writer, core, options, writeRow, {
+          ...baseInput,
           successor: {
             new_id: request.new_node_id,
             new_revision_id: request.new_revision_id,

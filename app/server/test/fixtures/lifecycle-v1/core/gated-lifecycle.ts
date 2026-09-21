@@ -7,6 +7,9 @@ const payload = JSON.parse(payloadJson ?? "{}") as {
   ops: Array<{ facade?: "context" | "publication" | "taxonomy" | "harness"; method: string; request: any }>;
   revisionIds?: string[];
   clockMs?: number | number[];
+  /** Command a boundary hook to throw, to deterministically LEAVE AN ORPHAN
+   *  revision (append landed, head never moved) without a real crash. */
+  throwAtBoundary?: { boundary: string; occurrence: number };
 };
 
 const { openContextWriter } = await import(
@@ -55,12 +58,21 @@ const clock = () => {
   return sample;
 };
 
+const boundaryCounts = new Map<string, number>();
+
 const service = await openContextWriter(datasetRoot!, {
   newRevisionId: () => payload.revisionIds?.[revisionIndex++] ?? `fallbackrev${String(revisionIndex).padStart(9, "0")}`,
   clock,
   sourceNamespace: null,
   onContextBoundary: async (boundary: string) => {
     trace.push(boundary);
+  },
+  onBoundary: async (boundary: string) => {
+    const target = payload.throwAtBoundary;
+    if (target === undefined || target.boundary !== boundary) return;
+    const seen = (boundaryCounts.get(boundary) ?? 0) + 1;
+    boundaryCounts.set(boundary, seen);
+    if (seen === target.occurrence) throw new Error("commanded orphan-leaving boundary failure");
   },
 });
 

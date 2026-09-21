@@ -17,6 +17,7 @@ import {
   requireClosedObject,
   requireNanoid21,
   requireNonemptyString,
+  requireNonNegativeInt64String,
   type Tokens,
 } from "../contracts/common";
 import { fail } from "../contracts/errors";
@@ -140,18 +141,6 @@ function operationId(value: JcsValue | undefined, tokens: Tokens): string {
   return value;
 }
 
-/** Canonical signed Int64 decimal TEXT. Never a JSON number. */
-function int64Text(value: JcsValue | undefined, tokens: Tokens): string {
-  if (typeof value !== "string") fail("invalid_type", tokens, "expected Int64 decimal string");
-  // `-0` matches a naive `-?(0|[1-9]...)` and is NOT canonical.
-  if (value === "-0" || !/^-?(0|[1-9][0-9]*)$/.test(value)) {
-    fail("invalid_value", tokens, "expected canonical decimal");
-  }
-  const parsed = BigInt(value);
-  if (parsed < -(2n ** 63n) || parsed > 2n ** 63n - 1n) fail("invalid_value", tokens, "outside Int64");
-  return value;
-}
-
 export function parseSupersedeNode(bytes: Uint8Array): SupersedeNodeRequest {
   const request = requireClosedObject(parseRequest(bytes), SUPERSEDE_KEYS, []);
   return {
@@ -201,7 +190,12 @@ export function parseListLifecycleHistory(bytes: Uint8Array): ListLifecycleHisto
   return {
     workspace_name: name(request.get("workspace_name"), ["workspace_name"]),
     node_id: nodeId(request.get("node_id"), ["node_id"]),
-    after_event_id: rawAfter === null ? null : int64Text(rawAfter, ["after_event_id"]),
+    // `supersede_log.id` is only ever allocated >= 1 (service.ts's max+1
+    // allocator), so a negative cursor is a caller error, not a valid "start
+    // from the beginning" -- delegate to the accepted non-negative grammar
+    // rather than a local reimplementation.
+    after_event_id:
+      rawAfter === null ? null : requireNonNegativeInt64String(rawAfter ?? null, ["after_event_id"]).text,
     limit: rawLimit,
   };
 }
