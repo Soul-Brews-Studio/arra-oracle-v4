@@ -1,8 +1,8 @@
-import { fail } from "../errors";
-import { requireClosedObject, requireNonemptyString, requireSha256Hex, requireTimestampString } from "../common";
-import { get } from "./get";
-import { parseRoot } from "./parse-root";
-import { requireNullable } from "./require-nullable";
+import { fail } from "./errors";
+import { requireClosedObject, requireNonemptyString, requireSha256Hex, requireTimestampString } from "./common";
+import { get } from "./source-ingestion-v1.get";
+import { parseRoot } from "./source-ingestion-v1.parseRoot";
+import { requireNullable } from "./source-ingestion-v1.requireNullable";
 
 const STORED_KEYS = ["source_namespace", "source_message_id", "source_payload_digest", "source_created_at", "ingested_at"] as const;
 

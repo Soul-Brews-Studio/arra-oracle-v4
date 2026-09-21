@@ -1,5 +1,5 @@
-import { fail } from "../errors";
-import type { JcsObject } from "../jcs";
+import { fail } from "./errors";
+import type { JcsObject } from "./jcs";
 import {
   requireClosedObject,
   requireNanoid21,
@@ -7,11 +7,11 @@ import {
   requireSha256Hex,
   requireTimestampString,
   requireUnicodeString,
-} from "../common";
-import { messageDigest } from "../v1";
-import { get } from "./get";
-import { parseRoot } from "./parse-root";
-import { requireNullable } from "./require-nullable";
+} from "./common";
+import { messageDigest } from "./v1";
+import { get } from "./source-ingestion-v1.get";
+import { parseRoot } from "./source-ingestion-v1.parseRoot";
+import { requireNullable } from "./source-ingestion-v1.requireNullable";
 
 const CONTEXT_KEYS = ["workspace_name", "session_name", "intake_at", "source_namespace"] as const;
 const MESSAGE_KEYS = ["peer_name", "role", "content", "in_reply_to"] as const;

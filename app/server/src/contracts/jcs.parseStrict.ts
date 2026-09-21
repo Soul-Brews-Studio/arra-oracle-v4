@@ -1,9 +1,9 @@
-import { fail } from "../errors";
-import { LIMITS } from "./constants";
-import { hasOnlyPairedSurrogates } from "./has-only-paired-surrogates";
-import { Parser, type SpanSink } from "./parser";
-import type { JcsValue } from "./types";
-import { utf8ByteLength } from "./utf8-byte-length";
+import { fail } from "./errors";
+import { LIMITS } from "./jcs.constants";
+import { hasOnlyPairedSurrogates } from "./jcs.hasOnlyPairedSurrogates";
+import { Parser, type SpanSink } from "./jcs.Parser";
+import type { JcsValue } from "./jcs.types";
+import { utf8ByteLength } from "./jcs.utf8ByteLength";
 
 /**
  * Parse strict JSON text. `tokens` is the JSON Pointer prefix errors are

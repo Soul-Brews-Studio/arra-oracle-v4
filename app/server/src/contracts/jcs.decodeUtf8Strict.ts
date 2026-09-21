@@ -1,5 +1,5 @@
-import { fail } from "../errors";
-import { utf8Fatal } from "./codecs";
+import { fail } from "./errors";
+import { utf8Fatal } from "./jcs.codecs";
 
 /** Decode bytes as UTF-8, rejecting malformed sequences. Byte cap is checked FIRST. */
 export function decodeUtf8Strict(bytes: Uint8Array, maxBytes: number, tokens: Array<string | number>): string {

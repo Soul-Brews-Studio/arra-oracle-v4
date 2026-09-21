@@ -1,6 +1,6 @@
-import { fail } from "../errors";
-import type { JcsValue } from "../jcs";
-import type { Tokens } from "../common";
+import { fail } from "./errors";
+import type { JcsValue } from "./jcs";
+import type { Tokens } from "./common";
 
 const INT64_MIN = -(2n ** 63n);
 const INT64_MAX = 2n ** 63n - 1n;

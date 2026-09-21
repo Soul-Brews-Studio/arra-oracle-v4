@@ -1,5 +1,5 @@
-import { fail } from "../errors";
-import { LIMITS, parseStrict, type JcsValue } from "../jcs";
+import { fail } from "./errors";
+import { LIMITS, parseStrict, type JcsValue } from "./jcs";
 
 /** Parse one bounded root document with the accepted strict rules. */
 export function parseRoot(json: unknown): JcsValue {

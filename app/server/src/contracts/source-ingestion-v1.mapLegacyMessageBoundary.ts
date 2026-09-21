@@ -1,9 +1,9 @@
-import { fail } from "../errors";
-import { requireClosedObject, requireNanoid21, requireNonemptyString, requireTimestampString } from "../common";
-import { formatTimestamp } from "../v1";
-import { get } from "./get";
-import { parseRoot } from "./parse-root";
-import { requireInt64Ranged } from "./require-int64-ranged";
+import { fail } from "./errors";
+import { requireClosedObject, requireNanoid21, requireNonemptyString, requireTimestampString } from "./common";
+import { formatTimestamp } from "./v1";
+import { get } from "./source-ingestion-v1.get";
+import { parseRoot } from "./source-ingestion-v1.parseRoot";
+import { requireInt64Ranged } from "./source-ingestion-v1.requireInt64Ranged";
 
 const LEGACY_CONTEXT_KEYS = ["workspace_name", "session_name", "migration_intake_at"] as const;
 const LEGACY_KEYS = [

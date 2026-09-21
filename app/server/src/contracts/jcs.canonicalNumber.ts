@@ -1,4 +1,4 @@
-import { fail } from "../errors";
+import { fail } from "./errors";
 
 /** ECMAScript Number::toString with JCS's -0 rule. Non-finite is a contract error. */
 export function canonicalNumber(n: number, tokens: Array<string | number> = []): string {

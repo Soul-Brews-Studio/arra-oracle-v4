@@ -1,6 +1,6 @@
-import { fail } from "../errors";
-import { parseStrict } from "./parse-strict";
-import type { JcsObject } from "./types";
+import { fail } from "./errors";
+import { parseStrict } from "./jcs.parseStrict";
+import type { JcsObject } from "./jcs.types";
 
 /** Parse strict JSON text that MUST decode to an object. */
 export function parseObjectText(text: string, tokens: Array<string | number>): JcsObject {

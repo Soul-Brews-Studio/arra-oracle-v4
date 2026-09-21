@@ -1,9 +1,9 @@
-import { fail } from "../errors";
-import { canonicalNumber } from "./canonical-number";
-import { canonicalString } from "./canonical-string";
-import { compareUtf16 } from "./compare-utf16";
-import { LIMITS } from "./constants";
-import type { JcsValue } from "./types";
+import { fail } from "./errors";
+import { canonicalNumber } from "./jcs.canonicalNumber";
+import { canonicalString } from "./jcs.canonicalString";
+import { compareUtf16 } from "./jcs.compareUtf16";
+import { LIMITS } from "./jcs.constants";
+import type { JcsValue } from "./jcs.types";
 
 /**
  * Serialize a parsed/constructed value as canonical JSON text. Objects MUST be

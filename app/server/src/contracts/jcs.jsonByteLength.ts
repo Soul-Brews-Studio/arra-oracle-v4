@@ -1,5 +1,5 @@
-import { utf8ByteLength } from "./utf8-byte-length";
-import type { JcsValue } from "./types";
+import { utf8ByteLength } from "./jcs.utf8ByteLength";
+import type { JcsValue } from "./jcs.types";
 
 /**
  * UTF-8 byte length a value WOULD have as compact JSON, computed without

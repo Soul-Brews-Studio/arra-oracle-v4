@@ -5,10 +5,10 @@
  * simply the one class both of those functions need.
  */
 
-import { fail } from "../errors";
-import { hasOnlyPairedSurrogates } from "./has-only-paired-surrogates";
-import type { JcsObject, JcsValue } from "./types";
-import { utf8ByteLength } from "./utf8-byte-length";
+import { fail } from "./errors";
+import { hasOnlyPairedSurrogates } from "./jcs.hasOnlyPairedSurrogates";
+import type { JcsObject, JcsValue } from "./jcs.types";
+import { utf8ByteLength } from "./jcs.utf8ByteLength";
 
 /** Reports the RAW source span of a parsed value: UTF-8 byte length of the exact text it occupied. */
 export type SpanSink = (path: Array<string | number>, rawBytes: number) => void;

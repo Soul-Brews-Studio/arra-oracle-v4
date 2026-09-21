@@ -1,4 +1,4 @@
-import type { JcsValue } from "./types";
+import type { JcsValue } from "./jcs.types";
 
 /** Deep structural equality over JcsValues (numbers by SameValueZero, maps by key set + values). */
 export function jcsEqual(a: JcsValue, b: JcsValue): boolean {

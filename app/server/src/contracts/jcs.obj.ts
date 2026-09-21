@@ -1,4 +1,4 @@
-import type { JcsObject, JcsValue } from "./types";
+import type { JcsObject, JcsValue } from "./jcs.types";
 
 /** Build a Map from a plain literal — for constructing envelopes in code, never for parsing input. */
 export function obj(entries: Record<string, JcsValue>): JcsObject {

@@ -1,9 +1,9 @@
-import { ContractError, fail } from "../errors";
-import { requireClosedObject, requireNanoid21, requireNonemptyString, requireSha256Hex } from "../common";
-import type { JcsObject, JcsValue } from "../jcs";
-import { sourceReplayOp } from "../replay-v1";
-import { get } from "./get";
-import { parseRoot } from "./parse-root";
+import { ContractError, fail } from "./errors";
+import { requireClosedObject, requireNanoid21, requireNonemptyString, requireSha256Hex } from "./common";
+import type { JcsObject, JcsValue } from "./jcs";
+import { sourceReplayOp } from "./replay-v1";
+import { get } from "./source-ingestion-v1.get";
+import { parseRoot } from "./source-ingestion-v1.parseRoot";
 
 const REQUESTED_KEYS = ["workspace_name", "session_name"] as const;
 const INCOMING_KEYS = ["source_namespace", "source_message_id", "source_payload_digest"] as const;

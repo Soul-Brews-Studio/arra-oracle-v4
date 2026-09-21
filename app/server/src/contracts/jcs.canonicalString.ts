@@ -1,5 +1,5 @@
-import { fail } from "../errors";
-import { hasOnlyPairedSurrogates } from "./has-only-paired-surrogates";
+import { fail } from "./errors";
+import { hasOnlyPairedSurrogates } from "./jcs.hasOnlyPairedSurrogates";
 
 /** JSON string per ECMAScript JSON.stringify — the escaping JCS mandates. */
 export function canonicalString(s: string, tokens: Array<string | number> = []): string {
