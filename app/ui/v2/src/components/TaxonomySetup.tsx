@@ -69,6 +69,19 @@ export function TaxonomySetup({
   );
 }
 
+/** Name first, id second.
+ *
+ * The first version of this laid out `name ......... [id]` with
+ * `justify-between`, which put a 21-character nanoid at the right edge of a
+ * narrow panel and the human-readable name at the far left. The result was a
+ * column of `ZXZgaq...p5mA` with nothing legible next to it -- the id, which
+ * a human never needs to read, dominated the thing a human always needs to
+ * read.
+ *
+ * The id still has to be here (it is held nowhere else, and losing it makes
+ * the vocabulary unreachable), but it belongs UNDER the name as secondary
+ * text, not beside it competing for the same line.
+ */
 function VocabularyBlock({
   label,
   vocabularyId,
@@ -80,15 +93,15 @@ function VocabularyBlock({
 }) {
   return (
     <div className="rounded border border-edge bg-panel p-3">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-slate-100">{label}</span>
-        <CopyId id={vocabularyId} />
+      <div className="flex flex-col gap-0.5">
+        <span className="text-sm font-semibold text-slate-100">{label}</span>
+        <CopyId id={vocabularyId} hint="vocabulary id" />
       </div>
-      <ul className="mt-2 flex flex-col gap-1">
+      <ul className="mt-2 flex flex-col gap-1.5">
         {Object.entries(terms).map(([term, termId]) => (
-          <li key={term} className="flex items-center justify-between gap-2">
-            <span className="text-[11px] text-muted">{term}</span>
-            <CopyId id={termId} />
+          <li key={term} className="flex flex-col gap-0.5 border-l-2 border-edge pl-2">
+            <span className="text-xs text-slate-200">{term}</span>
+            <CopyId id={termId} hint={`term id for ${term}`} />
           </li>
         ))}
       </ul>
@@ -99,7 +112,7 @@ function VocabularyBlock({
 /** Truncated id + copy button. Copying is the whole point -- this id is held
  *  nowhere else, so making it easy to paste into a durable note is not a
  *  nicety here, it's the mitigation for the loss described above. */
-function CopyId({ id }: { id: string }) {
+function CopyId({ id, hint }: { id: string; hint: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <button
@@ -108,10 +121,10 @@ function CopyId({ id }: { id: string }) {
         setCopied(true);
         setTimeout(() => setCopied(false), 1200);
       }}
-      title={id}
-      className="rounded border border-edge px-1.5 py-0.5 font-mono text-[10px] text-muted hover:border-accent/40 hover:text-accent"
+      title={`${hint} — click to copy\n${id}`}
+      className="self-start rounded px-0 py-0 text-left font-mono text-[10px] text-muted hover:text-accent"
     >
-      {copied ? "copied" : `${id.slice(0, 6)}…${id.slice(-4)}`}
+      {copied ? "copied ✓" : `${id.slice(0, 6)}…${id.slice(-4)}`}
     </button>
   );
 }
