@@ -1,7 +1,9 @@
 /**
  * Session links v1 -- the PURE half.
  *
- * Contract: ψ/.../session-link-v1-FROZEN.md (Soul-Brews-Studio/arra-oracle-v4#28)
+ * Contract: app/docs/contracts/session-link-v1.md
+ * SHA256 9a0235d7279d3a8ee56bbb83aac70b2eb769db507b24e591bf7ef80e024c6784
+ * (Soul-Brews-Studio/arra-oracle-v4#28)
  *
  * Request grammar and the stored-row codec, with no SDK, connection or owner
  * import. Everything here is decidable from bytes alone.
@@ -137,11 +139,20 @@ export type CreateSessionLinkRequest = {
 
 export function parseCreateSessionLink(bytes: Uint8Array): CreateSessionLinkRequest {
   const o = requireClosedObject(parseRequest(bytes), CREATE_KEYS, []);
+  const fromSessionName = name(o.get("from_session_name"), ["from_session_name"]);
+  const toSessionName = name(o.get("to_session_name"), ["to_session_name"]);
+  // Self-link is decidable from the two names alone, so it is refused HERE,
+  // by the parser, as a governed ContractError -- never inside the queued
+  // turn, where a malformed request would become an owner event and would
+  // report the wrong pointer ahead of reference/workspace resolution.
+  if (fromSessionName === toSessionName) {
+    fail("invalid_value", ["to_session_name"], "must not equal from_session_name");
+  }
   return {
     id: id(o.get("id"), ["id"]),
     workspace_name: name(o.get("workspace_name"), ["workspace_name"]),
-    from_session_name: name(o.get("from_session_name"), ["from_session_name"]),
-    to_session_name: name(o.get("to_session_name"), ["to_session_name"]),
+    from_session_name: fromSessionName,
+    to_session_name: toSessionName,
     relation: relation(o.get("relation"), ["relation"]),
     evidence_ref: evidenceRefText(o.get("evidence_ref"), ["evidence_ref"]),
     created_by_peer_name: nullableName(o.get("created_by_peer_name"), ["created_by_peer_name"]),

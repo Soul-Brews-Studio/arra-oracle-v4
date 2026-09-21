@@ -11,6 +11,7 @@ const payload = JSON.parse(payloadJson ?? "{}") as {
 };
 
 const { connect } = await import("@lancedb/lancedb");
+const { tableFromArrays } = await import("apache-arrow");
 const servicePath = new URL("../../../../src/publication/service.ts", import.meta.url).pathname;
 const { openContextWriter } = await import(servicePath);
 const { rawRows } = await import(new URL("../../../../src/publication/storage.ts", import.meta.url).pathname);
@@ -76,6 +77,44 @@ const harness: Record<string, (request: any) => Promise<unknown>> = {
         Object.entries(r).map(([k, v]) => [k, v === null || v === undefined ? null : String(v)]),
       ),
     );
+  },
+  /**
+   * Insert `session_links` rows DIRECTLY, bypassing every service-level
+   * check (self-link, endpoint existence, cycle detection). Used ONLY to
+   * plant retained state a well-behaved writer could never have produced
+   * itself -- a stored back-edge cycle, or a single node with more out-edges
+   * than the cycle walk's bound -- so the WALK's own defenses are what gets
+   * measured, not whatever wrote the fixture.
+   */
+  async insertRawSessionLinks(request: {
+    rows: Array<{
+      id: string;
+      workspace_name: string;
+      from_session_name: string;
+      to_session_name: string;
+      relation: string;
+      evidence_ref: string | null;
+      created_by_peer_name: string | null;
+      created_at_micros: string;
+    }>;
+  }) {
+    const tbl = await harnessTable("session_links");
+    const columns: Record<string, unknown[]> = {
+      id: [], workspace_name: [], from_session_name: [], to_session_name: [],
+      relation: [], evidence_ref: [], created_by_peer_name: [], created_at: [],
+    };
+    for (const row of request.rows) {
+      columns.id!.push(row.id);
+      columns.workspace_name!.push(row.workspace_name);
+      columns.from_session_name!.push(row.from_session_name);
+      columns.to_session_name!.push(row.to_session_name);
+      columns.relation!.push(row.relation);
+      columns.evidence_ref!.push(row.evidence_ref);
+      columns.created_by_peer_name!.push(row.created_by_peer_name);
+      columns.created_at!.push(BigInt(row.created_at_micros));
+    }
+    await tbl.add(tableFromArrays(columns as never) as never);
+    return { inserted: request.rows.length };
   },
 };
 
