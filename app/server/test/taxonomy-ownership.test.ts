@@ -76,8 +76,8 @@ const TAXONOMY_METHODS = [
   "retireTerm",
   "seedReservedVocabularies",
 ].join(",");
-const PUBLICATION_WRITE_METHODS = "getAcceptedHead,listAcceptedHistory,publishRevision";
-const PUBLICATION_READ_METHODS = "getAcceptedHead,listAcceptedHistory";
+const PUBLICATION_WRITE_METHODS = "getAcceptedHead,listAcceptedHistory,listNodes,publishRevision";
+const PUBLICATION_READ_METHODS = "getAcceptedHead,listAcceptedHistory,listNodes";
 const TAXONOMY_READ_METHODS = "getTerm,getVocabulary";
 
 /** nanoid21 identities supplied by this file, so no builder invents them. */

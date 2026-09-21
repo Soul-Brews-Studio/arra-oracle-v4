@@ -88,6 +88,11 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
     scopePath: [],
     call: (bundle, bytes) => bundle.publication.listAcceptedHistory(bytes),
   },
+  listNodes: {
+    action: "content:read",
+    scopePath: [],
+    call: (bundle, bytes) => bundle.publication.listNodes(bytes),
+  },
   // The governed revision codec owns this envelope; workspace_name lives at
   // /content/workspace_name, not at the request root.
   publishRevision: {
