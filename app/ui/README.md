@@ -54,3 +54,11 @@ Copy the previous version, bump the port in `vite.config.ts`, and add a row
 above. Do NOT factor shared code up into `ui/` — the isolation is the feature.
 If two versions genuinely need the same thing, the honest move is to promote it
 into the server or a real package, not a loose shared folder here.
+
+## A rebuild needs a hard reload
+
+`bun run build` emits a new hashed asset, but `index.html` is served from the
+API server's static assets and the browser caches it. A normal reload then
+loads yesterday's JavaScript against today's HTML, which presents as "my change
+did nothing" — it cost two debugging detours before it was recognised. Force a
+reload (`location.reload(true)`, or a hard refresh) after every build.

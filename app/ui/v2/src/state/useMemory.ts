@@ -183,10 +183,10 @@ export function useMemory() {
       if (!result.ok) setMessageError(describe(result));
       await refreshContext();
     },
-    send: async (peerName: string, role: string | null, content: string) => {
+    send: async (peerName: string, role: string | null, content: string, inReplyTo: string | null = null) => {
       if (session === null) return;
       setSending(true);
-      const result = await appendMessage(b, session, peerName, content, role);
+      const result = await appendMessage(b, session, peerName, content, role, inReplyTo);
       setSending(false);
       if (!result.ok) {
         setMessageError(describe(result));

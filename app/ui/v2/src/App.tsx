@@ -9,6 +9,7 @@ import { SidebarShell } from "./components/SidebarShell";
 import { SessionRail } from "./components/SessionRail";
 import { Transcript } from "./components/Transcript";
 import { WorkspaceBar } from "./components/WorkspaceBar";
+import { ForumView } from "./forum/ForumView";
 import { KnowledgeView } from "./KnowledgeView";
 import { useMemory } from "./state/useMemory";
 import { useRoute } from "./state/useRoute";
@@ -36,7 +37,7 @@ export function App() {
   // and Back steps through what you clicked. See state/useRoute.
   const { route, push } = useRoute();
   const view = route.view;
-  const setView = (v: "messages" | "knowledge") => push({ view: v });
+  const setView = (v: "messages" | "forum" | "knowledge") => push({ view: v });
 
   // Verify the saved roster once per bank/workspace change: a bookmark that
   // has gone stale should announce itself on arrival, not the first time you
@@ -91,14 +92,16 @@ export function App() {
       />
 
       <nav className="flex gap-1 border-b border-edge px-4 py-1.5">
-        {(["messages", "knowledge"] as const).map((v) => (
+        {(["messages", "forum", "knowledge"] as const).map((v) => (
           <button
             key={v}
             onClick={() => setView(v)}
             title={
               v === "messages"
                 ? "Honcho's model: peers, sessions, messages, assembled context, dialectic"
-                : "arra-oracle-v3's model: nodes, immutable revisions, type vocabulary, tags"
+                : v === "forum"
+                  ? "The same session's messages as reply trees — in_reply_to is the only nesting this system has"
+                  : "arra-oracle-v3's model: nodes, immutable revisions, type vocabulary, tags"
             }
             className={`rounded px-2.5 py-1 text-xs ${
               view === v
@@ -111,7 +114,16 @@ export function App() {
         ))}
       </nav>
 
-      {view === "knowledge" ? (
+      {view === "forum" ? (
+        <ForumView
+          messages={m.messages}
+          loading={m.loadingMessages}
+          error={m.messageError}
+          peerName={m.peer ?? ""}
+          onSend={(p, r2, c, inReplyTo) => void m.actions.send(p, r2, c, inReplyTo)}
+          sending={m.sending}
+        />
+      ) : view === "knowledge" ? (
         <KnowledgeView
           bank={{ bank: m.bank, token: m.token, workspace: m.workspace }}
           nodeId={route.node}

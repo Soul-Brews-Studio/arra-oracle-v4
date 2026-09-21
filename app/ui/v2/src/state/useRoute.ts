@@ -26,7 +26,7 @@ import { useCallback, useEffect, useState } from "react";
  * shareable location like this one.
  */
 export type Route = {
-  view: "messages" | "knowledge";
+  view: "messages" | "forum" | "knowledge";
   peer: string | null;
   session: string | null;
   node: string | null;
@@ -38,7 +38,8 @@ function parse(hash: string): Route {
   const raw = hash.startsWith("#") ? hash.slice(1) : hash;
   const [path, query = ""] = raw.split("?");
   const params = new URLSearchParams(query);
-  const view = path.replace(/^\/+/, "") === "knowledge" ? "knowledge" : "messages";
+    const slug = path.replace(/^\/+/, "");
+  const view: Route["view"] = slug === "knowledge" ? "knowledge" : slug === "forum" ? "forum" : "messages";
   return {
     view,
     peer: params.get("peer"),
@@ -52,7 +53,10 @@ function format(route: Route): string {
   // Only the keys that mean something in this view. Carrying a stale `node`
   // into the messages view would put a value in the URL that nothing reads,
   // which is how a link starts lying about what it restores.
-  if (route.view === "messages") {
+  if (route.view === "messages" || route.view === "forum") {
+    // The forum is the SAME session's messages rendered as reply trees, so it
+    // carries the same peer/session selection -- switching tabs should not
+    // lose where you are.
     if (route.peer !== null) params.set("peer", route.peer);
     if (route.session !== null) params.set("session", route.session);
   } else {
