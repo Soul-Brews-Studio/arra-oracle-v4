@@ -73,6 +73,23 @@ export function interleavedIds(prefix: string, perWorkspace: number): Interleave
   return { a, b };
 }
 
+/**
+ * A single nanoid21-shaped id, for a column that is an `id` in the physical
+ * sense (`peers.id`, `sessions.id`) but never itself a pagination cursor --
+ * `interleavedIds` above is for the cursor case, where INSERTION ORDER also
+ * has to be preserved. Verified against v4/list-merge: `encodePeerRow` /
+ * `encodeSessionRow` both validate `id` through `storedId`, which enforces
+ * the SAME `[A-Za-z0-9_-]{21}` grammar as `listNodes`' cursor ids -- a
+ * short human-readable id like `peer-a-id-3` (this proof's first draft)
+ * fails as `integrity_failure` the moment a real `listPeers`/`listSessions`
+ * reads it back, even though nothing about peers/sessions pagination
+ * itself is cursor-based on `id`.
+ */
+export function nanoidLike(seed: string): string {
+  if (seed.length > 21) throw new Error(`nanoidLike: "${seed}" exceeds nanoid21's 21 characters`);
+  return seed.padEnd(21, "_");
+}
+
 /** `epochMsFields` per table: which columns the child converts from a plain
  *  epoch-ms number to raw storage microseconds before calling
  *  `DatasetAdapter.append`. `mcp_calls.created_at` is a physical INT64

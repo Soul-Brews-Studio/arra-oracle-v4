@@ -71,6 +71,7 @@ import { createFixture, runGated, type Fixture } from "./helpers/publication-fix
 import {
   interleaved,
   interleavedIds,
+  nanoidLike,
   EPOCH_MS_FIELDS,
   workspaceRow,
   peerRow,
@@ -138,6 +139,19 @@ type ListSpec = {
   defaultRequest?: Record<string, unknown>;
 };
 
+// `include_total: false` is the ORDINARY-request default for every spec,
+// verified against the real merged tree (v4/list-merge): `listPeers` and
+// `listSessions` (v4/list-context) and `listNodes` (v4/list-nodes)
+// independently landed `include_total` as closed-key REQUIRED-but-boolean
+// -- "this grammar has no optional keys anywhere else" -- not the
+// `include_total?` optional shape #88's original brief described. A
+// dedicated op with `include_total: true` is built separately, only where
+// `total` itself is under test (see "the total-check ops" below) --
+// defaulting every OTHER request to `true` would make the ordinary
+// page-purity/chain-walk assertions exercise an extra scoped-count code
+// path they have no need of.
+const ORDINARY_REQUEST = { include_total: false };
+
 const SPECS: ListSpec[] = [
   {
     name: "listPeers",
@@ -146,6 +160,7 @@ const SPECS: ListSpec[] = [
     cursorReqKey: "after_name",
     cursorRespKey: "next_after_name",
     identityField: "name",
+    defaultRequest: ORDINARY_REQUEST,
   },
   {
     name: "listSessions",
@@ -154,6 +169,7 @@ const SPECS: ListSpec[] = [
     cursorReqKey: "after_name",
     cursorRespKey: "next_after_name",
     identityField: "name",
+    defaultRequest: ORDINARY_REQUEST,
   },
   {
     name: "listNodes",
@@ -162,9 +178,13 @@ const SPECS: ListSpec[] = [
     cursorReqKey: "after_id",
     cursorRespKey: "next_after_id",
     identityField: "id",
-    defaultRequest: { include_total: true, type_term: null },
+    defaultRequest: { ...ORDINARY_REQUEST, type_term: null },
   },
   {
+    // Not merged yet (v4/list-activity is still working, per #88's own
+    // tracking) -- no verified request shape to default, so none is
+    // guessed here. `findMethod` reports `not_implemented` regardless of
+    // what fields this file sends, so this stays skipped either way.
     name: "listMcpCalls",
     methodNames: ["listMcpCalls", "listMcpCall", "listCalls"],
     table: "mcp_calls",
@@ -281,8 +301,8 @@ push("seed.peers", {
   table: "peers",
   epochMsFields: EPOCH_MS_FIELDS.peers,
   rows: [
-    ...peers.a.map((name, i) => peerRow(ALPHA, `peer-a-id-${i}`, name, SEED_MS + i)),
-    ...peers.b.map((name, i) => peerRow(BETA, `peer-b-id-${i}`, name, SEED_MS + i)),
+    ...peers.a.map((name, i) => peerRow(ALPHA, nanoidLike(`pa${i}`), name, SEED_MS + i)),
+    ...peers.b.map((name, i) => peerRow(BETA, nanoidLike(`pb${i}`), name, SEED_MS + i)),
   ],
 });
 push("seed.sessions", {
@@ -290,8 +310,8 @@ push("seed.sessions", {
   table: "sessions",
   epochMsFields: EPOCH_MS_FIELDS.sessions,
   rows: [
-    ...sessions.a.map((name, i) => sessionRow(ALPHA, `sess-a-id-${i}`, name, SEED_MS + i)),
-    ...sessions.b.map((name, i) => sessionRow(BETA, `sess-b-id-${i}`, name, SEED_MS + i)),
+    ...sessions.a.map((name, i) => sessionRow(ALPHA, nanoidLike(`sa${i}`), name, SEED_MS + i)),
+    ...sessions.b.map((name, i) => sessionRow(BETA, nanoidLike(`sb${i}`), name, SEED_MS + i)),
   ],
 });
 push("seed.nodes", {
@@ -435,7 +455,19 @@ for (const workspace of [ALPHA, BETA]) {
       push(`listNodes.typeTerm.${workspace}.${term}.${pageSize}`, {
         kind: "walk",
         methodNames: LIST_NODES.methodNames,
-        baseRequest: { ...LIST_NODES.defaultRequest, workspace_name: workspace, limit: pageSize, type_term: term },
+        // `include_total: true` HERE, overriding the spec's ordinary
+        // `false` default: this walk is what item 5's `type_term` case
+        // checks -- `total` must come back `null` (deliberately, per
+        // v4/list-nodes: no native scoped count exists for a JSON-embedded
+        // field, and it refuses to fake one with a full scan), which is
+        // only observable if `include_total` was actually requested.
+        baseRequest: {
+          ...LIST_NODES.defaultRequest,
+          workspace_name: workspace,
+          limit: pageSize,
+          type_term: term,
+          include_total: true,
+        },
         cursorReqKey: LIST_NODES.cursorReqKey,
         cursorRespKey: LIST_NODES.cursorRespKey,
         maxPages: N + TYPED_N + 10,
@@ -502,6 +534,20 @@ for (const spec of SPECS) {
     methodNames: spec.methodNames,
     request: { ...spec.defaultRequest, workspace_name: GAMMA, limit: 10, [spec.cursorReqKey]: null },
   });
+  // A SEPARATE walk, `include_total: true`, only for item 5 ("total, when
+  // present, counts only the requested workspace"). Kept apart from the
+  // ordinary page-purity walks above (which default `include_total:
+  // false`) so THIS is the only place that extra scoped-count path runs.
+  for (const workspace of [ALPHA, BETA]) {
+    push(`${spec.name}.totalWalk.${workspace}`, {
+      kind: "walk",
+      methodNames: spec.methodNames,
+      baseRequest: { ...spec.defaultRequest, workspace_name: workspace, limit: 3, include_total: true },
+      cursorReqKey: spec.cursorReqKey,
+      cursorRespKey: spec.cursorRespKey,
+      maxPages: N + TYPED_N + 10,
+    });
+  }
 }
 
 combined = await driveOnce();
@@ -618,8 +664,8 @@ for (const spec of SPECS) {
       }
 
       test(`${workspace}: total, when the response carries one, counts only this workspace's own rows`, () => {
-        const result = op(`${spec.name}.walk.${workspace}.1`);
-        expect(result.ok).toBe(true);
+        const result = op(`${spec.name}.totalWalk.${workspace}`);
+        expect(result.ok, `${spec.name} ${workspace} totalWalk: ${JSON.stringify(result).slice(0, 500)}`).toBe(true);
         const totals: unknown[] = (result.totals as unknown[]).filter((t) => t !== null && t !== undefined);
         if (totals.length === 0) {
           // This implementation's response shape carries no `total` field.
