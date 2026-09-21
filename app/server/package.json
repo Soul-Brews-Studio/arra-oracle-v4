@@ -6,9 +6,11 @@
     "start": "bun run src/index.ts",
     "dev": "bun --watch src/index.ts",
     "cli": "bun run ../cli.ts",
-    "test": "bun test test ../cli.test.ts",
+    "test": "bun test.order.ts && bun test --bail $(cat test.order.txt) ../cli.test.ts",
     "typecheck": "tsc --project tsconfig.json",
-    "build": "bun build src/index.ts --target=bun --packages=external --outdir .tmp/build"
+    "build": "bun build src/index.ts --target=bun --packages=external --outdir .tmp/build",
+    "test:order": "bun test.order.ts",
+    "test:full": "bun test test ../cli.test.ts"
   },
   "dependencies": {
     "@elysiajs/static": "^1.4.10",
