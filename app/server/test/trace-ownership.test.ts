@@ -63,7 +63,7 @@ const CONTEXT_WRITE_METHODS =
   "advanceReadCursor,answerChat,appendMessages,createSessionLink,createTrace,getContext,getMessage," +
   "getPeer,getReadCursor,getRecallEligibility,getSession,getTrace,indexRevisionChunks,joinSession," +
   "listLifecycleHistory,listMessages,listSearchChunks,listSessionLinks,listTraceHits," +
-  "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode";
+  "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode,writeChunkEmbedding";
 const CONTEXT_READ_METHODS =
   "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
   "listLifecycleHistory,listMessages,listSearchChunks,listSessionLinks,listTraceHits";

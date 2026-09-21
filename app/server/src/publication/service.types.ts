@@ -64,6 +64,17 @@ export type DatasetAdapter = {
     predicate: string,
     assignments: Record<string, string>,
   ): Promise<{ rowsUpdated: number; version: number }>;
+  /**
+   * UPDATE-ONLY merge for a single, already-complete `search_chunks_v1` row
+   * (#90's embed-step write path). Deliberately narrower than a generic
+   * `mergeInsert` exposure: there is no `whenNotMatchedInsertAll`, so a row
+   * whose `id` does not already exist is left untouched rather than created
+   * -- this can UPDATE a chunk `indexRevisionChunks` wrote, never conjure one.
+   * Hardcoded to one table for the same reason `deleteDerivedScope` is
+   * restricted to two: a generic `table`/`row` surface would let a caller
+   * mutate authoritative rows this kernel does not intend to expose that way.
+   */
+  updateSearchChunkEmbedding(row: Record<string, unknown>): Promise<number>;
   release(): void;
 };
 

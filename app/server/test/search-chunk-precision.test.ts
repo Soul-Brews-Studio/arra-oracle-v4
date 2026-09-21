@@ -11,17 +11,17 @@
  * Arrow Vector rather than a JS array. Deterministic chunk ids are
  * byte-stable across runs.
  *
- * MEASURED, NOT ASSUMED: at this base commit, `search-chunk.ts`'s own
- * `storedEmbeddingMustBeNull` unconditionally refuses a NON-null `embedding`
- * value, and no writer in this kernel ever populates one -- the "not-yet-
- * implemented" embed step search-chunk.ts's header describes. There is
- * therefore no real path to a POPULATED embedding to round-trip; "the
- * all-null embedding written and read back as genuinely null" is proven via
- * a real `indexRevisionChunks` call, and "a non-384 profile refused" is
- * proven at the REQUEST-GRAMMAR boundary (`parseIndexRevision`), which is
- * where this kernel actually enforces the frozen dimension -- there is no
- * separate stored-embedding-dimension check to exercise. This gap is
- * reported explicitly, not silently narrowed.
+ * #90 UPDATE: `storedEmbedding` (replacing `storedEmbeddingMustBeNull`) now
+ * accepts a populated 384-float vector, and `service.writeChunkEmbedding.ts`
+ * is a real write path for one, through the same owner/gate machinery as
+ * every other mutator here. The gap the previous revision of this comment
+ * reported -- "no real path to a POPULATED embedding to round-trip" -- is
+ * closed below: a real `writeChunkEmbedding` call attaches a populated
+ * vector to a row a real `indexRevisionChunks` call created, and the RAW
+ * stored floats are compared, element-for-element, against `Math.fround` of
+ * the values requested (float32 storage rounds a JS double on write; the
+ * assertion must compare against that rounding, not the original double, or
+ * it passes for the wrong reason).
  */
 
 import { describe, expect, test } from "bun:test";
@@ -31,8 +31,10 @@ import {
   deriveChunkId,
   parseIndexRevision,
   SEARCH_CHUNK_FIELDS,
+  storedEmbedding,
 } from "../src/publication/search-chunk";
 import { ContractError } from "../src/contracts/errors";
+import { PublicationError } from "../src/publication/errors";
 
 const CHILD = new URL("./fixtures/search-chunk-v1/precision/seed-child.ts", import.meta.url).pathname;
 const ALPHA = "alpha-workspace";
@@ -157,6 +159,179 @@ describe("a real index writes a genuinely null embedding, omitted from the wire"
       expect(raw).toHaveLength(1);
       // Explicit null, present column -- not merely absent from a projection.
       expect(raw[0]!.embedding).toBeNull();
+    } finally {
+      await fixture.cleanup();
+    }
+  }, TEST_TIMEOUT_MS);
+});
+
+describe("storedEmbedding: null or exactly 384 finite floats, pure function only", () => {
+  const vec384 = (fill: number) => Array.from({ length: 384 }, () => fill);
+
+  test("null is accepted as-is", () => {
+    expect(storedEmbedding(null)).toBeNull();
+  });
+
+  test("a 384-element array of finite numbers is accepted, values unchanged", () => {
+    const values = vec384(0.5);
+    expect(storedEmbedding(values)).toEqual(values);
+  });
+
+  test("an Arrow-vector-like object exposing toArray() is accepted, matching storedTermIds's two-shape rule", () => {
+    const values = vec384(-1.25);
+    const vectorLike = { toArray: () => values };
+    expect(storedEmbedding(vectorLike)).toEqual(values);
+  });
+
+  test("383 or 385 elements is refused -- the dimension is frozen, never truncated or padded", () => {
+    expect(() => storedEmbedding(vec384(0).slice(0, 383))).toThrow(PublicationError);
+    expect(() => storedEmbedding([...vec384(0), 0])).toThrow(PublicationError);
+    try {
+      storedEmbedding(vec384(0).slice(0, 383));
+      throw new Error("expected a throw, got none");
+    } catch (error) {
+      expect((error as PublicationError).code).toBe("integrity_failure");
+    }
+  });
+
+  test("NaN or Infinity anywhere in the vector is refused", () => {
+    expect(() => storedEmbedding([...vec384(0).slice(0, 383), NaN])).toThrow(PublicationError);
+    expect(() => storedEmbedding([...vec384(0).slice(0, 383), Infinity])).toThrow(PublicationError);
+  });
+
+  test("a non-array, non-toArray value is refused", () => {
+    expect(() => storedEmbedding("not a vector")).toThrow(PublicationError);
+    expect(() => storedEmbedding(42)).toThrow(PublicationError);
+  });
+});
+
+describe("#90: a real write path attaches a populated embedding through the real owner/gate machinery", () => {
+  const dims = (...fills: number[]): number[] => {
+    // 384 values built from a short pattern of boundary cases, repeated to
+    // fill the frozen dimension -- every element still individually
+    // distinct enough (index-perturbed) that a transposition bug would show.
+    const out: number[] = [];
+    for (let i = 0; i < 384; i++) out.push(fills[i % fills.length]! + i * 1e-7);
+    return out;
+  };
+  // Boundary values per the dispatch: 0, negative, very small, very large.
+  const BOUNDARY_EMBEDDING = dims(0, -1, 1.5e-38, 3.4e38, -3.4e38, 1e-30);
+
+  test("write -> read back: the raw stored floats equal Math.fround of what was written, element-for-element", async () => {
+    const fixture = await createFixture([ALPHA]);
+    try {
+      const seeded = fixture.workspaces[ALPHA]!;
+      const revId = pad("revIdx2");
+      const indexed = await drive(fixture.datasetRoot, [
+        pub("publishRevision", { operation_id: "op-idx2", content: revisionEnvelope(ALPHA, seeded, pad("nodeIdx2")) }),
+        ctx("indexRevisionChunks", {
+          workspace_name: ALPHA, node_id: pad("nodeIdx2"), revision_id: revId,
+          chunker_version: CHUNKER_VERSION, embedding_profile: PROFILE,
+        }),
+      ], { revisionIds: [revId] });
+      expect(indexed.op1.ok, JSON.stringify(indexed.op1)).toBe(true);
+      const chunkId = (indexed.op1.value.rows[0] as Record<string, unknown>).id as string;
+
+      const parsed = await drive(fixture.datasetRoot, [
+        ctx("writeChunkEmbedding", { workspace_name: ALPHA, id: chunkId, embedding: BOUNDARY_EMBEDDING }),
+        hx("readRawRows", { table: "search_chunks_v1", predicate: `workspace_name = '${ALPHA}' AND id = '${chunkId}'` }),
+      ], { revisionIds: [revId] });
+
+      const embedded = parsed.op0;
+      expect(embedded.ok, JSON.stringify(embedded)).toBe(true);
+      expect(embedded.value.outcome).toBe("embedded");
+      // Never on the wire, populated or not -- see `encodeSearchChunkRow`.
+      expect("embedding" in embedded.value.row).toBe(false);
+      expect(embedded.value.row.status).toBe("ready");
+      expect(embedded.value.row.attempts).toBe("1");
+      expect(embedded.value.row.embedded_at).not.toBeNull();
+      expect(embedded.value.row.last_attempt_at).not.toBeNull();
+      expect(embedded.value.row.error_code).toBeNull();
+
+      const raw = parsed.op1.value as Record<string, unknown>[];
+      expect(raw).toHaveLength(1);
+      const storedVector = raw[0]!.embedding as number[];
+      expect(storedVector).toHaveLength(384);
+      // float32, not float64: storage rounds every JS double to its float32
+      // representation on write. `Math.fround` is the float32 rounding the
+      // Arrow Float32Array applied, so this compares against exactly that --
+      // NOT the original double, which would fail this assertion for the
+      // wrong reason on any of the boundary values above.
+      for (let i = 0; i < 384; i++) {
+        expect(storedVector[i]).toBe(Math.fround(BOUNDARY_EMBEDDING[i]!));
+      }
+      // The requested doubles are NOT all already float32-exact (this is
+      // what proves the comparison above is doing real work, not
+      // vacuously passing because rounding was a no-op).
+      expect(BOUNDARY_EMBEDDING.some((v, i) => v !== Math.fround(v))).toBe(true);
+    } finally {
+      await fixture.cleanup();
+    }
+  }, TEST_TIMEOUT_MS);
+
+  test("a dimension mismatch (383 or 385) is refused at the request boundary, not truncated or padded", async () => {
+    const fixture = await createFixture([ALPHA]);
+    try {
+      const seeded = fixture.workspaces[ALPHA]!;
+      const revId = pad("revIdx3");
+      const indexed = await drive(fixture.datasetRoot, [
+        pub("publishRevision", { operation_id: "op-idx3", content: revisionEnvelope(ALPHA, seeded, pad("nodeIdx3")) }),
+        ctx("indexRevisionChunks", {
+          workspace_name: ALPHA, node_id: pad("nodeIdx3"), revision_id: revId,
+          chunker_version: CHUNKER_VERSION, embedding_profile: PROFILE,
+        }),
+      ], { revisionIds: [revId] });
+      const chunkId = (indexed.op1.value.rows[0] as Record<string, unknown>).id as string;
+
+      for (const bad of [BOUNDARY_EMBEDDING.slice(0, 383), [...BOUNDARY_EMBEDDING, 0]]) {
+        const parsed = await drive(fixture.datasetRoot, [
+          ctx("writeChunkEmbedding", { workspace_name: ALPHA, id: chunkId, embedding: bad }),
+        ], { revisionIds: [revId] });
+        expect(parsed.op0.ok).toBe(false);
+        expect(parsed.op0).toMatchObject({ code: "invalid_value", path: "/embedding" });
+      }
+
+      // Refused, not partially applied: the row is still `pending`, and a
+      // correctly-sized vector can still embed it afterward.
+      const stillPending = await drive(fixture.datasetRoot, [
+        hx("readRawRows", { table: "search_chunks_v1", predicate: `workspace_name = '${ALPHA}' AND id = '${chunkId}'` }),
+      ]);
+      expect((stillPending.op0.value as Record<string, unknown>[])[0]!.status).toBe("pending");
+    } finally {
+      await fixture.cleanup();
+    }
+  }, TEST_TIMEOUT_MS);
+
+  test("re-embedding a row that is already ready is refused at /id, not silently overwritten", async () => {
+    const fixture = await createFixture([ALPHA]);
+    try {
+      const seeded = fixture.workspaces[ALPHA]!;
+      const revId = pad("revIdx4");
+      const indexed = await drive(fixture.datasetRoot, [
+        pub("publishRevision", { operation_id: "op-idx4", content: revisionEnvelope(ALPHA, seeded, pad("nodeIdx4")) }),
+        ctx("indexRevisionChunks", {
+          workspace_name: ALPHA, node_id: pad("nodeIdx4"), revision_id: revId,
+          chunker_version: CHUNKER_VERSION, embedding_profile: PROFILE,
+        }),
+      ], { revisionIds: [revId] });
+      const chunkId = (indexed.op1.value.rows[0] as Record<string, unknown>).id as string;
+
+      const first = await drive(fixture.datasetRoot, [
+        ctx("writeChunkEmbedding", { workspace_name: ALPHA, id: chunkId, embedding: BOUNDARY_EMBEDDING }),
+      ], { revisionIds: [revId] });
+      expect(first.op0.ok, JSON.stringify(first.op0)).toBe(true);
+
+      const second = await drive(fixture.datasetRoot, [
+        ctx("writeChunkEmbedding", { workspace_name: ALPHA, id: chunkId, embedding: dims(9) }),
+      ], { revisionIds: [revId] });
+      expect(second.op0.ok).toBe(false);
+      expect(second.op0).toMatchObject({ code: "invalid_reference", path: "/id" });
+
+      const unchanged = await drive(fixture.datasetRoot, [
+        hx("readRawRows", { table: "search_chunks_v1", predicate: `workspace_name = '${ALPHA}' AND id = '${chunkId}'` }),
+      ]);
+      const storedVector = (unchanged.op0.value as Record<string, unknown>[])[0]!.embedding as number[];
+      expect(storedVector[0]).toBe(Math.fround(BOUNDARY_EMBEDDING[0]!));
     } finally {
       await fixture.cleanup();
     }

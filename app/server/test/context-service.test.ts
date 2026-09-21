@@ -510,7 +510,7 @@ describe("real persistence: registration, shapes and reads", () => {
         "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
         "indexRevisionChunks", "joinSession", "listLifecycleHistory", "listMessages", "listSearchChunks",
         "listSessionLinks", "listTraceHits", "reconcileSearchChunks", "registerPeer", "registerSession",
-        "retireNode", "supersedeNode",
+        "retireNode", "supersedeNode", "writeChunkEmbedding",
       ]);
       // Only the BUNDLE closes the owner.
       expect(parsed.publicationKeys).not.toContain("close");
