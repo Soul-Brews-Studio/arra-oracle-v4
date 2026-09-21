@@ -4216,15 +4216,45 @@ function createContextWriterService(
      * No multi-table transaction is claimed here: the trace row and each hit
      * row are separate `writeRow` calls, each with its own before_write /
      * after_write / after_readback boundary triple. If the trace row lands
-     * and a later hit fails, that is an AMBIGUOUS partial write -- the owner
-     * poisons and reports `recovery_required`, exactly as `writeRow` already
-     * does for any single-row mismatch. There is no rollback: rows here are
-     * immutable and evidence-preserving by the same principle as everywhere
-     * else in this kernel.
+     * and a later hit's `writer.append` or readback genuinely fails (an SDK
+     * or verification fault), that is an ambiguous partial write and
+     * `writeRow` poisons the owner and reports `recovery_required`, exactly
+     * as it already does for any single-row mismatch. But if a hit fails
+     * with a SAFE contract error instead -- `encodeTraceHitRow` raising
+     * `integrity_failure`, say -- `serial`'s classification (this file,
+     * `isSafeContractError`) PRESERVES that code rather than collapsing it:
+     * the owner still poisons (once anything is durable, every later fault
+     * is inside the ambiguous window), but the caller sees `integrity_failure`,
+     * not `recovery_required`. TR-1(b) below moves everything reachable as
+     * `integrity_failure` into a pre-write pass specifically so that class of
+     * fault cannot occur AFTER the trace row lands in the first place. There
+     * is no rollback: rows here are immutable and evidence-preserving by the
+     * same principle as everywhere else in this kernel.
      */
     createTrace: (requestBytes: Uint8Array) => {
       // STATIC validation precedes owner work, as with every other mutation.
       const request = parseCreateTrace(requestBytes);
+      // Target normalization is PURE and needs only this request's own
+      // workspace_name, kind and target -- all fully known now, so it runs
+      // OUTSIDE mutate(), before owner work starts, per the convention
+      // `advanceReadCursor` states: "STATIC validation precedes owner work.
+      // Parsing inside the queued turn would make a malformed request an
+      // owner event." `target_json` is the exact canonical text that would
+      // be stored; a hit's `target_key` is never persisted (no such column).
+      //
+      // Tokens are `["hits", index]`, NOT `["hits", index, "target"]`:
+      // `targetOp` appends its own `workspace_name` / `target_kind` / `target`
+      // suffixes internally, so the base must be the HIT's own pointer for
+      // the one sub-error that is actually reachable here (a malformed
+      // `target`) to land at `/hits/<i>/target` rather than
+      // `/hits/<i>/target/target`. The other two sub-errors `targetOp` can
+      // raise (`workspace_name`, `target_kind`) are structurally unreachable
+      // at this call site -- `parseCreateTrace` already validated both --
+      // so their mis-anchored pointers are latent, not live.
+      const normalizedHits = request.hits.map((hit, index) => ({
+        input: hit,
+        target_json: targetOp(request.workspace_name, hit.kind, hit.target, ["hits", index]).target_json,
+      }));
       return mutate(async () => {
         await requireWorkspaceRow(request.workspace_name);
 
@@ -4246,16 +4276,6 @@ function createContextWriterService(
           );
           if (peer === null) failPublication("invalid_reference", "/peer_name");
         }
-
-        // Every hit's target is normalized against the RESOLVED workspace,
-        // once, whether this turns out to be a fresh create or a replay
-        // comparison. `target_json` is the exact canonical text that would be
-        // stored; a hit's `target_key` is never persisted (no such column).
-        const normalizedHits = request.hits.map((hit, index) => ({
-          input: hit,
-          target_json: targetOp(request.workspace_name, hit.kind, hit.target, ["hits", index, "target"])
-            .target_json,
-        }));
 
         await writer.refresh(TRACES);
         const existing = await contextOne(

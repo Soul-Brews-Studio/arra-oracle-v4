@@ -3,9 +3,10 @@
 // Adapted from ../../read-cursor-v1/core/gated-cursor.ts: same ops-array
 // dispatch over the real `context` facade, same boundary trace recording.
 // A small `harness` facade is also available, same as gated-cursor.ts's,
-// for the ONE case not reachable through the real API alone: planting a
-// non-contiguous stored `trace_hits.position` to prove the read path (TR-3)
-// refuses it rather than silently serving a gap.
+// for state the real API can never produce: a non-contiguous stored
+// `trace_hits.position` (TR-3), a negative stored `position` (TR-7), a
+// stored empty-string nullable text column (TR-11), and a stored
+// `parent_id`/`prev_id` outside the nanoid21 namespace (TR-4).
 const [, , datasetRoot, payloadJson] = Bun.argv;
 const payload = JSON.parse(payloadJson ?? "{}") as {
   ops: Array<{ facade?: "context" | "publication" | "taxonomy" | "harness"; method: string; request: any }>;
@@ -27,8 +28,10 @@ const harnessTable = async (name: string) => {
 
 const harness: Record<string, (request: any) => Promise<unknown>> = {
   /** Plant one `trace_hits` row directly, bypassing `createTrace` entirely --
-   *  the only way to reach a stored position the real write path can never
-   *  produce (it always assigns 0..n-1 contiguously). */
+   *  the only way to reach a stored position or a stored empty string the
+   *  real write path can never produce (positions are always assigned
+   *  0..n-1 contiguously and non-negative; the request grammar refuses "" for
+   *  every non-empty-required nullable text column). */
   async insertRawHit(request) {
     const tbl = await harnessTable("trace_hits");
     await tbl.add(
@@ -45,6 +48,37 @@ const harness: Record<string, (request: any) => Promise<unknown>> = {
         captured_at: [request.captured_at_micros != null ? BigInt(request.captured_at_micros) : null],
         note: [request.note ?? null],
         position: [BigInt(request.position)],
+      } as never) as never,
+    );
+    return { planted: true };
+  },
+  /** Plant one full `traces` row directly, bypassing `createTrace` entirely --
+   *  the only way to reach a stored `parent_id`/`prev_id` outside the
+   *  nanoid21 namespace the real write path can never produce. */
+  async insertRawTrace(request) {
+    const tbl = await harnessTable("traces");
+    await tbl.add(
+      tableFromArrays({
+        id: [request.id],
+        name: [request.name ?? "trace"],
+        workspace_name: [request.workspace_name],
+        session_name: [request.session_name ?? null],
+        peer_name: [request.peer_name ?? null],
+        query: [request.query ?? "q"],
+        mode: [request.mode ?? null],
+        session_id: [request.session_id ?? null],
+        session_from_ts: [request.session_from_ts_millis != null ? BigInt(request.session_from_ts_millis) : null],
+        session_to_ts: [request.session_to_ts_millis != null ? BigInt(request.session_to_ts_millis) : null],
+        friction_score: [request.friction_score ?? null],
+        confidence: [request.confidence ?? null],
+        parent_id: [request.parent_id ?? null],
+        prev_id: [request.prev_id ?? null],
+        depth: [BigInt(request.depth ?? 0)],
+        status: [request.status ?? "open"],
+        h_metadata: [request.h_metadata ?? null],
+        internal_metadata: [request.internal_metadata ?? null],
+        created_at: [BigInt(request.created_at_millis ?? 0)],
+        updated_at: [BigInt(request.updated_at_millis ?? 0)],
       } as never) as never,
     );
     return { planted: true };
