@@ -184,18 +184,37 @@ export type PublishOutcome = {
   content_digest: string;
 };
 
+/** The stored revision as `getAcceptedHead` and `listAcceptedHistory` return
+ *  it. Verified against the wire: the row carries all 26 columns, including
+ *  `content_digest` -- an earlier version of this type omitted it and a
+ *  component correctly concluded from the type that the server did not send
+ *  one. The type was wrong, not the server. */
 export type RevisionRow = {
   id: string;
   node_id: string;
   revision_no: string;
   base_revision_id: string | null;
+  operation_id: string;
   title: string;
   body: string;
   body_format: string;
+  fields: string;
+  author_peer_name: string | null;
+  observer_peer_name: string | null;
+  subject_peer_name: string | null;
+  session_name: string | null;
   is_active: boolean;
+  valid_from: string | null;
+  valid_to: string | null;
   change_reason: string | null;
   created_at: string;
+  schema_version: string;
+  canonical_version: string;
+  /** sha256 of the canonical envelope. This is what makes "same content"
+   *  decidable without diffing two bodies, so it is worth surfacing. */
+  content_digest: string;
   term_snapshot_json?: string;
+  link_snapshot_json?: string;
 };
 
 /** Terms are stored as JSON TEXT, so reading them back means parsing a column

@@ -37,10 +37,10 @@ export function NodeHead({
   const terms = parseTerms(revision);
   const type = typeOf(terms);
   const horizon = horizonOf(terms);
-  // content_digest lives on the publish outcome, not the row itself -- the
-  // row's own identity for "which bytes" is its id, so that is what gets
-  // truncated here rather than a digest this endpoint doesn't return.
-  const digest = revision.id.length <= 12 ? revision.id : `${revision.id.slice(0, 10)}…`;
+  // The row DOES carry content_digest -- sha256 over the canonical envelope.
+  // It is the thing that makes "same content" decidable without diffing two
+  // bodies, so it is worth the line even truncated.
+  const digest = `${revision.content_digest.slice(0, 12)}…`;
 
   return (
     <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
