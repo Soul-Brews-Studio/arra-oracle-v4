@@ -26,25 +26,29 @@ import { useCallback, useEffect, useState } from "react";
  * shareable location like this one.
  */
 export type Route = {
-  view: "messages" | "forum" | "knowledge";
+  view: "messages" | "forum" | "knowledge" | "explore";
+  /** Which detail tab the explore view has open. */
+  tab: string | null;
   peer: string | null;
   session: string | null;
   node: string | null;
 };
 
-const EMPTY: Route = { view: "messages", peer: null, session: null, node: null };
+const EMPTY: Route = { view: "messages", peer: null, session: null, node: null, tab: null };
 
 function parse(hash: string): Route {
   const raw = hash.startsWith("#") ? hash.slice(1) : hash;
   const [path, query = ""] = raw.split("?");
   const params = new URLSearchParams(query);
     const slug = path.replace(/^\/+/, "");
-  const view: Route["view"] = slug === "knowledge" ? "knowledge" : slug === "forum" ? "forum" : "messages";
+  const view: Route["view"] =
+    slug === "knowledge" ? "knowledge" : slug === "forum" ? "forum" : slug === "explore" ? "explore" : "messages";
   return {
     view,
     peer: params.get("peer"),
     session: params.get("session"),
     node: params.get("node"),
+    tab: params.get("tab"),
   };
 }
 
@@ -59,6 +63,14 @@ function format(route: Route): string {
     // lose where you are.
     if (route.peer !== null) params.set("peer", route.peer);
     if (route.session !== null) params.set("session", route.session);
+  } else if (route.view === "explore") {
+    // Explore carries all three selections plus the open tab: it is the one
+    // view where peer, session and node are meaningful at the same time, so a
+    // link to it has to restore the whole position, not one axis of it.
+    if (route.peer !== null) params.set("peer", route.peer);
+    if (route.session !== null) params.set("session", route.session);
+    if (route.node !== null) params.set("node", route.node);
+    if (route.tab !== null) params.set("tab", route.tab);
   } else {
     if (route.node !== null) params.set("node", route.node);
   }

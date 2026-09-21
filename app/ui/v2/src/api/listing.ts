@@ -56,12 +56,28 @@ export type Page<T> = {
 const call = (b: Bank, method: string, body: Record<string, unknown>): Promise<ApiResult> =>
   callMethod(b.bank, method, { workspace_name: b.workspace, ...body }, b.token);
 
-/** True when the envelope's error code is exactly `method_not_found` -- the
- *  one refusal that means "the endpoint itself is absent", not "the request
- *  was bad". Every other refusal (auth, validation, not_found-the-row) still
- *  reports through the normal `describe()` error path in the caller. */
+/** True when the endpoint ITSELF is absent, as opposed to the request being
+ *  bad. Two shapes, and the second was found by measurement rather than by
+ *  reading the contract:
+ *
+ *    - a `method_not_found` envelope, which is what the documented refusal
+ *      looks like
+ *    - a bare HTTP 404. An unregistered knowledge method is rejected by the
+ *      transport BEFORE any kernel runs, so it never reaches the code that
+ *      builds an `arra-error/v1` envelope. Measured against a server without
+ *      these methods: `POST /api/knowledge/default/listPeers` answers
+ *      `404` with the body `{"error":"error"}` -- no code, nothing to match.
+ *
+ *  Treating only the first shape as unsupported is exactly the false-empty
+ *  this function exists to prevent: the UI would render "no peers" over a
+ *  server that has no way to tell you whether there are any.
+ *
+ *  404 is safe to read this way here because every method in this module is
+ *  a LISTING call, and a listing has no row-level identity that could be
+ *  legitimately not-found. A 404 from these three can only mean the route. */
 function isUnsupported(result: ApiResult): boolean {
-  return asError(result.body)?.code === "method_not_found";
+  if (asError(result.body)?.code === "method_not_found") return true;
+  return result.status === 404;
 }
 
 function toPage<T>(result: ApiResult, cursorKey: string): Page<T> {

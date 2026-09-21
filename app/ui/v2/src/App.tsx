@@ -9,6 +9,8 @@ import { SidebarShell } from "./components/SidebarShell";
 import { SessionRail } from "./components/SessionRail";
 import { Transcript } from "./components/Transcript";
 import { WorkspaceBar } from "./components/WorkspaceBar";
+import { type ExploreTab } from "./explore/DetailTabs";
+import { ExploreView } from "./explore/ExploreView";
 import { ForumView } from "./forum/ForumView";
 import { KnowledgeView } from "./KnowledgeView";
 import { useMemory } from "./state/useMemory";
@@ -37,7 +39,7 @@ export function App() {
   // and Back steps through what you clicked. See state/useRoute.
   const { route, push } = useRoute();
   const view = route.view;
-  const setView = (v: "messages" | "forum" | "knowledge") => push({ view: v });
+  const setView = (v: "messages" | "forum" | "knowledge" | "explore") => push({ view: v });
 
   // Verify the saved roster once per bank/workspace change: a bookmark that
   // has gone stale should announce itself on arrival, not the first time you
@@ -92,12 +94,14 @@ export function App() {
       />
 
       <nav className="flex gap-1 border-b border-edge px-4 py-1.5">
-        {(["messages", "forum", "knowledge"] as const).map((v) => (
+        {(["explore", "messages", "forum", "knowledge"] as const).map((v) => (
           <button
             key={v}
             onClick={() => setView(v)}
             title={
-              v === "messages"
+              v === "explore"
+                ? "Browse peers, sessions and nodes — needs the listing endpoints (#88) on the server"
+                : v === "messages"
                 ? "Honcho's model: peers, sessions, messages, assembled context, dialectic"
                 : v === "forum"
                   ? "The same session's messages as reply trees — in_reply_to is the only nesting this system has"
@@ -114,7 +118,20 @@ export function App() {
         ))}
       </nav>
 
-      {view === "forum" ? (
+      {view === "explore" ? (
+        <ExploreView
+          bank={{ bank: m.bank, token: m.token, workspace: m.workspace }}
+          selectedPeer={route.peer}
+          selectedSession={route.session}
+          selectedNode={route.node}
+          activeTab={(route.tab as ExploreTab | null) ?? "nodes"}
+          onSelectPeer={(name) => push({ peer: name })}
+          onSelectSession={(name) => push({ session: name })}
+          onSelectNode={(id) => push({ node: id })}
+          onTabChange={(tab) => push({ tab })}
+          onBack={() => push({ view: "messages" })}
+        />
+      ) : view === "forum" ? (
         <ForumView
           messages={m.messages}
           loading={m.loadingMessages}
