@@ -26,6 +26,13 @@ import { ENVELOPE_KEYS, revisionOp, verifyRevisionOp, type RevisionResult } from
 import { ContractError, fail as failGoverned } from "../contracts/errors";
 import { failPublication, isContractError, PublicationError } from "./errors";
 import {
+  encodeReadCursorRow,
+  parseAdvanceReadCursor,
+  parseGetReadCursor,
+  READ_CURSOR_FIELDS,
+  validateWorkspaceRow,
+} from "./read-cursor";
+import {
   classifyMessageDestinationReplay,
   prepareNewMessage,
 } from "../contracts/source-ingestion-v1";
@@ -2510,6 +2517,7 @@ const PEERS = "peers";
 const SESSIONS = "sessions";
 const SESSION_PEERS = "session_peers";
 const MESSAGES = "messages";
+const READ_CURSORS = "read_cursors";
 
 const INT64_CEILING = 2n ** 63n - 1n;
 
@@ -2564,6 +2572,153 @@ async function selectedMaximum(
 
 function contextScope(workspace: string): string {
   return `workspace_name = ${quote(workspace)}`;
+}
+
+/* ------------------------------------------------------------------ *
+ * Read cursors. Shared by the reader and the writer so one definition of
+ * "a valid cursor" serves both; a second definition is how the two drift.
+ * ------------------------------------------------------------------ */
+
+const cursorKey = (workspace: string, peer: string, session: string): string =>
+  `${contextScope(workspace)} AND peer_name = ${quote(peer)} AND session_name = ${quote(session)}`;
+
+/**
+ * Resolve the three request references, IN ORDER, each at its own pointer.
+ *
+ * An inactive session and a departed membership do NOT forbid reading or
+ * recording progress: retained history stays addressable. No membership row is
+ * required for the observing peer and none is created, which is a deliberate
+ * difference from appendMessages, whose active-membership rule is untouched.
+ */
+async function resolveCursorScope(
+  adapter: DatasetAdapter,
+  request: { workspace_name: string; peer_name: string; session_name: string },
+): Promise<void> {
+  await adapter.refresh(WORKSPACES);
+  const workspace = await contextOne(
+    adapter,
+    WORKSPACES,
+    `name = ${quote(request.workspace_name)}`,
+  );
+  if (workspace === null) failPublication("invalid_reference", "/workspace_name");
+  // A malformed retained workspace is corruption at ROOT, decided BEFORE the
+  // peer lookup so a broken workspace is never reported as a missing peer.
+  const validated = validateWorkspaceRow(workspace);
+  if (validated.name !== request.workspace_name) failPublication("integrity_failure", "");
+
+  // Each reference is resolved AND validated before the next is looked up.
+  // Deferring validation would let a malformed peer be reported as a missing
+  // session, which names the wrong reference to whoever has to fix it.
+  await adapter.refresh(PEERS);
+  const peer = await contextOne(
+    adapter,
+    PEERS,
+    `${contextScope(request.workspace_name)} AND name = ${quote(request.peer_name)}`,
+  );
+  if (peer === null) failPublication("invalid_reference", "/peer_name");
+  // Full ACCEPTED encoder: a structurally broken peer is stored corruption
+  // even when this operation would not have read its fields.
+  encodePeerRow(peer);
+
+  await adapter.refresh(SESSIONS);
+  const session = await contextOne(
+    adapter,
+    SESSIONS,
+    `${contextScope(request.workspace_name)} AND name = ${quote(request.session_name)}`,
+  );
+  if (session === null) failPublication("invalid_reference", "/session_name");
+  encodeSessionRow(session);
+}
+
+/**
+ * Select one message by the declared namespace and prove its identity.
+ *
+ * `fault` separates the two callers: a REQUEST pointer that does not resolve
+ * is the caller's invalid_reference, while a RETAINED pointer that does not
+ * resolve is stored corruption at root. Same lookup, different authorship.
+ */
+async function selectCursorMessage(
+  adapter: DatasetAdapter,
+  workspace: string,
+  sessionName: string,
+  publicId: string,
+  fault: { code: "invalid_reference" | "integrity_failure" | "recovery_required"; path: string },
+): Promise<{ encoded: Record<string, unknown>; seq: bigint }> {
+  await adapter.refresh(MESSAGES);
+  // limit 2 inside contextOne: a duplicate public_id is integrity_failure, not
+  // a first-match guess.
+  const row = await contextOne(
+    adapter,
+    MESSAGES,
+    `${contextScope(workspace)} AND public_id = ${quote(publicId)}`,
+  );
+  if (row === null) failPublication(fault.code, fault.path);
+  const encoded = encodeMessageRow(row);
+  // The message must belong to the REQUESTED session. A cross-session pointer
+  // is not a cursor into this session's history.
+  if (encoded.session_name !== sessionName) failPublication(fault.code, fault.path);
+
+  const seqText = encoded.seq_in_session;
+  if (typeof seqText !== "string") failPublication("integrity_failure", "");
+  const seq = BigInt(seqText);
+  // The selected ORDINAL must also be unique and must name the same row.
+  // Only selected identities are checked: no corpus audit, no global max.
+  const bySeq = await contextOne(
+    adapter,
+    MESSAGES,
+    `${contextScope(workspace)} AND session_name = ${quote(sessionName)} AND seq_in_session = ${seq.toString(10)}`,
+  );
+  if (bySeq === null) failPublication("integrity_failure", "");
+  // Exactly ONE SAME row, compared on its FULL encoded state rather than a
+  // single field: a second row agreeing on public_id while differing in its
+  // legacy id, author or content is still two different messages.
+  const bySeqEncoded = encodeMessageRow(bySeq);
+  for (const field of Object.keys(encoded)) {
+    if (bySeqEncoded[field] !== encoded[field]) failPublication("integrity_failure", "");
+  }
+  return { encoded, seq };
+}
+
+/**
+ * The current cursor: raw micros retained alongside the wire row.
+ *
+ * The raw value is kept because the clock comparison is defined on
+ * MICROSECONDS. Comparing rendered millisecond text would silently accept a
+ * regression smaller than the rendering can show.
+ */
+async function selectCursorRow(
+  adapter: DatasetAdapter,
+  request: { workspace_name: string; peer_name: string; session_name: string },
+): Promise<{ encoded: Record<string, unknown>; rawMicros: bigint; seq: bigint | null } | null> {
+  await adapter.refresh(READ_CURSORS);
+  const row = await contextOne(
+    adapter,
+    READ_CURSORS,
+    cursorKey(request.workspace_name, request.peer_name, request.session_name),
+  );
+  if (row === null) return null;
+  const encoded = encodeReadCursorRow(row);
+  const raw = row.last_read_at;
+  const rawMicros =
+    typeof raw === "bigint"
+      ? raw
+      : typeof raw === "number" && Number.isSafeInteger(raw)
+        ? BigInt(raw)
+        : failPublication("integrity_failure", "");
+  let seq: bigint | null = null;
+  if (encoded.last_read_message_id !== null) {
+    // A retained pointer is dereferenced and fully validated. An orphan is
+    // terminal through this interface rather than quietly readable.
+    const message = await selectCursorMessage(
+      adapter,
+      request.workspace_name,
+      request.session_name,
+      encoded.last_read_message_id as string,
+      { code: "integrity_failure", path: "" },
+    );
+    seq = message.seq;
+  }
+  return { encoded, rawMicros, seq };
 }
 
 function createContextReadMethods(reader: DatasetAdapter) {
@@ -2687,6 +2842,14 @@ function createContextReadMethods(reader: DatasetAdapter) {
         next_after_seq: hasMore && page.length > 0 ? page[page.length - 1]!.toString(10) : null,
       };
     },
+
+    async getReadCursor(requestBytes: Uint8Array): Promise<Record<string, unknown> | null> {
+      const request = parseGetReadCursor(requestBytes);
+      await resolveCursorScope(reader, request);
+      // Absent is null, never not_found: there is no cursor to have lost.
+      const current = await selectCursorRow(reader, request);
+      return current === null ? null : current.encoded;
+    },
   };
 }
 
@@ -2804,6 +2967,192 @@ function createContextWriterService(
 
   return {
     ...reads,
+
+    /**
+     * Advance one reader's progress, or say precisely why it did not move.
+     *
+     * A conflict is a RETURNED value, not a thrown error: a stale guard or a
+     * backward request is an ordinary answer about state, and it never
+     * poisons. Only real persistence faults do.
+     */
+    advanceReadCursor: (requestBytes: Uint8Array) => {
+      // STATIC validation precedes owner work. Parsing inside the queued turn
+      // would make a malformed request an owner event.
+      const request = parseAdvanceReadCursor(requestBytes);
+      return mutate(async () => {
+        await resolveCursorScope(writer, request);
+
+        // Stored corruption is decided BEFORE any ordinary conflict: a corrupt
+        // cursor must not be reported as a mere guard mismatch.
+        const current = await selectCursorRow(writer, request);
+        const desired = await selectCursorMessage(
+          writer,
+          request.workspace_name,
+          request.session_name,
+          request.last_read_message_id,
+          { code: "invalid_reference", path: "/last_read_message_id" },
+        );
+
+        // 1. Already there: the retained row and its ORIGINAL timestamp, with
+        //    no guard comparison, no clock sample and no mutation.
+        if (current !== null && current.encoded.last_read_message_id === request.last_read_message_id) {
+          return { outcome: "already_satisfied" as const, row: current.encoded };
+        }
+
+        // 2. Backward, by signed BigInt ordinal only. Never lexical, never a
+        //    Number, never a timestamp, and never clamped at zero: retained
+        //    negatives, gaps and values beyond 2^53 all order correctly.
+        if (current !== null && current.seq !== null && desired.seq < current.seq) {
+          return { outcome: "conflict" as const, reason: "backward" as const, row: current.encoded };
+        }
+
+        // 3. The guard names the exact prior state: absent, present-with-null,
+        //    or present-with-pointer. An expected pointer is an old VALUE, so
+        //    it is compared, never dereferenced.
+        const guardMatches =
+          request.expected === null
+            ? current === null
+            : current !== null &&
+              current.encoded.last_read_message_id === request.expected.last_read_message_id;
+        if (!guardMatches) {
+          return {
+            outcome: "conflict" as const,
+            reason: "expected" as const,
+            row: current === null ? null : current.encoded,
+          };
+        }
+
+        // 4. ONLY a real creation or advance samples the clock.
+        const sampled = options.clock();
+        if (typeof sampled !== "number" || !Number.isSafeInteger(sampled)) {
+          failPublication("invalid_request", "");
+        }
+        const micros = BigInt(sampled) * 1000n;
+        let renderedAt: string;
+        try {
+          // Rendering is the range check: no second copy of the Gregorian
+          // grammar, and an unrenderable sample never reaches the store.
+          renderedAt = microsToTimestamp(micros);
+        } catch (error) {
+          if (!(error instanceof PublicationError)) throw error;
+          // The clock is operator configuration, not a caller field: ROOT.
+          return failPublication("invalid_request", "");
+        }
+        if (current !== null && micros < current.rawMicros) {
+          // Raw MICROSECOND comparison. Equality is allowed; a regression
+          // writes nothing at all, including no table version change.
+          failPublication("invalid_request", "");
+        }
+
+        // 5. Build the complete target BEFORE anything is attempted, so no
+        //    conversion can fail after the owner is marked.
+        const target: Record<string, unknown> = {
+          workspace_name: request.workspace_name,
+          peer_name: request.peer_name,
+          session_name: request.session_name,
+          last_read_message_id: request.last_read_message_id,
+          last_read_at: renderedAt,
+        };
+        const physical: Record<string, unknown> = {
+          workspace_name: request.workspace_name,
+          peer_name: request.peer_name,
+          session_name: request.session_name,
+          last_read_message_id: request.last_read_message_id,
+          // Arrow needs BigInt microseconds; a JS Number silently corrupts.
+          last_read_at: micros,
+        };
+        const key = cursorKey(request.workspace_name, request.peer_name, request.session_name);
+
+        await core.contextBoundary("before_write", false);
+        core.markAttemptedWrite();
+        if (current === null) {
+          await core.afterWrite(async () => {
+            await writer.append(READ_CURSORS, [physical]);
+          });
+        } else {
+          const { rowsUpdated } = await core.afterWrite(async () =>
+            writer.updateWhere(
+              READ_CURSORS,
+              // The logical key AND the expected previous pointer. IS NULL is
+              // the only spelling that matches a retained null pointer.
+              `${key} AND last_read_message_id ${
+                current.encoded.last_read_message_id === null
+                  ? "IS NULL"
+                  : `= ${quote(current.encoded.last_read_message_id as string)}`
+              }`,
+              {
+                last_read_message_id: quote(request.last_read_message_id),
+                last_read_at: `CAST(${micros.toString(10)} AS TIMESTAMP(6))`,
+              },
+            ),
+          );
+          // An absent or non-number count is mapped to 0 by the adapter and is
+          // NOT a reliable acknowledgment. Anything but exactly one is
+          // ambiguous after a write attempt: fail-stop, never an expected
+          // conflict, never success.
+          if (rowsUpdated !== 1) {
+            core.poison();
+            failPublication("recovery_required", "");
+          }
+        }
+        await core.contextBoundary("after_write", true);
+
+        const stored = await core.afterWrite(async () => {
+          await writer.refresh(READ_CURSORS);
+          // A duplicate logical key here is corruption and propagates as
+          // integrity_failure; afterWrite poisons on the way out.
+          const row = await contextOne(writer, READ_CURSORS, key);
+          if (row === null) {
+            core.poison();
+            failPublication("recovery_required", "");
+          }
+          const encoded = encodeReadCursorRow(row);
+          for (const field of READ_CURSOR_FIELDS) {
+            // Every physical field, not a count and not a decode: decoding
+            // proves structure and says nothing about what was asked for.
+            if (encoded[field] !== target[field]) {
+              core.poison();
+              failPublication("recovery_required", "");
+            }
+          }
+          // The chosen identity must STILL be the one that was selected.
+          //
+          // AFTER a write the classes differ from before it: a target that has
+          // gone missing, or a well-formed row that is no longer the one
+          // chosen, is ambiguity -- recovery_required. A duplicate or
+          // malformed row is corruption and keeps integrity_failure, which
+          // selectCursorMessage raises from within and afterWrite poisons on
+          // the way out.
+          const again = await selectCursorMessage(
+            writer,
+            request.workspace_name,
+            request.session_name,
+            request.last_read_message_id,
+            { code: "recovery_required", path: "" },
+          );
+          if (again.seq !== desired.seq) {
+            core.poison();
+            failPublication("recovery_required", "");
+          }
+          // FULL encoded identity, not public_id and seq alone: a different
+          // legacy id under the same public_id and ordinal would otherwise
+          // pass the readback unnoticed.
+          for (const field of Object.keys(desired.encoded)) {
+            if (again.encoded[field] !== desired.encoded[field]) {
+              core.poison();
+              failPublication("recovery_required", "");
+            }
+          }
+          return encoded;
+        });
+        await core.contextBoundary("after_readback", true);
+
+        return {
+          outcome: current === null ? ("created" as const) : ("advanced" as const),
+          row: stored,
+        };
+      });
+    },
 
     registerPeer: (requestBytes: Uint8Array): Promise<ContextRegistration> =>
       mutate(async () => {

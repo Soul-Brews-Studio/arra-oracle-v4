@@ -47,10 +47,10 @@ const BETA = "beta-workspace";
 /** §1: writer {publication,taxonomy,context,close}; reader {publication,taxonomy,context}. */
 const WRITER_KEYS = "close,context,publication,taxonomy";
 const READER_KEYS = "context,publication,taxonomy";
-/** §8: context writer has exactly these eight; the reader exactly the last four. */
+/** §8: context writer has exactly these ten; the reader exactly the last five. */
 const CONTEXT_WRITE_METHODS =
-  "appendMessages,getMessage,getPeer,getSession,joinSession,listMessages,registerPeer,registerSession";
-const CONTEXT_READ_METHODS = "getMessage,getPeer,getSession,listMessages";
+  "advanceReadCursor,appendMessages,getMessage,getPeer,getReadCursor,getSession,joinSession,listMessages,registerPeer,registerSession";
+const CONTEXT_READ_METHODS = "getMessage,getPeer,getReadCursor,getSession,listMessages";
 /** Existing facades keep their exact key sets and carry no close. */
 const PUBLICATION_WRITE_METHODS = "getAcceptedHead,listAcceptedHistory,publishRevision";
 const PUBLICATION_READ_METHODS = "getAcceptedHead,listAcceptedHistory";

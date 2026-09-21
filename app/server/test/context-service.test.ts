@@ -503,7 +503,7 @@ describe("real persistence: registration, shapes and reads", () => {
       const parsed = await drive(fixture.datasetRoot, [op("registerPeer", peerRequest(ALPHA))]);
       expect(parsed.writerKeys).toEqual(["close", "context", "publication", "taxonomy"]);
       expect(parsed.contextMethods).toEqual([
-        "appendMessages", "getMessage", "getPeer", "getSession",
+        "advanceReadCursor", "appendMessages", "getMessage", "getPeer", "getReadCursor", "getSession",
         "joinSession", "listMessages", "registerPeer", "registerSession",
       ]);
       // Only the BUNDLE closes the owner.
@@ -995,7 +995,7 @@ describe("core: the sourced path and the reader bundle", () => {
     }
   }, 300_000);
 
-  test("the READER bundle has exactly three facades and four context methods", async () => {
+  test("the READER bundle has exactly three facades and five context methods", async () => {
     const fixture = await createContextFixture([ALPHA]);
     try {
       const parsed = await drive(
@@ -1004,8 +1004,8 @@ describe("core: the sourced path and the reader bundle", () => {
         { freshReader: true },
       );
       expect(parsed.readerKeys).toEqual(["context", "publication", "taxonomy"]);
-      // Exactly the four READ methods; no mutator reachable from a reader.
-      expect(parsed.readerContextMethods).toEqual(["getMessage", "getPeer", "getSession", "listMessages"]);
+      // Exactly the five READ methods; no mutator reachable from a reader.
+      expect(parsed.readerContextMethods).toEqual(["getMessage", "getPeer", "getReadCursor", "getSession", "listMessages"]);
       // A gateless reader works AFTER the writer released its gate.
       expect(parsed.freshReaderPeer.name).toBe("peer-a");
     } finally {
