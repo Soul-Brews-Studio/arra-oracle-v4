@@ -13,8 +13,9 @@ import { type ExploreTab } from "./explore/DetailTabs";
 import { ExploreView } from "./explore/ExploreView";
 import { ForumView } from "./forum/ForumView";
 import { KnowledgeView } from "./KnowledgeView";
+import { OverviewView } from "./overview/OverviewView";
 import { useMemory } from "./state/useMemory";
-import { useRoute } from "./state/useRoute";
+import { type Route, useRoute } from "./state/useRoute";
 
 /** Three columns, matching what the data actually is:
  *
@@ -26,6 +27,19 @@ import { useRoute } from "./state/useRoute";
  * structural difference is the rails, which cannot enumerate; see
  * `state/roster.ts` for why that is a server property rather than a gap here.
  */
+/** What each tab shows, keyed by the route union so a new view cannot ship
+ *  without one. Written as a Record rather than the ternary chain that grew
+ *  here: five branches deep, the tooltip for the last tab was whatever fell
+ *  out of the final `else`, which is how a tab ends up describing its
+ *  neighbour. */
+const TAB_TITLES: Record<Route["view"], string> = {
+  overview: "Every count this server can produce, each beside the call that produced it — the landing page",
+  explore: "Browse peers, sessions and nodes — needs the listing endpoints (#88) on the server",
+  messages: "Honcho's model: peers, sessions, messages, assembled context, dialectic",
+  forum: "The same session's messages as reply trees — in_reply_to is the only nesting this system has",
+  knowledge: "arra-oracle-v3's model: nodes, immutable revisions, type vocabulary, tags",
+};
+
 export function App() {
   const m = useMemory();
   const [health, setHealth] = useState<number | null>(null);
@@ -39,7 +53,10 @@ export function App() {
   // and Back steps through what you clicked. See state/useRoute.
   const { route, push } = useRoute();
   const view = route.view;
-  const setView = (v: "messages" | "forum" | "knowledge" | "explore") => push({ view: v });
+  // Typed off Route rather than re-listing the views: the tab bar below maps
+  // over the same union, so a view added to the router shows up here or fails
+  // the build, instead of quietly becoming unreachable.
+  const setView = (v: Route["view"]) => push({ view: v });
 
   // Verify the saved roster once per bank/workspace change: a bookmark that
   // has gone stale should announce itself on arrival, not the first time you
@@ -94,19 +111,11 @@ export function App() {
       />
 
       <nav className="flex gap-1 border-b border-edge px-4 py-1.5">
-        {(["explore", "messages", "forum", "knowledge"] as const).map((v) => (
+        {(["overview", "explore", "messages", "forum", "knowledge"] as const).map((v) => (
           <button
             key={v}
             onClick={() => setView(v)}
-            title={
-              v === "explore"
-                ? "Browse peers, sessions and nodes — needs the listing endpoints (#88) on the server"
-                : v === "messages"
-                ? "Honcho's model: peers, sessions, messages, assembled context, dialectic"
-                : v === "forum"
-                  ? "The same session's messages as reply trees — in_reply_to is the only nesting this system has"
-                  : "arra-oracle-v3's model: nodes, immutable revisions, type vocabulary, tags"
-            }
+            title={TAB_TITLES[v]}
             className={`rounded px-2.5 py-1 text-xs ${
               view === v
                 ? "bg-accent/15 text-accent"
@@ -118,7 +127,15 @@ export function App() {
         ))}
       </nav>
 
-      {view === "explore" ? (
+      {view === "overview" ? (
+        // The one view that needs no selection to say something true, so it is
+        // what an empty hash opens on. Its quick actions route through the
+        // same `push({ view })` the tabs use -- one writer for the URL.
+        <OverviewView
+          bank={{ bank: m.bank, token: m.token, workspace: m.workspace }}
+          onGo={(v) => push({ view: v })}
+        />
+      ) : view === "explore" ? (
         <ExploreView
           bank={{ bank: m.bank, token: m.token, workspace: m.workspace }}
           selectedPeer={route.peer}

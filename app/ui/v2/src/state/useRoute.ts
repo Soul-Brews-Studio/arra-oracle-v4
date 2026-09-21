@@ -26,7 +26,7 @@ import { useCallback, useEffect, useState } from "react";
  * shareable location like this one.
  */
 export type Route = {
-  view: "messages" | "forum" | "knowledge" | "explore";
+  view: "overview" | "messages" | "forum" | "knowledge" | "explore";
   /** Which detail tab the explore view has open. */
   tab: string | null;
   peer: string | null;
@@ -34,15 +34,37 @@ export type Route = {
   node: string | null;
 };
 
-const EMPTY: Route = { view: "messages", peer: null, session: null, node: null, tab: null };
+/** Every slug this router answers to, in tab order. A list rather than a chain
+ *  of ternaries because `parse` and the tab bar have to agree on the set, and
+ *  a view added to one and forgotten in the other is a dead tab. */
+const VIEWS = ["overview", "explore", "messages", "forum", "knowledge"] as const;
+
+const isView = (slug: string): slug is Route["view"] => (VIEWS as readonly string[]).includes(slug);
+
+/** Whether the hash names something this router answers to. `parse` falls back
+ *  silently, which is right for RENDERING and wrong for the address bar; this
+ *  is what lets the hook tell "I corrected something" from "nothing to
+ *  correct". An EMPTY hash counts as known: it already restores the overview,
+ *  so it is a valid short form rather than a stale link. */
+function isKnownHash(hash: string): boolean {
+  const raw = hash.startsWith("#") ? hash.slice(1) : hash;
+  const slug = (raw.split("?")[0] ?? "").replace(/^\/+/, "");
+  return slug === "" || isView(slug);
+}
+
+/** An empty hash lands on the overview: it is the only view that needs no
+ *  selection to say something true, so it is what a first visit should open.
+ *  An unrecognised slug lands there too -- a stale link should arrive
+ *  somewhere that explains the server rather than on a screen asking for a
+ *  peer the link never named. */
+const EMPTY: Route = { view: "overview", peer: null, session: null, node: null, tab: null };
 
 function parse(hash: string): Route {
   const raw = hash.startsWith("#") ? hash.slice(1) : hash;
   const [path, query = ""] = raw.split("?");
   const params = new URLSearchParams(query);
-    const slug = path.replace(/^\/+/, "");
-  const view: Route["view"] =
-    slug === "knowledge" ? "knowledge" : slug === "forum" ? "forum" : slug === "explore" ? "explore" : "messages";
+  const slug = path.replace(/^\/+/, "");
+  const view: Route["view"] = isView(slug) ? slug : EMPTY.view;
   return {
     view,
     peer: params.get("peer"),
@@ -71,9 +93,13 @@ function format(route: Route): string {
     if (route.session !== null) params.set("session", route.session);
     if (route.node !== null) params.set("node", route.node);
     if (route.tab !== null) params.set("tab", route.tab);
-  } else {
+  } else if (route.view === "knowledge") {
     if (route.node !== null) params.set("node", route.node);
   }
+  // The overview falls through with no params on purpose: it is scoped to the
+  // bank and workspace, never to a selection, so any key carried here would be
+  // one the view does not read -- the way a link starts lying about what it
+  // restores.
   const query = params.toString();
   return `#/${route.view}${query === "" ? "" : `?${query}`}`;
 }
@@ -120,9 +146,17 @@ export function useRoute(): {
     [],
   );
 
-  return {
-    route,
-    push: useCallback((patch: Partial<Route>) => go(patch, "push"), [go]),
-    replace: useCallback((patch: Partial<Route>) => go(patch, "replace"), [go]),
-  };
+  const push = useCallback((patch: Partial<Route>) => go(patch, "push"), [go]);
+  const replace = useCallback((patch: Partial<Route>) => go(patch, "replace"), [go]);
+
+  // The fallback in `parse` fixes the SCREEN; this fixes the URL. A hash that
+  // named no view used to stay in the address bar after being silently
+  // redirected, so Back returned to the dead link and copying the location
+  // kept spreading it. `replace`, because a correction should not become a
+  // history step -- the reason this hook has a `replace` at all.
+  useEffect(() => {
+    if (typeof window !== "undefined" && !isKnownHash(window.location.hash)) replace({});
+  }, [route, replace]);
+
+  return { route, push, replace };
 }
