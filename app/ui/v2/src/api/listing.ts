@@ -24,14 +24,37 @@
 import { type ApiResult, callMethod } from "./client";
 import { type Bank, asError } from "./memory";
 
-export type PeerRow = { peer_name: string; created_at: string };
-export type SessionRow = { session_name: string; created_at: string };
+/* Row shapes, VERIFIED against the running server rather than assumed.
+ *
+ * An earlier version of this file guessed `peer_name` / `session_name` /
+ * `node_id` / `type_term`, by analogy with the request fields that name those
+ * things. The server returns the stored ROW, so the keys are the column
+ * names: `name` and `id`. Nothing errored -- `renderRow` just returned
+ * undefined and every list rendered as empty buttons under a header that
+ * correctly said "showing 2 of 2".
+ *
+ * That is the same failure as the missing `content_digest` earlier today: a
+ * hand-written mirror of a server type does not fail loudly, it fails as
+ * plausible code reading a wrong premise. Worth re-measuring any time these
+ * change.
+ *
+ * `type_term` in particular does NOT come back on a node row. The type lives
+ * in the revision's `term_snapshot_json`, and `listNodes` joins only
+ * `title`, `revision_no` and `content_digest` from the current revision. A
+ * type badge in a node list therefore needs either a second read or a server
+ * change -- it cannot be rendered from this row alone.
+ */
+export type PeerRow = { name: string; created_at: string };
+export type SessionRow = { name: string; created_at: string; is_active: boolean };
 export type NodeRow = {
-  node_id: string;
+  id: string;
+  workspace_name: string;
+  current_revision_id: string;
   title: string;
-  type_term: string;
   revision_no: string;
+  content_digest: string;
   created_at: string;
+  updated_at: string;
 };
 
 /** One page of a keyset-paginated list.
@@ -91,6 +114,15 @@ function toPage<T>(result: ApiResult, cursorKey: string): Page<T> {
   return { rows, nextCursor, total, supported: true };
 }
 
+/** `include_total` is ALWAYS sent, never omitted.
+ *
+ * The first version spread it in only when true, which is the ergonomic
+ * default in most APIs and wrong in this one: this kernel's request grammar
+ * is closed and has no optional-key concept, so every field is
+ * required-but-nullable and a missing key is `missing_field`, not a default.
+ * Omitting it produced `missing_field at /include_total` on every call --
+ * the same mismatch the isolation proof hit for the same reason.
+ */
 export async function listPeers(
   b: Bank,
   afterName: string | null,
@@ -100,7 +132,7 @@ export async function listPeers(
   const result = await call(b, "listPeers", {
     after_name: afterName,
     limit,
-    ...(includeTotal ? { include_total: true } : {}),
+    include_total: includeTotal,
   });
   return toPage<PeerRow>(result, "next_after_name");
 }
@@ -114,7 +146,7 @@ export async function listSessions(
   const result = await call(b, "listSessions", {
     after_name: afterName,
     limit,
-    ...(includeTotal ? { include_total: true } : {}),
+    include_total: includeTotal,
   });
   return toPage<SessionRow>(result, "next_after_name");
 }
@@ -129,8 +161,13 @@ export async function listNodes(
   const result = await call(b, "listNodes", {
     after_id: afterId,
     limit,
-    ...(includeTotal ? { include_total: true } : {}),
-    ...(typeTerm !== null ? { type_term: typeTerm } : {}),
+    include_total: includeTotal,
+    // Sent ALWAYS, `null` when unfiltered — same closed-grammar rule as
+    // `include_total`. Spreading it in only when non-null produced
+    // `missing_field at /type_term`, which the UI rendered as an ordinary
+    // empty list: "no nodes" over a server holding five. The count strip
+    // said "— NODES" at the same time, which was the only visible hint.
+    type_term: typeTerm,
   });
   return toPage<NodeRow>(result, "next_after_id");
 }

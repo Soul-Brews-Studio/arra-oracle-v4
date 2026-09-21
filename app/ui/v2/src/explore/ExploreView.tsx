@@ -107,10 +107,10 @@ export function ExploreView({
           <ListPanel
             label="peers"
             rows={listing.peers.state.rows}
-            rowKey={(p) => p.peer_name}
-            renderRow={(p) => p.peer_name}
+            rowKey={(p) => p.name}
+            renderRow={(p) => p.name}
             selectedKey={selectedPeer}
-            onSelect={(p) => onSelectPeer(p.peer_name)}
+            onSelect={(p) => onSelectPeer(p.name)}
             loading={listing.peers.state.loading}
             error={listing.peers.state.error}
             supported={listing.peers.state.supported}
@@ -125,10 +125,10 @@ export function ExploreView({
           <ListPanel
             label="sessions"
             rows={listing.sessions.state.rows}
-            rowKey={(s) => s.session_name}
-            renderRow={(s) => s.session_name}
+            rowKey={(s) => s.name}
+            renderRow={(s) => s.name}
             selectedKey={selectedSession}
-            onSelect={(s) => onSelectSession(s.session_name)}
+            onSelect={(s) => onSelectSession(s.name)}
             loading={listing.sessions.state.loading}
             error={listing.sessions.state.error}
             supported={listing.sessions.state.supported}

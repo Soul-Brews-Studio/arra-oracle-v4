@@ -105,10 +105,10 @@ export function DetailTabs(props: {
           <ListPanel<NodeRow>
             label="nodes"
             rows={props.nodes.rows}
-            rowKey={(n) => n.node_id}
-            renderRow={(n) => `${n.type_term} · ${n.title} · rev ${n.revision_no}`}
+            rowKey={(n) => n.id}
+            renderRow={(n) => `${n.title} · rev ${n.revision_no}`}
             selectedKey={props.nodes.selectedId}
-            onSelect={(n) => props.nodes.onSelect(n.node_id)}
+            onSelect={(n) => props.nodes.onSelect(n.id)}
             loading={props.nodes.loading}
             error={props.nodes.error}
             supported={props.nodes.supported}
