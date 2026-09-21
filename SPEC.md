@@ -530,13 +530,95 @@ posture, and v4 defaults to the first.
 libSQL *can* store vectors natively (`F32_BLOB` + `libsql_vector_idx`, DiskANN). v4
 still keeps vectors in LanceDB, for measured reasons — see §4.4.
 
-#### 4.1.2 FTS tokenizer — `trigram`, non-negotiable
+#### 4.1.2 FTS tokenizer — character trigrams, non-negotiable
 
-`tokenize='trigram'`. **Never `unicode61`.**
+**On LanceDB the tokenizer is spelled `ngram`, with `ngramMinLength: 3` and
+`ngramMaxLength: 3`.** Never `simple`, and never the omitted default.
 
-Measured on this fleet's corpus: Thai combining marks are token *breaks* under
-`unicode61` (the diacritic exception covers Latin only), so `ความ` returns **5 hits
-where trigram returns 435**. Thai is effectively invisible.
+> ⚠️ **Correction (2026-09-22), measured against the installed SDK.** This section
+> previously read `tokenize='trigram'. **Never `unicode61`.**` — SQLite FTS5 syntax.
+> **`@lancedb/lancedb` 0.38.0 refuses both of those strings:**
+>
+> ```
+> Index.fts({ baseTokenizer: "trigram" })    -> Invalid input, unknown base tokenizer trigram
+> Index.fts({ baseTokenizer: "unicode61" })  -> Invalid input, unknown base tokenizer unicode61
+> ```
+>
+> A bogus name (`definitely-not-a-tokenizer`) is rejected with the identical message,
+> which proves the name is genuinely validated rather than silently ignored. So this
+> spec mandated an **unbuildable configuration**, and #10 was blocked on a vocabulary
+> mismatch rather than on a technical disagreement.
+>
+> The *capability* is intact and is the shipped default of `ngram`: the engine's own
+> `listIndices()[0].indexDetails` reports `min_ngram_length: 3, max_ngram_length: 3,
+> prefix_only: false` for a bare `Index.fts({ baseTokenizer: "ngram" })`. Corroborated
+> independently — over the same 200 rows, `ngram` default and explicit `ngram(3,3)`
+> produced **byte-identical index artifacts** (66,668 B across 10 files), while
+> `ngram(2,4)` gave 51,953 and `icu` 46,676.
+>
+> Full accepted set at 0.38.0: `icu`, `icu/split`, `simple`, `whitespace`, `raw`,
+> `ngram`. **Omitting `baseTokenizer` resolves to `simple`, not `icu`.** `jieba/*` and
+> `lindera/*` are known names gated on language-model data that is not installed —
+> NOT RUN, not unsupported.
+
+Thai combining marks are token *breaks* under a word-boundary tokenizer, so Thai is
+invisible from the inside of a word. Measured on this fleet's corpus with SQLite FTS5,
+`ความ` returned **5 hits under `unicode61` where trigram returned 435**.
+
+> ⚠️ **That 435-vs-5 number is retained as history, not as LanceDB evidence.** It
+> necessarily came from SQLite FTS5, since LanceDB accepts neither tokenizer named in
+> it, and its corpus was not available for re-measurement — **NOT RUN**, neither
+> confirmed nor contradicted.
+>
+> **`ความ` is the wrong query to test this with.** Measured 2026-09-22 on LanceDB
+> 0.38.0: `icu` **finds** `ความ`, because `ความ` sits at offset 0 of its row and is a
+> complete ICU token, as is `ทรงจำ` (ICU splits the row `ความ|ทรง|จำ`). ICU is not
+> blind to Thai — it is blind only to **sub-segment** queries. Anyone re-running this
+> section's own example against LanceDB `icu` will see a hit and wrongly conclude ICU
+> is sufficient.
+>
+> **The discriminating query is `ลืม` inside the stored word `หลงลืม`** — the
+> counterexample #10 already carried:
+>
+> | Tokenizer | `ลืม` inside `หลงลืม` | `หลงลืม` whole | `ความ` | `brown` (ASCII) |
+> |---|---|---|---|---|
+> | `icu` | **miss** | hit | hit | hit |
+> | `icu/split` | **miss** | hit | hit | hit |
+> | `simple` / `whitespace` / *(unset)* | miss | miss | miss | hit |
+> | `raw` (not-a-tokenizer control) | miss | miss | miss | **miss** |
+> | `ngram` / `ngram(3,3)` / `ngram(2,4)` | **hit** | hit | hit | hit |
+>
+> `ลืม` *is* a literal substring of the stored `หลงลืม` and `icu` returns **zero** — a
+> substring scan cannot produce that number, and FTS with no index *errors*
+> (`Cannot perform full text search unless an INVERTED index has been created`), so a
+> silent scan fallback is impossible. Measured inside-word Thai recall for `icu` on
+> these fixtures: **0/2** (`ลืม`, and `หลง` inside `หลงลืม`).
+>
+> Fixtures were agent-authored (4 and 5 rows) with no relevance judgments — this
+> establishes *which tokenizer can do the job*, not *which retrieves better*. That
+> remains #7, and #7 stays open.
+
+**The working call shape**, proven end to end rather than read off documentation:
+
+```ts
+await tbl.createIndex("content", {
+  config: Index.fts({
+    baseTokenizer: "ngram",   // "trigram" -> Error: unknown base tokenizer trigram
+    ngramMinLength: 3,
+    ngramMaxLength: 3,
+    prefixOnly: false,
+    stem: false,              // DEFAULT IS true  -- must be turned off
+    removeStopWords: false,   // DEFAULT IS true  -- must be turned off
+  }),
+  replace: true,
+});
+```
+
+`stem: false` and `removeStopWords: false` are **mandatory, not stylistic**. Both
+default to `true`, and stop-word removal runs *even in ngram mode*: the query `the`
+returns `[]` under `ngram` defaults and hits under `stem:false, removeStopWords:false`.
+An ngram index built without disabling both is not a faithful trigram index. Verify
+with `listIndices()[0].indexDetails`, not by trusting the call site.
 
 > **arra-oracle-v3 shipped `unicode61`-only and is structurally unable to find Thai
 > inside words.** This is a known inherited defect that v4 exists to not repeat.
@@ -550,7 +632,13 @@ where trigram returns 435**. Thai is effectively invisible.
 
 Costs of trigram, accepted knowingly: ~1.8–3× index size, cannot match a needle under 3
 characters (fall back to `LIKE` **and say so in the response**), and must never be
-handed a wildcard. Every FTS token is quoted on the way in — an unquoted hyphen parses
+handed a wildcard. Measured 2026-09-22: below-minimum queries **die silently** — 1-char
+`ล` and 2-char `ลื` both return `[]`, 3-char `ลืม` returns the row, confirming
+`min_ngram_length: 3` directly rather than by inference. Over-match is real in both
+scripts: `row` matches "brown", and `งลื` — a meaningless fragment spanning a word
+boundary in `หลงลืม` — matches, where `icu` returns nothing for both. Index size was
+1.43× on a 200-row fixture, too small to test the 1.8–3× claim; that remains unmeasured
+at scale, and higher recall with unmeasured precision is not "better". Every FTS token is quoted on the way in — an unquoted hyphen parses
 as FTS5's `NOT` and returns silence.
 
 > This finding has now been independently measured **four times** across this fleet. It
@@ -1426,7 +1514,7 @@ is ever wanted, it is a separate proposal against a v4 that already works.
 | **S3** | Does claude.ai's connector accept a **path-scoped** resource (`/mcp/:bank`)? | §6.1 per-bank endpoints depend on RFC 9728 `resource` exact-match with a path | a real claude.ai connector added and approved against a path-scoped URL |
 | **S4** | Embedder choice for local-first (no API key) vs cloud | affects bank portability — a bank re-embedded with a different model is a different corpus | embedder identity recorded per bank, mismatch detected on read |
 | **S5** | With `ORACLE_DB_SYNC_URL` **set** and the network **down**, does a write fail — and does `offline: true` actually rescue it? | §4.1 now states writes forward to the primary; the rescue path is documented but unverified. Testing the no-sync-URL case proves nothing | a write is attempted in all three modes of §4.1's table and each behaves as the table claims |
-| **S6** | Does `tokenize='trigram'` FTS behave identically on **libSQL** as on stock SQLite FTS5? | §4.1.2 is load-bearing for Thai; a libSQL divergence would be silent. *(The LanceDB half of this question is closed — §4.1.2: character-level n-gram, already shipped and measured by this fleet.)* | `ความ` returns the trigram order of magnitude (~435), not the `unicode61` one (~5) |
+| **S6** | Does `tokenize='trigram'` FTS behave identically on **libSQL** as on stock SQLite FTS5? | §4.1.2 is load-bearing for Thai; a libSQL divergence would be silent. *(The LanceDB half of this question is closed — §4.1.2: character-level n-gram, already shipped and measured by this fleet.)* | ~~`ความ` returns the trigram order of magnitude (~435), not the `unicode61` one (~5)~~ — **superseded 2026-09-22: `ความ` is not a discriminator.** LanceDB `icu` finds it (it is a complete ICU token). Use `ลืม` against a stored `หลงลืม`: `icu` returns 0, `ngram(3,3)` returns the row. See §4.1.2 |
 | **S7** | LanceDB fragment/version growth on R2 under single-row appends (§4.4c) | one commit per `remember` means object count and scan cost grow without bound; compaction policy is unspecced | 10k single-row appends on a real R2 bucket; object count, recall latency and `optimize()` cost measured |
 | **S9** | **The one-hour experiment that settles §4.4d.** One Bun script: libSQL file, 10k real v3 documents (real Thai), `F32_BLOB(1024)`, `tokenize='trigram'`, **no vector index**. Measure (1) `ORDER BY vector_distance_cos(...) LIMIT 20` with a `workspace_name` prefilter, (2) `ความ` hit count — which also closes S6, (3) file size and `PRAGMA freelist_count` after 10k supersede UPDATEs | if (1) < 50 ms and (3) freelist ≈ 0, LanceDB has nothing to earn in v1 and §4.4–4.7 collapse to roughly one page | all three measured and recorded in this spec |
 | ~~**S10**~~ | ~~What already indexes the `.jsonl` corpus?~~ **CLOSED 2026-09-18.** 7–8 indexers found; `session-viewer` owns `~/.session-viewer/sessions.db` as sole writer, `session-search` reads it. **v4 is a reader, not an eighth writer** — recorded in §14.9 | — | done |
