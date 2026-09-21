@@ -14,6 +14,8 @@
 
 import type { WorkspaceAction } from "../auth/policy";
 import type { McpEnvelope, OperationService, ToolOperations } from "../auth/service";
+import { KNOWLEDGE_METHODS } from "../knowledge/registry";
+import type { KnowledgeAccess } from "../knowledge/transport";
 import { SERVER_NAME, SERVER_VERSION, err, negotiate, ok, text } from "./protocol";
 import { TOOLS } from "./tools";
 
@@ -56,6 +58,61 @@ const bounded = (value: unknown, fallback: number, field: string) => {
 /** Scope may never travel in arguments: the route workspace is authoritative. */
 const SCOPE_CARRIERS = ["workspace_name", "bank", "workspace"] as const;
 
+/**
+ * #31: where the connected `KnowledgeAccess` (opened by `composition.ts`)
+ * lives for MCP dispatch. Set once at startup; unset means every `kb_*` tool
+ * fails closed with a tool error rather than silently pretending to work.
+ */
+let knowledgeAccess: KnowledgeAccess | null = null;
+
+export function configureKnowledgeAccess(access: KnowledgeAccess | null): void {
+  knowledgeAccess = access;
+}
+
+/** Read `workspace_name` out of an ALREADY-DECODED plain object at `tokens`. */
+function readWorkspaceAtPlain(value: unknown, tokens: readonly string[]): string | null {
+  let node = value;
+  for (const token of tokens) {
+    if (typeof node !== "object" || node === null || Array.isArray(node)) return null;
+    node = (node as Record<string, unknown>)[token];
+  }
+  if (typeof node !== "object" || node === null || Array.isArray(node)) return null;
+  const workspace = (node as Record<string, unknown>).workspace_name;
+  return typeof workspace === "string" ? workspace : null;
+}
+
+/**
+ * Dispatch one `kb_<method>` tool call.
+ *
+ * `ops.bank` is the workspace THIS request was already admitted for (the
+ * four-action MCP projection in `auth/service.ts` ran before `dispatchTool`
+ * was ever called). The payload's own `workspace_name` is checked against it
+ * for the same reason the HTTP transport checks its route `:bank`: a name
+ * inside the request is not itself authorization. `payload` is re-encoded to
+ * bytes with a plain `JSON.stringify` — safe here specifically because it was
+ * already decoded ONCE by this package's own governed strict parser (the
+ * `/mcp/:bank` envelope reader in `app.ts`), so no duplicate key or invalid
+ * UTF-8 could have survived to reach this point; this is not a second
+ * ungoverned parser, it is a lossless re-encode of an already-validated value.
+ */
+async function dispatchKnowledgeTool(name: string, args: Record<string, unknown>, ops: ToolOperations): Promise<unknown> {
+  const method = name.slice(3);
+  const entry = KNOWLEDGE_METHODS[method];
+  if (entry === undefined) throw new Error("unknown tool");
+  const payload = args.payload;
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throw new Error("payload must be an object");
+  }
+  const scoped = readWorkspaceAtPlain(payload, entry.scopePath);
+  if (scoped === null || scoped !== ops.bank) {
+    throw new Error("payload workspace_name must match the connected bank");
+  }
+  if (knowledgeAccess === null) throw new Error("knowledge transport is not configured");
+  const bundle = await knowledgeAccess.getBundle(entry.action);
+  const bytes = new TextEncoder().encode(JSON.stringify(payload));
+  return entry.call(bundle, bytes);
+}
+
 /** Pure dispatcher: receives scope-bound operations, never a context. */
 export async function dispatchTool(
   name: string,
@@ -65,6 +122,8 @@ export async function dispatchTool(
   for (const carrier of SCOPE_CARRIERS) {
     if (carrier in args) throw new Error("scope may not be supplied in arguments");
   }
+
+  if (name.startsWith("kb_")) return dispatchKnowledgeTool(name, args, ops);
 
   switch (name) {
     case "remember": {

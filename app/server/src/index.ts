@@ -8,9 +8,10 @@
 // contact a model or listen; only `import.meta.main` does startup work.
 
 import { createApp } from "./app";
-import { createMcpAdapter } from "./mcp";
+import { configureKnowledgeAccess, createMcpAdapter } from "./mcp";
 import {
   checkSupportedRuntime,
+  composeKnowledgeAccess,
   composeService,
   GLOBAL_BODY_BACKSTOP,
   readConfig,
@@ -21,8 +22,14 @@ import { loadPolicy } from "./auth/loader";
 /** Build a fully wired app from explicit configuration. */
 export async function buildApp(config: { policyPath: string; origin: string; assets?: string }) {
   const service = await composeService({ policyPath: config.policyPath, origin: config.origin, port: 0 });
+  // #31: the same process is the sole knowledge writer (see
+  // knowledge/transport.ts's file header). Opened once here and shared by
+  // both the HTTP route and the MCP `kb_*` tools below.
+  const access = composeKnowledgeAccess();
+  configureKnowledgeAccess(access);
   return createApp({ origin: config.origin }, service, createMcpAdapter(service), {
     assets: config.assets,
+    knowledge: { policyPath: config.policyPath, access },
   });
 }
 
