@@ -25,6 +25,8 @@
 export { MAX_ITEMS, type AppendItem, type AppendMessagesRequest, parseAppendMessages } from "./context.parseAppendMessages";
 export { MAX_RESULT_WIRE_BYTES } from "./context.constants";
 export { MAX_PAGE_LIMIT, type ListMessagesRequest, parseListMessages } from "./context.parseListMessages";
+export { type ListPeersRequest, parseListPeers } from "./context.parseListPeers";
+export { type ListSessionsRequest, parseListSessions } from "./context.parseListSessions";
 export { PEER_FIELDS, encodePeerRow } from "./context.encodePeerRow";
 export { SESSION_FIELDS, encodeSessionRow } from "./context.encodeSessionRow";
 export { SESSION_PEER_FIELDS, encodeSessionPeerRow } from "./context.encodeSessionPeerRow";
@@ -36,3 +38,7 @@ export { type GetPeerRequest, parseGetPeer } from "./context.parseGetPeer";
 export { type GetSessionRequest, parseGetSession } from "./context.parseGetSession";
 export { type GetMessageRequest, parseGetMessage } from "./context.parseGetMessage";
 export { rowWireBytes } from "./context.rowWireBytes";
+export { type ListMcpCallsRequest, parseListMcpCalls } from "./context.parseListMcpCalls";
+export { MCP_CALL_FIELDS, encodeMcpCallRow } from "./context.encodeMcpCallRow";
+export { type ListConnectionsRequest, parseListConnections } from "./context.parseListConnections";
+export { CONNECTION_FIELDS, encodeConnectionRow } from "./context.encodeConnectionRow";

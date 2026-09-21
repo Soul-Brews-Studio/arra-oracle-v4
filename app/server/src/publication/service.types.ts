@@ -8,6 +8,7 @@ import { type createTaxonomyReadMethods } from "./service.createTaxonomyReadMeth
 import { type createTaxonomyWriterService } from "./service.createTaxonomyWriterService";
 import { type getAcceptedHead } from "./service.getAcceptedHead";
 import { type listAcceptedHistory } from "./service.listAcceptedHistory";
+import { type listNodes } from "./service.listNodes";
 import { type publishRevision } from "./service.publishRevision";
 
 /**
@@ -43,6 +44,14 @@ export type DatasetAdapter = {
     limit: number,
   ): Promise<Record<string, unknown>[]>;
   /**
+   * Exact row count at a predicate, via the SDK's own `countRows(filter)` --
+   * NOT a `query`/`orderedProjection` materialization counted in JS. This is
+   * a second full scan of the predicate's rows with no keyset to bound it,
+   * so it is for a caller that asked for a count DELIBERATELY (`total` on
+   * `listPeers`/`listSessions`), never a cost every page fetch pays.
+   */
+  count(table: string, predicate: string): Promise<number>;
+  /**
    * Scoped delete of DERIVED projection rows only.
    *
    * Deliberately NOT a generic delete. The table must be one of the two named
@@ -56,6 +65,16 @@ export type DatasetAdapter = {
     workspace: string,
     revisionId: string,
   ): Promise<{ numDeletedRows: number; version: number }>;
+  /**
+   * Native, predicate-scoped row count -- the SDK's own `countRows`, which
+   * never materializes a row into JS. `listNodes`' opt-in `include_total` is
+   * the only caller: counting an open-ended workspace-scoped set has no
+   * keyset to bound it, so this exists to answer that WITHOUT reading every
+   * row through `query`/`orderedProjection` to count them by hand, which
+   * would turn an opt-in sidebar total into an unbounded full scan through
+   * this process instead of the SDK's own count path.
+   */
+  count(table: string, predicate: string): Promise<number>;
   refresh(table: string): Promise<void>;
   version(table: string): Promise<number>;
   append(table: string, rows: Record<string, unknown>[]): Promise<number>;
@@ -117,6 +136,7 @@ export type TermSnapshotEntry = {
 export type PublicationReaderService = {
   getAcceptedHead(requestBytes: Uint8Array): Promise<unknown>;
   listAcceptedHistory(requestBytes: Uint8Array): Promise<unknown>;
+  listNodes(requestBytes: Uint8Array): Promise<unknown>;
 };
 
 export type PublicationWriterService = PublicationReaderService & {

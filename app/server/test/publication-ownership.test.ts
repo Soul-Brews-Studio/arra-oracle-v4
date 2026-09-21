@@ -800,10 +800,10 @@ describe.skipIf(!FIXTURE_READY)(`target dataset gating [${PENDING_FIXTURE}]`, ()
       const run = await runGated(root, scriptPath("writer.ts"), [root, "0"]);
       const events = eventsOf(run.stdout);
       expect(events).toContain("writer:ready");
-      // §2, §11: exactly the three methods plus close, every value a function,
+      // §2, §11: exactly the four methods plus close, every value a function,
       // an ordinary object prototype — no adapter, table or connection escapes.
       expect(eventFor(events, "writer:surface")).toBe(
-        "writer:surface close,getAcceptedHead,listAcceptedHistory,publishRevision",
+        "writer:surface close,getAcceptedHead,listAcceptedHistory,listNodes,publishRevision",
       );
       expect(eventFor(events, "writer:valuetypes")).toBe("writer:valuetypes function");
       expect(eventFor(events, "writer:prototype")).toBe("writer:prototype true");
@@ -993,12 +993,12 @@ describe.skipIf(!FIXTURE_READY)(`reader interface [${PENDING_FIXTURE}]`, () => {
   );
 
   test(
-    "the reader exposes exactly the two scoped read methods and no reachable handle",
+    "the reader exposes exactly the three scoped read methods and no reachable handle",
     async () => {
       const root = copyFixture("reader-surface");
       const run = await runChild(["bun", "run", scriptPath("reader.ts"), root]);
       expect(eventFor(run.events, "reader:surface")).toBe(
-        "reader:surface getAcceptedHead,listAcceptedHistory",
+        "reader:surface getAcceptedHead,listAcceptedHistory,listNodes",
       );
       // No publish, no close-the-writer, no adapter, and every value a function:
       // a raw table or connection would show up as an object here.

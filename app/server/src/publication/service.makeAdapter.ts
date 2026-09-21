@@ -203,6 +203,20 @@ export function makeAdapter(connection: Connection, onRelease: () => void): Data
       // lossy Number fallback returns on one side only.
       return decodeArrowRows(arrow);
     },
+    async count(table, predicate) {
+      const tbl = await handle(table);
+      await tbl.checkoutLatest();
+      // Guard the count at the ADAPTER, not at each call site. Two branches
+      // added this method independently: one validated here, one validated
+      // before stringifying in its own service. Keeping the adapter's version
+      // protects every future caller instead of only the two that exist now.
+      // A count that comes back non-integer or negative is the storage layer
+      // lying, and it would otherwise be stringified into a canonical decimal
+      // on the wire -- a lie with a trustworthy format.
+      const total = await tbl.countRows(predicate);
+      if (!Number.isSafeInteger(total) || total < 0) failPublication("integrity_failure");
+      return total;
+    },
     async deleteDerivedScope(table, workspace, revisionId) {
       // Restricted by construction: only these two tables, and the predicate
       // is built here from the reviewed literal escaper.

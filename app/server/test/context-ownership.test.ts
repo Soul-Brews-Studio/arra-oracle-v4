@@ -50,16 +50,19 @@ const READER_KEYS = "context,publication,taxonomy";
 /** §8: context writer has exactly these twenty-two (its own eleven plus the
  *  eleven reader methods it spreads in); the reader exactly the eleven. */
 const CONTEXT_WRITE_METHODS =
-  "advanceReadCursor,answerChat,appendMessages,createSessionLink,createTrace,getContext,getMessage," +
-  "getPeer,getReadCursor,getRecallEligibility,getSession,getTrace,indexRevisionChunks,joinSession," +
-  "listLifecycleHistory,listMessages,listSearchChunks,listSessionLinks,listTraceHits," +
-  "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode,writeChunkEmbedding";
+  "advanceReadCursor,answerChat,appendMessages,createSessionLink,createTrace,getContext," +
+  "getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
+  "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
+  "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessions,listTraceHits," +
+  "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
+  "writeChunkEmbedding";
 const CONTEXT_READ_METHODS =
   "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
-  "listLifecycleHistory,listMessages,listSearchChunks,listSessionLinks,listTraceHits";
+  "listConnections,listLifecycleHistory,listMcpCalls,listMessages,listPeers," +
+  "listSearchChunks,listSessionLinks,listSessions,listTraceHits";
 /** Existing facades keep their exact key sets and carry no close. */
-const PUBLICATION_WRITE_METHODS = "getAcceptedHead,listAcceptedHistory,publishRevision";
-const PUBLICATION_READ_METHODS = "getAcceptedHead,listAcceptedHistory";
+const PUBLICATION_WRITE_METHODS = "getAcceptedHead,listAcceptedHistory,listNodes,publishRevision";
+const PUBLICATION_READ_METHODS = "getAcceptedHead,listAcceptedHistory,listNodes";
 const TAXONOMY_WRITE_METHODS =
   "createTerm,createVocabulary,getTerm,getVocabulary,renameTerm,reparentTerm,retireTerm,seedReservedVocabularies";
 const TAXONOMY_READ_METHODS = "getTerm,getVocabulary";
