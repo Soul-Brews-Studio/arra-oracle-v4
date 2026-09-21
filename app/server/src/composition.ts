@@ -106,6 +106,7 @@ export async function composeService(config: RuntimeConfig): Promise<OperationSe
   const store = await import("./db");
   const embed = await import("./embed");
   const calls = await import("./mcp/calls");
+  const connections = await import("./mcp/connections");
 
   const deps: StoreDependencies = {
     insert: (row) => store.insert(row),
@@ -129,8 +130,31 @@ export async function composeService(config: RuntimeConfig): Promise<OperationSe
         workspace_name: string;
         session_name?: string | null;
         client_label?: string | null;
+        transport?: string | null;
+        remote_ip?: string | null;
         auth: { principal_id: string; credential_id: string; policy_version: string };
       };
+      // #102: the same admitted request feeds BOTH operations tables. The log
+      // is per-call and append-only; the fold is per-caller and bounded by the
+      // caller population. Fired without await and with its own catch so a
+      // dashboard-only table can never delay or fail the request it describes
+      // -- `foldConnection` is already best-effort internally, this is the
+      // second belt.
+      void connections
+        .foldConnection({
+          workspace_name: entry.workspace_name,
+          // "unknown" rather than a guess: `method` is NOT NULL and the read
+          // validates it as nonempty text, so a transport that did not say
+          // must still round-trip as something a human can read as "we were
+          // not told" -- never silently attributed to http or mcp.
+          method: entry.transport?.trim() ? entry.transport : "unknown",
+          principal: entry.auth.principal_id,
+          label: entry.client_label?.trim() ? entry.client_label : "unlabelled",
+          user_agent: entry.client_label ?? null,
+          remote_ip: entry.remote_ip ?? null,
+          tool: entry.tool,
+        })
+        .catch(() => {});
       return calls.logCall({
         tool: entry.tool,
         input: entry.input,
