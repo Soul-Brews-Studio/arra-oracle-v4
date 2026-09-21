@@ -193,3 +193,79 @@ trace to a revision cannot compare the two time columns directly.
 **There are no foreign keys.** LanceDB has none. Every "FK" above is a
 convention enforced in application code — which is why `supersede_log` snapshots
 `old_title` and `old_source` instead of pointing at a row that may be gone.
+
+---
+
+## 4 · Three lineages, not one
+
+Calling this "a Honcho-shaped schema" is half right and therefore misleading.
+Honcho supplies tier 1 and nothing else. The memory layer -- the part that makes
+this a memory system rather than a message log -- is arra-oracle-v3's, and the
+bank concept is Hindsight's. Every attribution below is from source.
+
+```text
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  WHERE EACH TABLE CAME FROM                                                  ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+  HONCHO  plastic-labs/honcho src/models.py         byte-compatible, §3
+  ──────  a bank exports as a plain table dump and imports back into stock
+          Honcho. v4 adds ONLY nullable columns. Nothing renamed or re-typed.
+
+      workspaces · peers · sessions · session_peers · messages
+
+          One alias on the surface, total: `bank` = workspaces. In the schema
+          it is always `workspace_name`. Every other noun keeps Honcho's word.
+          (Nat, 2026-09-18: "go same Honcho, that's cool -- but I need bank.")
+
+
+  ARRA-ORACLE-V3  Soul-Brews-Studio/arra-oracle-v3   §3.4, "tier 2"
+  ──────────────  what v3 knew that Honcho does not: a typed,
+                  superseded-not-deleted, bitemporal knowledge store with a
+                  controlled taxonomy over it. Separate tables Honcho never
+                  reads, written in tier 1's idiom so the schema stays one
+                  thing to learn instead of two.
+
+      nodes · node_revisions            <- v3 `oracle_documents`, plus the
+      node_revision_terms                  better half of v3's second model
+      revision_links                       (`oracle_memories`) -- bitemporal
+      supersede_log                        validity, not a point in time
+      vocabularies · terms
+      traces · trace_hits               <- v3 `trace_log` (schema.ts:171)
+
+
+  HINDSIGHT  vectorize-io/hindsight (MIT)            §3.1, workspace.py:21
+  ─────────  the bank-as-isolated-brain concept, and the per-bank MCP
+             endpoint precedent `/mcp/<bank>`.
+
+      workspaces.mission                DESCRIPTIVE ONLY, never behavioural.
+                                        Hindsight's disposition traits were
+                                        deliberately REJECTED -- the bank
+                                        describes itself, it does not act
+                                        out a personality.
+
+
+  V4'S OWN  new here, inherited from nobody
+  ────────
+      session_links                     context crosses sessions; getContext
+                                        walks these, bounded at 8
+      search_chunks_v1                  derived, save-first: embedding is
+                                        fixed_size_list<float32>[384], and
+                                        status/attempts/error_code carry the
+                                        retry state on the chunk row itself
+      read_cursors                      corrects Honcho's `messages.read`
+                                        boolean, which cannot describe more
+                                        than one reader
+      mcp_calls · connections           §6.3, §7.2 -- operations, not memory
+```
+
+### What this means for the UI
+
+`app/ui/v2` is modelled on Honcho's dashboard, which means it currently shows
+**only the Honcho third**: peers, sessions, messages, assembled context and the
+dialectic answer. It shows nothing of tier 2 -- no nodes, no revisions, no
+supersede chain, no taxonomy, no traces. Those are the tables that make this
+ours rather than a Honcho clone, and they are invisible in the UI.
+
+That is a gap in the UI, not in the schema, and it is the obvious thing for a
+`v3/` to answer.
