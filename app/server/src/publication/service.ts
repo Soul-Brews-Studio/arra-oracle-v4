@@ -33,6 +33,15 @@ import {
   validateWorkspaceRow,
 } from "./read-cursor";
 import {
+  encodeSessionLinkRow,
+  parseCreateSessionLink,
+  parseListSessionLinks,
+  MAX_CYCLE_VISITED,
+  MAX_RESULT_WIRE_BYTES as MAX_SESSION_LINK_WIRE_BYTES,
+  SESSION_LINK_FIELDS,
+  type SessionRelation,
+} from "./session-link";
+import {
   classifyMessageDestinationReplay,
   prepareNewMessage,
 } from "../contracts/source-ingestion-v1";
@@ -2518,6 +2527,7 @@ const SESSIONS = "sessions";
 const SESSION_PEERS = "session_peers";
 const MESSAGES = "messages";
 const READ_CURSORS = "read_cursors";
+const SESSION_LINKS = "session_links";
 
 const INT64_CEILING = 2n ** 63n - 1n;
 
@@ -2721,6 +2731,89 @@ async function selectCursorRow(
   return { encoded, rawMicros, seq };
 }
 
+/* ------------------------------------------------------------------ *
+ * Session links. Shared by the reader and the writer, exactly as read
+ * cursors are: one definition of "a valid endpoint pair" and one definition
+ * of "acyclic" serve both.
+ * ------------------------------------------------------------------ */
+
+/**
+ * Resolve both endpoints, IN ORDER, each at its own pointer. EXISTENCE ONLY:
+ * an inactive or historical session is a legitimate endpoint, exactly as read
+ * cursors permit historical access -- session links are annotations about a
+ * relationship, not new conversational content, so appendMessages' active-
+ * membership rule is deliberately NOT inherited here.
+ */
+async function resolveSessionLinkEndpoints(
+  adapter: DatasetAdapter,
+  workspace: string,
+  fromSession: string,
+  toSession: string,
+): Promise<void> {
+  await adapter.refresh(SESSIONS);
+  const from = await contextOne(
+    adapter,
+    SESSIONS,
+    `${contextScope(workspace)} AND name = ${quote(fromSession)}`,
+  );
+  if (from === null) failPublication("invalid_reference", "/from_session_name");
+  encodeSessionRow(from);
+
+  const to = await contextOne(
+    adapter,
+    SESSIONS,
+    `${contextScope(workspace)} AND name = ${quote(toSession)}`,
+  );
+  if (to === null) failPublication("invalid_reference", "/to_session_name");
+  encodeSessionRow(to);
+}
+
+/**
+ * Bounded reverse walk for the `continues`/`forked_from` cycle policy.
+ * `related_to` is symmetric and calls none of this -- no traversal, no bound.
+ *
+ * Starting from `toSession` (the parent side of the edge being proposed),
+ * follow the SAME directed relation backward: at each visited session, find
+ * its own outgoing edge(s) of this relation (`from_session_name = current`)
+ * and continue from their `to_session_name`. Reaching `fromSession` again
+ * means the proposed edge would close a cycle; revisiting any other session
+ * means a cycle already exists in stored data. Either is `integrity_failure`
+ * at ROOT -- a directed cycle in these two relations is never valid, whether
+ * this request would create it or merely reveals one already stored. 1024
+ * distinct visited sessions is allowed, the 1025th is `limit_exceeded`, the
+ * same bound as reply chains and revision ancestry.
+ */
+async function assertSessionLinkAcyclic(
+  writer: DatasetAdapter,
+  workspace: string,
+  fromSession: string,
+  toSession: string,
+  rel: SessionRelation,
+): Promise<void> {
+  if (rel === "related_to") return;
+  await writer.refresh(SESSION_LINKS);
+  const seen = new Set<string>();
+  const stack: string[] = [toSession];
+  let visited = 0;
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (current === fromSession) failPublication("integrity_failure", "");
+    if (seen.has(current)) continue;
+    seen.add(current);
+    visited += 1;
+    if (visited > MAX_CYCLE_VISITED) failPublication("limit_exceeded", "");
+    const rows = await writer.query(
+      SESSION_LINKS,
+      `${contextScope(workspace)} AND from_session_name = ${quote(current)} AND relation = ${quote(rel)}`,
+      MAX_CYCLE_VISITED + 1,
+    );
+    for (const row of rows) {
+      const encoded = encodeSessionLinkRow(row);
+      stack.push(encoded.to_session_name as string);
+    }
+  }
+}
+
 function createContextReadMethods(reader: DatasetAdapter) {
   /** Reads present the publication envelope, like every other owner failure. */
   const requireWorkspace = async (workspace: string): Promise<void> => {
@@ -2849,6 +2942,75 @@ function createContextReadMethods(reader: DatasetAdapter) {
       // Absent is null, never not_found: there is no cursor to have lost.
       const current = await selectCursorRow(reader, request);
       return current === null ? null : current.encoded;
+    },
+
+    /**
+     * Keyset ordered by `id` ONLY -- `created_at` is not unique (one clock
+     * sample per serialized turn can be shared by concurrent creates), so `id`
+     * is the only deterministic total order this table can offer. NOT
+     * chronological order: a stated limitation, not a silent one. `direction`
+     * is exactly one of the two column predicates; a caller wanting both
+     * directions issues two independent paginated reads.
+     */
+    async getSessionLinks(
+      requestBytes: Uint8Array,
+    ): Promise<{ rows: Record<string, unknown>[]; next_cursor: string | null }> {
+      const request = parseListSessionLinks(requestBytes);
+      await requireWorkspace(request.workspace_name);
+      await reader.refresh(SESSIONS);
+      const session = await contextOne(
+        reader,
+        SESSIONS,
+        `${contextScope(request.workspace_name)} AND name = ${quote(request.session_name)}`,
+      );
+      if (session === null) failPublication("invalid_reference", "/session_name");
+
+      await reader.refresh(SESSION_LINKS);
+      const column = request.direction === "from" ? "from_session_name" : "to_session_name";
+      const scope =
+        `${contextScope(request.workspace_name)} AND ${column} = ${quote(request.session_name)}` +
+        (request.cursor === null ? "" : ` AND id > ${quote(request.cursor)}`);
+
+      // KEYSET, never offset: limit+1 detects continuation and the lookahead
+      // row is validated for a duplicate id straddling the page edge.
+      const selected = await reader.orderedProjection(
+        SESSION_LINKS,
+        scope,
+        SESSION_LINK_FIELDS as unknown as string[],
+        { column: "id", ascending: true },
+        request.limit + 1,
+      );
+
+      const ids: string[] = [];
+      for (const row of selected) {
+        const encoded = encodeSessionLinkRow(row);
+        const id = encoded.id as string;
+        if (ids.includes(id)) failPublication("integrity_failure", "");
+        ids.push(id);
+      }
+
+      const page = ids.slice(0, request.limit);
+      const rows: Record<string, unknown>[] = [];
+      // Brackets plus one comma per row: sum + n + 1.
+      let budget = 1;
+      for (const id of page) {
+        const row = await contextOne(
+          reader,
+          SESSION_LINKS,
+          `${contextScope(request.workspace_name)} AND id = ${quote(id)}`,
+        );
+        if (row === null) failPublication("integrity_failure", "");
+        const encoded = encodeSessionLinkRow(row);
+        budget += rowWireBytes(encoded) + 1;
+        if (budget > MAX_SESSION_LINK_WIRE_BYTES) failPublication("limit_exceeded", "");
+        rows.push(encoded);
+      }
+
+      const hasMore = ids.length > request.limit;
+      return {
+        rows,
+        next_cursor: hasMore && page.length > 0 ? page[page.length - 1]! : null,
+      };
     },
   };
 }
@@ -3151,6 +3313,118 @@ function createContextWriterService(
           outcome: current === null ? ("created" as const) : ("advanced" as const),
           row: stored,
         };
+      });
+    },
+
+    /**
+     * Create one session link, or say precisely why it already exists.
+     *
+     * `id` is CALLER-STABLE identity, workspace-scoped: an identical-payload
+     * replay is `already_satisfied` with the retained row, no clock sample, no
+     * write; a changed-payload replay is a RETURNED `conflict`, never thrown,
+     * never poisoning. Self-link is `invalid_request` at `/to_session_name`
+     * for ALL THREE relations, checked before anything else -- a distinct,
+     * simpler rule than the cycle policy that follows it for the two directed
+     * relations.
+     */
+    createSessionLink: (requestBytes: Uint8Array) => {
+      const request = parseCreateSessionLink(requestBytes);
+      return mutate(async () => {
+        if (request.from_session_name === request.to_session_name) {
+          failPublication("invalid_request", "/to_session_name");
+        }
+
+        await requireWorkspaceRow(request.workspace_name);
+        // Reference resolution, IN ORDER: /from_session_name then
+        // /to_session_name. Existence only -- no active-membership rule.
+        await resolveSessionLinkEndpoints(
+          writer,
+          request.workspace_name,
+          request.from_session_name,
+          request.to_session_name,
+        );
+
+        await writer.refresh(SESSION_LINKS);
+        const byId = await contextOne(
+          writer,
+          SESSION_LINKS,
+          `${contextScope(request.workspace_name)} AND id = ${quote(request.id)}`,
+        );
+        if (byId !== null) {
+          const stored = encodeSessionLinkRow(byId);
+          const samePayload =
+            stored.from_session_name === request.from_session_name &&
+            stored.to_session_name === request.to_session_name &&
+            stored.relation === request.relation &&
+            stored.evidence_ref === request.evidence_ref &&
+            stored.created_by_peer_name === request.created_by_peer_name;
+          // EXACT replay: retained row, no clock sample, no write. A changed
+          // payload under the same id is a RETURNED conflict, never thrown.
+          return samePayload
+            ? { outcome: "already_satisfied" as const, row: stored }
+            : { outcome: "conflict" as const, row: stored };
+        }
+
+        // Cycle policy: PRESERVED for the two directed relations. `related_to`
+        // participates in neither traversal nor bound.
+        await assertSessionLinkAcyclic(
+          writer,
+          request.workspace_name,
+          request.from_session_name,
+          request.to_session_name,
+          request.relation,
+        );
+
+        // ONLY a real creation samples the clock.
+        const sampled = options.clock();
+        if (typeof sampled !== "number" || !Number.isSafeInteger(sampled)) {
+          failPublication("invalid_request", "");
+        }
+        const micros = BigInt(sampled) * 1000n;
+        try {
+          // Rendering is the range check: no second copy of the Gregorian
+          // grammar, and an unrenderable sample never reaches the store. The
+          // clock is operator configuration, not a caller field: invalid
+          // clock output is `invalid_request`, not an integrity fault.
+          microsToTimestamp(micros);
+        } catch (error) {
+          if (!(error instanceof PublicationError)) throw error;
+          return failPublication("invalid_request", "");
+        }
+
+        const physical: Record<string, unknown> = {
+          id: request.id,
+          workspace_name: request.workspace_name,
+          from_session_name: request.from_session_name,
+          to_session_name: request.to_session_name,
+          relation: request.relation,
+          evidence_ref: request.evidence_ref,
+          created_by_peer_name: request.created_by_peer_name,
+          // Arrow needs BigInt microseconds; a JS Number silently corrupts.
+          created_at: micros,
+        };
+        const expected = encodeSessionLinkRow(physical);
+
+        const stored = await writeRow(
+          SESSION_LINKS,
+          physical,
+          async () => {
+            const found = await contextOne(
+              writer,
+              SESSION_LINKS,
+              `${contextScope(request.workspace_name)} AND id = ${quote(request.id)}`,
+            );
+            if (found === null) {
+              core.poison();
+              failPublication("recovery_required", "");
+            }
+            return encodeSessionLinkRow(found);
+          },
+          expected,
+          SESSION_LINK_FIELDS,
+          false,
+        );
+        return { outcome: "created" as const, row: stored };
       });
     },
 
