@@ -58,8 +58,8 @@ const CONTEXT_READ_METHODS =
   "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
   "listLifecycleHistory,listMessages,listSearchChunks,listSessionLinks,listTraceHits";
 /** Existing facades keep their exact key sets and carry no close. */
-const PUBLICATION_WRITE_METHODS = "getAcceptedHead,listAcceptedHistory,publishRevision";
-const PUBLICATION_READ_METHODS = "getAcceptedHead,listAcceptedHistory";
+const PUBLICATION_WRITE_METHODS = "getAcceptedHead,listAcceptedHistory,listNodes,publishRevision";
+const PUBLICATION_READ_METHODS = "getAcceptedHead,listAcceptedHistory,listNodes";
 const TAXONOMY_WRITE_METHODS =
   "createTerm,createVocabulary,getTerm,getVocabulary,renameTerm,reparentTerm,retireTerm,seedReservedVocabularies";
 const TAXONOMY_READ_METHODS = "getTerm,getVocabulary";

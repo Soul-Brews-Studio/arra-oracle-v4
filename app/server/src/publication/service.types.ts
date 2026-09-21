@@ -8,6 +8,7 @@ import { type createTaxonomyReadMethods } from "./service.createTaxonomyReadMeth
 import { type createTaxonomyWriterService } from "./service.createTaxonomyWriterService";
 import { type getAcceptedHead } from "./service.getAcceptedHead";
 import { type listAcceptedHistory } from "./service.listAcceptedHistory";
+import { type listNodes } from "./service.listNodes";
 import { type publishRevision } from "./service.publishRevision";
 
 /**
@@ -117,6 +118,7 @@ export type TermSnapshotEntry = {
 export type PublicationReaderService = {
   getAcceptedHead(requestBytes: Uint8Array): Promise<unknown>;
   listAcceptedHistory(requestBytes: Uint8Array): Promise<unknown>;
+  listNodes(requestBytes: Uint8Array): Promise<unknown>;
 };
 
 export type PublicationWriterService = PublicationReaderService & {
