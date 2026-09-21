@@ -16,8 +16,22 @@
  * table rather than naming methods individually.
  *
  * Deliberately excludes session-link, lifecycle, trace and search-chunk
- * kernels: they are mid-integration elsewhere and their method lists are
- * still moving (issue #31 scope note).
+ * kernels — NOT because they are mid-integration (as of the v4/ui-33 merge
+ * of 2ce45b4+f600636, `service.ts` imports and wires all four: they carry
+ * core + ownership + recovery lanes, and three of the four already have
+ * frozen contract docs). The real reason is narrower and still holds:
+ *   - Their WRITE surfaces (e.g. anything shaped like publishRevision's
+ *     node/revision/domain-reference envelope, or a lifecycle transition)
+ *     are deep enough that wiring a route for them here, untested against a
+ *     real dataset, risks a transport that accepts and forwards
+ *     wrong-shaped requests nobody has exercised end to end.
+ *   - Their READ surfaces have no enumeration method to browse by (this
+ *     transport is get-by-name/get-by-id throughout; see knowledge.html's
+ *     Configuration tab for the same limitation on the kernels already
+ *     exposed below), so exposing a route here would not yet enable any
+ *     UI or caller to discover a valid id to call it with.
+ * Revisit kernel-by-kernel once each has a route author who has verified it
+ * against a real dataset, not as a batch.
  */
 
 import type { EvidenceReaderBundle, EvidenceWriterBundle } from "../publication/service";
