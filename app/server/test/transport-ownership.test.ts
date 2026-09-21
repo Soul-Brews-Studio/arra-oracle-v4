@@ -283,23 +283,20 @@ describe("no error-class laundering", () => {
     expect(JSON.parse(raw)).toEqual({ error: "internal" });
   });
 
-  // MEASURED, not asserted as correct: `TaxonomyError`'s own code list
+  // #86 fix, landed here: `TaxonomyError`'s own code list
   // (`TAXONOMY_ERROR_CODES` in src/publication/taxonomy.ts) includes
-  // `"conflict"`, a code `STATUS_FOR_CODE` in src/knowledge/transport.ts does
-  // not list. The `?? 500` fallback then applies. The wire CODE is still
-  // exactly "conflict" -- nothing is laundered into a different code -- but
-  // the STATUS collapses to the same 500 an unrelated integrity failure gets,
-  // which a caller cannot distinguish from a server fault by status alone.
-  // This is a gap in the status map, not a source file this task may edit;
-  // recorded here as a real, reproduced finding rather than silently worked
-  // around.
-  test("FINDING: taxonomy conflict has no STATUS_FOR_CODE entry and falls back to a generic 500", async () => {
+  // `"conflict"`. `STATUS_FOR_CODE` in src/knowledge/transport.ts now maps it
+  // to 409, its own status, distinct from an unrelated integrity failure's
+  // 500. This test previously asserted the OLD, buggy behaviour (status 500,
+  // indistinguishable from a server fault) as a recorded finding; updating it
+  // to 409 IS the fix landing, not a silent behaviour change.
+  test("taxonomy conflict arrives as 409, distinct from a server fault's 500", async () => {
     access = { getBundle: async () => throwingBundle(() => new TaxonomyError("conflict", "/term_name")) };
     const body = JSON.stringify({ workspace_name: "acme" });
     const res = await send("/api/knowledge/acme/getPeer", authedJson(ACME.token, body));
     const envelope = await res.json();
     expect(envelope.code).toBe("conflict"); // the CODE survives untouched
-    expect(res.status).toBe(500); // but the STATUS is indistinguishable from a server fault
+    expect(res.status).toBe(409); // and the STATUS is now its own, not 500's generic fault
   });
 });
 
