@@ -196,6 +196,110 @@ describe("real persistence: trace + trace_hit inside the real gate", () => {
       await fixture.cleanup();
     }
   }, 300_000);
+
+  test("TR-2: a prefix-matching retry after a simulated ambiguous partial write recovers, not conflicts", async () => {
+    const fixture = await createTraceFixture([ALPHA]);
+    try {
+      // Simulate: an EARLIER attempt's trace row + first hit landed, then the
+      // process died before the second hit's append. A fresh, unpoisoned
+      // owner (e.g. after a restart) now receives the byte-identical retry.
+      const partial = createTraceRequest(ALPHA, { id: TRACE1, hits: [hitInput({ ref: "hit-0" })] });
+      const full = createTraceRequest(ALPHA, {
+        id: TRACE1,
+        hits: [hitInput({ ref: "hit-0" }), hitInput({ ref: "hit-1" })],
+      });
+      const parsed = await drive(fixture.datasetRoot, [ctx("createTrace", partial), ctx("createTrace", full)]);
+      expect(parsed.op0.ok, JSON.stringify(parsed.op0)).toBe(true);
+      expect(parsed.op0.value.outcome).toBe("created");
+
+      const retry = parsed.op1;
+      expect(retry.ok, JSON.stringify(retry)).toBe(false);
+      expect(retry.code).toBe("recovery_required");
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 300_000);
+
+  test("TR-4: a stored parent_id outside the nanoid21 namespace is refused on read", async () => {
+    const fixture = await createTraceFixture([ALPHA]);
+    try {
+      const parsed = await drive(fixture.datasetRoot, [
+        hx("insertRawTrace", { id: TRACE1, workspace_name: ALPHA, parent_id: "not-a-nanoid21-id" }),
+        ctx("getTrace", { workspace_name: ALPHA, id: TRACE1 }),
+      ]);
+      expect(parsed.op0.ok).toBe(true);
+      const read = parsed.op1;
+      expect(read.ok, JSON.stringify(read)).toBe(false);
+      expect(read.code).toBe("integrity_failure");
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 300_000);
+
+  test("TR-7: a stored negative position is refused, distinctly from a mere gap", async () => {
+    const fixture = await createTraceFixture([ALPHA]);
+    try {
+      const request = createTraceRequest(ALPHA, { id: TRACE1, hits: [hitInput({ ref: "hit-0" })] });
+      const parsed = await drive(fixture.datasetRoot, [
+        ctx("createTrace", request),
+        // Plant a second hit at position -1: the real write path can only
+        // ever assign `BigInt(i)` with `i >= 0`.
+        hx("insertRawHit", {
+          workspace_name: ALPHA,
+          trace_id: TRACE1,
+          kind: "url",
+          ref: "hit-neg",
+          target: '{"url":"https://example.com/neg"}',
+          position: -1,
+        }),
+        // The replay comparison decodes EVERY stored hit (encodeTraceHitRow)
+        // before its own contiguity loop runs, so the negative value is
+        // caught by the stored-int64 guard, not the contiguity one.
+        ctx(
+          "createTrace",
+          createTraceRequest(ALPHA, {
+            id: TRACE1,
+            hits: [hitInput({ ref: "hit-0" }), hitInput({ ref: "hit-1" })],
+          }),
+        ),
+      ]);
+      expect(parsed.op0.ok).toBe(true);
+      expect(parsed.op1.ok).toBe(true);
+      const replay = parsed.op2;
+      expect(replay.ok, JSON.stringify(replay)).toBe(false);
+      expect(replay.code).toBe("integrity_failure");
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 300_000);
+
+  test("TR-11: a stored empty-string nullable text column is refused, not served as legitimate", async () => {
+    const fixture = await createTraceFixture([ALPHA]);
+    try {
+      const parsed = await drive(fixture.datasetRoot, [
+        // No real hit at all: a lone planted row at position 0 is
+        // contiguous, isolating this from TR-3/TR-7's checks.
+        hx("insertRawTrace", { id: TRACE1, workspace_name: ALPHA }),
+        hx("insertRawHit", {
+          workspace_name: ALPHA,
+          trace_id: TRACE1,
+          kind: "url",
+          ref: "hit-0",
+          target: '{"url":"https://example.com/a"}',
+          note: "",
+          position: 0,
+        }),
+        ctx("listTraceHits", { workspace_name: ALPHA, trace_id: TRACE1, after_position: null, limit: 10 }),
+      ]);
+      expect(parsed.op0.ok).toBe(true);
+      expect(parsed.op1.ok).toBe(true);
+      const listed = parsed.op2;
+      expect(listed.ok, JSON.stringify(listed)).toBe(false);
+      expect(listed.code).toBe("integrity_failure");
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 300_000);
 });
 
 describe("the pure request grammar refuses a malformed target statically", () => {

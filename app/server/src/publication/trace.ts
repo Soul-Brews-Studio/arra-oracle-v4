@@ -50,7 +50,7 @@ import {
   type TargetKind,
 } from "../contracts/evidence-v1";
 import { failPublication } from "./errors";
-import { microsToTimestamp } from "./rows";
+import { microsToTimestamp, toInt64Text } from "./rows";
 
 const MAX_REQUEST_BYTES = 1048576;
 const MAX_REQUEST_DEPTH = 64;
@@ -340,13 +340,13 @@ export function parseCreateTrace(bytes: Uint8Array): CreateTraceRequest {
   if (!Array.isArray(rawHits)) fail("invalid_type", ["hits"], "expected array");
   if (rawHits.length > MAX_HITS) fail("limit_exceeded", ["hits"], `at most ${MAX_HITS} hits`);
   const hits = rawHits.map((h, i) => parseHit(h, ["hits", i]));
-  // Contiguous 0..n-1 is an INVARIANT of "position = array index", proven by
-  // construction: this loop cannot produce anything else. Stated explicitly
-  // because the physical column is defined that way, not because the
-  // invariant could fail here.
-  hits.forEach((_, i) => {
-    if (i < 0 || i >= hits.length) failPublication("integrity_failure", "");
-  });
+  // Contiguous 0..n-1 is an INVARIANT of "position = array index" (assigned
+  // by `service.ts` from this array's own order), documentation only: an
+  // Array#map index can never fall outside [0, length), so there is no
+  // runtime branch to write here that could ever fire. The enforcement this
+  // invariant actually needs is on the READ side, where a stored position
+  // did not come from this construction -- see `listTraceHits` and the
+  // replay comparison in `createTrace` (service.ts).
 
   return {
     workspace_name: name(request.get("workspace_name"), ["workspace_name"]),
@@ -439,6 +439,28 @@ function storedNullableNonemptyText(value: unknown): string | null {
   return storedNonemptyText(value);
 }
 
+const NANOID21_PATTERN = /^[A-Za-z0-9_-]{21}$/;
+
+/**
+ * A stored nanoid21, required. The request grammar requires nanoid21 for
+ * `id`/`parent_id`/`prev_id`/`trace_id` (`requireNanoid21`, `nullablePointer`
+ * above); a stored value that does not satisfy the same namespace is state
+ * this service could never have written. Mirrors `read-cursor.ts`'s
+ * `storedPointer`: "A retained pointer must itself satisfy the declared
+ * namespace. A malformed one is terminal through this interface rather than
+ * silently converted."
+ */
+function storedNanoid(value: unknown): string {
+  const text = storedNonemptyText(value);
+  if (!NANOID21_PATTERN.test(text)) failPublication("integrity_failure", "");
+  return text;
+}
+
+function storedNullableNanoid(value: unknown): string | null {
+  if (value === null) return null;
+  return storedNanoid(value);
+}
+
 function storedStatus(value: unknown): TraceStatus {
   const text = storedNonemptyText(value);
   if (!(TRACE_STATUSES as readonly string[]).includes(text)) failPublication("integrity_failure", "");
@@ -451,12 +473,16 @@ function storedTargetKind(value: unknown): TargetKind {
   return text as TargetKind;
 }
 
-/** RAW int64 (bigint or safe-integer number) to canonical decimal TEXT. */
+/** RAW int64 (bigint or safe-integer number) to canonical decimal TEXT.
+ *  Delegates the range bound to the accepted `./rows.toInt64Text`, which
+ *  refuses anything outside signed 64-bit range -- this module must not
+ *  silently accept a value that could never have round-tripped through the
+ *  physical Int64 column it was read from. */
 function storedInt64Text(value: unknown): string {
-  if (typeof value === "bigint") return value.toString(10);
+  if (typeof value === "bigint") return toInt64Text(value);
   if (typeof value === "number") {
     if (!Number.isSafeInteger(value)) failPublication("integrity_failure", "");
-    return BigInt(value).toString(10);
+    return toInt64Text(BigInt(value));
   }
   return failPublication("integrity_failure", "");
 }
@@ -464,6 +490,19 @@ function storedInt64Text(value: unknown): string {
 function storedNullableInt64Text(value: unknown): string | null {
   if (value === null) return null;
   return storedInt64Text(value);
+}
+
+/**
+ * `depth` and `position` are int64 columns this service can only ever WRITE
+ * as >= 0 (`requireNonNegativeInt64String` at request grammar for `depth`;
+ * `BigInt(i)` with `i >= 0` for `position`). A stored negative is state this
+ * service could never have produced -- integrity_failure, per the same rule
+ * `read-cursor.ts`'s `storedName` applies to its own writer-bounded columns.
+ */
+function storedNonNegativeInt64Text(value: unknown): string {
+  const text = storedInt64Text(value);
+  if (text.startsWith("-")) failPublication("integrity_failure", "");
+  return text;
 }
 
 function storedFloat64OrNull(value: unknown): number | null {
@@ -553,22 +592,25 @@ function storedMicrosTimestampOrNull(value: unknown): string | null {
 export function encodeTraceRow(row: Record<string, unknown>): Record<string, unknown> {
   requireExactColumns(row, TRACE_FIELDS);
   return {
-    id: storedNonemptyText(row.id),
+    id: storedNanoid(row.id),
     name: storedNonemptyText(row.name),
     workspace_name: storedNonemptyText(row.workspace_name),
     session_name: storedNullableNonemptyText(row.session_name),
     peer_name: storedNullableNonemptyText(row.peer_name),
     query: storedNonemptyText(row.query),
-    mode: storedNullableText(row.mode),
-    session_id: storedNullableText(row.session_id),
+    // Nullable but NOT non-empty: the request grammar's `nullableShortText`
+    // requires nonempty when present, so these three CAN'T legitimately
+    // differ -- tightened to match TR-11.
+    mode: storedNullableNonemptyText(row.mode),
+    session_id: storedNullableNonemptyText(row.session_id),
     // Raw MILLISECONDS. NOT the ./rows micros helper -- see file header.
     session_from_ts: storedNullableMillisTimestamp(row.session_from_ts),
     session_to_ts: storedNullableMillisTimestamp(row.session_to_ts),
     friction_score: storedFloat64OrNull(row.friction_score),
-    confidence: storedNullableText(row.confidence),
-    parent_id: storedNullableNonemptyText(row.parent_id),
-    prev_id: storedNullableNonemptyText(row.prev_id),
-    depth: storedInt64Text(row.depth),
+    confidence: storedNullableNonemptyText(row.confidence),
+    parent_id: storedNullableNanoid(row.parent_id),
+    prev_id: storedNullableNanoid(row.prev_id),
+    depth: storedNonNegativeInt64Text(row.depth),
     status: storedStatus(row.status),
     h_metadata: storedNullableText(row.h_metadata),
     internal_metadata: storedNullableText(row.internal_metadata),
@@ -589,18 +631,21 @@ export function encodeTraceHitRow(row: Record<string, unknown>): Record<string, 
   requireExactColumns(row, TRACE_HIT_FIELDS);
   return {
     workspace_name: storedNonemptyText(row.workspace_name),
-    trace_id: storedNonemptyText(row.trace_id),
+    trace_id: storedNanoid(row.trace_id),
     kind: storedTargetKind(row.kind),
     ref: storedNonemptyText(row.ref),
     target: storedNonemptyText(row.target),
     line_start: storedNullableInt64Text(row.line_start),
     line_end: storedNullableInt64Text(row.line_end),
-    excerpt: storedNullableText(row.excerpt),
-    content_hash: storedNullableText(row.content_hash),
+    // Nullable but NOT non-empty (TR-11): the request grammar's
+    // `nullableLongText`/`nullableShortText` require nonempty when present,
+    // so a stored "" here is state this service could never have written.
+    excerpt: storedNullableNonemptyText(row.excerpt),
+    content_hash: storedNullableNonemptyText(row.content_hash),
     // Raw MICROSECONDS -- the ONE column in this whole kernel that really is
     // micros. Everything else on the trace row is milliseconds.
     captured_at: storedMicrosTimestampOrNull(row.captured_at),
-    note: storedNullableText(row.note),
-    position: storedInt64Text(row.position),
+    note: storedNullableNonemptyText(row.note),
+    position: storedNonNegativeInt64Text(row.position),
   };
 }
