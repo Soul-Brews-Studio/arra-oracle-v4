@@ -1,3 +1,4 @@
 /data
+/.tmp
 __pycache__
-**/*/__pycache__
+**/*/__pycache__server/public/v2/

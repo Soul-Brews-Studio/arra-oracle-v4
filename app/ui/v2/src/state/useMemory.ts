@@ -40,9 +40,13 @@ function describe(result: ApiResult): string {
   return `HTTP ${result.status}`;
 }
 
+/** `listMessages` answers `{ rows, next_after_seq }` -- NOT `{ items }`.
+ *  `getContext` answers `{ items, coverage, excluded }`. The two read paths
+ *  use different envelope keys, and reading the wrong one fails silently as
+ *  an empty transcript against a server that returned five messages. */
 function rows(body: unknown): MessageRow[] {
-  const items = (body as { items?: unknown })?.items;
-  return Array.isArray(items) ? (items as MessageRow[]) : [];
+  const value = (body as { rows?: unknown })?.rows;
+  return Array.isArray(value) ? (value as MessageRow[]) : [];
 }
 
 export function useMemory() {
