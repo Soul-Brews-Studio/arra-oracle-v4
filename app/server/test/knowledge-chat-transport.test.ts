@@ -92,7 +92,15 @@ const fakeBundle: KnowledgeBundle = {
   evidence: {} as never,
 };
 
-const access: KnowledgeAccess = { getBundle: async () => fakeBundle };
+// `answerChat` is `ephemeralWrite` (registry.ts): the transport opens it
+// through `getEphemeralWriter`, never the cached `getBundle` path -- see
+// `knowledge-chat-writer-gate.test.ts` for why, and for the test that
+// actually asserts on that distinction. This fake's `close` is a no-op:
+// this file is about the round trip, not about gate lifetime.
+const access: KnowledgeAccess = {
+  getBundle: async () => fakeBundle,
+  getEphemeralWriter: async () => ({ ...fakeBundle, close: async () => {} }) as never,
+};
 
 const request = (path: string, init: RequestInit = {}) =>
   new Request(url(path), { ...init, headers: { host: "127.0.0.1:3939", ...(init.headers ?? {}) } });

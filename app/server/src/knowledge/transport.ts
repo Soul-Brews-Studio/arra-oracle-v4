@@ -262,8 +262,23 @@ export type KnowledgeDatasetConfig = {
 
 /**
  * The one process-lifetime cache. Reads are gateless and cheap to open
- * eagerly; the writer is opened lazily on first use and never released by a
- * request path (see file header: writer-ownership decision).
+ * eagerly; the persisting writer is opened lazily on first use and never
+ * released by a request path (see file header: writer-ownership decision).
+ *
+ * `getEphemeralWriter` is the ONE exception to "never released by a request
+ * path", added for #33's `answerChat`: that method is defined only on the
+ * writer facade (it needs the injected `model` only a writer carries) but
+ * PERSISTS NOTHING (chat.ts: "must not share the write queue or the poison
+ * state that guards actual persistence"). Handing it the SAME cached,
+ * never-closed `writer` promise would seize the exclusive dataset gate
+ * (`OWNERS` in publication/service.ts) on its first call and hold it for the
+ * rest of the process -- for a call that cannot durably write anything and,
+ * at this deployment, cannot even succeed (no model configured; see
+ * registry.ts). A migration tool or a second server instance would then be
+ * locked out by a feature that never persists. `getEphemeralWriter` opens its
+ * own, uncached writer instance and the caller MUST close it once its single
+ * call completes -- see `handleKnowledgeRequest`'s `finally` block, the only
+ * place in this transport allowed to call `.close()` on a writer bundle.
  */
 export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
   let reader: Promise<KnowledgeBundle> | null = null;
@@ -287,6 +302,18 @@ export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
     return config.datasetRoot;
   };
 
+  /** Trusted operator configuration shared by every writer open, cached or
+   *  ephemeral -- never request data (see the cached path's own note below). */
+  const writerOptions = () => ({
+    newRevisionId: randomNanoid21,
+    clock: Date.now,
+    env: config.env ?? process.env,
+    // Trusted operator configuration, not request data: this transport
+    // exposes local intake only. A namespaced source feed is a future
+    // deployment decision, not something a caller's bytes can select.
+    sourceNamespace: null,
+  });
+
   return {
     async getBundle(action: KnowledgeAction): Promise<KnowledgeBundle> {
       if (action === "content:read") {
@@ -297,15 +324,7 @@ export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
       // gate not yet available) must be retryable on the next request rather
       // than poisoning every future write for the rest of the process.
       if (writer === null) {
-        const attempt = openEvidenceWriter(requireRoot(), {
-          newRevisionId: randomNanoid21,
-          clock: Date.now,
-          env: config.env ?? process.env,
-          // Trusted operator configuration, not request data: this transport
-          // exposes local intake only. A namespaced source feed is a future
-          // deployment decision, not something a caller's bytes can select.
-          sourceNamespace: null,
-        });
+        const attempt = openEvidenceWriter(requireRoot(), writerOptions());
         attempt.catch(() => {
           if (writer === attempt) writer = null;
         });
@@ -313,10 +332,31 @@ export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
       }
       return writer;
     },
+
+    /** A fresh, UNCACHED writer for one non-persisting call. Contends with
+     *  the cached writer through the same `OWNERS` gate `openEvidenceWriter`
+     *  already enforces (an active real write correctly refuses this with
+     *  `writer_unavailable`, exactly as it would refuse a second real
+     *  writer) but is never itself retained past the call that opened it. */
+    async getEphemeralWriter(): Promise<import("../publication/service").EvidenceWriterBundle> {
+      return openEvidenceWriter(requireRoot(), writerOptions());
+    },
   };
 }
 
-export type KnowledgeAccess = ReturnType<typeof createKnowledgeAccess>;
+/**
+ * `getEphemeralWriter` is declared OPTIONAL here even though the real
+ * `createKnowledgeAccess` always provides it: several existing tests type a
+ * hand-written fake as `KnowledgeAccess` with only `getBundle` (they never
+ * exercise an `ephemeralWrite` method), and an explicit interface -- rather
+ * than `ReturnType<typeof createKnowledgeAccess>`, which would make the new
+ * method silently required everywhere -- keeps those fakes valid without
+ * editing files this task does not own.
+ */
+export type KnowledgeAccess = {
+  getBundle(action: KnowledgeAction): Promise<KnowledgeBundle>;
+  getEphemeralWriter?(): Promise<import("../publication/service").EvidenceWriterBundle>;
+};
 
 // ── HTTP handler ────────────────────────────────────────────────────────
 
@@ -364,8 +404,29 @@ export async function handleKnowledgeRequest(
     return errorResponse(503);
   }
 
+  // A method marked `ephemeralWrite` (currently only `answerChat`) must run
+  // against a writer bundle THIS REQUEST opened and THIS REQUEST closes --
+  // never the process-lifetime cached one `getBundle` returns for a real
+  // persisting write. See `createKnowledgeAccess`'s own comment for why: that
+  // cached writer is never released by a request path, and this call
+  // persists nothing, so sharing it would seize the exclusive dataset gate
+  // for the rest of the process over a call that cannot durably write.
+  let closeEphemeral: (() => Promise<void>) | null = null;
   try {
-    const bundle = await ctx.access.getBundle(entry.action);
+    let bundle: KnowledgeBundle;
+    if (entry.ephemeralWrite === true) {
+      if (ctx.access.getEphemeralWriter === undefined) {
+        // Declared ephemeral but this `access` cannot open one: fail closed,
+        // the same way an absent dataset root does, rather than silently
+        // falling back to the cached writer this branch exists to avoid.
+        return errorResponse(503);
+      }
+      const opened = await ctx.access.getEphemeralWriter();
+      closeEphemeral = opened.close;
+      bundle = opened;
+    } else {
+      bundle = await ctx.access.getBundle(entry.action);
+    }
     const result = await entry.call(bundle, raw.bytes);
     return new Response(JSON.stringify(result ?? null), {
       status: 200,
@@ -378,5 +439,9 @@ export async function handleKnowledgeRequest(
       status: 500,
       headers: { "content-type": "application/json", "cache-control": "no-store" },
     });
+  } finally {
+    // Released unconditionally -- success, a governed refusal and a thrown
+    // 500 all end this one request's hold on the gate the same way.
+    if (closeEphemeral !== null) await closeEphemeral().catch(() => undefined);
   }
 }

@@ -48,6 +48,17 @@ export type KnowledgeMethod = {
   /** Tokens to the object carrying `workspace_name`. `[]` means top-level. */
   readonly scopePath: readonly string[];
   readonly call: (bundle: KnowledgeBundle, bytes: Uint8Array) => Promise<unknown>;
+  /**
+   * True for a `content:write`-gated method that is defined only on the
+   * writer facade but PERSISTS NOTHING (currently only `answerChat`). The
+   * transport (`knowledge/transport.ts`'s `handleKnowledgeRequest`) opens a
+   * fresh, uncached writer for these instead of the process-lifetime cached
+   * one, and closes it when the request ends -- otherwise the FIRST call
+   * would seize the exclusive dataset writer gate for the rest of the
+   * process over a call that can never durably write. Absent/false means the
+   * ordinary cached-writer path, unchanged for every other write method.
+   */
+  readonly ephemeralWrite?: boolean;
 };
 
 /** A reader bundle's `publication` facade has no `publishRevision`. */
@@ -130,14 +141,20 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
   // lives on the reader facade, matching every other content:read method
   // above. `answerChat` is defined only on the writer facade (it needs the
   // injected `model` the writer alone carries) so it must run as
-  // content:write even though it persists nothing; with no model configured
-  // at this deployment (`composeKnowledgeAccess` passes none), it currently
-  // always answers `writer_unavailable` -- a real, honestly-surfaced state,
-  // not a fabricated success.
+  // content:write even though it persists nothing -- but "runs as
+  // content:write" here means ONLY the authorization action: `ephemeralWrite`
+  // below tells the transport to open an uncached, per-request writer for it
+  // rather than the process-lifetime cached one every other `content:write`
+  // method shares, precisely because a persisting write must not be blocked
+  // for the rest of the process by a call that persists nothing. With no
+  // model configured at this deployment (`composeKnowledgeAccess` passes
+  // none), it currently always answers `writer_unavailable` -- a real,
+  // honestly-surfaced state, not a fabricated success.
   getContext: { action: "content:read", scopePath: [], call: (b, x) => b.context.getContext(x) },
   answerChat: {
     action: "content:write",
     scopePath: [],
+    ephemeralWrite: true,
     call: (b, x) => writer(b).context.answerChat(x),
   },
 
