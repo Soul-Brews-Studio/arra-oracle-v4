@@ -19,7 +19,11 @@ import { type DatasetAdapter } from "./service.types";
  * a peer that does not exist -- reads null, exactly as for an absent id. A
  * refusal here would confirm that the id exists in some session the caller
  * cannot see (authorization-v1.md §3: missing and inaccessible references must
- * not expose existence).
+ * not expose existence). For the same reason membership is decided on the
+ * stored row's raw `session_name` BEFORE the row's own integrity check: a
+ * corrupt message is reported to whoever may read it, and a non-member still
+ * reads null. Only a row whose `session_name` is not even a string reaches
+ * the integrity check first, because no membership can be decided for it.
  */
 export async function getMessage(reader: DatasetAdapter, requestBytes: Uint8Array, authority: RequestAuthority): Promise<Record<string, unknown> | null> {
 const request = parseGetMessage(requestBytes);
@@ -32,13 +36,13 @@ const request = parseGetMessage(requestBytes);
         `${contextScope(request.workspace_name)} AND public_id = ${quote(request.public_id)}`,
       );
       if (row === null) return null;
-      const encoded = encodeMessageRow(row);
       if (request.requester_peer_name !== null) {
+        const session = typeof row.session_name === "string" ? row.session_name : encodeMessageRow(row).session_name;
         try {
           await requireCurrentMembership(
             reader,
             request.workspace_name,
-            encoded.session_name as string,
+            session as string,
             request.requester_peer_name,
             "/requester_peer_name",
           );
@@ -47,6 +51,7 @@ const request = parseGetMessage(requestBytes);
           return null;
         }
       }
+      const encoded = encodeMessageRow(row);
       // A single row over the response budget is refused rather than truncated.
       if (rowWireBytes(encoded) > MAX_RESULT_WIRE_BYTES) failPublication("limit_exceeded", "");
       return encoded;

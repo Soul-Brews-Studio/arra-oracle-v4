@@ -167,6 +167,14 @@ A missing or malformed authority is a wiring fault: a plain `TypeError`, nothing
    departed member or a nonexistent peer reads null, identical to an absent id, so a
    non-member cannot learn that an id exists (authorization-v1.md §3: "Missing and
    inaccessible references must not expose existence").
+   Membership is decided on the stored row's raw `session_name` BEFORE the row's own
+   integrity check. So a corrupt message reports `integrity_failure` to whoever may
+   read it (a current member, the operator view), and a non-member still reads null.
+   Two residuals remain, both needing corrupt storage:
+   - a row whose `session_name` is not a string at all fails integrity first, because
+     no membership can be decided for it;
+   - `requireCurrentMembership` still reports a corrupt row of the requester's OWN peer
+     or membership record.
 
 A named requester narrows the operator view too: `operator` with a requester reads as that
 requester.
@@ -188,7 +196,10 @@ operator view.
 
 **Evidence.**
 
-- `app/server/test/context-read-boundary.test.ts`: service level, real gated dataset.
+- `app/server/test/context-read-boundary.test.ts`: service level, real gated dataset. It
+  includes a corrupted stored message, staged with `raw-mutate.ts corrupt-message`.
 - `app/server/test/transport-read-boundary.test.ts`: live `createApp`, HTTP and MCP.
 
-Both were seen red before the change.
+Both were seen red before the change. The corrupt-message case was added in a fix round,
+also red first: before it, a non-member got `integrity_failure` for a corrupt existing id
+and null for an absent one.

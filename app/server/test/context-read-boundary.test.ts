@@ -24,6 +24,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { parseGetMessage, parseListMessages } from "../src/publication/context";
 import { encodeRequest, type ContextFixture } from "./helpers/context-fixture";
+import { runGated } from "./helpers/publication-fixture";
 import {
   ALPHA,
   BETA,
@@ -38,6 +39,7 @@ import {
 } from "./helpers/read-boundary-fixture";
 
 const TEST_TIMEOUT_MS = 300_000;
+const RAW_MUTATE = new URL("./fixtures/context-v1/ownership/raw-mutate.ts", import.meta.url).pathname;
 
 const list = (workspace: string, session: string, requester?: string | null) => ({
   workspace_name: workspace,
@@ -250,6 +252,39 @@ describe("service: listMessages and getMessage enforce the read boundary", () =>
       expect(r.op5.value?.content).toBe("main-alpha");
       expect(contents(r.op6)).toEqual(["SECRET-alpha"]);
       refused(r.op7, "forbidden", "/requester_peer_name");
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "a corrupt stored message tells a non-member nothing: null, exactly as for an absent id",
+    async () => {
+      // Its own dataset: the corruption must not leak into the shared layout.
+      const corrupt = await createReadBoundaryFixture();
+      try {
+        const staged = await runGated(corrupt.datasetRoot, RAW_MUTATE, [
+          "corrupt-message",
+          corrupt.datasetRoot,
+          ALPHA,
+          SECRET_ID,
+        ]);
+        expect(staged.stdout, staged.stderr.slice(0, 600)).toContain("EVENT raw:corrupted rows=1");
+        const r = await driveContext(corrupt.datasetRoot, [
+          op("getMessage", get(ALPHA, SECRET_ID, "peer-a"), READER),
+          op("getMessage", get(ALPHA, "absentabsentabsentabs", "peer-a"), READER),
+          op("getMessage", get(ALPHA, SECRET_ID, "peer-c"), READER),
+          // Whoever may read it still sees the corruption, loudly.
+          op("getMessage", get(ALPHA, SECRET_ID, "peer-b"), READER),
+          op("getMessage", get(ALPHA, SECRET_ID), OPERATOR),
+        ]);
+        expect(r.op0).toEqual({ ok: true, value: null });
+        expect(r.op1).toEqual({ ok: true, value: null });
+        expect(r.op2).toEqual({ ok: true, value: null });
+        refused(r.op3, "integrity_failure", "");
+        refused(r.op4, "integrity_failure", "");
+      } finally {
+        await corrupt.cleanup();
+      }
     },
     TEST_TIMEOUT_MS,
   );
