@@ -12,6 +12,9 @@ dependencies = [
 
 [project.scripts]
 arra-migrate = "arra_migrate.__main__:main"
+# #34 operator-only copy migration (legacy-15 -> NEW target-19 candidate). Separate
+# on purpose: `arra-migrate` never imports it and never starts Bun.
+arra-migrate-copy = "arra_migrate.copy_migration:main"
 arra-probe = "arra_migrate.probe:main"
 arra-s3probe = "arra_migrate.s3probe:main"
 

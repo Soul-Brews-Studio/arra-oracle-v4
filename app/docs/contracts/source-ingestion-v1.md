@@ -179,3 +179,18 @@ Within semantic validation: prepareNew checks mode/config before supplied-digest
 ## 10. Bounded acceptance clarification
 
 The section7 allocation/no-write expectations for a real ingestion service remain #28 gates. For this isolated slice prove purity (injected time and identity retained, no allocator/clock/database/model dependencies), exact mapping and existing classifier composition instead; do not claim actual durable replay or uniqueness. Test all16 source-presence combinations, per-operation missing/extra/wrong values and deterministic competing-error cases; fixed expected outputs for local, sourced and legacy modes; negative epoch and far-calendar physical microseconds; namespace injection and source ID leading zeros. Preserve existing message byte vectors and all active paths. Collision handling and sourced legacy migration remain explicit #34 gates, not silently declared complete by a single-row fixture.
+
+## Amendment 2026-09-26 (overnight R11 + R17)
+
+Appended, not rewritten. Rulings: [`docs/overnight/DECISIONS.md`](../../../docs/overnight/DECISIONS.md) R11 and R17 (the #34 copy rehearsal).
+
+**What changed.** The legacy-copy path described in section 3 ("For a LEGACY COPY under #34") and section 8.3 now exists for whole datasets (`arra-migrate-copy`):
+
+- `ingested_at` is the ONE frozen `--intake-at` value for every copied message, and the report lists the assumption `ingested_at=migration_intake;original_ingestion_unknown`. It is never `created_at`.
+- A legacy `public_id` that is not nanoid21 is mapped deterministically (`id_map.jsonl` records every mapping; nanoid21 handles are kept). `in_reply_to` is rewritten through the same map. A reply whose target did not migrate keeps the message, stores NULL, and is reported as an unresolved `messages.in_reply_to` pointer with the legacy value.
+- A `created_at` or `read_at` that is not millisecond-exact is REJECTED with a per-record report entry (`sub_millisecond_timestamp`, pointer `/created_at` or `/read_at`), never rounded. The row stays in the untouched source.
+- Duplicate `(workspace, session, seq_in_session)` or duplicate public ids are rejected per record. The collision handling this contract held for #34 is therefore per dataset, not per row.
+
+Active-15 `messages` have no source columns, so no sourced legacy rows exist to hold; the sourced-legacy path stays unimplemented.
+
+**Fix round, same night.** Appended. The claim above that `ingested_at` is the frozen `--intake-at` and never `created_at` is now asserted per row (`test_messages_are_stamped_with_the_frozen_intake_time_never_created_at`). Before this, only the assumption string was checked, and a mutation to `created_at` still passed.

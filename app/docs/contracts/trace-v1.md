@@ -240,3 +240,11 @@ refusals, against a fake bundle calling this file's own real parsers), and
 `app/server/test/knowledge-expose13-live.test.ts` (`createTrace` → `getTrace` →
 `listTraceHits` round-tripped over both HTTP and MCP against a real writer-gated target-19
 dataset, including a same-payload MCP replay of `createTrace` landing `already_satisfied`).
+
+## 11. Amendment 2026-09-26 (overnight R11 + R17, migration)
+
+Appended, not rewritten. Context: the #34 copy migration under [`docs/overnight/DECISIONS.md`](../../../docs/overnight/DECISIONS.md) R11 and R17 (as corrected 22:00).
+
+**What changed.** Legacy `traces.status` values `raw | distilled | retired` are outside this kernel's closed set `open | complete | abandoned`, so a verbatim copy reads back as `integrity_failure`. The copy migration maps `raw -> open` (ruled: R17 as corrected 22:00) and, as an implementer extension that is **not** ruled, `distilled -> complete` and `retired -> abandoned` (DESIGN §10 still lists `raw | reviewed | distilled | retired`). The legacy value is recorded on the trace's report record. Legacy integer-millisecond columns are copied raw, and `distilled_to` / `distilled_at` become a revision link plus revision metadata. A legacy hit kind outside `TARGET_KINDS` (e.g. `file`) is rejected with a record; a kind inside it is unresolved, because a free-text `ref` does not determine a structured `target`.
+
+**Fix round, same night.** Appended. Proof only; the mapping is unchanged. The ruled leg `raw -> open` now has its own fixture trace and test (`test_ruled_raw_trace_status_maps_to_open`); before, only the unruled `distilled`/`retired` extension was exercised. A hit whose kind is inside `TARGET_KINDS` (a `url` with a valid https ref) is tested as `unresolved` (`locator_unmappable`). It stays unresolved on purpose: `trace_hits` rows are immutable and are created only with their trace, and Python cannot reproduce the kernel's WHATWG `requireUrl` check. Writing such a row directly would store a target the kernel never validated.

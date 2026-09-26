@@ -258,3 +258,13 @@ This section amends §1's `peer_name:W|null` and §2's fresh-path steps. The tex
 **Evidence.** `app/server/test/workspace-isolation-supersede.test.ts` covers a beta-only peer and a peer that exists nowhere, both refused from alpha and both leaving history empty; alpha's own peer is accepted and replays idempotently; `null` is accepted; and a refused operation id is reusable. The test was red on `aff9c65` (the beta-only peer was accepted). `lifecycle-precision.test.ts` previously named an unregistered `"peer-a"` and now names the fixture's seeded alpha peer.
 
 **Not changed here.** When this slice was written, lifecycle had no transport. Section 10 above (the expose-13 slice, merged first into `v4/overnight-26sep`) added the four registry entries, and its tests cover transport-level authorization. This section only adds the workspace check on `peer_name`, and that check applies on every transport, because it runs in the kernel.
+
+## 12. Amendment 2026-09-26 (overnight R11 + R17, migration)
+
+Appended, not rewritten. Ruling: [`docs/overnight/DECISIONS.md`](../../../docs/overnight/DECISIONS.md) R17.
+
+**What changed.** The #34 copy migration writes legacy supersede/retire history through `supersedeNode` / `retireNode`, not as copied rows. A legacy `supersede_log.reason` that is NULL becomes the literal `"legacy: reason not recorded"`, because `reason` is a required request field and a NOT NULL column here; the report counts these rows (`policies.null_reason_backfilled`, next to `null_reason_rows_in`). Events are pinned to the first revisions the same run published, applied in legacy `superseded_at` order with the kernel clock set to that legacy time. The kernel allocates `supersede_log.id` (max + 1), so legacy integer ids are not preserved; each legacy row's record carries its legacy id as the key. A second legacy event on an already-terminal node is reported rejected (`conflict_already_terminal`), never overwritten.
+
+**Why.** R17: the target requires a reason, and the legacy log allowed none. Inventing a plausible reason would be worse than a fixed, searchable marker.
+
+**Fix round, same night.** Appended. A legacy `memories.superseded_by` with NO `supersede_log` row gets ONE synthesized supersede event at the legacy `superseded_at`, with the R17 reason `"legacy: reason not recorded"`, counted in `policies.missing_log_row_backfilled`. This path now has a fixture row and a test that pins the stored event. Before, a mutation that skipped it still passed.
