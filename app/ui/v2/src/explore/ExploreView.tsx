@@ -5,6 +5,7 @@ import { useListing } from "../state/useListing";
 import { useMemory } from "../state/useMemory";
 import { useKnowledge } from "../state/useKnowledge";
 import { useEvidenceReview } from "../state/useEvidenceReview";
+import { useKnowledgeSearch } from "../state/useKnowledgeSearch";
 import { CountStrip } from "./CountStrip";
 import { ListPanel } from "./ListPanel";
 import { DetailTabs, type ExploreTab } from "./DetailTabs";
@@ -54,6 +55,7 @@ export function ExploreView({
   const k = useKnowledge(bank);
   const m = useMemory();
   const evidence = useEvidenceReview(bank, selectedNode, selectedSession, selectedPeer);
+  const search = useKnowledgeSearch(bank);
 
   useEffect(() => {
     m.setBank(bank.bank);
@@ -250,6 +252,23 @@ export function ExploreView({
             onSeed: () => void k.actions.seed(),
             busy: k.busy,
             error: k.error,
+          }}
+          search={{
+            query: search.query,
+            onQuery: search.setQuery,
+            mode: search.mode,
+            onMode: search.setMode,
+            loading: search.loading,
+            errorCode: search.errorCode,
+            hits: search.hits,
+            scanReason: search.scanReason,
+            embeddingProfile: search.embeddingProfile,
+            // Opens the hit the same way the plain node list already does:
+            // select it and switch to the "nodes" tab, the existing node view.
+            onOpenNode: (nodeId) => {
+              onSelectNode(nodeId);
+              onTabChange("nodes");
+            },
           }}
         />
       </div>
