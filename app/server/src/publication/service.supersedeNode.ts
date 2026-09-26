@@ -7,7 +7,6 @@ import { classifyLifecycleReplay } from "./service.classifyLifecycleReplay";
 import { NODES, NODE_REVISIONS } from "./service.constants";
 import { contextOne } from "./service.contextOne";
 import { contextScope } from "./service.contextScope";
-import { terminalEventsFor } from "./service.evaluateEligibility";
 import { mutateContextWrite } from "./service.mutateContextWrite";
 import { requireContextWorkspaceRow } from "./service.requireContextWorkspaceRow";
 import { type Clock, type DatasetAdapter, type LifecycleEventInput, type LifecycleWriteOutcome, type OwnerCore } from "./service.types";
@@ -59,20 +58,15 @@ const request = parseSupersedeNode(requestBytes);
 
         // #29 slice B (overnight R7): superseding INTO a successor that
         // already carries its own terminal event (retired, or itself already
-        // superseded) is refused. A returned conflict, like every other
-        // lifecycle-state classification in this file -- the reference
-        // itself resolved fine; its STATE is what is refused. Checked once
-        // the successor reference has resolved, before the (unaffected)
-        // revision lookup below, and after classification (§2) already ran,
-        // so a byte-identical replay of a request accepted before the
-        // successor became terminal still returns `idempotent`.
-        const successorTerminal = (
-          await terminalEventsFor(writer, request.workspace_name, [request.new_node_id])
-        ).get(request.new_node_id);
-        if (successorTerminal !== undefined) {
-          return { outcome: "conflict", reason: "successor_terminal", row: null };
-        }
-
+        // superseded) is refused -- a returned conflict, like every other
+        // lifecycle-state classification in this file, since the reference
+        // itself resolved fine and only its STATE is refused. That check now
+        // lives inside `writeLifecycleEventFresh`, AFTER it resolves this
+        // request's own `/node_id` and `/peer_name` (fix round: checking it
+        // here, before those two ever resolved, broke lifecycle-v1.md §11's
+        // "request references resolve first" precedence -- a caller naming a
+        // nonexistent node or peer was told there was a conflict, as if the
+        // node existed).
         await writer.refresh(NODE_REVISIONS);
         const successorRevision = await contextOne(
           writer,
