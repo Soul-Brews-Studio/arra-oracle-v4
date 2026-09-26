@@ -210,7 +210,18 @@ export type KnowledgeWriterService = {
   close: () => Promise<void>;
 };
 
-export type KnowledgeOptions = OperatorOptions & { onTaxonomyBoundary?: TaxonomyBoundaryHook };
+export type KnowledgeOptions = OperatorOptions & {
+  onTaxonomyBoundary?: TaxonomyBoundaryHook;
+  /** Trusted CONFIGURATION, never request JSON (R6, #27). `true` lets this
+   *  owner's taxonomy facade create, rename, retire and reparent terms in a
+   *  SEALED vocabulary: the operator lifecycle taxonomy-write-v1.md
+   *  describes. Absent or false, those four refuse `invalid_request`. No
+   *  transport sets it; `createKnowledgeAccess` opens ordinary writers. */
+  taxonomyOperator?: boolean;
+};
+
+/** What each taxonomy mutator receives from its writer factory. */
+export type TaxonomyWriteOptions = { clock: Clock; taxonomyOperator: boolean };
 
 export type ContextRegistration =
   | { outcome: "created" | "already_satisfied"; row: Record<string, unknown> }

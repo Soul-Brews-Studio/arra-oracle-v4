@@ -5,12 +5,13 @@ import { lookupTermById } from "./service.lookupTermById";
 import { lookupTermByName } from "./service.lookupTermByName";
 import { lookupVocabularyById } from "./service.lookupVocabularyById";
 import { mutateTaxonomyWrite } from "./service.mutateTaxonomyWrite";
+import { refuseSealedVocabulary } from "./service.refuseSealedVocabulary";
 import { requireTaxonomyWorkspaceRow } from "./service.requireTaxonomyWorkspaceRow";
 import { sameExcept } from "./service.sameExcept";
-import { type Clock, type DatasetAdapter, type MutationOutcome, type OwnerCore, type TaxonomyRow } from "./service.types";
+import { type DatasetAdapter, type MutationOutcome, type OwnerCore, type TaxonomyRow, type TaxonomyWriteOptions } from "./service.types";
 import { writeTaxonomyRow } from "./service.writeTaxonomyRow";
 
-export function createTerm(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock }, requestBytes: Uint8Array): Promise<MutationOutcome> {
+export function createTerm(writer: DatasetAdapter, core: OwnerCore, options: TaxonomyWriteOptions, requestBytes: Uint8Array): Promise<MutationOutcome> {
 return mutateTaxonomyWrite(core, async () => {
         const request = parseCreateTerm(requestBytes);
         await requireTaxonomyWorkspaceRow(writer, request.workspace_name);
@@ -36,6 +37,11 @@ return mutateTaxonomyWrite(core, async () => {
             request.parent_id,
           );
         }
+
+        // R6: every requested reference has resolved, so a sealed vocabulary
+        // refuses here -- before the collision checks and the already-satisfied
+        // return below, so even an exact replay of a seeded row is refused.
+        refuseSealedVocabulary(vocabularyRow, options, "/vocabulary_id");
 
         const expected: TaxonomyRow = {
           id: request.term_id,

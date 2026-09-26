@@ -23,6 +23,9 @@ const payload = JSON.parse(payloadJson ?? "{}") as {
   breakTableAt?: { boundary: string; occurrence: number; table: string };
   /** Rows written directly as fixture state BEFORE any op runs. */
   plant?: { table: string; rows: Record<string, unknown>[] };
+  /** R6 (#27): open as the trusted in-process operator, the only owner that
+   *  may mutate a SEALED vocabulary's terms. Absent means an ordinary owner. */
+  operator?: boolean;
   /** Corrupt a stored field at the Nth firing of a boundary, then RETURN
    *  normally. Not a thrown hook: the service meets bad durable state. */
   corruptAt?: {
@@ -82,6 +85,7 @@ const describeError = (error: unknown): Record<string, unknown> => {
 const service = await openKnowledgeWriter(datasetRoot!, {
   newRevisionId: () => "unusedunusedunused000",
   clock: () => payload.clockMs,
+  taxonomyOperator: payload.operator === true,
   onTaxonomyBoundary: async (boundary: string) => {
     trace.push(boundary);
     const seen = (counts.get(boundary) ?? 0) + 1;
