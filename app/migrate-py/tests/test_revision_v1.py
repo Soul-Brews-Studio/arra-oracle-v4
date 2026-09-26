@@ -565,8 +565,9 @@ class IsolationTests(unittest.TestCase):
     #: The #34 copy migration (overnight R11 + R17) IS an operator tool, with
     #: its own entry point (``arra-migrate-copy``), and holding the gate is its
     #: job: it takes ``writer_gate`` on the NEW empty candidate, hands the SAME
-    #: held lock to the Bun worker (``adopt_gate``), and keeps the lock file out
-    #: of the source snapshot (``snapshot``). The production migrator
+    #: held lock to the Bun worker (``adopt_gate``), and its preflight tolerates
+    #: the gate's own lock file as the one leftover a candidate may hold, so a
+    #: rerun after a failed run converges (``snapshot``). The production migrator
     #: (``__main__``) still never imports the gate or the copy path -- see
     #: ``test_the_copy_migration_is_reachable_only_from_its_own_entry_points``.
     #: EXACT files, never the whole package: a new copy_migration module that
