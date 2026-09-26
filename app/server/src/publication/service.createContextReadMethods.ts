@@ -11,6 +11,7 @@ import { listMcpCalls } from "./service.listMcpCalls";
 import { listMessages } from "./service.listMessages";
 import { listPeers } from "./service.listPeers";
 import { listSearchChunks } from "./service.listSearchChunks";
+import { listSessionMembers } from "./service.listSessionMembers";
 import { listSessions } from "./service.listSessions";
 import { listSessionLinks } from "./service.listSessionLinks";
 import { listTraceHits } from "./service.listTraceHits";
@@ -26,6 +27,8 @@ export function createContextReadMethods(reader: DatasetAdapter) {
     listMessages: (requestBytes: Uint8Array, authority: RequestAuthority) => listMessages(reader, requestBytes, authority),
     listPeers: (requestBytes: Uint8Array) => listPeers(reader, requestBytes),
     listSessions: (requestBytes: Uint8Array) => listSessions(reader, requestBytes),
+    // K10 (overnight R18): the first read of session_peers.
+    listSessionMembers: (requestBytes: Uint8Array) => listSessionMembers(reader, requestBytes),
     getReadCursor: (requestBytes: Uint8Array) => getReadCursor(reader, requestBytes),
     listSessionLinks: (requestBytes: Uint8Array) => listSessionLinks(reader, requestBytes),
     getRecallEligibility: (requestBytes: Uint8Array) => getRecallEligibility(reader, requestBytes),

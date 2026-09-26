@@ -71,17 +71,18 @@ const RUNTIME_EXPORTS = [
 ].join(",");
 /** Twenty-two on every context WRITER facade (its own eleven plus the eleven
  *  reader methods it spreads in), eleven on every context READER facade. */
+// Overnight R18: + closeSession (K9, D7) on every writer, + listSessionMembers (K10) on both.
 const CONTEXT_WRITE_METHODS =
-  "advanceReadCursor,appendMessages,createSessionLink,createTrace,getContext," +
+  "advanceReadCursor,appendMessages,closeSession,createSessionLink,createTrace,getContext," +
   "getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
-  "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessions,listTraceHits," +
+  "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits," +
   "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
   "writeChunkEmbedding";
 const CONTEXT_READ_METHODS =
   "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
   "listConnections,listLifecycleHistory,listMcpCalls,listMessages,listPeers," +
-  "listSearchChunks,listSessionLinks,listSessions,listTraceHits";
+  "listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits";
 /** Bundle keys are unchanged by this slice; nested facades never carry close. */
 const CONTEXT_WRITER_KEYS = "close,context,publication,taxonomy";
 const EVIDENCE_WRITER_KEYS = "close,context,evidence,publication,taxonomy";
@@ -354,7 +355,8 @@ describe("context facades across all four factories", () => {
       expect(readerMethods).toContain("listSessionLinks");
       expect(readerMethods).not.toContain("createSessionLink");
       // 28: #32 / R9 moved `answerChat` off the writer onto the reader-side chat facade.
-      expect({ writer: writerMethods.length, reader: readerMethods.length }).toEqual({ writer: 28, reader: 16 });
+      // 30 / 17: overnight R18 added closeSession (writer) and listSessionMembers (both).
+      expect({ writer: writerMethods.length, reader: readerMethods.length }).toEqual({ writer: 30, reader: 17 });
       expect(writerMethods).not.toContain("close");
       expect(readerMethods).not.toContain("close");
     },

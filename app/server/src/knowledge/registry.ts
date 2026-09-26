@@ -273,6 +273,14 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
     call: (b, x) => writer(b).context.createSessionLink(x),
   },
 
+  // ── forum kernels (overnight R18: K9 D7, K10) ─────────────────────────────
+  // `closeSession` is the one-way close recorded in sessions.internal_metadata
+  // (no new column); `listSessionMembers` is the first read of session_peers.
+  // `listSessions`' K10 filters and `listMessages`' K11 tail are optional keys
+  // on the entries above, not new methods.
+  closeSession: { action: "content:write", scopePath: [], call: (b, x) => writer(b).context.closeSession(x) },
+  listSessionMembers: { action: "content:read", scopePath: [], call: (b, x) => b.context.listSessionMembers(x) },
+
   // ── traces (#28) ─────────────────────────────────────────────────────────
   getTrace: { action: "content:read", scopePath: [], call: (b, x) => b.context.getTrace(x) },
   listTraceHits: { action: "content:read", scopePath: [], call: (b, x) => b.context.listTraceHits(x) },

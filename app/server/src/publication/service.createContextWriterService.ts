@@ -1,5 +1,6 @@
 import { advanceReadCursor } from "./service.advanceReadCursor";
 import { appendMessages } from "./service.appendMessages";
+import { closeSession } from "./service.closeSession";
 import { createContextReadMethods } from "./service.createContextReadMethods";
 import { createSessionLink } from "./service.createSessionLink";
 import { createTrace } from "./service.createTrace";
@@ -34,6 +35,8 @@ export function createContextWriterService(
     registerSession: (requestBytes: Uint8Array) => registerSession(writer, core, options, requestBytes),
     joinSession: (requestBytes: Uint8Array) => joinSession(writer, core, options, requestBytes),
     appendMessages: (requestBytes: Uint8Array) => appendMessages(writer, core, options, requestBytes),
+    // K9 (overnight R18 D7): the one-way close, recorded in internal_metadata.
+    closeSession: (requestBytes: Uint8Array) => closeSession(writer, core, options, requestBytes),
     // No `answerChat` here any more (#32 slice A, R9): it persists nothing, so
     // it is composed over the READER (service.createChatService.ts) and never
     // needs, holds or releases this writer.

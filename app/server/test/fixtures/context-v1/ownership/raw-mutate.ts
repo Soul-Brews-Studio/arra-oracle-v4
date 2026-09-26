@@ -53,4 +53,21 @@ if (mode === "corrupt-message") {
   console.log(`EVENT raw:corrupted rows=${rows.length}`);
 }
 
+// K9 (R18 D7): a session whose internal_metadata another writer left in a
+// given shape -- not JSON, or a close record on a session still active -- so
+// closeSession can be tested against stored state it never writes itself.
+// The 5th argument is the literal text to store.
+if (mode === "session-internal-metadata") {
+  const table = await db.openTable("sessions");
+  await table.update(
+    { internal_metadata: quote(peerName!) },
+    { where: `workspace_name = ${quote(workspace!)} AND name = ${quote(name!)}` },
+  );
+  const rows = await table
+    .query()
+    .where(`workspace_name = ${quote(workspace!)} AND name = ${quote(name!)} AND internal_metadata = ${quote(peerName!)}`)
+    .toArray();
+  console.log(`EVENT raw:session-metadata rows=${rows.length}`);
+}
+
 console.log("EVENT done");

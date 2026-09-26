@@ -51,6 +51,11 @@ export const PEER_FIELDS: Readonly<Record<string, readonly PeerFieldPath[]>> = O
   // the exhaustiveness test below exists to force)
   createTrace: [["peer_name"]],
   createSessionLink: [["created_by_peer_name"]],
+  // the peer closing a session (K9, overnight R18 D7)
+  closeSession: [["peer_name"]],
+  // K10: "sessions X belongs to" is asked AS X -- a bound credential may ask
+  // only about its own peers, the same rule as a message requester.
+  listSessions: [["member_peer_name"]],
   retireNode: [["peer_name"]],
   supersedeNode: [["peer_name"]],
   // reviewed: these assert no acting peer (lookups, taxonomy, evidence, audit)
@@ -79,7 +84,7 @@ export const PEER_FIELDS: Readonly<Record<string, readonly PeerFieldPath[]>> = O
   getPeer: [],
   getSession: [],
   listPeers: [],
-  listSessions: [],
+  listSessionMembers: [],
   registerPeer: [],
   registerSession: [],
   listMcpCalls: [],

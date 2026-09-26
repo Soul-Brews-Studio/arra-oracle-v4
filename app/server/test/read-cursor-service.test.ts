@@ -61,7 +61,7 @@ describe("preflight: the required surface", () => {
         const bundle = await (service as Record<string, any>)[factory](fixture.datasetRoot);
         expect(Object.keys(bundle.context).sort()).toEqual([
           "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
-          "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks", "listSessionLinks", "listSessions",
+          "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks", "listSessionLinks", "listSessionMembers", "listSessions",
           "listTraceHits",
         ]);
         expect("close" in bundle.context).toBe(false);
@@ -116,10 +116,10 @@ describe("real persistence: cursors inside the real gate", () => {
         // (`{ ...reads, ...writeOnly }`), so this is that union, not just the
         // thirteen write-only methods.
         expect(parsed.contextMethods).toEqual([
-          "advanceReadCursor", "appendMessages", "createSessionLink", "createTrace", "getContext",
+          "advanceReadCursor", "appendMessages", "closeSession", "createSessionLink", "createTrace", "getContext",
           "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
           "indexRevisionChunks", "joinSession", "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks",
-          "listSessionLinks", "listSessions", "listTraceHits", "reconcileSearchChunks", "registerPeer", "registerSession",
+          "listSessionLinks", "listSessionMembers", "listSessions", "listTraceHits", "reconcileSearchChunks", "registerPeer", "registerSession",
           "retireNode", "supersedeNode", "writeChunkEmbedding",
         ]);
         expect(parsed.contextHasClose).toBe(false);

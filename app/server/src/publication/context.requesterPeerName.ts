@@ -2,8 +2,11 @@ import type { JcsObject } from "../contracts/jcs";
 import { name } from "./context.name";
 
 /**
- * The ONE optional key in the context request grammar (#87 / R3,
+ * The first optional key in the context request grammar (#87 / R3,
  * docs/overnight/DECISIONS.md), accepted only by getMessage and listMessages.
+ * (The overnight R18 amendment added more on the same terms: registerSession's
+ * `h_metadata`, listSessions' two filters, listMessages' `direction` and
+ * `before_seq`; see context-ingestion-v1.md.)
  *
  * Optional rather than required-nullable, deliberately: every existing
  * caller (UI v2, the dev stack, the acceptor probe) omits it and reads through
