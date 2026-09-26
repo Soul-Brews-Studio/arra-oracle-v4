@@ -115,7 +115,8 @@ def run_copy_migration(
         "conservation_ok": conserved,
         "policies": {
             "r11_type": "exact reserved type term kept; else note + original string as a legacy_type tag term; "
-                        "a string over the 256-byte term-name bound rejects that memory alone",
+                        "a string over the 256-byte term-name bound is still note, with no tag term: kept whole "
+                        "in internal_metadata.legacy_type and recorded (memories.type, r11_type_tag_unrepresentable)",
             "r17_vocabulary": "legacy vocabularies: cardinality many, required false, hierarchy flat; "
                               "flat keeps no parent, so every legacy terms.parent_id is dropped and recorded",
             "r17_null_reason": NULL_REASON,

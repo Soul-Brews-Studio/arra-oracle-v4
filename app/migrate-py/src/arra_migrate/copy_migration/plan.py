@@ -11,8 +11,10 @@ Per memory (ruling R11 + R17, docs/overnight/DECISIONS.md):
     correction) is kept; anything else becomes ``note`` and the original
     string becomes a term in the workspace's ``legacy_type`` tag vocabulary.
     A string that cannot BE a term name (over the kernel's 256-byte bound)
-    rejects that one memory (``legacy_type_unrepresentable``): R11 keeps the
-    original as a tag, and one bad row must never block its workspace;
+    still becomes ``note`` -- R11's first clause, and the memory is not lost
+    -- but gets no tag: the whole string stays in
+    ``internal_metadata.legacy_type`` and the missing tag is one
+    ``memories.type`` pointer record (``legacy_type_tag_unrepresentable``);
   - ``memory_terms`` rows become the revision's term snapshot, which the
     kernel projects into ``node_revision_terms``;
   - ``traces.distilled_to`` pointing here becomes a ``derived_from`` link to
@@ -115,6 +117,7 @@ def build_knowledge_plan(source_db: Any, state: CopyState, candidate_root: str) 
     traces = sorted(read_rows(source_db, "traces"), key=lambda r: r["id"])
     for name, rows in (("memories", memories), ("memory_terms", memory_terms), ("supersede_log", log_rows)):
         state.report.rows_in[name] = len(rows)
+    state.report.policies["r11_type_tag_unrepresentable"] += 0
 
     workspaces: dict[str, dict[str, Any]] = {}
     planned: dict[str, dict[str, Any]] = {}      # legacy memory id -> plan item
@@ -137,12 +140,6 @@ def build_knowledge_plan(source_db: Any, state: CopyState, candidate_root: str) 
             state.rejected("memories", key, ws, "sub_millisecond_timestamp", f"/{bad}",
                            detail=f"{row[bad].isoformat()} is not millisecond-exact; refusing to round")
             continue
-        size = len((row["type"] or "").encode("utf-8"))
-        if row["type"] not in RESERVED_TYPE_TERMS and size > LEGACY_TYPE_TAG_MAX_BYTES:
-            state.rejected("memories", key, ws, "legacy_type_unrepresentable", "/type",
-                           detail=f"R11 keeps a non-reserved type as a legacy_type tag term; this one is "
-                                  f"{size} UTF-8 bytes and a term name allows {LEGACY_TYPE_TAG_MAX_BYTES}")
-            continue
         try:
             node_id = state.ids.assign_fixed("nodes", ws, key, legacy_node_id(ws, key), "arra-legacy-node/v1 (R18 D1)")
             revision_id = state.ids.assign("node_revisions", ws, key, derived_key=f"{key}#1")
@@ -156,7 +153,17 @@ def build_knowledge_plan(source_db: Any, state: CopyState, candidate_root: str) 
             type_term = row["type"]
         else:
             type_term = "note"
-            if row["type"]:
+            size = len((row["type"] or "").encode("utf-8"))
+            if size > LEGACY_TYPE_TAG_MAX_BYTES:
+                state.report.policies["r11_type_tag_unrepresentable"] += 1
+                meta["unresolved_references"]["type"] = (
+                    f"legacy type is {size} UTF-8 bytes; a legacy_type tag term allows {LEGACY_TYPE_TAG_MAX_BYTES}: "
+                    "kept as note, whole string in legacy_type, no tag term")
+                state.pointer("memories.type", key, ws, False, code="legacy_type_tag_unrepresentable",
+                              detail=f"R11 note kept; the original type ({size} UTF-8 bytes, over the "
+                                     f"{LEGACY_TYPE_TAG_MAX_BYTES}-byte term-name bound) cannot be a legacy_type "
+                                     "tag term, so it is kept whole in internal_metadata.legacy_type")
+            elif row["type"]:
                 tag = row["type"]
                 if tag not in {t["name"] for t in target["legacy_type_terms"]}:
                     target["legacy_type_terms"].append({"term_id": state.ids.assign(
