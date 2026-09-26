@@ -711,19 +711,26 @@ describe("real persistence: resume, conflict and the SHARED owner", () => {
   test("a CHANGED seed row conflicts, and is not silently repaired", async () => {
     const fixture = await createTaxonomyFixture([ALPHA]);
     try {
-      const parsed = await drive(fixture.datasetRoot, [
-        op("seedReservedVocabularies", seedManifest(ALPHA)),
-        // Rename a reserved term: allowed lifecycle, per the ruling.
-        op("renameTerm", {
-          workspace_name: ALPHA,
-          term_id: id("tnote"),
-          expected_name: "note",
-          name: "renamed-note",
-        }),
-        // Re-seeding now meets a changed row. Terminal through this slice:
-        // reconciliation is out of scope and must NOT be invented here.
-        op("seedReservedVocabularies", seedManifest(ALPHA)),
-      ]);
+      const parsed = await drive(
+        fixture.datasetRoot,
+        [
+          op("seedReservedVocabularies", seedManifest(ALPHA)),
+          // Rename a reserved term: allowed OPERATOR lifecycle, per the ruling.
+          op("renameTerm", {
+            workspace_name: ALPHA,
+            term_id: id("tnote"),
+            expected_name: "note",
+            name: "renamed-note",
+          }),
+          // Re-seeding now meets a changed row. Terminal through this slice:
+          // reconciliation is out of scope and must NOT be invented here.
+          op("seedReservedVocabularies", seedManifest(ALPHA)),
+        ],
+        // R6 (#27, docs/overnight/DECISIONS.md): `type` is sealed, so only the
+        // trusted in-process operator may rename its terms. An ordinary owner
+        // is refused; taxonomy-seal.test.ts pins that side.
+        { operator: true },
+      );
       expect((parsed.op1 as { ok: boolean; value: Record<string, unknown> }).value.outcome).toBe(
         "updated",
       );
@@ -948,8 +955,11 @@ describe("real persistence: term lifecycle, tree structure and the ABA hazard", 
   const drive = async (
     root: string,
     ops: Array<{ method: string; request: unknown }>,
+    // R6: only `{ operator: true }` is passed here, by the one case that
+    // retires reserved `type` terms.
+    extra: Record<string, unknown> = {},
   ): Promise<Record<string, any>> => {
-    const result = await runGated(root, CHILD, [root, JSON.stringify({ ops, clockMs: CLOCK })]);
+    const result = await runGated(root, CHILD, [root, JSON.stringify({ ops, clockMs: CLOCK, ...extra })]);
     if (result.code !== 0) throw new Error(`child exited ${result.code}: ${result.stderr.slice(0, 600)}`);
     const line = result.stdout.trim().split("\n").filter(Boolean).at(-1);
     if (line === undefined) throw new Error(`no output: ${result.stderr.slice(0, 600)}`);
@@ -1017,16 +1027,22 @@ describe("real persistence: term lifecycle, tree structure and the ABA hazard", 
     const fixture = await createTaxonomyFixture([ALPHA]);
     try {
       const manifest = seedManifest(ALPHA) as { type: { terms: { note: string } } };
-      const parsed = await drive(fixture.datasetRoot, [
-        op("seedReservedVocabularies", manifest),
-        // `type` is required and seeded with five terms, so four retirements
-        // are fine and the fifth must be refused.
-        op("retireTerm", { workspace_name: ALPHA, term_id: id("tconcl") }),
-        op("retireTerm", { workspace_name: ALPHA, term_id: id("tlearn") }),
-        op("retireTerm", { workspace_name: ALPHA, term_id: id("tdisc") }),
-        op("retireTerm", { workspace_name: ALPHA, term_id: id("tcorr") }),
-        op("retireTerm", { workspace_name: ALPHA, term_id: manifest.type.terms.note }),
-      ]);
+      const parsed = await drive(
+        fixture.datasetRoot,
+        [
+          op("seedReservedVocabularies", manifest),
+          // `type` is required and seeded with five terms, so four retirements
+          // are fine and the fifth must be refused.
+          op("retireTerm", { workspace_name: ALPHA, term_id: id("tconcl") }),
+          op("retireTerm", { workspace_name: ALPHA, term_id: id("tlearn") }),
+          op("retireTerm", { workspace_name: ALPHA, term_id: id("tdisc") }),
+          op("retireTerm", { workspace_name: ALPHA, term_id: id("tcorr") }),
+          op("retireTerm", { workspace_name: ALPHA, term_id: manifest.type.terms.note }),
+        ],
+        // R6: retiring reserved `type` terms is operator lifecycle; an
+        // ordinary owner is refused before the last-required check runs.
+        { operator: true },
+      );
       for (const key of ["op1", "op2", "op3", "op4"]) {
         expect(parsed[key].ok, `${key} should have retired`).toBe(true);
       }

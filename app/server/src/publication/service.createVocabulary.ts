@@ -3,16 +3,23 @@ import { VOCABULARIES } from "./service.constants";
 import { lookupVocabularyById } from "./service.lookupVocabularyById";
 import { lookupVocabularyByName } from "./service.lookupVocabularyByName";
 import { mutateTaxonomyWrite } from "./service.mutateTaxonomyWrite";
+import { refuseSealedVocabulary } from "./service.refuseSealedVocabulary";
 import { requireTaxonomyWorkspaceRow } from "./service.requireTaxonomyWorkspaceRow";
 import { sameExcept } from "./service.sameExcept";
-import { type Clock, type DatasetAdapter, type MutationOutcome, type OwnerCore, type TaxonomyRow } from "./service.types";
+import { type DatasetAdapter, type MutationOutcome, type OwnerCore, type TaxonomyRow, type TaxonomyWriteOptions } from "./service.types";
 import { writeTaxonomyRow } from "./service.writeTaxonomyRow";
 
-export function createVocabulary(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock }, requestBytes: Uint8Array): Promise<MutationOutcome> {
+export function createVocabulary(writer: DatasetAdapter, core: OwnerCore, options: TaxonomyWriteOptions, requestBytes: Uint8Array): Promise<MutationOutcome> {
 return mutateTaxonomyWrite(core, async () => {
         const request = parseCreateVocabulary(requestBytes);
         // Preflight the WHOLE request before mutating anything.
         await requireTaxonomyWorkspaceRow(writer, request.workspace_name);
+        // R6: a sealed vocabulary's term set is operator-only, so an ordinary
+        // caller's sealed vocabulary could never hold a term. Required, it
+        // would fail every later publish in the workspace; optional, it would
+        // hold its name forever, empty. The requested policy decides, so this
+        // outranks the collisions and the already_satisfied replay below.
+        refuseSealedVocabulary({ term_policy: request.term_policy }, options, "/term_policy");
         await writer.refresh(VOCABULARIES);
         const byId = await lookupVocabularyById(writer, request.workspace_name, request.vocabulary_id);
         const byName = await lookupVocabularyByName(writer, request.workspace_name, request.name);

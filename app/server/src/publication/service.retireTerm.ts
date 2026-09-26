@@ -4,11 +4,12 @@ import { TERMS, VOCABULARIES, scopeOf } from "./service.constants";
 import { lookupTermById } from "./service.lookupTermById";
 import { lookupVocabularyById } from "./service.lookupVocabularyById";
 import { mutateTaxonomyWrite } from "./service.mutateTaxonomyWrite";
+import { refuseSealedVocabulary } from "./service.refuseSealedVocabulary";
 import { requireTaxonomyWorkspaceRow } from "./service.requireTaxonomyWorkspaceRow";
-import { type Clock, type DatasetAdapter, type MutationOutcome, type OwnerCore } from "./service.types";
+import { type DatasetAdapter, type MutationOutcome, type OwnerCore, type TaxonomyWriteOptions } from "./service.types";
 import { updateTerm } from "./service.updateTerm";
 
-export function retireTerm(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock }, requestBytes: Uint8Array): Promise<MutationOutcome> {
+export function retireTerm(writer: DatasetAdapter, core: OwnerCore, options: TaxonomyWriteOptions, requestBytes: Uint8Array): Promise<MutationOutcome> {
 return mutateTaxonomyWrite(core, async () => {
         const request = parseRetireTerm(requestBytes);
         await requireTaxonomyWorkspaceRow(writer, request.workspace_name);
@@ -26,12 +27,16 @@ return mutateTaxonomyWrite(core, async () => {
           stored.vocabulary_id as string,
         );
         if (vocabulary === null) failTaxonomy("integrity_failure", "");
+        const vocabularyRow = encodeVocabularyRow(vocabulary);
+        // R6: policy is validated even for an already-satisfied request, so
+        // the seal precedes the inactive shortcut below.
+        refuseSealedVocabulary(vocabularyRow, options, "/term_id");
 
         // No reactivation exists, so an already-inactive term is satisfied.
         if (stored.is_active !== true) {
           return { outcome: "already_satisfied" as const, row: stored };
         }
-        if (encodeVocabularyRow(vocabulary).required === true) {
+        if (vocabularyRow.required === true) {
           // Refuse retiring the LAST active term of a required vocabulary:
           // that would leave a required classification unsatisfiable.
           const active = await writer.query(
