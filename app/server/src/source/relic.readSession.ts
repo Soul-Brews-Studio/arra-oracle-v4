@@ -57,7 +57,14 @@ export async function readSession(
   if (options.from !== undefined && options.from !== null) {
     failRelic("bad_output", "relic-backed read() has no seq-offset pagination; `from` must be omitted");
   }
-  const limit = Math.max(1, Math.min(options.limit ?? DEFAULT_LIMIT, MAX_LIMIT));
+  // Same non-finite-`limit` guard as `relic.findSessions.ts`: `Math.max`/
+  // `Math.min` never recover from a `NaN` operand, so an unvalidated caller
+  // passing `NaN` would otherwise reach `relic tail -n NaN` and, per the
+  // installed relic CLI's own `rows.slice(-Math.max(1,NaN))`, return the
+  // WHOLE transcript rather than a bounded page.
+  const rawLimit = options.limit ?? DEFAULT_LIMIT;
+  const safeLimit = Number.isFinite(rawLimit) ? rawLimit : DEFAULT_LIMIT;
+  const limit = Math.max(1, Math.min(safeLimit, MAX_LIMIT));
 
   const session = await getSession(config, sessionUuid);
   if (session === null) {

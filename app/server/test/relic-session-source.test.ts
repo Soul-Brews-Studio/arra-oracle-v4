@@ -267,6 +267,28 @@ describe("read-only against relic: proven from the real argv/env the adapter spa
     expect(limitIndex).toBeGreaterThanOrEqual(0);
     expect(calls[0]!.argv[limitIndex + 1]).toBe("500"); // MAX_OVERFETCH in relic.findSessions.ts
   });
+
+  test("find()'s NaN limit does not bypass the clamp -- Math.max/min never recover from a NaN operand", async () => {
+    // `Math.max(1, Math.min(NaN, MAX_LIMIT))` is `NaN`, not `1`: without the
+    // `Number.isFinite` guard, this reached the CLI as the literal argv
+    // string "NaN", which real relic's cmdSearch does not bound at all
+    // (`limit > 0 ? slice : hits` returns every hit for a non-positive N).
+    const calls = await recordCalls(() => createRelicSessionSource(config()).find("some topic", NaN));
+    const limitIndex = calls[0]!.argv.indexOf("--limit");
+    expect(limitIndex).toBeGreaterThanOrEqual(0);
+    expect(calls[0]!.argv[limitIndex + 1]).toBe("100"); // DEFAULT_LIMIT(20) * OVERFETCH_FACTOR(5) in relic.findSessions.ts
+  });
+
+  test("read()'s NaN limit does not bypass the clamp -- Math.max/min never recover from a NaN operand", async () => {
+    // Same defect, the `tail -n` side: real relic's cmdTail does
+    // `rows.slice(-Math.max(1,NaN))`, which is `slice(NaN)` and returns the
+    // WHOLE transcript rather than a bounded page.
+    const calls = await recordCalls(() => createRelicSessionSource(config()).read("s-normal-1", { limit: NaN }));
+    const tailCall = calls[1]!;
+    const nIndex = tailCall.argv.indexOf("-n");
+    expect(nIndex).toBeGreaterThanOrEqual(0);
+    expect(tailCall.argv[nIndex + 1]).toBe("20"); // DEFAULT_LIMIT in relic.readSession.ts
+  });
 });
 
 describe("get(): exact session identity only, never a look-alike or a subagent transcript", () => {

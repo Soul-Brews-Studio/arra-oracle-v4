@@ -48,7 +48,13 @@ export async function findSessions(
 ): Promise<SessionRef[]> {
   if (query === "") return [];
   assertNotFlagLike("query", query);
-  const boundedLimit = Math.max(1, Math.min(limit, MAX_LIMIT));
+  // A non-finite `limit` (e.g. `NaN`, from an unvalidated upstream caller)
+  // must not survive the clamp below: `Math.min(NaN, MAX_LIMIT)` is `NaN`,
+  // and `Math.max(1, NaN)` is STILL `NaN`, not `1` -- Math.max/min never
+  // recover from a NaN operand. Falling back to the default keeps the clamp
+  // meaningful instead of forwarding a literal `"NaN"` to the relic CLI.
+  const safeLimit = Number.isFinite(limit) ? limit : DEFAULT_LIMIT;
+  const boundedLimit = Math.max(1, Math.min(safeLimit, MAX_LIMIT));
   const overfetch = Math.min(boundedLimit * OVERFETCH_FACTOR, MAX_OVERFETCH);
 
   const raw = await runRelicJson(config, ["search", query, "--limit", String(overfetch)]);
