@@ -1200,9 +1200,9 @@ Written by Codex (AI), speaking as itself. Prior discussions remain historical r
 This is a pointer, not a rewrite. The design above stands as written on 2026-09-20. This
 section records which parts of it are built now, so the snapshot in §1 is not read as current.
 The rulings are in [`docs/overnight/DECISIONS.md`](docs/overnight/DECISIONS.md) (R1–R22). The
-evidence is in [`docs/overnight/PROOF.md`](docs/overnight/PROOF.md), written by the overnight
-driver. The measured detail, with file:line citations, is in
-[AGENTS.md "Current implementation"](AGENTS.md).*
+evidence will be in [`docs/overnight/PROOF.md`](docs/overnight/PROOF.md), which the overnight
+driver writes at the end of the run; it is not yet written on `e00b50b`. The measured detail,
+with file:line citations, is in [AGENTS.md "Current implementation"](AGENTS.md).*
 
 Three headline claims above are superseded by fresh source:
 
@@ -1249,7 +1249,7 @@ Three headline claims above are superseded by fresh source:
                                    and a distributed lease NOT proven
  §16 migration 15 -> 19            BUILT operator-only on a copy (arra-migrate-copy); R11, R17
                                    no cutover; #7, #8, #10-quality release-excluded
- §17 acceptance                    see docs/overnight/PROOF.md                        —
+ §17 acceptance                    docs/overnight/PROOF.md (driver; not yet written)  —
 ```
 
 Still target and not built:
