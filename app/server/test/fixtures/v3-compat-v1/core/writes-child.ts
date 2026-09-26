@@ -16,6 +16,7 @@
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 
 type Who = "rw" | "free" | "ro";
 type Step = {
@@ -29,7 +30,7 @@ type Step = {
   capture?: { name: string; path: (string | number)[] };
 };
 const [, , datasetRoot, workDir, payloadJson] = process.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   /** A scratch directory to run in, so the parent can prove nothing lands in cwd. */
   cwd?: string;
   banks: string[];

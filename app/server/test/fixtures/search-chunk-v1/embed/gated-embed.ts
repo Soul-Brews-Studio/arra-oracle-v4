@@ -25,10 +25,12 @@
 //    `"none"` omits the probe option entirely. `payload.digestTimeoutMs`
 //    sets `ARRA_EMBED_DIGEST_TIMEOUT_MS` before import, like
 //    `embedTimeoutMs`. Never a real network call.
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
+
 type Op = { facade?: "context" | "publication" | "taxonomy" | "harness"; method: string; request: any };
 
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   ops: Array<
     | Op
     | { concurrent: Op[] }

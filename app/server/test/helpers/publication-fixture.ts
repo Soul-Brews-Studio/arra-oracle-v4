@@ -19,6 +19,8 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { assertExecLimits } from "./argv.assertExecLimits";
+import { spillOversizedArgs } from "./argv.spillOversizedArgs";
 
 /** Deadline every owned child is held to, in milliseconds. */
 export const CHILD_DEADLINE_MS = 60_000;
@@ -83,7 +85,8 @@ export type RunResult = { code: number; stdout: string; stderr: string };
  * Run an owned child with a parent-enforced deadline.
  *
  * On timeout the child is SIGKILLed by its exact PID and reaped; nothing here
- * matches on a process name or pattern.
+ * matches on a process name or pattern. An argv or env string Linux would
+ * refuse with E2BIG is refused here on every platform, before any spawn.
  */
 export function runOwnedChild(
   command: string,
@@ -91,9 +94,11 @@ export function runOwnedChild(
   options: { cwd?: string; env?: NodeJS.ProcessEnv; deadlineMs?: number } = {},
 ): Promise<RunResult> {
   return new Promise((resolvePromise, reject) => {
+    const env = pythonEnv(options.env);
+    assertExecLimits(command, args, env);
     const child = spawn(command, args, {
       cwd: options.cwd,
-      env: pythonEnv(options.env),
+      env,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -167,13 +172,17 @@ export async function createFixture(
  * `exec_with_gate` replaces the Python process in place, so the returned PID
  * is the Bun program itself and there is no second lock holder. A caller that
  * wants to kill mid-run should use `spawnGatedChild` instead.
+ *
+ * An argument over the inline limit reaches the child as a file reference
+ * (`argv.spillOversizedArgs.ts`); the child decodes it with `readArgPayload`.
  */
-export function runGated(
+export async function runGated(
   datasetRoot: string,
   scriptPath: string,
   args: string[] = [],
   options: { deadlineMs?: number; env?: NodeJS.ProcessEnv } = {},
 ): Promise<RunResult> {
+  const spill = spillOversizedArgs(args);
   const launcher = [
     "-c",
     [
@@ -184,9 +193,13 @@ export function runGated(
     datasetRoot,
     process.execPath,
     scriptPath,
-    ...args,
+    ...spill.args,
   ];
-  return runOwnedChild(PYTHON, launcher, { cwd: MIGRATE_DIR, ...options });
+  try {
+    return await runOwnedChild(PYTHON, launcher, { cwd: MIGRATE_DIR, ...options });
+  } finally {
+    spill.cleanup();
+  }
 }
 
 /** A gated child kept alive so the parent can kill it at a chosen moment. */
@@ -207,22 +220,31 @@ export function spawnGatedChild(
   args: string[] = [],
   env: NodeJS.ProcessEnv = {},
 ): GatedChild {
-  const child = spawn(
-    PYTHON,
+  // Same spill and E2BIG guard as `runGated`; the spill is removed on close.
+  const spill = spillOversizedArgs(args);
+  const launcher = [
+    "-c",
     [
-      "-c",
-      [
-        "import sys",
-        "from arra_migrate.writer_gate import exec_with_gate",
-        "exec_with_gate(sys.argv[1], sys.argv[2:])",
-      ].join("\n"),
-      datasetRoot,
-      process.execPath,
-      scriptPath,
-      ...args,
-    ],
-    { cwd: MIGRATE_DIR, env: pythonEnv(env), stdio: ["ignore", "pipe", "pipe"] },
-  );
+      "import sys",
+      "from arra_migrate.writer_gate import exec_with_gate",
+      "exec_with_gate(sys.argv[1], sys.argv[2:])",
+    ].join("\n"),
+    datasetRoot,
+    process.execPath,
+    scriptPath,
+    ...spill.args,
+  ];
+  const childEnv = pythonEnv(env);
+  try {
+    assertExecLimits(PYTHON, launcher, childEnv);
+  } catch (error) {
+    spill.cleanup();
+    throw error;
+  }
+  const child = spawn(PYTHON, launcher, { cwd: MIGRATE_DIR, env: childEnv, stdio: ["ignore", "pipe", "pipe"] });
+  // Registered FIRST, so the spill is gone before any exit waiter resumes.
+  child.on("close", () => spill.cleanup());
+  child.on("error", () => spill.cleanup());
 
   // The exit promise is created AT SPAWN, not when wait() is first called.
   // Registering the listener lazily meant calling wait() after the child had

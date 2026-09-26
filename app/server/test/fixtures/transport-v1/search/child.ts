@@ -20,9 +20,10 @@ import { createApp } from "../../../../src/app";
 import { createKnowledgeAccess } from "../../../../src/knowledge/transport";
 import { createOperationService, type OperationService, type StoreDependencies } from "../../../../src/auth/service";
 import { createMcpAdapter, configureKnowledgeAccess } from "../../../../src/mcp";
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 
 const [, , root, workDir, payloadJson] = process.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   banks: { alpha: string; beta: string };
   embedderProfile: string;
   queryVectors: Record<string, number[]>;

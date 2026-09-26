@@ -17,8 +17,9 @@
 //
 // Like the other gated children it makes no assertions; it prints one JSON
 // line and exits.
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 const [, , payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   boot?: boolean;
   ops?: Array<{ action: "content:read" | "content:write"; facade: string; method: string; request: any }>;
 };

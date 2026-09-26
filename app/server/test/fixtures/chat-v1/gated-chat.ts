@@ -6,8 +6,9 @@
 // line. The MODEL is a real in-process stub -- never JSON-serialized, since
 // it is code, not data -- so this is the one place a "model call" can be
 // counted without any network or SDK involved.
+import { readArgPayload } from "../../helpers/argv.readArgPayload";
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   modelMode: "ok" | "fail";
   getContextArgs: Record<string, unknown>;
   answerChatArgs?: Record<string, unknown>;

@@ -18,8 +18,9 @@
 // explicit null: this base commit's own writer never populates it either
 // (see search-chunk.ts's header), so this harness has no populated-vector
 // case to plant that the kernel itself does not already refuse outright.
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   ops: Array<{ facade?: "context" | "publication" | "taxonomy" | "harness"; method: string; request: any }>;
   clockMs?: number;
   revisionIds?: string[];

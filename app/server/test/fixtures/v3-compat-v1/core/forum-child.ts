@@ -22,6 +22,7 @@
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 
 type Who = "rw" | "free" | "ro" | "audit" | "opw";
 type Step = {
@@ -34,7 +35,7 @@ type Step = {
   capture?: { name: string; path: (string | number)[] };
 };
 const [, , datasetRoot, workDir, payloadJson] = process.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as { banks: string[]; steps: Step[] };
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as { banks: string[]; steps: Step[] };
 void datasetRoot;
 
 const TOKEN: Record<Who, string> = { rw: "a1".repeat(32), free: "b2".repeat(32), ro: "c3".repeat(32), audit: "d4".repeat(32), opw: "e5".repeat(32) };

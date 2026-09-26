@@ -14,8 +14,9 @@
 //
 // Usage: bun fts-child.ts '<json {ops:[...]}>'   with ARRA_DATA_DIR and
 // ARRA_AUTH_POLICY set by the parent to a fresh mktemp dataset.
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 const [, , payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as { ops: Array<Record<string, any>> };
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as { ops: Array<Record<string, any>> };
 
 const src = (path: string) => new URL(`../../../../src/${path}`, import.meta.url).pathname;
 const store = await import(src("db.ts"));

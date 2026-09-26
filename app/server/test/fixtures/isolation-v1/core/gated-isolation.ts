@@ -9,8 +9,9 @@
 // call's outcome (or governed error) back to the parent as JSON, plus a raw
 // harness read for setup verification. Every isolation claim is made by the
 // test file, from what this script reports.
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   // `authority`: the #87 RequestAuthority the message reads take (R3).
   ops: Array<{ facade?: "context" | "publication" | "taxonomy" | "evidence" | "harness"; method: string; request: any; authority?: unknown }>;
   clockMs?: number;

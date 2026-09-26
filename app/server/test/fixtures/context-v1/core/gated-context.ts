@@ -5,8 +5,9 @@
 //
 // Records the boundary trace in firing order AND the persisted scoped
 // identities separately: counts alone cannot prove WHICH row was written.
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   // `authority` is the transport-built RequestAuthority the #87 message reads
   // take as their second argument (R3); every other method ignores it.
   ops: Array<{ method: string; request: unknown; authority?: unknown }>;

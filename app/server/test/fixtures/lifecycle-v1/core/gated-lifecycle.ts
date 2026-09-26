@@ -2,8 +2,9 @@
 // gate. Adapted from fixtures/read-cursor-v1/core/gated-cursor.ts: same
 // dispatch loop, same trace/results shape, minus the cursor-only harness
 // surgery this kernel does not need.
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   ops: Array<{ facade?: "context" | "publication" | "taxonomy" | "harness"; method: string; request: any }>;
   revisionIds?: string[];
   clockMs?: number | number[];
