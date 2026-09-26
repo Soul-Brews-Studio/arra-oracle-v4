@@ -121,13 +121,14 @@ export const MEMORY_TOOLS = [
  * parser and one validator.
  */
 /**
- * #87 / R3 (docs/overnight/DECISIONS.md): the message reads carry an
- * authorization rule a generic "exact request body" line would hide, so the
- * catalogue states it and declares the one optional payload key.
+ * #87 / R3 (docs/overnight/DECISIONS.md): the message reads -- and, since the
+ * overnight R18 amendment, the member list -- carry an authorization rule a
+ * generic "exact request body" line would hide, so the catalogue states it
+ * and declares the one optional payload key.
  */
 const READ_BOUNDARY_NOTE =
   " Membership is a read boundary: set payload.requester_peer_name to read as that peer, which must be a CURRENT" +
-  " member of the message's session (a stranger or departed member is refused; getMessage answers null)." +
+  " member of the session read (a stranger or departed member is refused; getMessage answers null)." +
   " Omit it for the operator view, which needs audit:read on this bank; a content:read-only credential that" +
   " names no requester is refused with forbidden.";
 const REQUESTER_PROPERTY = {
@@ -136,7 +137,7 @@ const REQUESTER_PROPERTY = {
     description: "Optional. The peer reading; omit (or null) for the audit:read operator view.",
   },
 };
-const READ_BOUNDARY_METHODS: ReadonlySet<string> = new Set(["getMessage", "listMessages"]);
+const READ_BOUNDARY_METHODS: ReadonlySet<string> = new Set(["getMessage", "listMessages", "listSessionMembers"]);
 
 /** Methods whose payload names an ACTING peer (`registry.peerFields.ts`). */
 const BINDING_NOTE =

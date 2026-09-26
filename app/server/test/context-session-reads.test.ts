@@ -23,10 +23,10 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { ContractError } from "../src/contracts/errors";
-import { parseListMessages, parseListSessions } from "../src/publication/context";
+import { parseListMessages, parseListSessionMembers, parseListSessions } from "../src/publication/context";
 import { appendRequest, contextId, createContextFixture, messageItem, type ContextFixture } from "./helpers/context-fixture";
 import { runGated } from "./helpers/publication-fixture";
-import { OPERATOR, READER, driveContext, op } from "./helpers/read-boundary-fixture";
+import { OPERATOR, READER, bound, driveContext, op } from "./helpers/read-boundary-fixture";
 
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
@@ -77,6 +77,14 @@ describe("grammar (pure): every new key is optional, every old shape unchanged",
   test("listSessions: a total over BOTH filters is not countable and is refused, not approximated", () => {
     const e = contractErr(() => parseListSessions(bytes(sessions({ include_total: true, is_active: true, member_peer_name: "peer-a" }))));
     expect({ code: e.code, path: e.path }).toEqual({ code: "invalid_value", path: "/include_total" });
+  });
+
+  test("fix round: listSessionMembers takes an OPTIONAL requester_peer_name, on listMessages' terms", () => {
+    expect(parseListSessionMembers(bytes(members("s2"))).requester_peer_name).toBeNull();
+    expect(parseListSessionMembers(bytes(members("s2", { requester_peer_name: null }))).requester_peer_name).toBeNull();
+    expect(parseListSessionMembers(bytes(members("s2", { requester_peer_name: "peer-a" }))).requester_peer_name).toBe("peer-a");
+    expect(contractErr(() => parseListSessionMembers(bytes(members("s2", { requester_peer_name: "" })))).path).toBe("/requester_peer_name");
+    expect(contractErr(() => parseListSessionMembers(bytes(members("s2", { requester: "peer-a" })))).code).toBe("unexpected_field");
   });
 
   test("listMessages: direction asc|desc; before_seq only with desc; after_seq only with asc", () => {
@@ -131,12 +139,12 @@ beforeAll(async () => {
     op("listSessions", sessions({ member_peer_name: "peer-a", is_active: false })), // 7
     op("listSessions", sessions({ member_peer_name: "nobody" })), // 8
     op("listSessions", sessions({ member_peer_name: "peer-a" }, BETA)), // 9
-    op("listSessionMembers", members("s2")), // 10
-    op("listSessionMembers", members("s2", { limit: 1 })), // 11
-    op("listSessionMembers", members("s2", { limit: 1, after_name: "peer-a" })), // 12
-    op("listSessionMembers", members("s5")), // 13 departed member is history, flagged by left_at
-    op("listSessionMembers", members("nope")), // 14
-    op("listSessionMembers", members("s2", {}, BETA)), // 15
+    op("listSessionMembers", members("s2"), OPERATOR), // 10
+    op("listSessionMembers", members("s2", { limit: 1 }), OPERATOR), // 11
+    op("listSessionMembers", members("s2", { limit: 1, after_name: "peer-a" }), OPERATOR), // 12
+    op("listSessionMembers", members("s5"), OPERATOR), // 13 departed member is history, flagged by left_at
+    op("listSessionMembers", members("nope"), OPERATOR), // 14
+    op("listSessionMembers", members("s2", {}, BETA), OPERATOR), // 15
     op("listMessages", tail(), READER), // 16 last two
     op("listMessages", tail({ before_seq: "4" }), READER), // 17
     op("listMessages", tail({ before_seq: "2" }), READER), // 18
@@ -144,6 +152,15 @@ beforeAll(async () => {
     op("listMessages", tail({ requester_peer_name: null }), READER), // 20 no requester, no operator
     op("listMessages", tail({ requester_peer_name: null, limit: 100 }), OPERATOR), // 21 operator view, all five
     op("listMessages", { workspace_name: ALPHA, session_name: "s1", after_seq: null, limit: 2, direction: "asc", requester_peer_name: "peer-a" }, READER), // 22
+    // Fix round: who belongs to a session is behind the same R3 boundary.
+    op("listSessionMembers", members("s2", { requester_peer_name: "peer-a" }), READER), // 23 a current member
+    op("listSessionMembers", members("s3", { requester_peer_name: "peer-a" }), READER), // 24 not a member
+    op("listSessionMembers", members("s5", { requester_peer_name: "peer-a" }), READER), // 25 departed
+    op("listSessionMembers", members("s2"), READER), // 26 no requester, no operator
+    op("listSessionMembers", members("s2", { requester_peer_name: "peer-a" }), bound(["peer-b"])), // 27 outside the binding
+    op("listSessionMembers", members("s2", { requester_peer_name: null }), OPERATOR), // 28 explicit null, operator
+    op("listSessionMembers", members("nope", { requester_peer_name: "peer-a" }), READER), // 29 missing session first
+    op("listSessionMembers", members("s3", { requester_peer_name: "peer-a" }, BETA), READER), // 30 beta's s3 is peer-a's
   ]);
 }, TIMEOUT);
 afterAll(async () => {
@@ -196,6 +213,17 @@ describe("K10 listSessionMembers: the first read of session_peers", () => {
     expect(typeof row.left_at).toBe("string");
     refused(run.op14, "invalid_reference", "/session_name");
     expect(run.op15.value.rows).toEqual([]);
+  });
+
+  test("fix round: a named requester must be a CURRENT member; none needs the operator view; the binding is re-checked", () => {
+    expect(run.op23.value.rows.map((r: any) => r.peer_name)).toEqual(["peer-a", "peer-b"]);
+    refused(run.op24, "invalid_reference", "/requester_peer_name");
+    refused(run.op25, "invalid_reference", "/requester_peer_name");
+    refused(run.op26, "forbidden", "/requester_peer_name");
+    refused(run.op27, "forbidden", "/requester_peer_name");
+    expect(run.op28.value.rows.map((r: any) => r.peer_name)).toEqual(["peer-a", "peer-b"]);
+    refused(run.op29, "invalid_reference", "/session_name");
+    expect(run.op30.value.rows.map((r: any) => r.peer_name)).toEqual(["peer-a"]);
   });
 });
 

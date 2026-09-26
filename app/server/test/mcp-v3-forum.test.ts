@@ -21,6 +21,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { derivedId } from "../src/mcp/legacy-v3/ids.derivedId";
 import { runGated } from "./helpers/publication-fixture";
 import { createTaxonomyFixture, type TaxonomyFixture } from "./helpers/taxonomy-fixture";
 
@@ -28,9 +29,16 @@ const CHILD = join(import.meta.dir, "fixtures", "v3-compat-v1", "core", "forum-c
 const F = "ws-forum";
 const O = "ws-other";
 const ref = (name: string) => ({ $ref: name });
-const kb = (label: string, method: string, payload: Record<string, unknown>) => ({ label, bank: F, tool: `kb_${method}`, args: { payload: { workspace_name: F, ...payload } } });
+/** The session id nat's oracle_thread derives from idempotency_key "squat-key". */
+const SQUAT = derivedId(F, "session", "oracle_thread", "nat", "squat-key");
+const kb = (label: string, method: string, payload: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+  ({ label, bank: F, tool: `kb_${method}`, args: { payload: { workspace_name: F, ...payload } }, ...extra });
 const session = (label: string, name: string) => kb(label, "getSession", { session_name: ref(name) });
-const members = (label: string, name: string) => kb(label, "listSessionMembers", { session_name: ref(name), after_name: null, limit: 100 });
+// Read back through the audit:read operator view: the member list is behind
+// the same R3 boundary as the messages.
+const membersAt = (label: string, name: unknown) =>
+  kb(label, "listSessionMembers", { session_name: name, after_name: null, limit: 100 }, { as: "audit" });
+const members = (label: string, name: string) => membersAt(label, ref(name));
 const say = (label: string, peer: string, args: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({ label, bank: F, peer, tool: "oracle_thread", args, ...extra });
 const read = (label: string, peer: string | undefined, args: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({ label, bank: F, ...(peer ? { peer } : {}), tool: "oracle_thread_read", args, ...extra });
 const update = (label: string, peer: string | undefined, args: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({ label, bank: F, ...(peer ? { peer } : {}), tool: "oracle_thread_update", args, ...extra });
@@ -94,6 +102,8 @@ beforeAll(async () => {
     // A stranger's refused post adds nobody, `to` included.
     say("stranger_invite", "zoe", { threadId: ref("TH2"), message: "let me add neo", to: ["neo"] }, { as: "free" }),
     members("th2_members", "TH2"),
+    // ...and writes nothing at all: zoe is not even registered by trying.
+    kb("zoe_after_refusal", "getPeer", { peer_name: "zoe" }),
     threads("threads_neo", "neo", { limit: 20 }),
     threads("threads_neo_all", "neo", { limit: 20, all: true }),
     threads("threads_nat", "nat", {}, { as: "free" }),
@@ -126,6 +136,43 @@ beforeAll(async () => {
     members("th5_members", "TH5"),
     session("th5_head", "TH5"),
     kb("count_end", "listSessions", { after_name: null, limit: 100, include_total: true }),
+    // Fix round (the verifier's findings on this slice). An idempotency_key is
+    // the SPEAKER's: another speaker's same key must neither land in the first
+    // speaker's thread nor join anyone to it.
+    say("zoe_hello", "zoe", { message: "zoe registers by speaking" }, { as: "free" }),
+    say("shared_neo", "neo", { message: "neo private body", idempotency_key: "shared" }, { capture: { name: "TS", path: ["thread_id"] } }),
+    say("shared_nat", "nat", { message: "nat new thread", idempotency_key: "shared", to: ["zoe"] }, { as: "free", capture: { name: "TN", path: ["thread_id"] } }),
+    say("shared_nat_retry", "nat", { message: "nat new thread", idempotency_key: "shared", to: ["zoe"] }, { as: "free" }),
+    members("shared_ts_members", "TS"),
+    members("shared_tn_members", "TN"),
+    read("shared_nat_read", "nat", { threadId: ref("TS") }, { as: "free" }),
+    read("shared_zoe_read", "zoe", { threadId: ref("TS") }, { as: "free" }),
+    // A thread the key derives that already exists WITHOUT the speaker (here
+    // pre-registered under that name) is refused before anyone is joined.
+    kb("squat_register", "registerSession", { session_id: SQUAT, name: `t-${SQUAT}` }),
+    say("squat_post", "nat", { message: "into the squat", idempotency_key: "squat-key", to: ["zoe"] }, { as: "free" }),
+    membersAt("squat_members", `t-${SQUAT}`),
+    read("squat_audit_read", undefined, { threadId: `t-${SQUAT}` }, { as: "audit" }),
+    // Continuing a closed thread is a member's act, and a refusal writes nothing.
+    say("ghosty_reopen", "ghosty", { threadId: ref("TH4"), message: "i was never here", reopen: true }, { as: "free" }),
+    kb("ghosty_peer", "getPeer", { peer_name: "ghosty" }),
+    kb("ghosty_threads", "listSessions", { after_name: null, limit: 100, include_total: false, member_peer_name: "ghosty" }, { as: "audit" }),
+    // The member list is behind the R3 boundary: rw is bound to neo, no audit:read.
+    kb("mem_rw_no_requester", "listSessionMembers", { session_name: ref("TH2"), after_name: null, limit: 100 }),
+    kb("mem_rw_nonmember", "listSessionMembers", { session_name: ref("TH2"), after_name: null, limit: 100, requester_peer_name: "neo" }),
+    kb("mem_rw_other", "listSessionMembers", { session_name: ref("TH2"), after_name: null, limit: 100, requester_peer_name: "nat" }),
+    kb("mem_rw_member", "listSessionMembers", { session_name: ref("TH3"), after_name: null, limit: 100, requester_peer_name: "neo" }),
+    // Closing with no peer is the operator path: it needs audit:read.
+    say("tc", "nat", { message: "to be closed by an operator" }, { as: "free", capture: { name: "TC", path: ["thread_id"] } }),
+    kb("close_null_rw", "closeSession", { session_name: ref("TC"), reason: "gotcha", peer_name: null, operation_id: "null-1" }),
+    kb("close_null_free", "closeSession", { session_name: ref("TC"), reason: "gotcha", peer_name: null, operation_id: "null-2" }, { as: "free" }),
+    session("tc_open", "TC"),
+    kb("close_null_opw", "closeSession", { session_name: ref("TC"), reason: "operator close", peer_name: null, operation_id: "null-3" }, { as: "opw" }),
+    session("tc_closed", "TC"),
+    // A title over the kernel's 1024-byte cap is refused before any write
+    // (513 two-byte characters: bytes, not characters, are counted).
+    say("long_title", "tia", { message: "x", title: "\u00e9".repeat(513) }, { as: "free" }),
+    kb("tia_peer", "getPeer", { peer_name: "tia" }),
     { label: "list_rw", bank: F, tool: "tools/list", args: {} },
     { label: "list_ro", bank: F, as: "ro", tool: "tools/list", args: {} },
   ];
@@ -213,7 +260,10 @@ describe("V4 #3 and #4: membership is the boundary; no silent join; reads move n
 
   test("a stranger's refused post adds no one: recipients join only after the post proves the speaker a member", () => {
     compat("stranger_invite", "semantic_refusal");
+    expect(out.stranger_invite.value.error).toContain("join:true");
     expect(ok("th2_members").rows.map((r: any) => r.peer_name)).toEqual(["nat"]);
+    // Fix round: the membership refusal comes before the speaker is registered.
+    expect(ok("zoe_after_refusal")).toBeNull();
   });
 
   test("join:true joins and posts; the thread reads back in seq order with each author and role", () => {
@@ -364,5 +414,83 @@ describe("the four tools are advertised by grant", () => {
     expect(ro).toContain("oracle_thread_read");
     expect(ro).not.toContain("oracle_thread");
     expect(ro).not.toContain("oracle_thread_update");
+  });
+});
+
+// ── fix round: the independent verifier's findings on this slice ─────────
+const peersOf = (label: string) => ok(label).rows.map((r: any) => r.peer_name);
+/** A kernel refusal through kb_*: the governed envelope, on whichever layer answered it. */
+const kbRefused = (label: string, code: string, path: string) => {
+  const res = out[label];
+  const where = `${label}: ${JSON.stringify(res)}`;
+  if (res?.status === 200) {
+    expect(res.isError, where).toBe(true);
+    expect(res.value, where).toMatchObject({ code, path });
+  } else {
+    expect(res?.status, where).toBe(code === "forbidden" ? 403 : 400);
+    const body = JSON.stringify(res.body ?? res.value);
+    expect(body, where).toContain(`"${code}"`);
+    expect(body, where).toContain(`"${path}"`);
+  }
+};
+
+describe("fix round: an idempotency_key is the speaker's own, and never joins anyone silently", () => {
+  test("another speaker's same key starts ITS OWN thread; the first thread gains no member and leaks nothing", () => {
+    const neo = ok("shared_neo");
+    // The verifier's repro: before the fix nat's call was refused, yet had
+    // already joined nat and zoe to neo's thread, and both read it.
+    expect(peersOf("shared_ts_members")).toEqual(["neo"]);
+    for (const label of ["shared_nat_read", "shared_zoe_read"]) {
+      expect(JSON.stringify(out[label])).not.toContain("neo private body");
+      compat(label, "semantic_refusal");
+    }
+    const nat = ok("shared_nat");
+    expect(nat.thread_id).not.toBe(neo.thread_id);
+    expect(ok("shared_nat_retry")).toMatchObject({ thread_id: nat.thread_id, message_id: nat.message_id });
+    expect(peersOf("shared_tn_members")).toEqual(["nat", "zoe"]);
+  });
+
+  test("a keyed thread that already exists without the speaker is refused before anyone is joined or anything posted", () => {
+    expect(ok("squat_register").outcome).toBe("created");
+    compat("squat_post", "semantic_refusal", "/idempotency_key");
+    expect(peersOf("squat_members")).toEqual([]);
+    expect(ok("squat_audit_read").messages).toEqual([]);
+  });
+});
+
+describe("fix round: continuing a closed thread is a member's act", () => {
+  test("a stranger's reopen is refused, writes nothing, and carries no one anywhere", () => {
+    const refused = compat("ghosty_reopen", "semantic_refusal");
+    expect(refused.error).toContain("member");
+    expect(ok("ghosty_peer")).toBeNull();
+    expect(ok("ghosty_threads").rows).toEqual([]);
+  });
+});
+
+describe("fix round: listSessionMembers is behind the same R3 boundary as the messages", () => {
+  test("no requester needs audit:read; a named requester must be bound AND a current member", () => {
+    kbRefused("mem_rw_no_requester", "forbidden", "/requester_peer_name");
+    kbRefused("mem_rw_nonmember", "invalid_reference", "/requester_peer_name");
+    kbRefused("mem_rw_other", "forbidden", "/requester_peer_name");
+    expect(peersOf("mem_rw_member")).toEqual(["neo"]);
+  });
+});
+
+describe("fix round: closeSession with no peer is the operator path", () => {
+  test("peer_name null needs audit:read: refused for content:write alone, bound or not; a writing operator closes", () => {
+    kbRefused("close_null_rw", "forbidden", "/peer_name");
+    kbRefused("close_null_free", "forbidden", "/peer_name");
+    expect(ok("tc_open").is_active).toBe(true);
+    expect(ok("close_null_opw").outcome).toBe("closed");
+    const head = ok("tc_closed");
+    expect(head.is_active).toBe(false);
+    expect(JSON.parse(head.internal_metadata).closed).toMatchObject({ by_peer: null, reason: "operator close", operation_id: "null-3" });
+  });
+});
+
+describe("fix round: an over-long title is refused before any write", () => {
+  test("a title over 1024 UTF-8 bytes is unsupported_argument at /title, and the speaker was not registered", () => {
+    compat("long_title", "unsupported_argument", "/title");
+    expect(ok("tia_peer")).toBeNull();
   });
 });

@@ -31,6 +31,8 @@ export const PEER_FIELDS: Readonly<Record<string, readonly PeerFieldPath[]>> = O
   // requester (message reads; the kernel re-checks this one itself)
   getMessage: [["requester_peer_name"]],
   listMessages: [["requester_peer_name"]],
+  // K10: the member list is read AS a member, on the message reads' terms
+  listSessionMembers: [["requester_peer_name"]],
   // requester of chat context
   getContext: [["peer_name"]],
   answerChat: [["peer_name"]],
@@ -51,7 +53,7 @@ export const PEER_FIELDS: Readonly<Record<string, readonly PeerFieldPath[]>> = O
   // the exhaustiveness test below exists to force)
   createTrace: [["peer_name"]],
   createSessionLink: [["created_by_peer_name"]],
-  // the peer closing a session (K9, overnight R18 D7)
+  // the peer closing a session (K9, overnight R18 D7; the kernel re-checks it)
   closeSession: [["peer_name"]],
   // K10: "sessions X belongs to" is asked AS X -- a bound credential may ask
   // only about its own peers, the same rule as a message requester.
@@ -84,7 +86,6 @@ export const PEER_FIELDS: Readonly<Record<string, readonly PeerFieldPath[]>> = O
   getPeer: [],
   getSession: [],
   listPeers: [],
-  listSessionMembers: [],
   registerPeer: [],
   registerSession: [],
   listMcpCalls: [],

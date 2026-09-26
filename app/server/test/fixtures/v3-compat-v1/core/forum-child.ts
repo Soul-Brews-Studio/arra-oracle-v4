@@ -13,6 +13,7 @@
 //   free   content:read+write, no binding (any asserted peer)
 //   ro     content:read only
 //   audit  content:read + audit:read (the operator view), no binding
+//   opw    content:read+write + audit:read (a writing operator), no binding
 //
 // argv: [datasetRoot, workDir, payloadJson]
 
@@ -20,7 +21,7 @@ import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-type Who = "rw" | "free" | "ro" | "audit";
+type Who = "rw" | "free" | "ro" | "audit" | "opw";
 type Step = {
   label: string;
   as?: Who;
@@ -34,7 +35,7 @@ const [, , datasetRoot, workDir, payloadJson] = process.argv;
 const payload = JSON.parse(payloadJson ?? "{}") as { banks: string[]; steps: Step[] };
 void datasetRoot;
 
-const TOKEN: Record<Who, string> = { rw: "a1".repeat(32), free: "b2".repeat(32), ro: "c3".repeat(32), audit: "d4".repeat(32) };
+const TOKEN: Record<Who, string> = { rw: "a1".repeat(32), free: "b2".repeat(32), ro: "c3".repeat(32), audit: "d4".repeat(32), opw: "e5".repeat(32) };
 const sha = (v: string) => createHash("sha256").update(v, "ascii").digest("hex");
 const policyPath = join(workDir!, "policy.json");
 const grant = (actions: string[], peers?: string[]) =>
@@ -48,6 +49,7 @@ writeFileSync(
       { id: "free", disabled: false, workspaces: grant(["content:read", "content:write"]), global_actions: [] },
       { id: "ro", disabled: false, workspaces: grant(["content:read"]), global_actions: [] },
       { id: "audit", disabled: false, workspaces: grant(["content:read", "audit:read"]), global_actions: [] },
+      { id: "opw", disabled: false, workspaces: grant(["content:read", "content:write", "audit:read"]), global_actions: [] },
     ],
     credentials: (Object.keys(TOKEN) as Who[]).map((who) => ({
       id: `cred-${who}`, principal_id: who, sha256: sha(TOKEN[who]),

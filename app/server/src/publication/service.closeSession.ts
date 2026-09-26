@@ -1,4 +1,4 @@
-import { SESSION_FIELDS, closedInternalMetadata, encodeSessionRow, parseCloseSession, readCloseRecord } from "./context";
+import { type RequestAuthority, SESSION_FIELDS, closedInternalMetadata, encodeSessionRow, parseCloseSession, readCloseRecord, requireMessageReadAuthority } from "./context";
 import { PublicationError, failPublication } from "./errors";
 import { microsToTimestamp } from "./rows";
 import { quote } from "./storage";
@@ -21,20 +21,34 @@ export type CloseSessionOutcome =
  * -- no new column, no new table, and nothing ever sets it back (registration
  * never reactivates, context-ingestion-v1.md §3).
  *
- * Precedence: grammar (before the queue), workspace, session, stored
- * integrity, replay of THIS session's recorded operation_id, already closed,
- * the closing peer's CURRENT membership, clock, write, readback. As with
- * lifecycle events, an exact replay outranks every later state check and
+ * Precedence: grammar and authority (before the queue), workspace, session,
+ * stored integrity, replay of THIS session's recorded operation_id, already
+ * closed, the closing peer's CURRENT membership, clock, write, readback. As
+ * with lifecycle events, an exact replay outranks every later state check and
  * samples no clock, so it stays idempotent after the peer has left.
+ *
+ * Authority is R3's, at `/peer_name`: a named peer must sit inside the
+ * grant's binding (the transport checked it; this re-checks it, as the
+ * message reads do), and a close that names NO peer is the operator path,
+ * which needs `audit:read` -- otherwise a credential bound to one peer could
+ * close, for good, a session none of its peers belongs to.
  *
  * The write is one guarded update: the row must still be active and still
  * hold the metadata that was read. Anything but exactly one updated row, or a
  * readback that differs in any physical field, is ambiguity after an
  * attempted write: poison, `recovery_required`.
  */
-export function closeSession(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null }, requestBytes: Uint8Array): Promise<CloseSessionOutcome> {
-  // STATIC validation precedes owner work: a malformed request is never an owner event.
+export function closeSession(
+  writer: DatasetAdapter,
+  core: OwnerCore,
+  options: { clock: Clock; sourceNamespace: string | null },
+  requestBytes: Uint8Array,
+  authority: RequestAuthority,
+): Promise<CloseSessionOutcome> {
+  // STATIC validation precedes owner work: a malformed or unauthorized
+  // request is never an owner event.
   const request = parseCloseSession(requestBytes);
+  requireMessageReadAuthority(request.peer_name, authority, "/peer_name");
   return mutateContextWrite(core, async () => {
     await requireContextWorkspaceRow(writer, request.workspace_name);
     await writer.refresh(SESSIONS);

@@ -243,21 +243,22 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
     description:
       "Post to a thread, starting one when threadId is omitted. A thread is a v4 session and thread_id is its name (a string);" +
       " the speaking peer (argument `peer`, else the X-Arra-Peer header, bound by the credential's peers list) is the author" +
-      " and a member. `to` adds other registered oracles as members. A non-member must pass join:true: v4 never joins silently." +
-      " A closed thread is continued with reopen:true, which starts a NEW thread linked 'continues' to it and carries its members." +
+      " and a member. `to` adds other registered oracles as members, once the post is stored. A non-member must pass join:true:" +
+      " v4 never joins silently. A member continues a closed thread with reopen:true, which starts a NEW thread linked" +
+      " 'continues' to it and carries its members." +
       " No auto-answer: oracle_response is always null. title is display metadata; model is not stored yet.",
     inputSchema: obj(
       {
         message: str("Required. Not trimmed; must not be blank."),
         threadId: { type: ["string", "integer"], description: "Session name. An integer is a v3 id and is not found." },
-        title: str("Display title of a new thread."),
+        title: str("Display title of a new thread, at most 1024 UTF-8 bytes."),
         role: str("Stored as given; no default is invented."),
         to: strings("Registered peers to add as members."),
         join: { type: "boolean", description: "Join an existing thread before posting." },
         reopen: { type: "boolean", description: "Continue a closed thread in a new, linked thread." },
         model: str("Not stored yet; named in compat_warnings."),
         peer: str("Optional speaker, bound by the credential's peers list."),
-        idempotency_key: str("Optional. Makes a retry replay instead of posting twice."),
+        idempotency_key: str("Optional, and the speaker's own. Makes a retry replay instead of posting twice."),
       },
       ["message"],
     ),

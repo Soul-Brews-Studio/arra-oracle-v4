@@ -27,8 +27,9 @@ export function createContextReadMethods(reader: DatasetAdapter) {
     listMessages: (requestBytes: Uint8Array, authority: RequestAuthority) => listMessages(reader, requestBytes, authority),
     listPeers: (requestBytes: Uint8Array) => listPeers(reader, requestBytes),
     listSessions: (requestBytes: Uint8Array) => listSessions(reader, requestBytes),
-    // K10 (overnight R18): the first read of session_peers.
-    listSessionMembers: (requestBytes: Uint8Array) => listSessionMembers(reader, requestBytes),
+    // K10 (overnight R18): the first read of session_peers, behind the same
+    // R3 boundary as the two message reads, so it takes the authority too.
+    listSessionMembers: (requestBytes: Uint8Array, authority: RequestAuthority) => listSessionMembers(reader, requestBytes, authority),
     getReadCursor: (requestBytes: Uint8Array) => getReadCursor(reader, requestBytes),
     listSessionLinks: (requestBytes: Uint8Array) => listSessionLinks(reader, requestBytes),
     getRecallEligibility: (requestBytes: Uint8Array) => getRecallEligibility(reader, requestBytes),

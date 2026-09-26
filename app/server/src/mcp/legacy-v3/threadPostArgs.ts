@@ -3,6 +3,12 @@ import type { V3ToolContext } from "./handlers";
 
 export type Warning = { code: string; field: string; detail: string };
 
+/** `registerSession`'s cap on a K12a display title (context-ingestion-v1.md,
+ *  overnight R18), in UTF-8 bytes. Checked here too, so an over-long title is
+ *  refused with the other arguments -- before the speaker peer is written --
+ *  rather than by the kernel after it. */
+const MAX_TITLE_BYTES = 1024;
+
 export type ThreadPostArgs = {
   message: string;
   role: string | null;
@@ -50,13 +56,17 @@ export function threadPostArgs(context: V3ToolContext, args: Record<string, unkn
     });
   }
   const warnings: Warning[] = [];
+  const title = optionalString("title");
+  if (title !== null && new TextEncoder().encode(title).length > MAX_TITLE_BYTES) {
+    refuse("/title", `title must be at most ${MAX_TITLE_BYTES} UTF-8 bytes`);
+  }
   if (args.model !== undefined && args.model !== null) {
     warnings.push({ code: "argument_ignored", field: "model", detail: "v4 stores no model per message yet (K12b); the post is kept without it" });
   }
   return {
     message: args.message as string,
     role: optionalString("role"),
-    title: optionalString("title"),
+    title,
     to,
     join: flag("join"),
     reopen: flag("reopen"),

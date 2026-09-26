@@ -1,9 +1,10 @@
-import { MAX_RESULT_WIRE_BYTES, encodeSessionPeerRow, parseListSessionMembers, rowWireBytes } from "./context";
+import { MAX_RESULT_WIRE_BYTES, type RequestAuthority, encodeSessionPeerRow, parseListSessionMembers, requireMessageReadAuthority, rowWireBytes } from "./context";
 import { failPublication } from "./errors";
 import { quote } from "./storage";
 import { SESSIONS, SESSION_PEERS } from "./service.constants";
 import { contextOne } from "./service.contextOne";
 import { contextScope } from "./service.contextScope";
+import { requireCurrentMembership } from "./service.requireCurrentMembership";
 import { requireWorkspace } from "./service.requireWorkspace";
 import { type DatasetAdapter } from "./service.types";
 
@@ -13,17 +14,30 @@ import { type DatasetAdapter } from "./service.types";
  * peer name, departed members included with `left_at` set -- membership is
  * history, and leaving never erases it.
  *
- * `content:read`, like `listSessions` and `listPeers`: who belongs to a
- * session is not message content. The R3 read boundary stays on the messages
- * themselves (listMessages/getMessage).
+ * Behind the SAME R3 boundary as the messages (listMessages/getMessage): who
+ * belongs to a session is who talks to whom. A named `requester_peer_name`
+ * must be inside the grant's binding and hold CURRENT membership; with none,
+ * only the audit:read operator view reads. Without this, a credential bound
+ * to one peer could list any session's members here and walk around the
+ * binding on `listSessions.member_peer_name`.
  */
-export async function listSessionMembers(reader: DatasetAdapter, requestBytes: Uint8Array): Promise<{ rows: Record<string, unknown>[]; next_after_name: string | null }> {
+export async function listSessionMembers(
+  reader: DatasetAdapter,
+  requestBytes: Uint8Array,
+  authority: RequestAuthority,
+): Promise<{ rows: Record<string, unknown>[]; next_after_name: string | null }> {
   const request = parseListSessionMembers(requestBytes);
+  requireMessageReadAuthority(request.requester_peer_name, authority);
   await requireWorkspace(reader, request.workspace_name);
   await reader.refresh(SESSIONS);
   const workspace = contextScope(request.workspace_name);
   const session = await contextOne(reader, SESSIONS, `${workspace} AND name = ${quote(request.session_name)}`);
   if (session === null) failPublication("invalid_reference", "/session_name");
+  // Session existence is not secret (listSessions shows it), so the member
+  // check after it reveals nothing a caller could not already list.
+  if (request.requester_peer_name !== null) {
+    await requireCurrentMembership(reader, request.workspace_name, request.session_name, request.requester_peer_name, "/requester_peer_name");
+  }
 
   await reader.refresh(SESSION_PEERS);
   const scope = `${workspace} AND session_name = ${quote(request.session_name)}`;

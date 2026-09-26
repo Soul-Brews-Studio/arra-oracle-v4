@@ -96,9 +96,10 @@ export type KnowledgeMethod = {
   readonly scopePath: readonly string[];
   /**
    * `authority` is built by the transport from the policy snapshot that
-   * admitted this request (#87 / R3), never from its bytes. Only the message
-   * reads consume it; every other entry ignores it. Peer-binding checks for
-   * every method are declared in `registry.peerFields.ts`.
+   * admitted this request (#87 / R3), never from its bytes. Only the
+   * membership-bounded reads (getMessage, listMessages, listSessionMembers)
+   * and closeSession consume it; every other entry ignores it. Peer-binding
+   * checks for every method are declared in `registry.peerFields.ts`.
    */
   readonly call: (bundle: KnowledgeBundle, bytes: Uint8Array, authority: RequestAuthority) => Promise<unknown>;
   /**
@@ -276,10 +277,12 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
   // ── forum kernels (overnight R18: K9 D7, K10) ─────────────────────────────
   // `closeSession` is the one-way close recorded in sessions.internal_metadata
   // (no new column); `listSessionMembers` is the first read of session_peers.
+  // Both take the authority on R3 terms: members are listed AS a member (or
+  // by the audit:read operator), and a close naming no peer is the operator's.
   // `listSessions`' K10 filters and `listMessages`' K11 tail are optional keys
   // on the entries above, not new methods.
-  closeSession: { action: "content:write", scopePath: [], call: (b, x) => writer(b).context.closeSession(x) },
-  listSessionMembers: { action: "content:read", scopePath: [], call: (b, x) => b.context.listSessionMembers(x) },
+  closeSession: { action: "content:write", scopePath: [], call: (b, x, a) => writer(b).context.closeSession(x, a) },
+  listSessionMembers: { action: "content:read", scopePath: [], call: (b, x, a) => b.context.listSessionMembers(x, a) },
 
   // ── traces (#28) ─────────────────────────────────────────────────────────
   getTrace: { action: "content:read", scopePath: [], call: (b, x) => b.context.getTrace(x) },

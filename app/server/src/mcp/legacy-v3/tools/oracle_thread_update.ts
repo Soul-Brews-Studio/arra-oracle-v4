@@ -55,7 +55,8 @@ export async function oracle_thread_update(args: Record<string, unknown>, contex
       session_name: name,
       reason,
       peer_name: speaker,
-      operation_id: `v3-close:${key === null ? randomId() : derivedId(context.bank, "close", name, key)}`,
+      // The key is the speaker's own, as on oracle_thread.
+      operation_id: `v3-close:${key === null ? randomId() : derivedId(context.bank, "close", name, speaker, key)}`,
     })) as Closed;
   } catch (error) {
     const e = error as { code?: unknown; path?: unknown };

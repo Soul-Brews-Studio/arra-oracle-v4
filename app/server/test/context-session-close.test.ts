@@ -19,7 +19,7 @@ import { ContractError } from "../src/contracts/errors";
 import * as context from "../src/publication/context";
 import { appendRequest, contextId, createContextFixture, messageItem, type ContextFixture } from "./helpers/context-fixture";
 import { runGated } from "./helpers/publication-fixture";
-import { driveContext, op } from "./helpers/read-boundary-fixture";
+import { OPERATOR, READER, bound, driveContext, op } from "./helpers/read-boundary-fixture";
 
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
@@ -73,6 +73,16 @@ describe("grammar (pure)", () => {
     expect(contractErr(() => parseClose(close("s", { reason: "x".repeat(4097) }))).path).toBe("/reason");
   });
 
+  test("fix round: a blank reason says nothing and is refused; operation_id is capped at 256 UTF-8 bytes", () => {
+    for (const blank of [" ", "\t\n", "\u3000"]) {
+      const e = contractErr(() => parseClose(close("s", { reason: blank })));
+      expect({ code: e.code, path: e.path }).toEqual({ code: "invalid_value", path: "/reason" });
+    }
+    expect(parseClose(close("s", { operation_id: "\u0e25".repeat(85) })).operation_id).toHaveLength(85);
+    const long = contractErr(() => parseClose(close("s", { operation_id: "\u0e25".repeat(86) })));
+    expect({ code: long.code, path: long.path }).toEqual({ code: "limit_exceeded", path: "/operation_id" });
+  });
+
   test("registerSession h_metadata is OPTIONAL: absent or null is no title; {title} is canonical JSON text", () => {
     const base = session("s");
     expect(context.parseRegisterSession(bytes(base)).h_metadata).toBeNull();
@@ -109,24 +119,29 @@ beforeAll(async () => {
     op("registerSession", session("sess-c", { h_metadata: null })), // 5
     op("joinSession", { workspace_name: ALPHA, session_name: "sess-a", peer_name: "peer-a" }), // 6
     op("appendMessages", appendRequest(ALPHA, "sess-a", [messageItem({ public_id: contextId("m1") })])), // 7
-    op("closeSession", close("sess-a", { peer_name: "peer-b" })), // 8 not a member
-    op("closeSession", close("sess-a", { peer_name: "ghost" })), // 9 no such peer
-    op("closeSession", close("sess-missing")), // 10
-    op("closeSession", close("sess-a")), // 11 closes
-    op("closeSession", close("sess-a")), // 12 exact replay
-    op("closeSession", close("sess-a", { reason: "another reason" })), // 13 same key, other payload
-    op("closeSession", close("sess-a", { operation_id: "close-2" })), // 14 already closed
+    op("closeSession", close("sess-a", { peer_name: "peer-b" }), READER), // 8 not a member
+    op("closeSession", close("sess-a", { peer_name: "ghost" }), READER), // 9 no such peer
+    op("closeSession", close("sess-missing"), READER), // 10
+    op("closeSession", close("sess-a"), READER), // 11 closes
+    op("closeSession", close("sess-a"), READER), // 12 exact replay
+    op("closeSession", close("sess-a", { reason: "another reason" }), READER), // 13 same key, other payload
+    op("closeSession", close("sess-a", { operation_id: "close-2" }), READER), // 14 already closed
     op("getSession", { workspace_name: ALPHA, session_name: "sess-a" }), // 15
     op("appendMessages", appendRequest(ALPHA, "sess-a", [messageItem({ public_id: contextId("m2") })])), // 16
     op("joinSession", { workspace_name: ALPHA, session_name: "sess-a", peer_name: "peer-b" }), // 17
     op("registerSession", session("sess-a")), // 18 no reactivation
-    op("closeSession", close("sess-b", { peer_name: null, operation_id: "close-b" })), // 19 operator close
-    op("closeSession", { ...close("sess-a"), workspace_name: BETA }), // 20 isolation
-    op("closeSession", close("sess-c", { workspace_name: "no-such-workspace" })), // 21
+    op("closeSession", close("sess-b", { peer_name: null, operation_id: "close-b" }), OPERATOR), // 19 operator close
+    op("closeSession", { ...close("sess-a"), workspace_name: BETA }, READER), // 20 isolation
+    op("closeSession", close("sess-c", { workspace_name: "no-such-workspace" }), READER), // 21
+    // Fix round: null is the OPERATOR path, and the kernel re-checks the binding.
+    op("closeSession", close("sess-c", { peer_name: null, operation_id: "close-c" }), READER), // 22 no audit:read
+    op("closeSession", close("sess-c", { operation_id: "close-c2" }), bound(["peer-b"])), // 23 peer-a not bound
+    op("closeSession", close("sess-c", { operation_id: "close-c3" })), // 24 no authority at all
+    op("getSession", { workspace_name: ALPHA, session_name: "sess-c" }), // 25 still open
   ];
   run = await driveContext(fixture.datasetRoot, ops);
   // A fresh owner replays the close: the ORIGINAL record, no boundary fired.
-  replay = await driveContext(fixture.datasetRoot, [op("closeSession", close("sess-a"))]);
+  replay = await driveContext(fixture.datasetRoot, [op("closeSession", close("sess-a"), READER)]);
 
   // A session deactivated with no close record (a legacy or migrated state),
   // and one whose internal_metadata another writer left in each odd shape.
@@ -146,11 +161,11 @@ beforeAll(async () => {
   await mutate("session-internal-metadata", "sess-garbage", "not json");
   await mutate("session-internal-metadata", "sess-open-record", record("peer-a", "forged"));
   await mutate("session-internal-metadata", "sess-other-keys", JSON.stringify({ imported_from: "v3" }));
-  legacy = await driveContext(fixture.datasetRoot, [op("closeSession", close("sess-legacy"))]);
+  legacy = await driveContext(fixture.datasetRoot, [op("closeSession", close("sess-legacy"), READER)]);
   corrupt = await driveContext(fixture.datasetRoot, [
-    op("closeSession", close("sess-garbage")),
-    op("closeSession", close("sess-open-record")),
-    op("closeSession", close("sess-other-keys")),
+    op("closeSession", close("sess-garbage"), READER),
+    op("closeSession", close("sess-open-record"), READER),
+    op("closeSession", close("sess-other-keys"), READER),
     op("getSession", { workspace_name: ALPHA, session_name: "sess-garbage" }),
   ]);
 }, TIMEOUT);
@@ -214,6 +229,13 @@ describe("K9: closeSession is a one-way close recorded in internal_metadata (D7)
     const closed = value(run.op19);
     expect(closed.outcome).toBe("closed");
     expect(closed.row.internal_metadata).toBe(record(null, "close-b"));
+  });
+
+  test("fix round: no peer needs the audit:read operator view; a named peer must sit in the binding; no authority fails closed", () => {
+    refused(run.op22, "forbidden", "/peer_name");
+    refused(run.op23, "forbidden", "/peer_name");
+    expect(run.op24).toMatchObject({ ok: false, name: "TypeError" });
+    expect(value(run.op25)).toMatchObject({ is_active: true, internal_metadata: null });
   });
 
   test("a session already inactive with no record is already_closed, and nothing is written", () => {
