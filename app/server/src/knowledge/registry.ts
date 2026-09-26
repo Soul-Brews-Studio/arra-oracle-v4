@@ -42,7 +42,8 @@ import type { EvidenceReaderBundle, EvidenceWriterBundle } from "../publication/
  * importing the composition graph cannot trigger their import-time
  * environment reads"). A STATIC top-level import here was tried first and
  * reverted: `mcp/calls.listMcpCalls.ts` / `mcp/connections.listConnections.ts`
- * import `../mcp/calls` / `../mcp/connections`, which import `../storage`,
+ * import `./calls.openCallLogTable` / `./connections.openConnectionsTable`
+ * (before fix round 2: `./calls` / `./connections`), which import `../storage`,
  * whose `DATA_DIR` is a `const` read from `process.env.ARRA_DATA_DIR` at
  * MODULE LOAD. A static import here pulls `storage.ts` into the STATIC
  * import graph of `app.ts` (via `knowledge/transport.ts` -> `composition.ts`),

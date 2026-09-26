@@ -1,7 +1,8 @@
 // Standalone probe (NOT a `bun:test` file, never discovered by any glob):
 // prints one JSON line describing what `listMcpCalls`/`listConnections`
-// answer against an `ARRA_DATA_DIR` that has NEITHER table. `calls.ts` and
-// `connections.ts` cache their LanceDB connection at module scope
+// answer against an `ARRA_DATA_DIR` that has NEITHER table.
+// `calls.openCallLogTable.ts` and `connections.openConnectionsTable.ts` cache
+// their LanceDB connection at module scope
 // (`storage.ts`'s `DATA_DIR` is fixed at import), so this MUST run in its own
 // fresh process -- reusing any process that already opened a table for this
 // root, or any other root, would answer from the wrong cached state. The
