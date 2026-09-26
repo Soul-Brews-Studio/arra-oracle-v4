@@ -203,3 +203,129 @@ operator view.
 Both were seen red before the change. The corrupt-message case was added in a fix round,
 also red first: before it, a non-member got `integrity_failure` for a corrupt existing id
 and null for an absent one.
+
+## Amendment 2026-09-26 (overnight R18 (V4 + K12a + K9-K11, D7, D8))
+
+Appended, not rewritten: the frozen text above and the R3 amendment stand except where this
+section says otherwise. Authority: `docs/overnight/DECISIONS.md` R18 (D7 accepts `closeSession`
+as a one-way close recorded in `sessions.internal_metadata`, with no new column; D8 makes
+`X-Arra-Peer` the connection-level speaker, bound by R3 `peers:[...]`) and the kernel table of
+`docs/overnight/V3-PARITY.md` §5 (K9-K12). Issues #31 (the v3 forum adapter needs these reads and
+the close) and #28. Nat's intent for the forum family: each oracle registers as a peer and they
+talk to each other like a Claude Code channel. A thread is a session, a post is a message.
+
+**Why.** The v3-compatible forum tools could not be served honestly without four things the
+frozen interface lacked: a thread title with nowhere to live (§2 "JSON columns are initialized
+null"), no way to close a session (§3 "never reactivation" covered only the other direction),
+no read of `session_peers` at all, and no way to read "the last N" messages without walking the
+session from the start. None of the four adds a table, a column or a dependency.
+
+**K12a, `registerSession` display title (§2, §3).** One OPTIONAL key, on the same terms as R3's
+`requester_peer_name` (every existing caller omits it, and omission already has a meaning):
+
+```text
+registerSession {workspace_name:W, session_id:N, name:S [, h_metadata: null | {title:T}]}
+```
+
+`T` is a nonempty valid-Unicode string of at most 1024 UTF-8 bytes (a chosen wire cap). The
+object is closed: exactly `title`. Omitted and `null` both store `h_metadata = null`, as before.
+A present title is stored as the canonical (RFC 8785) text `{"title":T}`. It is DISPLAY data:
+the name stays the immutable identity (DESIGN.md:369), and a title is never matched on. A replay
+under the same id and name is `already_satisfied` and retains the ORIGINAL row, title included,
+exactly as §3 already says of "all current optional metadata". `appendMessages` still writes
+`h_metadata = null` (K12b, a per-message model, is not part of this amendment).
+
+**K9, `closeSession` (new write, `content:write`).**
+
+```text
+closeSession {workspace_name:W, session_name:S, reason:R, peer_name:S|null, operation_id:O}
+```
+
+`R` is nonempty, at most 4096 UTF-8 bytes (the lifecycle reason cap); `O` is a nonempty string,
+deliberately not nanoid-shaped, like lifecycle operation ids. All keys required, closed.
+
+- Effect: `is_active` true -> false, ONE WAY, and `internal_metadata` becomes the canonical JSON of
+  every key already stored there plus `closed: {at, by_peer, operation_id, reason}`. `at` is the
+  injected clock rendered as exact UTC milliseconds; `by_peer` is `peer_name`. Nothing ever sets
+  a session active again: registration stays `already_satisfied` on an inactive session.
+- Result: `{outcome:"closed"|"idempotent", row}` or `{outcome:"conflict",
+  reason:"operation_digest"|"already_closed", row}`, where `row` is the stored session row. No
+  new error code; conflicts are values, as §5 already does for registration.
+- Precedence: grammar (before the queue), workspace (`invalid_reference /workspace_name`),
+  session (`invalid_reference /session_name`), stored integrity, replay, state, reference, clock,
+  write. Replay: a stored close record with the same `operation_id` is `idempotent` when reason
+  and peer match and `operation_digest` otherwise; no clock is sampled and no boundary fires.
+  State: any other close of an inactive session is `already_closed`, nothing written. Reference:
+  a non-null `peer_name` must exist and hold CURRENT membership of the session
+  (`requireCurrentMembership`), else `invalid_reference /peer_name`. `null` is the
+  unattributed path, recorded as `by_peer: null` and open to any `content:write` holder of the
+  workspace, exactly as `retireNode`'s null `peer_name` is: the R3 binding judges asserted
+  peer names, and a null asserts none.
+- Stored integrity: `internal_metadata` that is not a JSON object, a `closed` value that is not
+  exactly `{at, by_peer, operation_id, reason}` with an exact-millisecond `at`, or an ACTIVE
+  session carrying a close record, is `integrity_failure` at the root, never repaired.
+- Write: one guarded update (`is_active = true` and the `internal_metadata` that was read), one
+  boundary triple, readback of every physical field. Anything but exactly one updated row, or a
+  differing readback, poisons the owner and answers `recovery_required`, as §5 requires.
+- `operation_id` is the retry key of THIS session's close. It is recorded on the session, not in
+  a workspace-wide journal, so reuse across sessions is not detected.
+- Consequences already in the frozen text: a closed session refuses `appendMessages` (stopped,
+  `invalid_reference /session_name`) and `joinSession` (`invalid_reference /session_name`), and
+  stays readable history through every read.
+
+**K10, session filters and the first membership read (new read, `content:read`).**
+
+```text
+listSessions       {workspace_name:W, after_name:S|null, limit:number, include_total:boolean
+                    [, is_active:boolean|null] [, member_peer_name:S|null]}
+listSessionMembers {workspace_name:W, session_name:S, after_name:S|null, limit:number}
+```
+
+- `is_active` filters inside the page query and the count, so pages are full and `total` counts
+  the filtered set.
+- `member_peer_name` lists only sessions the peer CURRENTLY belongs to (`left_at` null), keyset
+  over its memberships by session name, each batch's sessions fetched in one query. With
+  `is_active` as well, batches continue until the page fills, the memberships end, or 1000 are
+  scanned; a page cut by that bound may be short with a non-null `next_after_name`, which is an
+  exact keyset position. `include_total:true` with BOTH filters is refused (`invalid_value
+  /include_total`): it would need an unbounded join, and a total is never approximated. An
+  unknown peer is an empty list, not an error: it is a filter, not a reference.
+- `listSessionMembers` answers `{rows:[SessionPeerRow], next_after_name}` ordered by peer name,
+  departed members included with `left_at` set. Missing session is `invalid_reference
+  /session_name`. Membership is not message content, so this read is `content:read` like
+  `listSessions`/`listPeers`; the R3 boundary stays on the messages.
+- Peer binding (authorization-v1.md, R3): `listSessions.member_peer_name` and
+  `closeSession.peer_name` are caller-asserted peers (`knowledge/registry.peerFields.ts`), so a
+  credential bound to `peers:[...]` may ask only about, and close only as, a bound peer.
+
+**K11, `listMessages` tail (§6).** Two more OPTIONAL keys:
+
+```text
+listMessages {... [, direction:"asc"|"desc"] [, before_seq:I|null]}
+```
+
+Omitted `direction` is `"asc"`, the frozen read, answering `{rows, next_after_seq}` unchanged.
+`"desc"` reads newest first with the exclusive keyset `seq_in_session < before_seq` (null starts
+at the newest) and answers `{rows, next_before_seq}`. One cursor per direction: `before_seq` with
+`asc`, or a non-null `after_seq` with `desc`, is `invalid_value` at that key. The R3 read boundary,
+the validation of every selected key and lookahead, and the 16 MiB budget are identical for both
+directions (one shared `selectMessagePage`).
+
+**§8 surface.** The context writer gains `closeSession`; both reader and writer gain
+`listSessionMembers`. The registry (`knowledge/registry.ts`) exposes both over HTTP, MCP (`kb_*`)
+and the CLI (`kb <method>`); `closeSession` is `content:write`.
+
+**Not in this amendment.** `listSessions` ordering by creation or activity (`order:
+"created_desc"`, V3-PARITY §5 K10) is not built: `created_at` is not unique, and a safe keyset
+over it needs a composite cursor the ordered projection does not provide. Per-message `model`
+(K12b) and a per-session message count are not built.
+
+**Evidence** (each seen red before the change):
+
+- `app/server/test/context-session-close.test.ts`: K12a and K9 at the service level, real gated
+  dataset, including a reason with a quote, a backslash and Thai text round-tripping through the
+  guarded update, and stored metadata staged with `raw-mutate.ts session-internal-metadata`.
+- `app/server/test/context-session-reads.test.ts`: K10 and K11, including a departed member and
+  the R3 boundary on the tail.
+- `app/server/test/mcp-v3-forum.test.ts`: the four v3 forum tools over the real wire, inside the
+  writer gate.
