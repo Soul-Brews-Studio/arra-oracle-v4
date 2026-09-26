@@ -21,9 +21,10 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+from arra_migrate.honcho_roundtrip import names
 from arra_migrate.honcho_roundtrip.bundle import export_from_honcho, export_to_honcho
 from arra_migrate.honcho_roundtrip.diff import diff_against_input, honcho_to_bundle
-from arra_migrate.honcho_roundtrip.dump import build_spec_15_5_bank, WORKSPACE_NAME
+from arra_migrate.honcho_roundtrip.dump import build_spec_15_5_bank, dump_tier1, WORKSPACE_NAME
 from arra_migrate.honcho_roundtrip.target import FakeHonchoTarget
 
 SESSION_NAMES = ["session-one", "session-two"]
@@ -73,6 +74,27 @@ class SpecBankRoundTripDiffTests(unittest.TestCase):
             report.lossy_fields_by_construction,
             {("workspaces", "configuration"), ("sessions", "configuration")},
         )
+
+
+class DumpedBankChainTests(unittest.TestCase):
+    """2026-09-26 fix-round-two finding, analysis-8 tests #10/#11: every
+    round-trip test up to this point (including `SpecBankRoundTripDiffTests`
+    above) diffs the IN-MEMORY rows `build_spec_15_5_bank` returns, never the
+    bank `dump_tier1` reads back off disk -- so a defect in `dump_tier1`
+    itself (a wrong column filter, a missed per-session sort, a lost
+    timezone) had no test that would ever see it. Chains the whole pipeline
+    for real: `build_spec_15_5_bank` (write) -> `dump_tier1` (read back off
+    the SAME on-disk dataset) -> `export_to_honcho` -> `diff_against_input`."""
+
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp(prefix="arra-honcho-diff-dumped-"))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        build_spec_15_5_bank(self.root)
+
+    def test_the_dumped_bank_round_trips_with_no_problems(self) -> None:
+        dumped = dump_tier1(self.root, WORKSPACE_NAME)
+        report = _round_trip(dumped)
+        self.assertEqual(report.problems, [], report.problems)
 
 
 class WorkspaceConfigurationReservedKeyCollisionTests(unittest.TestCase):
@@ -345,6 +367,70 @@ class SessionPeerMembershipCorruptionIsCaughtTests(unittest.TestCase):
             any("session_peers[" in p and "expected members" in p for p in report.problems),
             report.problems,
         )
+
+
+class WorkspaceNameCorruptingHonchoTarget(FakeHonchoTarget):
+    """2026-09-26 fix-round-two finding: `_diff_workspace`'s `"name"` entry
+    (`handled["name"] = (iw["name"], ow["name"], True)`) is a `must_equal`
+    comparison the verifier found NO test pins -- flipping that `True` to
+    `False` stayed green. Corrupts ONLY the workspace `id` on READ: every
+    other row (`peers`, `sessions`, `messages`) gets its `workspace_name`
+    from the caller-supplied constant passed to `honcho_to_bundle`, not from
+    this value, so this isolates the workspace-name comparison from every
+    other check."""
+
+    def get_workspace(self, workspace_id: str) -> dict[str, Any]:
+        row = super().get_workspace(workspace_id)
+        row["id"] = row["id"] + "-corrupted"
+        return row
+
+
+class WorkspaceNameCorruptionIsCaughtTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp(prefix="arra-honcho-diff-wsname-"))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.bank = build_spec_15_5_bank(self.root)
+
+    def test_a_renamed_workspace_is_caught(self) -> None:
+        target = WorkspaceNameCorruptingHonchoTarget()
+        export_to_honcho(target, self.bank)
+        export = export_from_honcho(target, WORKSPACE_NAME, SESSION_NAMES)
+        returned = honcho_to_bundle(export, WORKSPACE_NAME)
+        report = diff_against_input(self.bank, returned)
+
+        self.assertFalse(report.ok)
+        self.assertTrue(any(p.startswith("workspaces.name:") for p in report.problems), report.problems)
+
+
+class PeerDroppingHonchoTarget(FakeHonchoTarget):
+    """2026-09-26 fix-round-two finding: `_diff_peers`' "missing from Honcho"
+    check (diff.py) is the only place that catches a peer disappearing
+    OUTRIGHT (as opposed to surviving with a corrupted field, which every
+    other peer test here already covers) -- the verifier found removing that
+    one `if missing:` block stayed green. Silently refuses to store exactly
+    one peer, so `list_peers` never returns it."""
+
+    def create_peer(self, workspace_id: str, peer_id: str, metadata: dict[str, Any], configuration: dict[str, Any]) -> dict[str, Any]:
+        if peer_id == names.honcho_name("neo"):
+            return {"id": peer_id, "workspace_id": workspace_id, "metadata": {}, "configuration": {}, "created_at": None}
+        return super().create_peer(workspace_id, peer_id, metadata, configuration)
+
+
+class PeerMissingFromHonchoIsCaughtTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp(prefix="arra-honcho-diff-peermissing-"))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.bank = build_spec_15_5_bank(self.root)
+
+    def test_a_peer_silently_dropped_from_honcho_is_reported_missing(self) -> None:
+        target = PeerDroppingHonchoTarget()
+        export_to_honcho(target, self.bank)
+        export = export_from_honcho(target, WORKSPACE_NAME, SESSION_NAMES)
+        returned = honcho_to_bundle(export, WORKSPACE_NAME)
+        report = diff_against_input(self.bank, returned)
+
+        self.assertFalse(report.ok)
+        self.assertTrue(any(p.startswith("peers: missing from Honcho after import:") for p in report.problems), report.problems)
 
 
 if __name__ == "__main__":
