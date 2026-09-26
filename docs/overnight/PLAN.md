@@ -205,3 +205,12 @@ are part of done.
 - 23:36 **GATE 3 on `226ec10`: 1339 pass / 0 fail, 82/82 files, 183s. Probe: methods 44, HTTP 44, MCP 44, CLI 44,
   isolation failures 0.** Issue checks: 6 FAIL + 3 GAP remain. Every one belongs to wave 2 (lifecycle #29 ×2,
   search-query #30, chat #31 answerChat row + #32 ×2) or to #33's browser proof. #102 and #103 now PASS.
+- 23:42 First GitHub CI runs FAILED on timing, not logic: shards took 914–1036 s against ~160 s locally, and gated tests crossed
+  bun's 5 s default. The one logic failure (PEER_FIELDS) was already fixed. `e457b74`: `TEST_TIMEOUT_MS=60000` in CI,
+  shard logs uploaded on failure, and an unnamed shard failure now prints its log tail.
+- 23:42 MERGED chat (#32 A+B, accepted first time) and migration (#34, accepted after repair). Conflicts: registry, transport and MCP
+  (the chat slice removed the ephemeral-writer path while ops-root added the operations branch; kept both correctly) and two
+  contract amendment collisions (both kept and numbered). **Integration found what the slice gates missed**: the Python
+  kernel-import guard failed 22 subtests, because the chat and ops-root verifiers ran TS suites only. All 8 new importers were
+  reviewed as read-side and listed with reasons (`9452c52`). Python: 182 OK. The gate script (`.tmp/gate.sh`) now runs typecheck,
+  the sharded TS suite, all 4 Python suites and the live probe, and the wave scripts now require the Python guard.
