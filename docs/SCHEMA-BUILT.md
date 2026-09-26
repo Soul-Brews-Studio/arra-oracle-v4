@@ -4,6 +4,22 @@ Measured 2026-09-21 from `app/server/src/publication/storage.ts` (`TARGET_SCHEMA
 and `app/migrate-py/src/arra_migrate/target_v1/` (`TARGET_TABLE_NAMES`), not from
 `SPEC.md` and not from any discussion.
 
+**Re-measured 2026-09-27 on `e00b50b`, after the overnight R1–R22 merges: no change.** Both
+registries still hold 19 tables and 228 columns:
+
+- `TARGET_SCHEMA` was imported from `storage.ts:50-74` and every table's column and
+  nullable counts compared;
+- `target_v1.TARGET_TABLES` gives 228 fields from `to_arrow_schema()`, under registry
+  `arra-v4-target/1`.
+
+Every per-table number in the ledger below still matches. The active Python registry
+(`arra_migrate.models.TABLES`) is still 15 tables / 152 fields. No overnight ruling added a
+table:
+
+- R10 made `conclusion` a type term;
+- R5 moved where two operations tables are *read*, not their shape (§3);
+- R7 kept several embedding profiles in the one `search_chunks_v1` (§3).
+
 Every earlier ASCII in this repo's discussions describes a **different** database
 than the one the TypeScript runtime will open. This file is the correction, and
 the drift is named in section 0 rather than quietly fixed.
@@ -191,17 +207,37 @@ active Python registry was moved to match. See `DATABASE-HISTORY.md` section 3.
 
 ---
 
-## 3 · Three things the diagram cannot show
+## 3 · Four things the diagram cannot show
 
 **`embedding` is `fixed_size_list<float32?>[384]`.** The dimension is frozen by
-the Arrow column type, not by config. Changing the embedding model means a new
-table version — hence the `_v1` suffix on `search_chunks_v1`, which is the only
-table carrying one.
+the Arrow column type, not by config. Only a different *dimension* needs a new
+table version, which is why `search_chunks_v1` is the only table with a suffix.
+A different model at 384 dimensions does not need one. It is a new
+`embedding_profile` value in the same table (overnight R7, DESIGN.md §11
+amendment).
 
-**Timestamps split by tier.** Tiers 1 and 2 use `timestamp[us]`. `traces` and
-`mcp_calls` use `int64` for `created_at` / `updated_at`. That is inherited from
-v3's trace format, not a design choice made here, and it means a query joining a
-trace to a revision cannot compare the two time columns directly.
+- Every chunk row stores its profile id, which defaults to
+  `ollama/all-minilm/384/none` (`publication/search-chunk.profiles.ts:75-84`).
+- Semantic search reads only the active profile's `ready` rows.
+- The model digest is pinned per dataset outside the table, in
+  `.embedding-profile-pins.json` (R20).
+
+**Timestamps split by tier.** Every time column is `timestamp[us]` (25
+columns) except five `int64` ones, all in two tables (re-measured by importing
+`TARGET_SCHEMA`):
+
+- `traces.session_from_ts`, `traces.session_to_ts`, `traces.created_at`,
+  `traces.updated_at`;
+- `mcp_calls.created_at`.
+
+That is inherited from v3's trace format, not a design choice made here, and it
+means a query joining a trace to a revision cannot compare the two time columns
+directly. The frozen contracts require
+stored `timestamp[us]` values to be millisecond-aligned: a sub-millisecond value
+fails closed rather than being truncated on read (for example
+`context-ingestion-v1.md:57`, `read-cursor-v1.md:30`). The case hit in practice
+was `workspaces.created_at` written by the dev seed. It is now fixed at the
+producer (R1/R2; `docs/overnight/LANCEDB-FACTS.md` §1).
 
 **There are no foreign keys.** LanceDB has none. Every "FK" above is a
 convention enforced in application code — which is why `supersede_log` snapshots
@@ -225,7 +261,11 @@ hold rows that codec rejects. The two readers withhold such a row and report
 its id in `unreadable` rather than failing the page. The call-log writer now
 records `session_name`/`peer_name` only in the reader's grammar, and anything
 else as null, flagged in `h_metadata.invalid_fields`. See the R5 amendment in
-`app/docs/contracts/authorization-integration-v1.md`.
+`app/docs/contracts/authorization-integration-v1.md`. Per R19, `connections.method`
+is the SPEC §7.2 *auth* method, `"bearer"` for every row today (not the
+transport), and `principal` is the credential id. `mcp_calls` rows come only from
+the MCP path (`auth/service.ts` → `logCall`). The HTTP knowledge route writes no
+audit row.
 
 ---
 
@@ -294,11 +334,29 @@ bank concept is Hindsight's. Every attribution below is from source.
 
 ### What this means for the UI
 
-`app/ui/v2` is modelled on Honcho's dashboard, which means it currently shows
-**only the Honcho third**: peers, sessions, messages, assembled context and the
-dialectic answer. It shows nothing of tier 2 -- no nodes, no revisions, no
-supersede chain, no taxonomy, no traces. Those are the tables that make this
-ours rather than a Honcho clone, and they are invisible in the UI.
+*Corrected 2026-09-27.* When this section was written, `app/ui/v2` showed only the
+Honcho third. That is no longer true. The overnight #33 slice added the tier-2
+surfaces, with screenshots in `docs/overnight/UI-PROOF.md`:
 
-That is a gap in the UI, not in the schema, and it is the obvious thing for a
-`v3/` to answer.
+- nodes;
+- accepted revision history and a side-by-side revision diff;
+- lifecycle (retire, supersede, eligibility, history);
+- evidence review (associations and dependents);
+- traces;
+- chat with citations.
+
+A name scan of the UI's non-test source (`git ls-files app/ui/v2/src`, 87 files, comments
+stripped, each of the 57 `KNOWLEDGE_METHOD_NAMES` matched as a whole word) finds 30 called.
+The other 27 are absent from the UI. Five of those are named only in comments, never called:
+`getMessage`, `getChatSettings`, `createTrace`, `createSessionLink`, `listTraces`. The other 22:
+
+- search: `searchKnowledgeKeyword`, `searchKnowledgeSemantic`;
+- taxonomy, everything but seeding (`seedReservedVocabularies`), `getVocabulary` and
+  `getTerm`: `createVocabulary`, `createTerm`, `renameTerm`, `retireTerm`,
+  `reparentTerm`, `lookupVocabularyByName`, `lookupTermByName`, `listTerms`,
+  `listTermUsage`;
+- derived search index: `indexRevisionChunks`, `embedPendingChunks`,
+  `writeChunkEmbedding`, `reconcileSearchChunks`, `listSearchChunks`,
+  `getSearchFreshness`;
+- sessions: `listSessionMembers`, `closeSession`, `advanceReadCursor`;
+- `knowledgeStats`, `reconcileRevisionAssociations`.

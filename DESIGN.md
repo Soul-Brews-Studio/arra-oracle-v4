@@ -6,6 +6,8 @@
 
 > Current delivery overlay: [delivery gates](app/docs/contracts/delivery-gates.md) records accepted isolated physical/byte/source contracts, scoped reads, pure authorization policy `eb281cc` and local HTTP/MCP/CLI/browser integration `11cf723`. The running spike was not restarted; target19 remains isolated and #25 remains open for future target-service/reference coverage. Earlier built-state snapshots below remain historical.
 
+> Overnight status (2026-09-27): what is built now against what is still target is in the closing section, "Amendment 2026-09-26 (overnight all (R1-R22) — docs corrected from measured source)". The rulings are in [`docs/overnight/DECISIONS.md`](docs/overnight/DECISIONS.md). The body below is unchanged.
+
 # v4 revised full design: conversation, knowledge, context, and LanceDB
 
 <!-- arra-v4:full-revision-after-honcho:2026-09-20 -->
@@ -1191,3 +1193,72 @@ Arrows summarize order; issues hold full dependencies. Proposed refinements: cap
 - Honcho: connected 40-tool contracts + read-only evidence in #35, not older local 3.0.12 alone. [MCP instructions](https://github.com/plastic-labs/honcho/blob/main/mcp/instructions.md) are reference, not requirements.
 
 Written by Codex (AI), speaking as itself. Prior discussions remain historical records; this revision does not assert a completed migration, full test pass, or production readiness.
+
+## Amendment 2026-09-26 (overnight all (R1-R22) — docs corrected from measured source)
+
+*Added 2026-09-27 by Claude Opus 5.5 (AI) and measured on `v4/overnight-26sep` `e00b50b`.
+This is a pointer, not a rewrite. The design above stands as written on 2026-09-20. This
+section records which parts of it are built now, so the snapshot in §1 is not read as current.
+The rulings are in [`docs/overnight/DECISIONS.md`](docs/overnight/DECISIONS.md) (R1–R22). The
+evidence will be in [`docs/overnight/PROOF.md`](docs/overnight/PROOF.md), which the overnight
+driver writes at the end of the run; it is not yet written on `e00b50b`. The measured detail,
+with file:line citations, is in [AGENTS.md "Current implementation"](AGENTS.md).*
+
+Three headline claims above are superseded by fresh source:
+
+- "15 built tables / 19 proposed" (§"What changed"). The 19 tables are built and enforced:
+  TypeScript `TARGET_SCHEMA` equals Python `target_v1`, 19 tables / 228 fields. The default
+  migrator still creates the 15.
+- "8 tools, auth absent" (§1 `[L]`, evidence list). MCP now serves 65 tools, 8 legacy plus 57
+  `kb_*`, or 90 when `ARRA_MCP_V3_COMPAT=1`. Bearer auth from an `arra-auth/v1` policy file
+  is required (#25, closed).
+- "ICU full-text search" (§1 `[B]`). Replaced by one shared `ngram(3,3)` config (R14, and the
+  §11 amendment above).
+
+```text
+ DESIGN section                    state on e00b50b                                  ruling
+ --------------------------------  ------------------------------------------------  ---------
+ §4  19-table schema               BUILT + ENFORCED; default migrator still active15; —
+                                   target-19-manifest still "proposed-not-active"
+ §5  Honcho-shaped core            BUILT: peers, sessions, members, messages, cursors #28
+     membership as read boundary   BUILT: requester must be a current member, else   R3
+                                   audit:read operator view; optional peers binding
+     session links                 BUILT; mixed continues/forked_from cycles refused  R7 (#28)
+     Relic adapter                 BUILT, isolated, read-only; NO route yet           R7 (#28)
+     round-trip vs stock Honcho    phase 1 on fixtures only; live run NOT done        R15 (#8)
+ §6  nodes + immutable revisions   BUILT                                             #26 closed
+ §7  taxonomy, type, horizon       BUILT; sealed vocab refused on every transport;   R6, R10
+                                   "conclusion" is a type term, no table (#89)
+ §8  evidence, dependents          BUILT: associations, scanDependents, reconcile    —
+ §9  corrections, supersession     BUILT: one eligibility rule, [valid_from,valid_to) R7 (#29)
+                                   at request time; listNodes hides inactive
+ §10 traces                        BUILT: create/get/list/hits; immutable, so the    R7, D11
+                                   v3 link/unlink tools are NOT carried
+ §11 embeddings / derived search   BUILT save-first: index, then embed backfill;     R7, R8,
+                                   several profiles per table; digest pinned per      R14, R20,
+                                   dataset; keyword rank without score; semantic l2   R21
+     keyword order workspace-local  BUILT (merged debd350)                            R22
+ §12 context, chat, UI             BUILT: getContext, answerChat via local Ollama;   R4, R9
+                                   coverage "full" only when nothing excluded;
+                                   UI v2 tier-2 views (docs/overnight/UI-PROOF.md)    #33
+ §13 operations and audit          BUILT in ARRA_DATA_DIR (operations root), not in  R5, R19
+                                   the target root; MCP calls only
+ §14 one service, three transports BUILT: 57 methods on HTTP, MCP and CLI (kb +      R7, R8
+                                   6 aliases); v3-compatible adapter behind a flag    R18
+ §15 durability / concurrency      one writer via the fd-42 gate; R2 multi-writer    —
+                                   and a distributed lease NOT proven
+ §16 migration 15 -> 19            BUILT operator-only on a copy (arra-migrate-copy); R11, R17
+                                   no cutover; #7, #8, #10-quality release-excluded
+ §17 acceptance                    docs/overnight/PROOF.md (driver; not yet written)  —
+```
+
+Still target and not built:
+
+- a per-workspace FTS index or statistics, which would close the R22 residual fully;
+- recall-quality judgments not written by an agent (#7, R16 phase B);
+- a live #8 round-trip against stock Honcho;
+- a workspace-creation API;
+- a release cutover;
+- non-Ollama chat providers.
+
+On GitHub, #22 and #27–#34 remain open until the integration PR is reviewed.
