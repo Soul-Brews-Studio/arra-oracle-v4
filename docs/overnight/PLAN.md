@@ -166,3 +166,9 @@ are part of done.
   search-embed (#30 A–C, Sonnet) · search-query (knowledge keyword + semantic retrieval, Opus) ·
   sessions (#28 B+D + trace hygiene, Sonnet) · v3-frame (VA fixes + V0 + K2 + parity defects, Opus).
   Integration gate (typecheck + sharded suite) running in pane `w6C:p8`.
+- 22:42 INTEGRATION GATE 1 on `99a576d`: sharded suite **1330 pass / 1 fail, 81/81 files, 144.96s** (baseline
+  496.65s single-process). The failure is a merge interaction: membership made `PEER_FIELDS` exhaustive over the
+  registry, and expose-13 added 13 methods. Fixed in `9012c59`: the 4 actor fields are bound, the other 9 are
+  reviewed as none, and the new tests are red 6/10 without the change and green 10/10 with it.
+- 22:42 First GitHub Actions runs ever on this repo: run `36252777625` (integration) and `36252787312` (v4/on-ci).
+  Install, typecheck and build passed; the suite was still running.
