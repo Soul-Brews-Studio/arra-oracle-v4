@@ -529,6 +529,21 @@ class IsolationTests(unittest.TestCase):
         for sibling in sorted(barrel.parent.glob(f"{barrel.stem}.*.ts"))
     )
 
+    #: v3-compatible adapter (#31 legacy adapters, R18), reviewed at the
+    #: overnight merge of 2026-09-26: each reuses a contract helper for the
+    #: SAME purpose the kernel does, so a v3 write validates exactly like a v4
+    #: one instead of carrying a second copy of the rules.
+    #:   - publish.ts: CANONICAL_VERSION / SCHEMA_VERSION constants for the
+    #:     revision envelope it builds (revision-v1).
+    #:   - renderResearchNote.ts, normalizeProject.ts: normalizeRepo /
+    #:     requireUrl for the evidence links a research note carries (evidence-v1).
+    OVERNIGHT_HELPER_REUSE = (
+        TS_ROOT / "mcp" / "legacy-v3" / "publish.ts",
+        TS_ROOT / "mcp" / "legacy-v3" / "renderResearchNote.ts",
+        TS_ROOT / "mcp" / "legacy-v3" / "normalizeProject.ts",
+    )
+    HELPER_REUSE_ALLOWED = HELPER_REUSE_ALLOWED + OVERNIGHT_HELPER_REUSE
+
     #: The publication kernel is internal: no active source may import it.
     PUBLICATION_FILES = (
         TS_ROOT / "publication" / "errors.ts",
@@ -690,6 +705,10 @@ class IsolationTests(unittest.TestCase):
         TS_ROOT / "mcp" / "connections.listConnections.ts",
         TS_ROOT / "mcp" / "operations.listPage.ts",
         TS_ROOT / "knowledge" / "transport.requireBoundPeers.ts",
+        #   - knowledge/transport.indexProfile: reads CHUNKER_VERSION and
+        #     EMBEDDING_DIMENSION, constants, to name the profile a server-side
+        #     index request uses (R8 backfill); no kernel call.
+        TS_ROOT / "knowledge" / "transport.indexProfile.ts",
     )
 
     def test_no_active_server_source_imports_the_publication_kernel(self):
