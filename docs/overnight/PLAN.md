@@ -202,3 +202,6 @@ are part of done.
   resolved: `mcp/index.ts` keeps both the R3 binding check and the R5 operations branch; the `connections.ts` comment
   keeps the #105 correction; the contract keeps both amendments. **R19**: `connections.method` = the SPEC §7.2 auth method,
   `bearer` (red → green). The UI v2 bundle was rebuilt from the merged source; two slices had each committed their own. Gate 3 is running.
+- 23:36 **GATE 3 on `226ec10`: 1339 pass / 0 fail, 82/82 files, 183s. Probe: methods 44, HTTP 44, MCP 44, CLI 44,
+  isolation failures 0.** Issue checks: 6 FAIL + 3 GAP remain. Every one belongs to wave 2 (lifecycle #29 ×2,
+  search-query #30, chat #31 answerChat row + #32 ×2) or to #33's browser proof. #102 and #103 now PASS.
