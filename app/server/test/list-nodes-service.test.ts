@@ -32,7 +32,12 @@ let beta: SeededWorkspace;
 const nodeId = (seed: string) => `${seed}${"0".repeat(Math.max(0, 21 - seed.length))}`.slice(0, 21);
 const revId = (seed: string) => `${seed}${"0".repeat(Math.max(0, 21 - seed.length))}`.slice(0, 21);
 
-type ListNodesPage = { rows: Record<string, unknown>[]; next_after_id: string | null; total: string | null };
+type ListNodesPage = {
+  rows: Record<string, unknown>[];
+  next_after_id: string | null;
+  next_after_updated_at: string | null;
+  total: string | null;
+};
 
 async function publish(
   request: unknown,
@@ -55,6 +60,10 @@ async function listNodes(request: {
   include_total: boolean;
   include_inactive: boolean;
   type_term: string | null;
+  all_term_ids?: string[] | null;
+  any_term_ids?: string[] | null;
+  order?: "id_asc" | "updated_desc";
+  after_updated_at?: string | null;
 }): Promise<ListNodesPage> {
   const reader = await openPublicationReader(fixture.datasetRoot);
   return (await reader.listNodes(encodeRequest(request))) as ListNodesPage;

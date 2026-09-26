@@ -472,3 +472,77 @@ actually excludes retired/superseded content end-to-end, not just that parsing s
 `nodes list` alias test (unchanged assertion, now the fix-round regression pin) proves the alias's
 wire body without `--history` is byte-for-byte identical to what it always sent -- this is the
 `invalid_request` regression the verifier measured on the alias's real HTTP/MCP path, now closed.
+
+## 13. Amendment 2026-09-26 (overnight R18 (K3 + K4 + V6 + list/reflect))
+
+Implements `docs/overnight/DECISIONS.md` R18 and `docs/overnight/V3-PARITY.md` §5's K3 ("term
+filter on `listNodes`") and K4 ("time order on `listNodes`"), dispatched to the v3-list slice.
+§§1-12 above are unchanged; this section only widens `listNodes`'s own request/response grammar
+(§12 point 4), the same section R7's `include_inactive` amendment already lives in.
+
+**Why now, together.** `oracle_list`/`oracle_reflect`/`oracle_inbox`/`oracle_recap` (the v3-compatible
+adapter's V6 slice) all need to ask for "entries carrying this tag" and "newest first" without a
+second, adapter-side full scan-and-sort of every page `listNodes` already returns -- the "applied
+after the page, within the kernel's scan window" degraded behaviour `V3-PARITY.md §4.3` originally
+designed `oracle_list`'s `type` filter and its `order_changed` warning around. K3 and K4 remove
+both: the filter and the order both happen INSIDE the kernel's own bounded scan, exactly where
+`type_term` and `include_inactive` already happen.
+
+**1. K3 -- `all_term_ids` / `any_term_ids`.** Two new keys on `parseListNodes`, next to
+`type_term`, following the SAME "optional key, admitted only when the caller sends it" idiom §12
+point 4's fix round already established for `include_inactive` -- NOT the "required-but-nullable"
+shape `V3-PARITY.md §5`'s table first sketched, which would have broken every caller that predates
+this amendment (`oracle_list`'s own V2-degraded callers included) the exact way a required
+`include_inactive` already did once. Omitted means no filter; present means a nonempty,
+duplicate-free array of at most 20 (`MAX_FILTER_TERM_IDS`) nanoid21 term ids -- an empty array or an
+explicit `null` is `invalid_request`, never a second spelling of "omitted" (the same rule
+`include_inactive: null` states).
+
+- `all_term_ids`: every listed id must be assigned on the candidate's CURRENT head revision.
+- `any_term_ids`: at least one listed id must be assigned.
+- Both read `node_revisions.term_snapshot_json` (`service.snapshotTermIds.ts`, the general form
+  `service.deriveNodeType.ts` already specializes to the reserved `type` entry) -- never a live
+  `node_revision_terms` join, for the identical reason `type_term` already avoids one: that
+  projection lags `reconcileRevisionAssociations` and would silently miss every unreconciled node.
+- Combined with each other (AND) and with `type_term` (AND); `all_term_ids` is itself AND across its
+  own ids, `any_term_ids` is itself OR.
+- `include_total` stays `null` whenever either is set, for the same reason it already does for
+  `type_term`: term assignment lives in JSON text, not an indexed column, so an exact count would
+  mean materializing and parsing every candidate revision -- the full scan this kernel already
+  refuses to run just to fake a total.
+- `PEER_FIELDS` (`knowledge/registry.peerFields.ts`) is unchanged: `listNodes` still binds no peer
+  field, so this amendment asserts none rather than adding one.
+
+**2. K4 -- `order` and `after_updated_at`.** A new optional `order` key, `"id_asc"` (the ORIGINAL,
+unchanged keyset order, and the default when omitted) or `"updated_desc"` (`nodes.updated_at`
+descending). A new optional `after_updated_at` key completes the `updated_desc` keyset PAIR
+alongside the existing `after_id`: present only when `order` is `"updated_desc"` (refused under the
+default order, since it would silently do nothing there), and the two travel together -- both
+`null` (the first page) or both non-null (a continuation); one set without the other is
+`invalid_request`, a half-specified cursor rather than a value this kernel guesses at.
+
+- A single-column SQL `ORDER BY updated_at` makes no promise about how it breaks a tie on that
+  column, so `updated_desc` always widens the scan window to `MAX_SCANNED_NODES` (like a
+  `type_term`/`all_term_ids`/`any_term_ids`/`include_inactive:false` filter already does) and then
+  re-sorts that window, in this process, to a deterministic `(updated_at desc, id asc)` order --
+  the SAME pair the keyset boundary predicate excludes by (`updated_at < X OR (updated_at = X AND id
+  > afterId)`). This is exact within one window; a tie wider than `MAX_SCANNED_NODES` (an
+  improbable number of nodes sharing one stored microsecond) is the same disclosed, bounded-scan
+  trade-off `MAX_SCANNED_NODES` already states for a rare `type_term` value.
+- The response gains an additive `next_after_updated_at: string | null`, alongside `next_after_id`:
+  the second half of the pair, `null` in `id_asc` mode and whenever the page exhausts the workspace.
+- `after_updated_at`'s wire shape is the exact same UTC-millisecond text `rows.ts`'s
+  `timestampToMicros` accepts; a malformed value is this request's OWN `invalid_request`, never the
+  stored-row `integrity_failure` the same bytes would raise read back off a row.
+
+**Not changed here.** The `id_asc` order's own predicate, page-boundary and `total` semantics
+(§12 point 4) are byte-identical to before this amendment for a caller that never sends `order`,
+`after_updated_at`, `all_term_ids` or `any_term_ids` -- every one of those keys is additive and
+optional. No new table, no schema change, no new registry entry (`listNodes` is already registered).
+
+**Evidence.** `app/server/test/list-nodes-service.test.ts`'s `"listNodes: all_term_ids / any_term_ids
+filter (K3)"` and `"listNodes: order (K4)"` describe blocks: red on this round's HEAD before this
+change (every new key was an unrecognized field, `invalid_request` from `closedKeys`), green after --
+including a real tie (two nodes published under the identical instant) walked, one row per page, to
+prove the `(updated_at desc, id asc)` tie-break is deterministic and the keyset pair skips and
+repeats nothing across a page boundary.
