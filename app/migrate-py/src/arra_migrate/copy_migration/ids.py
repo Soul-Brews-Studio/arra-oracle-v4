@@ -11,6 +11,10 @@ carry ids like ``m_muigqmxf_qchtyc`` or ``msg-001``. Every such id goes through
   - a second legacy id landing on the same target id raises ``IdCollision``,
     which the caller reports as a rejected record -- never a silent merge.
 
+Node ids are the one exception to "keep a nanoid21 id": a legacy memory's node
+id is ALWAYS ``legacy_node_id`` (ruling R18 D1), byte-for-byte the derivation the
+v3-compatible MCP resolver uses to find a migrated memory by its legacy id.
+
 Workspace ids are NOT mapped: ``read-cursor.validateWorkspaceRow`` states they
 are physical required strings with no nanoid decision, so they pass through.
 
@@ -28,6 +32,11 @@ NANOID21 = re.compile(r"^[A-Za-z0-9_-]{21}$")
 DOMAIN = "arra-migrate-copy/v1"
 
 
+#: R18 D1 (docs/overnight/DECISIONS.md, V3-PARITY.md A3). Do not change alone:
+#: the v3-compat resolver computes the same bytes.
+LEGACY_NODE_DOMAIN = "arra-legacy-node/v1"
+
+
 class IdCollision(ValueError):
     """Two distinct legacy keys would share one target id."""
 
@@ -38,6 +47,13 @@ def is_nanoid21(value: object) -> bool:
 
 def derive_nanoid21(kind: str, workspace: str, legacy_key: str) -> str:
     material = f"{DOMAIN}\n{kind}\n{workspace}\n{legacy_key}".encode()
+    return base64.urlsafe_b64encode(hashlib.sha256(material).digest()).decode("ascii")[:21]
+
+
+def legacy_node_id(workspace: str, legacy_id: str) -> str:
+    """base64url(sha256("arra-legacy-node/v1\n" + ws + "\n" + id))[0:21]."""
+
+    material = f"{LEGACY_NODE_DOMAIN}\n{workspace}\n{legacy_id}".encode()
     return base64.urlsafe_b64encode(hashlib.sha256(material).digest()).decode("ascii")[:21]
 
 
@@ -54,13 +70,18 @@ class IdMap:
         id of that kind exists, e.g. a node's first revision); it is always
         derived, never kept."""
 
+        if derived_key is None and is_nanoid21(legacy_id):
+            return self.assign_fixed(kind, workspace, legacy_id, legacy_id, "kept")
+        return self.assign_fixed(kind, workspace, legacy_id,
+                                 derive_nanoid21(kind, workspace, derived_key or legacy_id), "derived")
+
+    def assign_fixed(self, kind: str, workspace: str, legacy_id: str, target: str, basis: str) -> str:
+        """Record a target id computed by a named rule (e.g. R18 D1), with the
+        same collision refusal as ``assign``."""
+
         key = (kind, workspace, legacy_id)
         if key in self._forward:
             return self._forward[key]
-        if derived_key is None and is_nanoid21(legacy_id):
-            target, basis = legacy_id, "kept"
-        else:
-            target, basis = derive_nanoid21(kind, workspace, derived_key or legacy_id), "derived"
         owner = self._claimed.get((kind, target))
         if owner is not None and owner != (workspace, legacy_id):
             raise IdCollision(f"{kind}: {legacy_id!r} and {owner[1]!r} both map to {target}")

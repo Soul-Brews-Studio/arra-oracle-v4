@@ -5,7 +5,8 @@ through ``publishRevision`` (Bun is the one canonicalizer). Nothing in here
 computes a digest or canonical JSON.
 
 Per memory (ruling R11 + R17, docs/overnight/DECISIONS.md):
-  - node id / first revision id: deterministic from the legacy id (ids.py);
+  - node id: R18 D1 ``legacy_node_id`` (the v3-compat resolver's formula);
+    first revision id: deterministic from the legacy id (ids.py);
   - ``type``: an EXACT reserved term (note, conclusion, learning, discussion,
     correction) is kept; anything else becomes ``note`` and the original
     string becomes a term in the workspace's ``legacy_type`` tag vocabulary;
@@ -33,7 +34,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .ids import IdCollision
+from .ids import IdCollision, legacy_node_id
 from .report import REPORT_VERSION
 from .state import CopyState
 from .tables import read_rows
@@ -131,7 +132,7 @@ def build_knowledge_plan(source_db: Any, state: CopyState, candidate_root: str) 
                            detail=f"{row[bad].isoformat()} is not millisecond-exact; refusing to round")
             continue
         try:
-            node_id = state.ids.assign("nodes", ws, key)
+            node_id = state.ids.assign_fixed("nodes", ws, key, legacy_node_id(ws, key), "arra-legacy-node/v1 (R18 D1)")
             revision_id = state.ids.assign("node_revisions", ws, key, derived_key=f"{key}#1")
         except IdCollision as error:
             state.rejected("memories", key, ws, "id_collision", "/id", detail=str(error))

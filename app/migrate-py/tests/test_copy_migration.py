@@ -24,6 +24,7 @@ What it does not prove: production cutover, R2, or recall quality.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import shutil
@@ -131,6 +132,11 @@ class CopyMigrationTests(unittest.TestCase):
         self.assertNotIn("timestamp written by a microsecond clock", contents)
         self.assertIn("ingested_at=migration_intake;original_ingestion_unknown", self.report["assumptions"])
 
+    def test_trace_hit_kind_outside_target_kinds_is_rejected_with_a_record(self):
+        record = next(r for r in self._records() if r["table"] == "trace_hits")
+        self.assertEqual((record["outcome"], record["code"]), ("rejected", "kind_outside_target_kinds"))
+        self.assertEqual(_rows(self.candidate, "trace_hits"), [])
+
     def test_orphan_term_is_a_record_not_a_crash(self):
         record = next(r for r in self._records() if r["table"] == "terms" and r["legacy_key"] == "term-orphan")
         self.assertEqual(record["outcome"], "unresolved")
@@ -162,6 +168,22 @@ class CopyMigrationTests(unittest.TestCase):
         self.assertEqual(reply["in_reply_to"], original["public_id"], "in_reply_to rewritten through the map")
 
     # -- knowledge: memories -> nodes/revisions -----------------------------
+
+    def test_node_ids_use_the_r18_d1_legacy_node_derivation_byte_for_byte(self):
+        """The v3-compat resolver finds a migrated memory by this exact formula."""
+
+        def legacy_node_id(ws, legacy_id):
+            digest = hashlib.sha256(f"arra-legacy-node/v1\n{ws}\n{legacy_id}".encode()).digest()
+            return base64.urlsafe_b64encode(digest).decode("ascii")[:21]
+
+        revisions = {r["node_id"]: r for r in _rows(self.candidate, "node_revisions")}
+        for row in legacy_rows()["memories"]:
+            if row["id"] == "m_muigr3dd_subms":
+                continue
+            with self.subTest(memory=row["id"]):
+                node_id = legacy_node_id(row["workspace_name"], row["id"])
+                self.assertIn(node_id, revisions)
+                self.assertEqual(json.loads(revisions[node_id]["internal_metadata"])["legacy_id"], row["id"])
 
     def test_memories_become_nodes_with_an_accepted_first_revision(self):
         nodes = _rows(self.candidate, "nodes")

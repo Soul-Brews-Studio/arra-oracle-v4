@@ -107,8 +107,11 @@ def run_copy_migration(
             "r11_type": "exact reserved type term kept; else note + original string as a legacy_type tag term",
             "r17_vocabulary": "legacy vocabularies: cardinality many, required false, hierarchy flat",
             "r17_null_reason": NULL_REASON,
-            "trace_status_map": "IMPLEMENTER DECISION (not R11/R17): raw->open, distilled->complete, "
-                                "retired->abandoned; legacy value kept on each trace record",
+            "trace_status_map": "raw->open (R17, corrected 22:00); distilled->complete and "
+                                "retired->abandoned are an IMPLEMENTER extension, not ruled; "
+                                "legacy value kept on each trace record",
+            "node_ids": "R18 D1 legacy_node_id: base64url(sha256('arra-legacy-node/v1\\n'+ws+'\\n'+id))[0:21]",
+            "trace_hits": "kind outside TARGET_KINDS rejected; inside it unresolved (no structured locator)",
             **dict(report.policies),
         },
         "readback": readback,

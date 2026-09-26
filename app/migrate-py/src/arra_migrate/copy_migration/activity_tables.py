@@ -10,15 +10,16 @@ column; the knowledge plan carries it into the conclusion revision's
 ``traces.status``: the legacy closed set is raw | distilled | retired; the trace
 kernel's closed set is open | complete | abandoned (trace-v1.md), and a stored
 value outside it reads back as ``integrity_failure``. The copy maps
-raw -> open, distilled -> complete, retired -> abandoned and records the legacy
-value on the row's report record. This mapping is an IMPLEMENTER decision made
-tonight, not part of rulings R11/R17; it is named in the report's policies and
-in the target-v1-decisions amendment so it can be overturned.
+raw -> open (ruled: R17 as corrected 22:00), and -- an IMPLEMENTER extension,
+not ruled -- distilled -> complete, retired -> abandoned. The legacy value is
+kept on the row's report record, and the policy is named in the report and in
+the trace-v1 amendment so it can be overturned.
 
-``trace_hits`` is reported UNRESOLVED row by row: the target requires a
-structured ``target`` locator validated against an evidence kind, and a legacy
-free-text ``ref`` with kind ``file`` does not determine one without inventing
-it. The legacy rows stay intact in the source.
+``trace_hits`` (R17 as corrected 22:00): a legacy ``kind`` outside the evidence
+``TARGET_KINDS`` (e.g. ``file``) is REJECTED with a record. A kind inside it is
+UNRESOLVED: the target requires a structured ``target`` locator, and a legacy
+free-text ``ref`` does not determine one without inventing it. The legacy rows
+stay intact in the source.
 """
 
 from __future__ import annotations
@@ -34,6 +35,9 @@ Row = dict[str, Any]
 #: legacy status -> trace-v1 status. Target values already in the closed set pass through.
 TRACE_STATUS_MAP = {"raw": "open", "distilled": "complete", "retired": "abandoned"}
 TARGET_TRACE_STATUSES = ("open", "complete", "abandoned")
+#: evidence-v1.ts TARGET_KINDS, the closed set a trace hit's kind must be in.
+TARGET_KINDS = ("node_revision", "trace", "message", "session", "relic_event", "relic_session",
+                "code", "commit", "issue", "discussion", "url")
 _NULLABLE_NONEMPTY = ("session_name", "peer_name", "mode", "session_id", "confidence")
 
 
@@ -92,11 +96,13 @@ def copy_traces(rows: list[Row], state: CopyState) -> list[Row]:
 def copy_trace_hits(rows: list[Row], state: CopyState) -> list[Row]:
     for row in rows:
         trace = state.traces.get(row["trace_id"])
-        state.unresolved(
-            "trace_hits", f"{row['trace_id']}|{row['position']}", trace["workspace"] if trace else None,
-            "locator_unmappable", "/target",
-            detail=f"legacy kind={row['kind']!r} ref={row['ref']!r} has no structured evidence locator",
-        )
+        key, ws = f"{row['trace_id']}|{row['position']}", trace["workspace"] if trace else None
+        detail = f"legacy kind={row['kind']!r} ref={row['ref']!r}"
+        if row["kind"] not in TARGET_KINDS:
+            state.rejected("trace_hits", key, ws, "kind_outside_target_kinds", "/kind", detail=detail)
+        else:
+            state.unresolved("trace_hits", key, ws, "locator_unmappable", "/target",
+                             detail=detail + " has no structured evidence locator")
     return []
 
 
