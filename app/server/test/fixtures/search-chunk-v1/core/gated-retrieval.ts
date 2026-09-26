@@ -19,9 +19,14 @@
 //   harness              -> test-side dataset inspection/surgery on
 //                           search_chunks_v1's rows and indexes (never
 //                           product code)
+//
+// The writer's clock reads `payload.clockMs` (one fixed instant) unless an op
+// carries its own `clockMs`: from that op on, the clock reads that instant.
+// That is how a test gives two publications different acceptance times
+// (overnight R22's second ordering key) without a wall clock.
 const [, , datasetRoot, payloadJson] = Bun.argv;
 const payload = JSON.parse(payloadJson ?? "{}") as {
-  ops: Array<{ label: string; facade: "publication" | "context" | "reader" | "reader_other" | "harness"; method: string; request?: any }>;
+  ops: Array<{ label: string; facade: "publication" | "context" | "reader" | "reader_other" | "harness"; method: string; request?: any; clockMs?: number }>;
   revisionIds: string[];
   clockMs?: number;
   embedderProfile: string;
@@ -50,9 +55,10 @@ const embedder = {
 };
 
 let revisionIndex = 0;
+let nowMs = payload.clockMs ?? 1_758_412_800_000;
 const writer = await openEvidenceWriter(datasetRoot!, {
   newRevisionId: () => payload.revisionIds[revisionIndex++] ?? `fallback${String(revisionIndex).padStart(13, "0")}`,
-  clock: () => payload.clockMs ?? 1_758_412_800_000,
+  clock: () => nowMs,
   sourceNamespace: null,
 });
 const reader = await openEvidenceReader(datasetRoot!, { embedder });
@@ -182,6 +188,7 @@ const describeError = (error: unknown): Record<string, unknown> => {
 const results: Record<string, unknown> = {};
 try {
   for (const op of payload.ops) {
+    if (typeof op.clockMs === "number") nowMs = op.clockMs;
     try {
       if (op.facade === "harness") {
         results[op.label] = { ok: true, value: await harness[op.method]!(op.request) };

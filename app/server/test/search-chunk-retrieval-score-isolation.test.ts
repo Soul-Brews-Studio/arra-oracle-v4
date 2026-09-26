@@ -1,6 +1,6 @@
 /**
  * #30 / #10 keyword score isolation -- overnight R21 (docs/overnight/DECISIONS.md,
- * search-polish slice).
+ * search-polish slice), and keyword ORDER isolation -- overnight R22.
  *
  * `search-chunk-v1.md`'s "Still NOT claimed" section measured a live leak: one
  * workspace's raw BM25 `score` for an UNCHANGED hit set fell from 5.65 to 2.38
@@ -10,29 +10,28 @@
  * on every workspace's text, so a caller can read another workspace's term
  * statistics off a number it was never granted access to.
  *
- * R21's fix: `searchKnowledgeKeyword` returns an integer `rank` (1..n, stable
- * order -- score then node id, as before) and never a raw score. The first
- * `describe` below is the failing-first proof of exactly that: change ONLY
- * workspace BETA's corpus, and a SINGLE-hit answer's raw `score` moved before
- * the fix; its `rank` is always `1` after, regardless of what any other
- * workspace holds.
+ * R21's fix: `searchKnowledgeKeyword` returns an integer `rank` (1..n, a
+ * stable order) and never a raw score. The first `describe` below is the
+ * failing-first proof of exactly that: change ONLY workspace BETA's corpus,
+ * and a SINGLE-hit answer's raw `score` moved before the fix; its `rank` is
+ * always `1` after, regardless of what any other workspace holds.
  *
  * That single-hit proof is deliberately narrow, and an independent verifier
- * (2026-09-27) showed why it cannot be read as "isolation, full stop": `rank`
- * is a POSITION, and the position of a multi-hit answer still comes from BM25
- * order, which is computed from the shared index's corpus-wide IDF and
- * average document length. Changing only BETA's corpus can still swap which
- * of ALPHA's OWN nodes ranks first -- and therefore, at a bounded `limit`,
- * which of ALPHA's own nodes is even returned. `rank` closes the raw-score
- * VALUE leak; it does not make hit ORDER (or limit-bound membership)
- * workspace-local. The second `describe` below is the failing-first proof of
- * THAT residual leak (mirrors the verifier's own repro), and it stays green
- * on purpose: it pins the honest, currently-true claim -- the SET of node ids
- * never crosses a workspace boundary and the raw score is never on the wire,
- * but the ORDER between two of ALPHA's own hits is not guaranteed stable
- * against BETA's writes. Closing that fully needs a per-workspace index or
- * per-workspace statistics (R21's own "reverse by" line) -- out of scope for
- * this slice, and recorded, not hidden, in `search-chunk-v1.md`'s amendment.
+ * (2026-09-27) showed why: `rank` is a POSITION, and under R21 the position of
+ * a multi-hit answer still came from BM25 order, computed from the shared
+ * index's corpus-wide IDF and average document length. Changing only BETA's
+ * corpus swapped which of ALPHA's OWN nodes ranked first (A1,A2 -> A2,A1) --
+ * and therefore, at `limit: 1`, which of ALPHA's own nodes came back at all.
+ *
+ * R22 closes that: BM25 may only SELECT candidates; the ORDER is computed from
+ * ALPHA's own rows (occurrences of the query in the head text, then the head's
+ * acceptance instant, then node id). The second `describe` below is the same
+ * repro, inverted: it was green while it pinned the leak, and it is now the
+ * failing-first proof that the leak is gone -- ALPHA's answers for a
+ * multi-hit query (whole, and cut to `limit: 1`) and a single-hit query are
+ * byte-identical before and after BETA-only writes. What R22 does NOT close
+ * (which candidates enter when ALPHA has more of them than the overfetch
+ * reads) is measured in `search-chunk-retrieval-overfetch-bound.test.ts`.
  *
  * Semantic search is untouched here: `distance` is L2 between the query
  * vector and one stored row's own vector, never a corpus-wide statistic, so
@@ -174,22 +173,25 @@ describe("#30 / #10 keyword score isolation (R21) -- single hit, raw score remov
   );
 });
 
-// ── Residual leak: rank order (and, at a bounded limit, membership) is NOT
-// workspace-local -- the verifier's own repro, kept honest ──────────────────
+// ── Order isolation (R22): the verifier's own repro, inverted ─────────────
 //
-// Two ALPHA nodes both contain the query once, so a caller sees BOTH; which
-// one this answer's `rank: 1` names is decided by BM25, and BM25's IDF is a
-// property of the shared index, not of ALPHA's corpus alone. A1 additionally
-// repeats the query's own "abc" trigram, A2 repeats its "def" trigram; BETA
-// then indexes nodes that repeat ONLY "abc" (never the query itself, so BETA
-// never becomes a candidate) -- exactly enough to depress "abc"'s corpus-wide
-// IDF and make A2 outrank A1, with nothing ALPHA wrote changing in between.
+// Two ALPHA nodes both contain the query once. A1 additionally repeats the
+// query's own "abc" trigram, A2 repeats its "def" trigram; BETA then indexes
+// nodes that repeat ONLY "abc" (never the query itself, so BETA never becomes
+// a candidate) -- exactly enough to depress "abc"'s corpus-wide IDF and make
+// A2 outrank A1 in BM25, with nothing ALPHA wrote changing in between. Under
+// R21 that flipped ALPHA's answer; under R22 BM25 decides nothing about the
+// order, and both nodes hold the query once under one fixed writer clock, so
+// node id decides: A1 then A2, before and after.
 const ORDER_TERM = "orderleakabcdef";
 const ORDER_A1 = pad("orderLeakA1");
 const ORDER_A1_REV = pad("orderLeakA1Rev");
 const ORDER_A2 = pad("orderLeakA2");
 const ORDER_A2_REV = pad("orderLeakA2Rev");
 const ORDER_BETA_ABC_NODE_COUNT = 12; // matches the verifier's own measurement
+// A single-hit query in the same corpus: only A1's body repeats "abc" three
+// times running, and it is made of exactly the trigrams BETA depresses.
+const ORDER_SINGLE_TERM = "abcabcabc";
 
 function buildOrderLeakOps(fixture: Fixture): { ops: Op[]; revisionIds: string[] } {
   const alpha = fixture.workspaces[ALPHA]!;
@@ -213,13 +215,20 @@ function buildOrderLeakOps(fixture: Fixture): { ops: Op[]; revisionIds: string[]
       method: "indexRevisionChunks",
       request: { workspace_name: workspace, node_id: node, revision_id: revision, chunker_version: CHUNKER_VERSION, embedding_profile: { name: PROFILE, dims: DIMS } },
     });
-  const keyword = (label: string) => ops.push({ label, facade: "reader", method: "searchKnowledgeKeyword", request: { workspace_name: ALPHA, query: ORDER_TERM, limit: 2 } });
+  const keyword = (label: string, query = ORDER_TERM, limit = 2) =>
+    ops.push({ label, facade: "reader", method: "searchKnowledgeKeyword", request: { workspace_name: ALPHA, query, limit } });
+  /** Every ALPHA search, asked once before BETA's writes and once after. */
+  const searches = (when: "before" | "after") => {
+    keyword(`kw_order_${when}`);
+    keyword(`kw_order_limit1_${when}`, ORDER_TERM, 1);
+    keyword(`kw_single_${when}`, ORDER_SINGLE_TERM);
+  };
 
   publish("pub_order_a1", ALPHA, alpha, ORDER_A1, ORDER_A1_REV, `${ORDER_TERM} ${"abc".repeat(40)}`);
   index("idx_order_a1", ALPHA, ORDER_A1, ORDER_A1_REV);
   publish("pub_order_a2", ALPHA, alpha, ORDER_A2, ORDER_A2_REV, `${ORDER_TERM} ${"def".repeat(40)}`);
   index("idx_order_a2", ALPHA, ORDER_A2, ORDER_A2_REV);
-  keyword("kw_order_before");
+  searches("before");
 
   for (let i = 0; i < ORDER_BETA_ABC_NODE_COUNT; i++) {
     // Fixed-width index, as `nBeta`/`rBeta` above: `pad` fills with "0", so a
@@ -230,14 +239,14 @@ function buildOrderLeakOps(fixture: Fixture): { ops: Op[]; revisionIds: string[]
     publish(`pub_order_beta_${i}`, BETA, beta, node, revision, "abc".repeat(60));
     index(`idx_order_beta_${i}`, BETA, node, revision);
   }
-  keyword("kw_order_after");
+  searches("after");
 
   return { ops, revisionIds };
 }
 
-describe("#30 / #10 keyword rank order (R21 fix-round) -- the leak rank alone does not close", () => {
+describe("#30 / #10 keyword rank order (R22) -- BETA-only writes never reorder ALPHA's own hits", () => {
   runIt(
-    "changing ONLY workspace BETA's corpus can still swap which of ALPHA's own nodes ranks first",
+    "changing ONLY workspace BETA's corpus never changes ALPHA's order or bytes, for a multi-hit and a single-hit query",
     async () => {
       const fixture = await createFixture([ALPHA, BETA]);
       cleanups.push(fixture.cleanup);
@@ -260,20 +269,32 @@ describe("#30 / #10 keyword rank order (R21 fix-round) -- the leak rank alone do
       const before = ok("kw_order_before");
       const after = ok("kw_order_after");
 
-      // The honest, currently-true guarantee: the SET never crosses a
-      // workspace boundary, and neither answer ever carries a raw score.
+      // Kept from R21: the SET never crosses a workspace boundary, and
+      // neither answer ever carries a raw score.
       for (const answer of [before, after]) {
         expect(answer.hits.map((hit: { node_id: string }) => hit.node_id).sort()).toEqual([ORDER_A1, ORDER_A2].sort());
         for (const hit of answer.hits) expect(hit).not.toHaveProperty("score");
         expect(answer.hits.map((hit: { rank: number }) => hit.rank)).toEqual([1, 2]);
       }
 
-      // The residual leak, reproduced rather than assumed away: ALPHA wrote
-      // nothing between these two searches. Only BETA's "abc"-repeating
-      // corpus grew, and that alone flips which of ALPHA's own nodes this
-      // answer names first (and so, at `limit: 1`, which one comes back).
+      // R22: ALPHA wrote nothing between these two searches; only BETA's
+      // "abc"-repeating corpus grew -- which flipped this order under R21.
+      // Now the order is ALPHA's own (one occurrence each, one writer
+      // instant, so node id), and the bytes do not move.
       expect(before.hits.map((hit: { node_id: string }) => hit.node_id)).toEqual([ORDER_A1, ORDER_A2]);
-      expect(after.hits.map((hit: { node_id: string }) => hit.node_id)).toEqual([ORDER_A2, ORDER_A1]);
+      expect(after).toEqual(before);
+      expect(JSON.stringify(after)).toBe(JSON.stringify(before));
+
+      // At `limit: 1` the leak was which NODE came back; now it is A1 both times.
+      const limitBefore = ok("kw_order_limit1_before");
+      expect(limitBefore.hits.map((hit: { node_id: string }) => hit.node_id)).toEqual([ORDER_A1]);
+      expect(JSON.stringify(ok("kw_order_limit1_after"))).toBe(JSON.stringify(limitBefore));
+
+      // A single-hit query over exactly the trigrams BETA depressed.
+      const singleBefore = ok("kw_single_before");
+      expect(singleBefore.hits.map((hit: { node_id: string }) => hit.node_id)).toEqual([ORDER_A1]);
+      expect(singleBefore.hits[0].rank).toBe(1);
+      expect(JSON.stringify(ok("kw_single_after"))).toBe(JSON.stringify(singleBefore));
     },
     TIMEOUT_MS,
   );

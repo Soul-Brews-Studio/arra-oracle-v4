@@ -384,17 +384,17 @@ describe("#30 knowledge retrieval on a real gated dataset", () => {
 
   runIt("keyword: ordering is stable, the limit is bounded, case folds, unknown workspace is refused", () => {
     expect(ok("kw_inside_word_again")).toEqual(ok("kw_inside_word"));
-    expect(ok("kw_limit_one").hits).toHaveLength(1);
-    expect(ok("kw_limit_one").hits[0].node_id).toBe(ok("kw_inside_word").hits[0].node_id);
-    // R21: rank is this answer's own 1-based position -- the ordering
-    // guarantee (score then node id) is stable but no longer observable as a
-    // number, only as position. `rank == index + 1` alone is the shape the
-    // code always produces, so it cannot fail on its own; the explicit
-    // node-id order below is what actually pins BM25 order (a mutant that
-    // reverses or drops score ordering changes THIS, not the rank shape).
+    // R21: rank is the 1-based position; the node-id order pins the ORDER.
+    // R22: the workspace's own order, never BM25's (which put thai first):
+    // one ลืม each, one fixed writer instant, so node id -- pending, thai.
     const hits = ok("kw_inside_word").hits as Hit[];
     expect(hits.map((hit) => hit.rank)).toEqual(hits.map((_, index) => index + 1));
-    expect(hits.map((hit) => hit.node_id)).toEqual([N.thai, N.pending]);
+    expect(hits.map((hit) => hit.node_id)).toEqual([N.pending, N.thai]);
+    // R22's measured residual (search-chunk-v1.md section 18.3): `limit: 1`
+    // reads a first round of 1 x FTS_CANDIDATE_FACTOR = 4 candidate chunks and
+    // alpha holds 5 with ลืม (retired, superseded, stale included). BM25 picks
+    // the 4, so the bounded hit need not be the full answer's first: thai.
+    expect((ok("kw_limit_one").hits as Hit[]).map((hit) => [hit.node_id, hit.rank])).toEqual([[N.thai, 1]]);
     expect(nodes("kw_english_case")).toEqual([N.fox]);
     expect(failed("kw_limit_over")).toMatchObject({ code: "invalid_value", path: "/limit" });
     expect(failed("kw_unknown_workspace")).toMatchObject({ code: "invalid_reference", path: "/workspace_name" });
@@ -449,6 +449,12 @@ describe("#30 knowledge retrieval on a real gated dataset", () => {
     expect(ok("kw_after_repair").match).toBe("ngram");
     // Same answer set; BM25 scores may move once every row is indexed.
     expect(nodes("kw_after_repair").sort()).toEqual(nodes("kw_inside_word").sort());
+    // R22: a rebuilt index cannot move the answer, and both scans answer the
+    // index path's hits in its order (everything but each hit's `match`).
+    expect(ok("kw_after_repair")).toEqual(ok("kw_inside_word"));
+    const unfound = (label: string) => (ok(label).hits as Hit[]).map(({ match: _match, ...rest }) => rest);
+    expect(unfound("kw_no_index")).toEqual(unfound("kw_inside_word"));
+    expect(unfound("kw_icu_index")).toEqual(unfound("kw_inside_word"));
   });
 
   runIt("semantic: stub vectors rank nearest first by squared L2, over READY head chunks of eligible nodes only", () => {
