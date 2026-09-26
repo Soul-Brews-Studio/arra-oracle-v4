@@ -371,8 +371,17 @@ $("loadContext").onclick = async () => {
     });
     lastContextItems = result.items || [];
     $("contextMsg").textContent = `${result.items.length} item(s) · coverage ${result.coverage}${result.excluded.length ? ` · ${result.excluded.length} excluded` : ""}`;
+    // #85 / R4: unauthorized exclusions arrive as ONE anonymous count, never
+    // by id; a null public_id is the linked-session bound, which names nothing.
+    const describeExcluded = (x) =>
+      x.reason === "unauthorized"
+        ? `${esc(x.count)} unauthorized (not identified)`
+        : x.public_id === null
+          ? "linked sessions past the bound (not searched)"
+          : `${esc(x.session_name)}/${esc(x.public_id)} (${esc(x.reason)})`;
+    const omitted = result.excluded_omitted ? ` · +${esc(result.excluded_omitted)} more not listed` : "";
     const excludedNote = result.excluded.length
-      ? `<div class="field-hint">excluded (unauthorized or budget-exceeded, never silently dropped): ${result.excluded.map((x) => `${esc(x.session_name)}/${esc(x.public_id)} (${esc(x.reason)})`).join(", ")}</div>`
+      ? `<div class="field-hint">excluded (never silently dropped): ${result.excluded.map(describeExcluded).join(", ")}${omitted}</div>`
       : "";
     const items = result.items.map((it) => `<tr><td>${esc(it.session_name)}</td><td>${esc(it.peer_name)}</td><td>${esc(it.role)}</td><td>${esc(it.content)}</td></tr>`).join("");
     $("contextResult").innerHTML = result.items.length

@@ -42,9 +42,10 @@ function describe(result: ApiResult): string {
 }
 
 /** `listMessages` answers `{ rows, next_after_seq }` -- NOT `{ items }`.
- *  `getContext` answers `{ items, coverage, excluded }`. The two read paths
- *  use different envelope keys, and reading the wrong one fails silently as
- *  an empty transcript against a server that returned five messages. */
+ *  `getContext` answers `{ items, coverage, excluded, excluded_omitted }`.
+ *  The two read paths use different envelope keys, and reading the wrong
+ *  one fails silently as an empty transcript against a server that
+ *  returned five messages. */
 function rows(body: unknown): MessageRow[] {
   const value = (body as { rows?: unknown })?.rows;
   return Array.isArray(value) ? (value as MessageRow[]) : [];

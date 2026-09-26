@@ -40,24 +40,29 @@ export type ContextItem = {
   created_at: string;
 };
 
-/** Mirrors `chat.ExcludedContextItem`. `unauthorized` is correct access
- *  control, NOT incompleteness -- only a budget/count stop flips coverage. */
-export type ExcludedItem = {
-  reason: "unauthorized" | "budget_exceeded";
-  session_name: string;
-  public_id: string | null;
-};
+/** Mirrors `chat.ExcludedContextItem` (#85, overnight ruling R4).
+ *  Unauthorized exclusions are ONE anonymous count, never listed by id: the
+ *  ids were the leak. Budget/count stops keep their identifiers; both-null
+ *  is the linked-session bound, which names no session on purpose. */
+export type ExcludedItem =
+  | { reason: "budget_exceeded"; session_name: string; public_id: string }
+  | { reason: "budget_exceeded"; session_name: null; public_id: null }
+  | { reason: "unauthorized"; count: number };
 
+/** `coverage` is `"full"` only when nothing at all was excluded. */
 export type ContextResult = {
   items: ContextItem[];
   coverage: "full" | "partial";
   excluded: ExcludedItem[];
+  /** Budget entries not listed because `excluded` hit its byte bound. */
+  excluded_omitted: number;
 };
 
 export type ChatAnswer = {
   answer: string;
   coverage: "full" | "partial";
   excluded: ExcludedItem[];
+  excluded_omitted: number;
   items_used: string[];
 };
 
