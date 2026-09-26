@@ -1,0 +1,213 @@
+[p1 "arra-oracle-v4 — memory" | space "ui-33 fix-round proof"(86): 1 managed, 0 untracked — p1* "arra-oracle-v4 — memory"]
+root
+  container
+    container
+      text "BANK"
+      textbox [ref=246, loc=css:input[placeholder="default"]]
+        text "default"
+    container
+      text "WORKSPACE"
+      textbox [ref=247, loc=css:input[placeholder="workspace_name"]]
+        text "default"
+    container
+      text "TOKEN"
+      textbox [ref=248, loc=css:input[placeholder="bearer…"]]
+    button [ref=249]
+      text "ping"
+  container
+    button [ref=250]
+      text "overview"
+    button [ref=251]
+      text "explore"
+    button [ref=252]
+      text "messages"
+    button [ref=253]
+      text "forum"
+    button [ref=254]
+      text "knowledge"
+  container
+    container
+      text "Workspaces"
+      text ">"
+      text "default"
+      button [ref=255]
+        text "Back"
+    container
+      container
+        text "4"
+        text "PEERS"
+      text "|"
+      container
+        text "2"
+        text "SESSIONS"
+      text "|"
+      container
+        text "7"
+        text "NODES"
+      button [ref=256]
+        text "refresh all"
+    container
+      container
+        container
+          container
+            button [ref=257]
+              text "⌄"
+            text "PEERS"
+            button [ref=258]
+              text "↻"
+          textbox [ref=259, loc=css:input[placeholder="filter loaded peers…"]]
+            text "filter loaded peers…"
+          container
+            button [ref=260]
+              text "alice"
+            button [ref=261]
+              text "bob"
+            button [ref=262]
+              text "carol"
+            button [ref=263]
+              text "dave"
+          container
+            container
+              text "showing"
+              text "4"
+              text "of 4"
+            container
+              text "page"
+              text "1"
+              text "(walked)"
+            container
+              button [ref=264]
+                text "‹ prev"
+              button [ref=265]
+                text "next ›"
+        container
+          container
+            button [ref=266]
+              text "⌄"
+            text "SESSIONS"
+            button [ref=267]
+              text "↻"
+          textbox [ref=268, loc=css:input[placeholder="filter loaded sessions…"]]
+            text "filter loaded sessions…"
+          container
+            button [ref=269]
+              text "sess-a"
+            button [ref=270]
+              text "sess-b"
+          container
+            container
+              text "showing"
+              text "2"
+              text "of 2"
+            container
+              text "page"
+              text "1"
+              text "(walked)"
+            container
+              button [ref=271]
+                text "‹ prev"
+              button [ref=272]
+                text "next ›"
+      container
+        container
+          button [ref=273]
+            text "Nodes"
+          button [ref=274]
+            text "Chat"
+          button [ref=275]
+            text "Messages"
+          button [ref=276]
+            text "Evidence"
+          button [ref=277]
+            text "Config"
+        container [ref=278]
+          container
+            heading
+              text "TRACE"
+            container
+              textbox [ref=279, loc=css:input[placeholder="trace id (nanoid21)"]]
+                text "trace id (nanoid21)"
+              button [ref=280]
+                text "Look up"
+            container
+              paragraph
+                text "no trace looked up"
+              paragraph
+                text "paste a trace id above"
+          container
+            container
+              heading
+                text "SESSION LINKS"
+              button [ref=281]
+                text "from"
+              button [ref=282]
+                text "to"
+            unordered_list
+              list_item
+                container
+                  text "sess-a"
+                  container
+                    text "--"
+                    text "continues"
+                    text "-->"
+                  text "sess-b"
+                container
+                  text "alice"
+                  text "2026-09-26T18:58:33.580Z"
+          container
+            heading
+              text "DIRECT EVIDENCE"
+            container
+              container
+                container
+                  text "rev"
+                  text "r_jcGH7H"
+                  text "…"
+                text "head"
+              container
+                paragraph
+                  text "TERMS ("
+                  text "2"
+                  text ")"
+                unordered_list
+                  list_item
+                    text "type"
+                    text ":"
+                    text "conclusion"
+                  list_item
+                    text "memory_horizon"
+                    text ":"
+                    text "long_term"
+              container
+                paragraph
+                  text "LINKS ("
+                  text "0"
+                  text ")"
+                paragraph
+                  text "this revision cites nothing"
+          container
+            heading
+              text "REVERSE EVIDENCE"
+            unordered_list
+              list_item
+                text "MDBCaKBkrc"
+                text "…"
+                text "rev"
+                text "1"
+                text "node_revision"
+                text "derived_from"
+          container
+            heading
+              text "LIFECYCLE"
+            text "eligible for recall"
+            paragraph
+              text "no lifecycle events"
+            paragraph
+              text "never superseded or retired"
+          container
+            heading
+              text "LIFECYCLE ACTIONS"
+            button [ref=283]
+              text "Retire…"
+            button [ref=284]
+              text "Supersede…"
