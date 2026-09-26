@@ -61,7 +61,7 @@ const { connect } = await import("@lancedb/lancedb");
 const { activeEmbeddingProfileId } = await import(
   new URL("../../../../src/publication/search-chunk.ts", import.meta.url).pathname
 );
-const { existsSync, readFileSync } = await import("node:fs");
+const { existsSync, readFileSync, writeFileSync } = await import("node:fs");
 const { join } = await import("node:path");
 
 /** The one stub digest every probe call answers when a test does not script
@@ -159,6 +159,11 @@ const harness: Record<string, (request: any) => Promise<unknown>> = {
   async readPinFile() {
     const path = join(datasetRoot!, ".embedding-profile-pins.json");
     return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
+  },
+  /** Plant raw pin-file text: how a test damages the pin on purpose. */
+  async writePinFile(request) {
+    writeFileSync(join(datasetRoot!, ".embedding-profile-pins.json"), String(request.text), "utf8");
+    return null;
   },
   /** The profile id THIS process's module instance computes right now. */
   async profileId() {

@@ -281,6 +281,35 @@ describe("R20 (2): every embed run probes before embedding anything", () => {
   }, TEST_TIMEOUT_MS);
 });
 
+describe("R20: a damaged pin is never read as \"not pinned\"", () => {
+  test("an unreadable pin file is integrity_failure for embed and freshness; nothing embedded, nothing re-pinned", async () => {
+    const fixture = await createFixture([ALPHA]);
+    try {
+      const seeded = fixture.workspaces[ALPHA]!;
+      const node = pad("dp-bad-node");
+      const rev = pad("dp-bad-rev");
+      const parsed = await drive(
+        fixture.datasetRoot,
+        [
+          publish(seeded, node, "op-dp-bad", "damaged pin body"),
+          indexChunks(node, rev),
+          { facade: "harness", method: "writePinFile", request: { text: "{not json" } },
+          embed(),
+          freshness(),
+          rawChunks(rev),
+        ],
+        { revisionIds: [rev], embedderMode: "fixed", digests: [DIGEST_A] },
+      );
+      expect(parsed.op3).toMatchObject({ ok: false, code: "integrity_failure" });
+      expect(parsed.op4).toMatchObject({ ok: false, code: "integrity_failure" });
+      expect(parsed.embedCalls).toEqual([]);
+      expect(ok(parsed.op5, "raw")[0]).toMatchObject({ status: "pending", attempts: "0", embedding: null });
+    } finally {
+      await fixture.cleanup();
+    }
+  }, TEST_TIMEOUT_MS);
+});
+
 describe("R20: a restart sequence unmeasured-then-measured never changes any row's profile id", () => {
   test("boot 1 cannot measure, boot 2 can: the rows indexed under boot 1 are the ones boot 2 embeds", async () => {
     const fixture = await createFixture([ALPHA]);

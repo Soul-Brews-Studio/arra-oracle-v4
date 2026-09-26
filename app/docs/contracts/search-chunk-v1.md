@@ -431,6 +431,8 @@ write path" holds. `composition.ts` wires `embed.ts`'s `embed()`, which now take
     `pending`/`attempts: 0`/`embedding: null`, pin and `profile_id` unchanged;
   - an unmeasured, hung or unconfigured probe blocks with zero vectors;
   - a digest that changes during the embedder call writes nothing;
+  - a damaged pin file is `integrity_failure` for both `embedPendingChunks` and
+    `getSearchFreshness`, with no embedder call and no re-pin;
   - unmeasured-then-measured across a restart embeds the same rows under the same
     `profile_id`.
 - `app/server/test/search-chunk-digest-boot.test.ts` covers items 2, 4 and 5 through the
