@@ -498,3 +498,38 @@ refresh keeps unindexed rows below indexed ones),
 occurrence found on both, cross-workspace credential refused, beta's identical text never in
 alpha's answer), and `app/server/test/cli-search.test.ts` (bare `search` stays legacy;
 `--mode keyword|semantic` reaches the registry route).
+
+## 14. Amendment 2026-09-26 (overnight R18 (V2 read/supersede/verify) + D3)
+
+Appended, not rewritten. Ruling: [`docs/overnight/DECISIONS.md`](../../../docs/overnight/DECISIONS.md)
+R18/R20, `docs/overnight/V3-PARITY.md` §4.2 (`oracle_verify`).
+
+**What changed.** `app/server/src/mcp/legacy-v3/tools/oracle_verify.ts` (new) is the first v3-compat
+consumer of `reconcileSearchChunks` (§6 above). It maps v3's `verify` shape onto that one kernel:
+`healthy = visited - missing - stale`, `missing`/`drifted` = the kernel's `missing`/`stale` counts,
+`missing_documents` = `missing_revisions`, and a `partial` warning when `exhausted` is false.
+`orphaned` and `untracked` are always `null`, named `field_unavailable`: this kernel has no concept
+of either (nothing is ever deleted out from under a chunk row to make one "orphaned", and every
+node is tracked by construction). `check:false` is `not_carried` (v3's version wrote a synthetic
+`superseded_by:'_verified_orphan'`, inventing a lifecycle event this kernel never would); `type` is
+accepted and ignored, named `argument_ignored`.
+
+**GAP, named rather than approximated: no `getSearchFreshness` on this base.** R20 (embedding-digest
+pinning: `getSearchFreshness` reporting the pinned and last-measured model digest) has not landed in
+this checkout as of this amendment -- `rg -i freshness app/server/src` finds nothing. v3's `verify`
+concept conflates two questions this v4 split into two kernels: "is every current node's text
+indexed" (`reconcileSearchChunks`, wired here) and "is the embedding profile consistent"
+(`getSearchFreshness`, R20, not yet present). `oracle_verify` answers only the first; it does not
+invent a digest-freshness field, does not silently claim the embedding half is healthy, and does not
+call a kernel that does not exist. When `getSearchFreshness` lands, `oracle_verify`'s `uses`/
+`requires` and this section both need a follow-up amendment naming the added field(s).
+
+**Not changed here.** No kernel file changed; `reconcileSearchChunks` itself is exactly as §6 and
+§12/§13 above describe (visits every current node, reports terminal nodes as `ineligible` rather
+than `missing`, reports and never reclaims stale rows).
+
+**Evidence.** `app/server/test/mcp-v3-reads.test.ts` (new, failing-first: red before `oracle_verify`
+existed, all three `oracle_verify` steps answering `not_yet_available`): a normal call's `healthy`/
+`missing`/`drifted` are numbers, `orphaned`/`untracked` are `null` and named in `compat_warnings`,
+`missing_documents` is an array; `check:false` answers `not_carried`; a `type` filter is accepted,
+ignored and named `argument_ignored`.
