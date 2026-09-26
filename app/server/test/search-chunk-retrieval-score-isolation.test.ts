@@ -44,13 +44,15 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createFixture, PYTHON, revisionEnvelope, runGated, type Fixture } from "./helpers/publication-fixture";
-import { CHUNKER_VERSION } from "../src/publication/search-chunk";
+import { CHUNKER_VERSION, activeEmbeddingProfileId } from "../src/publication/search-chunk";
 
 const CHILD = join(import.meta.dir, "fixtures", "search-chunk-v1", "core", "gated-score-isolation.ts");
 const TIMEOUT_MS = 120_000;
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
-const PROFILE = "all-minilm";
+// #30 R7 (search-embed, R20): the closed profile registry accepts only its
+// active id; the bare model name this slice was written against is refused.
+const PROFILE = activeEmbeddingProfileId();
 const DIMS = 384;
 // A shifted-frequency test term: distinctive enough that only the seeded
 // rows below hold it, long enough that `ngram(3,3)` has real trigrams to
