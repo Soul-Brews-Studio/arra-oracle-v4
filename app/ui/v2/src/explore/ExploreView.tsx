@@ -4,6 +4,7 @@ import type { TypeTerm } from "../api/knowledge";
 import { useListing } from "../state/useListing";
 import { useMemory } from "../state/useMemory";
 import { useKnowledge } from "../state/useKnowledge";
+import { useEvidenceReview } from "../state/useEvidenceReview";
 import { CountStrip } from "./CountStrip";
 import { ListPanel } from "./ListPanel";
 import { DetailTabs, type ExploreTab } from "./DetailTabs";
@@ -52,6 +53,7 @@ export function ExploreView({
   const listing = useListing(bank);
   const k = useKnowledge(bank);
   const m = useMemory();
+  const evidence = useEvidenceReview(bank, selectedNode, selectedSession, selectedPeer);
 
   useEffect(() => {
     m.setBank(bank.bank);
@@ -183,6 +185,64 @@ export function ExploreView({
             onLoadMore: () => void m.actions.refreshMessages(),
             disabled: selectedSession === null,
             disabledReason: selectedSession === null ? "Pick a session first." : null,
+          }}
+          evidence={{
+            nodeId: selectedNode,
+            sessionName: selectedSession,
+            headRevisionId: k.snapshotHead ?? k.head?.revision?.id ?? null,
+            trace: {
+              id: evidence.trace.id,
+              onIdChange: evidence.trace.setId,
+              onLookup: evidence.trace.lookup,
+              loading: evidence.trace.loading,
+              row: evidence.trace.row,
+              error: evidence.trace.error,
+            },
+            hits: {
+              rows: evidence.hits.rows,
+              error: evidence.hits.error,
+              hasMore: evidence.hits.hasMore,
+              onLoadMore: evidence.hits.loadMore,
+            },
+            sessionLinks: {
+              rows: evidence.sessionLinks.rows,
+              loading: evidence.sessionLinks.loading,
+              error: evidence.sessionLinks.error,
+              hasMore: evidence.sessionLinks.hasMore,
+              onLoadMore: evidence.sessionLinks.loadMore,
+              direction: evidence.sessionLinks.direction,
+              onDirectionChange: evidence.sessionLinks.setDirection,
+            },
+            lifecycle: {
+              rows: evidence.lifecycle.rows,
+              loading: evidence.lifecycle.loading,
+              error: evidence.lifecycle.error,
+            },
+            recall: {
+              value: evidence.recall.value,
+              error: evidence.recall.error,
+            },
+            lifecycleActions: {
+              busy: evidence.lifecycle.actions.busy,
+              error: evidence.lifecycle.actions.error,
+              outcome: evidence.lifecycle.actions.outcome,
+              onRetire: evidence.lifecycle.actions.retire,
+              onSupersede: evidence.lifecycle.actions.supersede,
+            },
+            association: {
+              row: evidence.association.row,
+              loading: evidence.association.loading,
+              error: evidence.association.error,
+              citedStatus: evidence.association.citedStatus,
+            },
+            dependents: {
+              rows: evidence.dependents.rows,
+              loading: evidence.dependents.loading,
+              error: evidence.dependents.error,
+              hasMore: evidence.dependents.hasMore,
+              onLoadMore: evidence.dependents.loadMore,
+              citingStatus: evidence.dependents.citingStatus,
+            },
           }}
           config={{
             taxonomy: k.taxonomy,
