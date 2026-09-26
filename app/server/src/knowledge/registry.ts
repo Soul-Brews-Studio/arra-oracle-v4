@@ -256,6 +256,24 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
     call: (b, x) => writer(b).context.reconcileSearchChunks(x),
   },
 
+  // ── knowledge retrieval (#30, overnight R7 #30 part + R14) ───────────────
+  // The recall path over the target-19 tier: keyword (shared ngram(3,3)
+  // index, substring-verified, scan fallback that says so) and semantic
+  // (injected query embedder, squared L2 over READY chunks of one profile).
+  // Two methods, never fused (R7). Both run on the gateless READER: a
+  // content:read caller never opens the writer, and the reader never builds
+  // the text index -- `indexRevisionChunks` (writer) does.
+  searchKnowledgeKeyword: {
+    action: "content:read",
+    scopePath: [],
+    call: (b, x) => b.context.searchKnowledgeKeyword(x),
+  },
+  searchKnowledgeSemantic: {
+    action: "content:read",
+    scopePath: [],
+    call: (b, x) => b.context.searchKnowledgeSemantic(x),
+  },
+
   // ── evidence ─────────────────────────────────────────────────────────
   getRevisionAssociations: {
     action: "content:read",

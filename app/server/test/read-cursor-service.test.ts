@@ -62,7 +62,7 @@ describe("preflight: the required surface", () => {
         expect(Object.keys(bundle.context).sort()).toEqual([
           "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
           "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks", "listSessionLinks", "listSessions",
-          "listTraceHits",
+          "listTraceHits", "searchKnowledgeKeyword", "searchKnowledgeSemantic",
         ]);
         expect("close" in bundle.context).toBe(false);
       }
@@ -120,7 +120,7 @@ describe("real persistence: cursors inside the real gate", () => {
           "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
           "indexRevisionChunks", "joinSession", "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks",
           "listSessionLinks", "listSessions", "listTraceHits", "reconcileSearchChunks", "registerPeer", "registerSession",
-          "retireNode", "supersedeNode", "writeChunkEmbedding",
+          "retireNode", "searchKnowledgeKeyword", "searchKnowledgeSemantic", "supersedeNode", "writeChunkEmbedding",
         ]);
         expect(parsed.contextHasClose).toBe(false);
         // Only the BUNDLE closes the owner; the bundle key set is unchanged.

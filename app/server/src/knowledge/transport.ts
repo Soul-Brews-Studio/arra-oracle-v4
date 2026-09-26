@@ -47,7 +47,7 @@ import {
 } from "../auth/http";
 import { ContractError } from "../contracts/errors";
 import { parseStrictBytes, type JcsObject, type JcsValue } from "../contracts/jcs";
-import { openEvidenceReader, openEvidenceWriter } from "../publication/service";
+import { openEvidenceReader, openEvidenceWriter, type QueryEmbedder } from "../publication/service";
 import { KNOWLEDGE_METHODS, type KnowledgeAction, type KnowledgeBundle, type RequestAuthority } from "./registry";
 import { KnowledgeAuthDenied, admitKnowledgeAction, type KnowledgeAuthFailure } from "./transport.admitKnowledgeAction";
 import { requireBoundPeers } from "./transport.requireBoundPeers";
@@ -232,6 +232,10 @@ function randomNanoid21(): string {
 export type KnowledgeDatasetConfig = {
   readonly datasetRoot: string | undefined;
   readonly env?: NodeJS.ProcessEnv;
+  /** #30: the trusted query embedder semantic search is composed with
+   *  (`composition.ts`: local Ollama; tests: a stub). Absent means
+   *  `searchKnowledgeSemantic` answers `writer_unavailable`. */
+  readonly embedder?: QueryEmbedder;
 };
 
 /**
@@ -286,6 +290,7 @@ export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
     // exposes local intake only. A namespaced source feed is a future
     // deployment decision, not something a caller's bytes can select.
     sourceNamespace: null,
+    embedder: config.embedder,
   });
 
   return {
@@ -297,7 +302,7 @@ export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
       // writer-gate path below, which would require a writer for a call that
       // never mutates anything and could deadlock a reader-only deployment.
       if (action !== "content:write") {
-        reader ??= openEvidenceReader(requireRoot());
+        reader ??= openEvidenceReader(requireRoot(), { embedder: config.embedder });
         return reader;
       }
       // Write path: cache only a SUCCESSFUL open. A failed attempt (writer

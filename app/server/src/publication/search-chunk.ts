@@ -38,3 +38,13 @@ export { type ListChunksRequest, parseListChunks } from "./search-chunk.parseLis
 export { type WriteChunkEmbeddingRequest, parseWriteChunkEmbedding } from "./search-chunk.parseWriteChunkEmbedding";
 export { SEARCH_CHUNK_ID_DOMAIN, deriveChunkId } from "./search-chunk.deriveChunkId";
 export { SEARCH_CHUNK_CONTENT_DOMAIN, deriveContentHash } from "./search-chunk.deriveContentHash";
+// #30 retrieval (overnight R7 #30 part + R14): the pure half of
+// searchKnowledgeKeyword / searchKnowledgeSemantic.
+export { DEFAULT_EMBEDDING_PROFILE } from "./search-chunk.defaultEmbeddingProfile";
+export { MAX_QUERY_BYTES, searchQuery } from "./search-chunk.searchQuery";
+export { DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, searchLimit } from "./search-chunk.searchLimit";
+export { type SearchKnowledgeKeywordRequest, parseSearchKnowledgeKeyword } from "./search-chunk.parseSearchKnowledgeKeyword";
+export { type SearchKnowledgeSemanticRequest, parseSearchKnowledgeSemantic } from "./search-chunk.parseSearchKnowledgeSemantic";
+export { SNIPPET_CODE_POINTS, searchSnippet } from "./search-chunk.searchSnippet";
+export { type RankedChunk, rankedChunk } from "./search-chunk.rankedChunk";
+export { type HitHead, type KnowledgeHit, groupKnowledgeHits } from "./search-chunk.groupKnowledgeHits";

@@ -58,7 +58,12 @@ export async function openEvidenceWriter(
       createTaxonomyWriterService(adapter, core, { clock, taxonomyOperator: options.taxonomyOperator === true }),
     ),
     context: Object.freeze(
-      createContextWriterService(adapter, core, { clock, sourceNamespace: options.sourceNamespace, model: options.model }),
+      createContextWriterService(adapter, core, {
+        clock,
+        sourceNamespace: options.sourceNamespace,
+        model: options.model,
+        embedder: options.embedder,
+      }),
     ),
     evidence: Object.freeze(createEvidenceWriterService(adapter, core)),
     close: core.close,

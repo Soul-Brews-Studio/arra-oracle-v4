@@ -14,6 +14,7 @@
 import { createRequire } from "node:module";
 import { createOperationService, type OperationService, type StoreDependencies } from "./auth/service";
 import { createKnowledgeAccess, type KnowledgeAccess } from "./knowledge/transport";
+import { DEFAULT_EMBEDDING_PROFILE } from "./publication/search-chunk.defaultEmbeddingProfile";
 
 export type RuntimeConfig = {
   readonly policyPath: string;
@@ -190,6 +191,16 @@ export function composeKnowledgeAccess(env: NodeJS.ProcessEnv = process.env): Kn
   return createKnowledgeAccess({
     datasetRoot: typeof datasetRoot === "string" && datasetRoot.trim() ? datasetRoot : undefined,
     env,
+    // #30 semantic search: the query embedder is the same local Ollama model
+    // `embed.ts` serves, imported lazily on first use like `composeService`'s
+    // raw modules. Its profile is that model's name -- the name an embed
+    // worker stores via `indexRevisionChunks` -- with `embed.ts`'s own default
+    // (`all-minilm`, `DEFAULT_EMBEDDING_PROFILE`). SEAM: the concurrent
+    // profile registry replaces this pairing with a registry entry.
+    embedder: {
+      profile: env.EMBEDDING_MODEL?.trim() ? env.EMBEDDING_MODEL : DEFAULT_EMBEDDING_PROFILE,
+      embed: async (text: string) => (await import("./embed")).embedOne(text),
+    },
   });
 }
 

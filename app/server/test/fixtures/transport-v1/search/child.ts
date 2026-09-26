@@ -125,8 +125,10 @@ async function runHttp(bank: string, token: string, method: string, body: unknow
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 
-async function runMcp(bank: string, token: string, rpc: Record<string, unknown>) {
-  const outcome = await mcpAdapter(bank, `Bearer ${token}`, async () => ({ id: 1, ...rpc }));
+type Envelope = Awaited<ReturnType<Parameters<ReturnType<typeof createMcpAdapter>>[2]>>;
+
+async function runMcp(bank: string, token: string, rpc: { method: string; params?: Record<string, unknown> }) {
+  const outcome = await mcpAdapter(bank, `Bearer ${token}`, async () => ({ id: 1, params: {}, ...rpc }) as Envelope);
   if (outcome.kind === "denied") return { denied: outcome.code };
   return (await outcome.response.json()) as { result?: { content?: { text: string }[]; isError?: boolean; tools?: { name: string }[] } };
 }

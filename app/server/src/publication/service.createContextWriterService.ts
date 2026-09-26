@@ -13,14 +13,14 @@ import { registerSession } from "./service.registerSession";
 import { retireNode } from "./service.retireNode";
 import { supersedeNode } from "./service.supersedeNode";
 import { writeChunkEmbedding } from "./service.writeChunkEmbedding";
-import { type Clock, type DatasetAdapter, type OwnerCore } from "./service.types";
+import { type Clock, type DatasetAdapter, type OwnerCore, type QueryEmbedder } from "./service.types";
 
 export function createContextWriterService(
   writer: DatasetAdapter,
   core: OwnerCore,
-  options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn },
+  options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn; embedder?: QueryEmbedder },
 ) {
-  const reads = createContextReadMethods(writer);
+  const reads = createContextReadMethods(writer, { embedder: options.embedder });
   return {
     ...reads,
 
