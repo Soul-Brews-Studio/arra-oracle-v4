@@ -195,6 +195,13 @@ export function composeKnowledgeAccess(env: NodeJS.ProcessEnv = process.env): Kn
     // merely composing knowledge access cannot trigger `embed.ts`'s own
     // import-time environment reads (this module's own header rule).
     embedder: (texts, signal) => import("./embed").then((mod) => mod.embed(texts, signal)),
+    // #30 R20: the model-digest probe every `embedPendingChunks` run makes
+    // before embedding anything -- `GET /api/tags` on the same OLLAMA_URL and
+    // EMBEDDING_MODEL `embed.ts` uses. Called per run, never at boot.
+    digestProbe: (signal) =>
+      import("./publication/search-chunk.fetchOllamaModelDigest").then((mod) =>
+        mod.fetchOllamaModelDigest({ signal }),
+      ),
   });
 }
 
@@ -204,28 +211,15 @@ export function composeKnowledgeAccess(env: NodeJS.ProcessEnv = process.env): Kn
  * Lives here, not in the HTTP entrypoint: §3 keeps index/app free of raw store
  * imports, and startup maintenance is an operator path, not a request path.
  *
- * `env` defaults to `process.env` and exists so a test can drive this with a
- * scratch `ARRA_KNOWLEDGE_DATASET_ROOT`/`OLLAMA_URL` without mutating the real
- * process environment.
+ * #30 R20: boot never probes the embedding model, never pins its digest and
+ * never changes an embedding profile id. The digest is measured by every
+ * `embedPendingChunks` run instead (`search-chunk-digest-boot.test.ts` runs
+ * this function against a live stub Ollama and asserts zero requests).
  */
-export async function runStartupIndexWork(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+export async function runStartupIndexWork(): Promise<void> {
   const store = await import("./db");
   // Do not rebuild a matching index on every restart, and never mutate on read.
   // An index whose live details differ from the shared trigram config (an older
   // deployment's icu) is rebuilt here once, before listen (R14, #10).
   await store.ensureFtsIndex(false);
-
-  // #30 R7/TODO 4: best-effort, BOUNDED model-digest probe (fix round: the
-  // unbounded version measured at 300007 ms -- Bun's own default fetch
-  // timeout -- against a hung Ollama, holding up every content save for up
-  // to 5 minutes on every boot). Pinned once measured, so the active
-  // profile's identity never flips between boots depending on whether
-  // Ollama happened to answer THIS one -- see
-  // `search-chunk.pinActiveEmbeddingModelDigest.ts`'s doc for both
-  // properties. Kept in its own module, not inlined here, so it is testable
-  // without ever touching `./db`'s legacy FTS work above.
-  const { pinActiveEmbeddingModelDigest } = await import(
-    "./publication/search-chunk.pinActiveEmbeddingModelDigest"
-  );
-  await pinActiveEmbeddingModelDigest(env);
 }

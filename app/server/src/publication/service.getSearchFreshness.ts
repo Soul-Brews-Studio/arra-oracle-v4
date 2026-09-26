@@ -1,8 +1,10 @@
 import { CHUNKER_VERSION, activeEmbeddingProfileId, parseGetSearchFreshness } from "./search-chunk";
+import { readEmbeddingPins } from "./search-chunk.readEmbeddingPins";
 import { storedNullableTimestamp } from "./search-chunk.storedNullableTimestamp";
 import { quote } from "./storage";
 import { NODES, NODE_REVISIONS, SEARCH_CHUNKS } from "./service.constants";
 import { contextScope } from "./service.contextScope";
+import { LAST_MEASURED_MODEL_DIGESTS } from "./service.lastMeasuredModelDigests";
 import { requireWorkspace } from "./service.requireWorkspace";
 import { type DatasetAdapter } from "./service.types";
 
@@ -20,6 +22,7 @@ export type SearchFreshness = {
     ready: number;
     failed: number;
     last_attempt_at: string | null;
+    model_digest: { pinned: string | null; last_measured: string | null };
   };
 };
 
@@ -38,10 +41,17 @@ export type SearchFreshness = {
  *    profile only (R7: only the active profile is ever a target of new
  *    writes, so it is the only one freshness reports on) plus the latest
  *    `last_attempt_at` across those rows, `null` when none has ever been
- *    attempted.
+ *    attempted. R20 adds `model_digest`: `pinned` is the digest this
+ *    dataset pinned for the active profile (`null` until the first embed
+ *    run writes a vector), `last_measured` is what the most recent embed
+ *    run's probe in THIS process measured (`null` before any run here, or
+ *    when that probe could not measure). The two differing is exactly the
+ *    state in which embed runs refuse `embedding_profile_mismatch`.
+ *    Dataset-wide, not per workspace: one pin covers the whole profile.
  */
 export async function getSearchFreshness(
   reader: DatasetAdapter,
+  datasetRoot: string,
   requestBytes: Uint8Array,
 ): Promise<SearchFreshness> {
   const request = parseGetSearchFreshness(requestBytes);
@@ -99,6 +109,11 @@ export async function getSearchFreshness(
   );
   const lastAttemptAt =
     lastAttempted.length === 0 ? null : storedNullableTimestamp(lastAttempted[0]!.last_attempt_at);
+  const pins = readEmbeddingPins(datasetRoot);
+  const modelDigest = {
+    pinned: Object.hasOwn(pins, profileId) ? pins[profileId]!.digest : null,
+    last_measured: LAST_MEASURED_MODEL_DIGESTS.get(datasetRoot) ?? null,
+  };
 
   return {
     content: { nodes, revisions },
@@ -106,6 +121,13 @@ export async function getSearchFreshness(
       indexed_rows: scopedTextIndex === null ? null : scopedTextIndex.indexedRows,
       unindexed_rows: scopedTextIndex === null ? null : scopedTextIndex.unindexedRows,
     },
-    vectors: { profile_id: profileId, pending, ready, failed, last_attempt_at: lastAttemptAt },
+    vectors: {
+      profile_id: profileId,
+      pending,
+      ready,
+      failed,
+      last_attempt_at: lastAttemptAt,
+      model_digest: modelDigest,
+    },
   };
 }

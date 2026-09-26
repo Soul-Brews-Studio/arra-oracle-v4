@@ -2,7 +2,8 @@ import { requireClosedObject, type Tokens } from "../contracts/common";
 import { fail } from "../contracts/errors";
 import type { JcsValue } from "../contracts/jcs";
 import { name } from "./search-chunk.name";
-import { EMBEDDING_DIMENSION, requireRegisteredEmbeddingProfileName } from "./search-chunk.profiles";
+import { EMBEDDING_DIMENSION } from "./search-chunk.profiles";
+import { requireRegisteredEmbeddingProfileName } from "./search-chunk.requireRegisteredEmbeddingProfileName";
 import type { EmbeddingProfileRequest } from "./search-chunk.types";
 
 export { EMBEDDING_DIMENSION };

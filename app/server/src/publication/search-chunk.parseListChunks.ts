@@ -3,7 +3,7 @@ import { chunkerVersion } from "./search-chunk.chunkerVersion";
 import { name } from "./search-chunk.name";
 import { nanoidField } from "./search-chunk.nanoidField";
 import { parseRequest } from "./search-chunk.parseRequest";
-import { requireRegisteredEmbeddingProfileName } from "./search-chunk.profiles";
+import { requireRegisteredEmbeddingProfileName } from "./search-chunk.requireRegisteredEmbeddingProfileName";
 
 // scoped on the SAME tuple the chunk id is keyed on: `indexRevisionChunks` is
 // explicitly re-callable for one revision under different chunker versions

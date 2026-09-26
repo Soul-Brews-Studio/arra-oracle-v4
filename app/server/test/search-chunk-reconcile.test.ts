@@ -333,6 +333,8 @@ describe("getSearchFreshness: per-stage freshness, unknown kept distinct from ze
         ready: 0,
         failed: 0,
         last_attempt_at: null,
+        // R20: nothing embedded, nothing measured in this process yet.
+        model_digest: { pinned: null, last_measured: null },
       });
     } finally {
       await fixture.cleanup();

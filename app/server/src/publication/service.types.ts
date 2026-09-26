@@ -1,5 +1,5 @@
 import { type ChatModelFn } from "./chat";
-import { type EmbedFn } from "./search-chunk.types";
+import { type DigestProbeFn, type EmbedFn } from "./search-chunk.types";
 import { type BoundaryHook, type ContextBoundary, type ContextBoundaryHook, type EvidenceBoundary, type EvidenceBoundaryHook, type PublicationBoundary, type TaxonomyBoundary, type TaxonomyBoundaryHook } from "./service.boundaries";
 import { type createContextReadMethods } from "./service.createContextReadMethods";
 import { type createContextWriterService } from "./service.createContextWriterService";
@@ -296,6 +296,10 @@ export type ContextOptions = KnowledgeOptions & {
    *  content-hash reuse straight to `failed`/`embedder_unavailable` rather
    *  than attempting a network call this module makes on its own. */
   embedder?: EmbedFn;
+  /** R20's model-digest probe, injected the same way. Absent means every
+   *  `embedPendingChunks` run is `blocked: "digest_unmeasured"`: no vector
+   *  is ever written without a measured digest. */
+  digestProbe?: DigestProbeFn;
 };
 
 export type SetAction = "unchanged" | "filled" | "rebuilt";

@@ -20,3 +20,11 @@ export type EmbeddingProfileRequest = { name: string; dims: number };
  * still times out correctly.
  */
 export type EmbedFn = (texts: string[], signal?: AbortSignal) => Promise<number[][]>;
+
+/**
+ * R20's model-digest probe, injected like `EmbedFn`: `composition.ts` wires
+ * `search-chunk.fetchOllamaModelDigest.ts`, tests wire a stub. `null` means
+ * unmeasured. `embedPendingChunks` bounds it with its own timer, so an
+ * implementation that ignores `signal` still cannot hold a run.
+ */
+export type DigestProbeFn = (signal: AbortSignal) => Promise<string | null>;

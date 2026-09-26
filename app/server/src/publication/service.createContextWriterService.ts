@@ -1,5 +1,5 @@
 import { type ChatModelFn } from "./chat";
-import { type EmbedFn } from "./search-chunk.types";
+import { type DigestProbeFn, type EmbedFn } from "./search-chunk.types";
 import { advanceReadCursor } from "./service.advanceReadCursor";
 import { answerChat } from "./service.answerChat";
 import { appendMessages } from "./service.appendMessages";
@@ -20,9 +20,18 @@ import { type Clock, type DatasetAdapter, type OwnerCore } from "./service.types
 export function createContextWriterService(
   writer: DatasetAdapter,
   core: OwnerCore,
-  options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn; embedder?: EmbedFn },
+  options: {
+    clock: Clock;
+    sourceNamespace: string | null;
+    model?: ChatModelFn;
+    embedder?: EmbedFn;
+    digestProbe?: DigestProbeFn;
+    /** Canonical dataset root, for R20's pin file (`embedPendingChunks`,
+     *  `getSearchFreshness`). */
+    datasetRoot: string;
+  },
 ) {
-  const reads = createContextReadMethods(writer);
+  const reads = createContextReadMethods(writer, options.datasetRoot);
   return {
     ...reads,
 

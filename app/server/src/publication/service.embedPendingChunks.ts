@@ -15,9 +15,14 @@ import {
   type EmbedErrorCode,
   type EmbedFn,
 } from "./search-chunk";
+import { failEmbeddingProfileMismatch } from "./search-chunk.failEmbeddingProfileMismatch";
+import { readEmbeddingPins } from "./search-chunk.readEmbeddingPins";
+import { type DigestProbeFn } from "./search-chunk.types";
+import { writeEmbeddingPin } from "./search-chunk.writeEmbeddingPin";
 import { quote } from "./storage";
 import { SEARCH_CHUNKS } from "./service.constants";
 import { contextScope } from "./service.contextScope";
+import { measureModelDigest } from "./service.measureModelDigest";
 import { mutateContextWrite } from "./service.mutateContextWrite";
 import { requireContextWorkspaceRow } from "./service.requireContextWorkspaceRow";
 import { sameEncodedValue } from "./service.sameEncodedValue";
@@ -66,7 +71,20 @@ export type EmbedPendingChunksResult = {
    *  overwritten; simply left as whatever the winning writer left them at.
    *  0 in the overwhelming common case of no contention. */
   skipped: number;
+  /** R20: `"digest_unmeasured"` when this run embedded and wrote NOTHING
+   *  because no single measured model digest covers it -- the probe failed,
+   *  timed out or answered nothing recognisable (before the embedder), or
+   *  answered differently after it. Rows are left exactly as they were:
+   *  not failed, `attempts` untouched. `null` on every other outcome. */
+  blocked: "digest_unmeasured" | null;
 };
+
+/** The digest this dataset pinned for `profileId` (R20), or `null` when
+ *  nothing is pinned yet. A damaged pin file is `integrity_failure`. */
+function pinnedDigest(datasetRoot: string, profileId: string): string | null {
+  const pins = readEmbeddingPins(datasetRoot);
+  return Object.hasOwn(pins, profileId) ? pins[profileId]!.digest : null;
+}
 
 /**
  * Reject with `EmbedTimeoutError` after `ms`, whichever settles first. The
@@ -142,11 +160,35 @@ function isValidEmbeddingBatch(value: unknown, expectedCount: number): value is 
  *    in flight.
  * 4. WRITE BACK -- inside `core.serial`, one turn for the whole batch, using
  *    `writeChunkEmbedding.ts`'s own update-then-verify-readback shape.
+ *
+ * R20 (docs/overnight/DECISIONS.md) gates all four steps on the model
+ * digest, which is part of the profile's identity:
+ *
+ * - Step 0, before ANYTHING else, on EVERY run: probe the serving model's
+ *   digest (`measureModelDigest`, bounded). Unmeasurable -> return
+ *   `blocked: "digest_unmeasured"` having embedded and written nothing.
+ *   Measured but different from this dataset's pin ->
+ *   `embedding_profile_mismatch` naming both, nothing embedded or written.
+ * - After the embedder call, probe again: vectors are only written when the
+ *   SAME digest was measured on both sides of the call that produced them;
+ *   anything else is `digest_unmeasured`, nothing written.
+ * - Inside the write turn: re-read the pin (another run may have pinned
+ *   since step 0), and, when nothing is pinned yet and this turn is about to
+ *   write its first vector, pin the measured digest first. A pin is only
+ *   ever written by a run that writes a vector, from that run's own
+ *   measurement. `profile_id` itself never changes (search-chunk.profiles.ts).
  */
 export async function embedPendingChunks(
   writer: DatasetAdapter,
   core: OwnerCore,
-  options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn; embedder?: EmbedFn },
+  options: {
+    clock: Clock;
+    sourceNamespace: string | null;
+    model?: ChatModelFn;
+    embedder?: EmbedFn;
+    digestProbe?: DigestProbeFn;
+    datasetRoot: string;
+  },
   requestBytes: Uint8Array,
 ): Promise<EmbedPendingChunksResult> {
   const request = parseEmbedPendingChunks(requestBytes);
@@ -157,12 +199,23 @@ export async function embedPendingChunks(
     `${contextScope(request.workspace_name)} AND chunker_version = ${quote(CHUNKER_VERSION)}` +
     ` AND embedding_profile = ${quote(profileId)}`;
   const eligibleClause = `(status = 'pending' OR (status = 'failed' AND attempts < ${MAX_EMBED_ATTEMPTS}))`;
+  const blocked = async (): Promise<EmbedPendingChunksResult> => {
+    await writer.refresh(SEARCH_CHUNKS);
+    const remaining = await writer.count(SEARCH_CHUNKS, `${scope} AND ${eligibleClause}`);
+    return { attempted: 0, embedded: 0, reused: 0, failed: 0, remaining, skipped: 0, blocked: "digest_unmeasured" };
+  };
+
+  // R20 step 0: measure first, compare with the pin, before any read of work.
+  const measured = await measureModelDigest(options.datasetRoot, options.digestProbe);
+  if (measured === null) return blocked();
+  const pinnedAtStart = pinnedDigest(options.datasetRoot, profileId);
+  if (pinnedAtStart !== null && pinnedAtStart !== measured) failEmbeddingProfileMismatch(pinnedAtStart, measured);
 
   await writer.refresh(SEARCH_CHUNKS);
   const candidates = await writer.query(SEARCH_CHUNKS, `${scope} AND ${eligibleClause}`, request.limit);
 
   if (candidates.length === 0) {
-    return { attempted: 0, embedded: 0, reused: 0, failed: 0, remaining: 0, skipped: 0 };
+    return { attempted: 0, embedded: 0, reused: 0, failed: 0, remaining: 0, skipped: 0, blocked: null };
   }
 
   type Plan =
@@ -230,13 +283,26 @@ export async function embedPendingChunks(
     }
   }
 
+  // R20: the model that answered the embedder call must be the one measured
+  // before it. A second probe is the only way to know; any other answer
+  // (a changed build, or none) means no single digest covers these vectors.
+  if (embeddedVectors !== null) {
+    const confirmed = await measureModelDigest(options.datasetRoot, options.digestProbe);
+    if (confirmed !== measured) return blocked();
+  }
+
   return mutateContextWrite(core, async () => {
     await core.contextBoundary("before_write", false);
-    core.markAttemptedWrite();
 
     // Fix round finding 3: refresh right before the per-row current-state
     // check below, matching `writeChunkEmbedding.ts`'s own convention.
     await writer.refresh(SEARCH_CHUNKS);
+
+    // R20, re-checked inside the turn: a concurrent run may have pinned a
+    // digest since step 0. Still before any write, so refusing here leaves
+    // the owner usable.
+    const pinned = pinnedDigest(options.datasetRoot, profileId);
+    if (pinned !== null && pinned !== measured) failEmbeddingProfileMismatch(pinned, measured);
 
     const now = () => BigInt(options.clock()) * 1000n;
     let embedded = 0;
@@ -244,6 +310,7 @@ export async function embedPendingChunks(
     let failedCount = 0;
     let skipped = 0;
     const written: Record<string, unknown>[] = [];
+    const current: Plan[] = [];
 
     for (const plan of planned) {
       // Fix round finding 3 ("lost acknowledged write"): `plan.row` was read
@@ -260,20 +327,32 @@ export async function embedPendingChunks(
       // clobbered by this batch's stale plan -- this row is simply skipped,
       // left exactly as the winning writer left it.
       const id = plan.row.id as string;
-      const current = await writer.query(
+      const stored = await writer.query(
         SEARCH_CHUNKS,
         `${contextScope(request.workspace_name)} AND id = ${quote(id)}`,
         1,
       );
       if (
-        current.length !== 1 ||
-        current[0]!.attempts !== plan.row.attempts ||
-        current[0]!.status !== plan.row.status
+        stored.length !== 1 ||
+        stored[0]!.attempts !== plan.row.attempts ||
+        stored[0]!.status !== plan.row.status
       ) {
         skipped += 1;
         continue;
       }
+      current.push(plan);
+    }
 
+    // R20 (1): the first vector this dataset ever gets under this profile is
+    // preceded by its pin, from THIS run's measurement. A run that writes no
+    // vector (every row failed or skipped) pins nothing.
+    const writesVector = current.some((plan) => plan.kind === "reuse" || batchError === null);
+    if (pinned === null && writesVector) {
+      writeEmbeddingPin(options.datasetRoot, profileId, measured, options.clock());
+    }
+
+    core.markAttemptedWrite();
+    for (const plan of current) {
       const termIds = storedTermIds(plan.row.term_ids);
       let physical: Record<string, unknown>;
       if (plan.kind === "reuse") {
@@ -356,6 +435,6 @@ export async function embedPendingChunks(
     await core.contextBoundary("after_readback", true);
 
     const remaining = await writer.count(SEARCH_CHUNKS, `${scope} AND ${eligibleClause}`);
-    return { attempted: candidates.length, embedded, reused, failed: failedCount, remaining, skipped };
+    return { attempted: candidates.length, embedded, reused, failed: failedCount, remaining, skipped, blocked: null };
   });
 }

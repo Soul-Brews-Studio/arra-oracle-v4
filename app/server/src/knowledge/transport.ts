@@ -48,7 +48,7 @@ import {
 import { ContractError } from "../contracts/errors";
 import { parseStrictBytes, type JcsObject, type JcsValue } from "../contracts/jcs";
 import { openEvidenceReader, openEvidenceWriter } from "../publication/service";
-import { type EmbedFn } from "../publication/search-chunk.types";
+import { type DigestProbeFn, type EmbedFn } from "../publication/search-chunk.types";
 import { KNOWLEDGE_METHODS, type KnowledgeAction, type KnowledgeBundle, type RequestAuthority } from "./registry";
 import { KnowledgeAuthDenied, admitKnowledgeAction, type KnowledgeAuthFailure } from "./transport.admitKnowledgeAction";
 import { requireBoundPeers } from "./transport.requireBoundPeers";
@@ -157,6 +157,9 @@ const STATUS_FOR_CODE: Readonly<Record<string, number>> = Object.freeze({
   limit_exceeded: 413,
   // #87 / R3: the admitted caller's own authority does not cover the request.
   forbidden: 403,
+  // #30 / R20: the dataset's pinned embedding model is not the one serving
+  // now. A state conflict an operator resolves by re-indexing, not a retry.
+  embedding_profile_mismatch: 409,
 });
 
 /**
@@ -241,6 +244,10 @@ export type KnowledgeDatasetConfig = {
    *  closed with `embedder_unavailable` rather than making a network call
    *  this transport was never told about. */
   readonly embedder?: EmbedFn;
+  /** #30 R20's model-digest probe, wired by `composeKnowledgeAccess`. Absent
+   *  means every `embedPendingChunks` run is `blocked: "digest_unmeasured"`
+   *  and writes nothing -- never a vector without a measured digest. */
+  readonly digestProbe?: DigestProbeFn;
 };
 
 /**
@@ -296,6 +303,7 @@ export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
     // deployment decision, not something a caller's bytes can select.
     sourceNamespace: null,
     embedder: config.embedder,
+    digestProbe: config.digestProbe,
   });
 
   return {

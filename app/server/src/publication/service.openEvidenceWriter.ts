@@ -63,6 +63,8 @@ export async function openEvidenceWriter(
         sourceNamespace: options.sourceNamespace,
         model: options.model,
         embedder: options.embedder,
+        digestProbe: options.digestProbe,
+        datasetRoot: canonical,
       }),
     ),
     evidence: Object.freeze(createEvidenceWriterService(adapter, core)),

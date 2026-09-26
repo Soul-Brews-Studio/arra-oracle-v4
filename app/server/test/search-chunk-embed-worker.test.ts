@@ -230,6 +230,7 @@ describe("embedPendingChunks: a concurrent writeChunkEmbedding is never clobbere
         failed: 0,
         remaining: 0,
         skipped: 1,
+        blocked: null,
       });
 
       // The row is left EXACTLY as `writeChunkEmbedding` left it -- never
@@ -294,6 +295,7 @@ describe("embedPendingChunks: an out-of-contract embedder response never reaches
           failed: 1,
           remaining: 1,
           skipped: 0,
+          blocked: null,
         });
 
         const listed = parsed.op3.value;
@@ -333,14 +335,14 @@ describe("embedPendingChunks: a failed attempt retries and converges on ready", 
       expect(parsed.op0.value.outcome).toBe("accepted");
 
       const firstEmbed = parsed.op2;
-      expect(firstEmbed.value).toEqual({ attempted: 1, embedded: 0, reused: 0, failed: 1, remaining: 1, skipped: 0 });
+      expect(firstEmbed.value).toEqual({ attempted: 1, embedded: 0, reused: 0, failed: 1, remaining: 1, skipped: 0, blocked: null });
       const afterFirst = parsed.op3.value;
       expect(afterFirst[0].status).toBe("failed");
       expect(afterFirst[0].attempts).toBe("1");
       expect(afterFirst[0].error_code).toBe("embedder_bad_response");
 
       const secondEmbed = parsed.op4;
-      expect(secondEmbed.value).toEqual({ attempted: 1, embedded: 1, reused: 0, failed: 0, remaining: 0, skipped: 0 });
+      expect(secondEmbed.value).toEqual({ attempted: 1, embedded: 1, reused: 0, failed: 0, remaining: 0, skipped: 0, blocked: null });
       const afterSecond = parsed.op5.value;
       expect(afterSecond[0].status).toBe("ready");
       expect(afterSecond[0].attempts).toBe("2");
@@ -379,10 +381,10 @@ describe("embedPendingChunks: content-hash reuse costs zero embedder calls", () 
       );
       expect(parsed.op0.value.outcome).toBe("accepted");
       const firstEmbed = parsed.op2;
-      expect(firstEmbed.value).toEqual({ attempted: 1, embedded: 1, reused: 0, failed: 0, remaining: 0, skipped: 0 });
+      expect(firstEmbed.value).toEqual({ attempted: 1, embedded: 1, reused: 0, failed: 0, remaining: 0, skipped: 0, blocked: null });
 
       const secondEmbed = parsed.op5;
-      expect(secondEmbed.value).toEqual({ attempted: 1, embedded: 0, reused: 1, failed: 0, remaining: 0, skipped: 0 });
+      expect(secondEmbed.value).toEqual({ attempted: 1, embedded: 0, reused: 1, failed: 0, remaining: 0, skipped: 0, blocked: null });
 
       const listedB = parsed.op6.value;
       expect(listedB[0].status).toBe("ready");
@@ -413,7 +415,7 @@ describe("embedPendingChunks: no embedder configured fails closed, never a netwo
         { revisionIds: [revA], embedderMode: "none" },
       );
       const result = parsed.op2;
-      expect(result.value).toEqual({ attempted: 1, embedded: 0, reused: 0, failed: 1, remaining: 1, skipped: 0 });
+      expect(result.value).toEqual({ attempted: 1, embedded: 0, reused: 0, failed: 1, remaining: 1, skipped: 0, blocked: null });
       const listed = parsed.op3.value;
       expect(listed[0].status).toBe("failed");
       expect(listed[0].error_code).toBe("embedder_unavailable");
@@ -442,7 +444,7 @@ describe("embedPendingChunks: the retry budget is bounded", () => {
       }
       // The (MAX_EMBED_ATTEMPTS + 1)th call finds nothing left to retry.
       const last = parsed[`op${2 + MAX_EMBED_ATTEMPTS}`];
-      expect(last.value).toEqual({ attempted: 0, embedded: 0, reused: 0, failed: 0, remaining: 0, skipped: 0 });
+      expect(last.value).toEqual({ attempted: 0, embedded: 0, reused: 0, failed: 0, remaining: 0, skipped: 0, blocked: null });
       expect(parsed.embedCalls).toHaveLength(MAX_EMBED_ATTEMPTS);
     } finally {
       await fixture.cleanup();
@@ -475,7 +477,7 @@ describe("R8: index first, embed later, like backfill -- the whole loop, made re
       expect(before.vectors).toMatchObject({ pending: 1, ready: 0, failed: 0 });
 
       const embedded = parsed.op3.value;
-      expect(embedded).toEqual({ attempted: 1, embedded: 1, reused: 0, failed: 0, remaining: 0, skipped: 0 });
+      expect(embedded).toEqual({ attempted: 1, embedded: 1, reused: 0, failed: 0, remaining: 0, skipped: 0, blocked: null });
 
       const after = parsed.op4.value;
       expect(after.vectors).toMatchObject({ pending: 0, ready: 1, failed: 0 });

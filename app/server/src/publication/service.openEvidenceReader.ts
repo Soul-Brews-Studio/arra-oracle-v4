@@ -14,7 +14,7 @@ export async function openEvidenceReader(datasetRoot: string): Promise<EvidenceR
   return Object.freeze({
     publication: Object.freeze(makeReadMethods(adapter)),
     taxonomy: Object.freeze(createTaxonomyReadMethods(adapter)),
-    context: Object.freeze(createContextReadMethods(adapter)),
+    context: Object.freeze(createContextReadMethods(adapter, canonical)),
     evidence: Object.freeze(createEvidenceReadMethods(adapter)),
   });
 }

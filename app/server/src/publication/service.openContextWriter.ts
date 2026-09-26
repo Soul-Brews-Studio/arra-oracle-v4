@@ -69,6 +69,8 @@ export async function openContextWriter(
         sourceNamespace: options.sourceNamespace,
         model: options.model,
         embedder: options.embedder,
+        digestProbe: options.digestProbe,
+        datasetRoot: canonical,
       }),
     ),
     close: core.close,

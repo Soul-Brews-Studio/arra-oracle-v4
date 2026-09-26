@@ -32,7 +32,7 @@ export { MAX_RECONCILE_REVISIONS, type ReconcileSearchChunksRequest, parseReconc
 export { SEARCH_CHUNK_FIELDS, encodeSearchChunkRow } from "./search-chunk.encodeSearchChunkRow";
 export { storedEmbedding } from "./search-chunk.storedEmbedding";
 export { storedTermIds } from "./search-chunk.storedTermIds";
-export { type EmbeddingProfileRequest, type EmbedFn } from "./search-chunk.types";
+export { type DigestProbeFn, type EmbeddingProfileRequest, type EmbedFn } from "./search-chunk.types";
 export { type IndexRevisionChunksRequest, parseIndexRevision } from "./search-chunk.parseIndexRevision";
 export { type ListChunksRequest, parseListChunks } from "./search-chunk.parseListChunks";
 export { type GetSearchFreshnessRequest, parseGetSearchFreshness } from "./search-chunk.parseGetSearchFreshness";
@@ -49,11 +49,10 @@ export { SEARCH_CHUNK_ID_DOMAIN, deriveChunkId } from "./search-chunk.deriveChun
 export { SEARCH_CHUNK_CONTENT_DOMAIN, deriveContentHash } from "./search-chunk.deriveContentHash";
 export {
   type EmbeddingProfile,
+  ACTIVE_EMBEDDING_MODEL_NAME,
+  ACTIVE_EMBEDDING_PROFILE,
   INPUT_RULE,
-  activeEmbeddingProfile,
-  activeEmbeddingProfileId,
-  configureActiveEmbeddingModelDigest,
-  fetchOllamaModelDigest,
-  getActiveEmbeddingModelDigest,
-  requireRegisteredEmbeddingProfileName,
 } from "./search-chunk.profiles";
+export { activeEmbeddingProfileId } from "./search-chunk.activeEmbeddingProfileId";
+export { requireRegisteredEmbeddingProfileName } from "./search-chunk.requireRegisteredEmbeddingProfileName";
+export { MODEL_DIGEST_PATTERN, fetchOllamaModelDigest } from "./search-chunk.fetchOllamaModelDigest";

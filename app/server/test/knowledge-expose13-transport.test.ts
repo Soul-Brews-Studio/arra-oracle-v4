@@ -283,12 +283,19 @@ const fakeBundle: KnowledgeBundle = {
       return {
         content: { nodes: 0, revisions: 0 },
         text_index: { indexed_rows: null, unindexed_rows: null },
-        vectors: { profile_id: activeEmbeddingProfileId(), pending: 0, ready: 0, failed: 0, last_attempt_at: null },
+        vectors: {
+          profile_id: activeEmbeddingProfileId(),
+          pending: 0,
+          ready: 0,
+          failed: 0,
+          last_attempt_at: null,
+          model_digest: { pinned: null, last_measured: null },
+        },
       };
     },
     async embedPendingChunks(bytes: Uint8Array) {
       parseEmbedPendingChunks(bytes);
-      return { attempted: 0, embedded: 0, reused: 0, failed: 0, remaining: 0, skipped: 0 };
+      return { attempted: 0, embedded: 0, reused: 0, failed: 0, remaining: 0, skipped: 0, blocked: null };
     },
   } as never,
   evidence: {} as never,

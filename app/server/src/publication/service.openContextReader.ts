@@ -14,6 +14,6 @@ export async function openContextReader(datasetRoot: string): Promise<ContextRea
   return Object.freeze({
     publication: Object.freeze(makeReadMethods(adapter)),
     taxonomy: Object.freeze(createTaxonomyReadMethods(adapter)),
-    context: Object.freeze(createContextReadMethods(adapter)),
+    context: Object.freeze(createContextReadMethods(adapter, canonical)),
   });
 }

@@ -17,6 +17,14 @@
 //    records each sub-result under its own index -- how the hang test
 //    proves `publishRevision` is never blocked by a concurrent
 //    `embedPendingChunks` call stuck in its embedder.
+//  - R20 (docs/overnight/DECISIONS.md): `payload.digests` scripts the STUB
+//    model-digest probe, one entry per probe call (the last entry repeats):
+//    a digest string is a measurement, `null` is "Ollama answered nothing
+//    usable", `"hang"` never settles. Absent means one fixed stub digest
+//    for every call, so tests about something else are never blocked;
+//    `"none"` omits the probe option entirely. `payload.digestTimeoutMs`
+//    sets `ARRA_EMBED_DIGEST_TIMEOUT_MS` before import, like
+//    `embedTimeoutMs`. Never a real network call.
 type Op = { facade?: "context" | "publication" | "taxonomy" | "harness"; method: string; request: any };
 
 const [, , datasetRoot, payloadJson] = Bun.argv;
@@ -35,16 +43,46 @@ const payload = JSON.parse(payloadJson ?? "{}") as {
   embedTimeoutMs?: number;
   embedderMode?: "none" | "fixed" | "hang" | "reject-once" | "always-fail" | "short-batch" | "wrong-dims" | "nan-values";
   embedDims?: number;
+  digests?: Array<string | null> | "none";
+  digestTimeoutMs?: number;
 };
 
 if (payload.embedTimeoutMs !== undefined) {
   process.env.ARRA_EMBED_TIMEOUT_MS = String(payload.embedTimeoutMs);
+}
+if (payload.digestTimeoutMs !== undefined) {
+  process.env.ARRA_EMBED_DIGEST_TIMEOUT_MS = String(payload.digestTimeoutMs);
 }
 
 const servicePath = new URL("../../../../src/publication/service.ts", import.meta.url).pathname;
 const { openContextWriter } = await import(servicePath);
 const { rawRows } = await import(new URL("../../../../src/publication/storage.ts", import.meta.url).pathname);
 const { connect } = await import("@lancedb/lancedb");
+const { activeEmbeddingProfileId } = await import(
+  new URL("../../../../src/publication/search-chunk.ts", import.meta.url).pathname
+);
+const { existsSync, readFileSync } = await import("node:fs");
+const { join } = await import("node:path");
+
+/** The one stub digest every probe call answers when a test does not script
+ *  `payload.digests` -- the measured `/api/tags` shape (64 lowercase hex). */
+const DEFAULT_STUB_DIGEST = "0d1a2b3c4d5e6f708192a3b4c5d6e7f80d1a2b3c4d5e6f708192a3b4c5d6e7f8";
+const digestScript: Array<string | null> =
+  payload.digests === undefined || payload.digests === "none" ? [DEFAULT_STUB_DIGEST] : payload.digests;
+let probeCalls = 0;
+const digestProbe =
+  payload.digests === "none"
+    ? undefined
+    : async (_signal?: AbortSignal): Promise<string | null> => {
+        const answer = digestScript[Math.min(probeCalls, digestScript.length - 1)] ?? null;
+        probeCalls += 1;
+        if (answer === "hang") {
+          return new Promise<string | null>(() => {
+            /* never resolves, and ignores the signal on purpose */
+          });
+        }
+        return answer;
+      };
 
 const DIMS = payload.embedDims ?? 384;
 const embedCalls: string[][] = [];
@@ -116,6 +154,16 @@ const harnessTable = async (name: string) => {
 };
 
 const harness: Record<string, (request: any) => Promise<unknown>> = {
+  /** R20: the dataset's pin sidecar, read raw -- the parent asserts its
+   *  exact content, so this never goes through the production reader. */
+  async readPinFile() {
+    const path = join(datasetRoot!, ".embedding-profile-pins.json");
+    return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
+  },
+  /** The profile id THIS process's module instance computes right now. */
+  async profileId() {
+    return activeEmbeddingProfileId();
+  },
   async readRawRows(request) {
     const tbl = await harnessTable(request.table);
     const rows = await rawRows(tbl, request.predicate);
@@ -158,7 +206,13 @@ const describeError = (error: unknown): Record<string, unknown> => {
     version = null;
     message = e?.message ?? null;
   }
-  return { name: e.name ?? null, code: e.code ?? null, path: e.path ?? null, version, message };
+  let envelope: unknown = null;
+  try {
+    envelope = typeof e.toJSON === "function" ? e.toJSON() : null;
+  } catch {
+    envelope = null;
+  }
+  return { name: e.name ?? null, code: e.code ?? null, path: e.path ?? null, version, message, envelope };
 };
 
 let revisionIndex = 0;
@@ -167,6 +221,7 @@ const service = await openContextWriter(datasetRoot!, {
   clock: () => payload.clockMs ?? 1_758_412_800_000,
   sourceNamespace: null,
   embedder,
+  digestProbe,
   onContextBoundary: async (boundary: string) => {
     trace.push(boundary);
   },
@@ -225,6 +280,7 @@ try {
 } finally {
   results.trace = trace;
   results.embedCalls = embedCalls;
+  results.probeCalls = probeCalls;
 }
 
 console.log(JSON.stringify(results));
