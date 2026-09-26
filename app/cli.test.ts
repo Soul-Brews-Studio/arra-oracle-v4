@@ -69,7 +69,9 @@ describe("CLI transport contract", () => {
     expect(recalled.code).toBe(0);
     expect(JSON.parse(JSON.parse(recalled.out).result.content[0].text)).toEqual(answer);
     response = { ...answer, match: "ngram" };
-    const searched = await run("search", "--query", "ลืม");
+    // Legacy memories search needs its legacy mode named explicitly since #30
+    // (R7): a bare `search` is the knowledge-tier search (see the block below).
+    const searched = await run("search", "--query", "ลืม", "--mode", "text");
     expect(searched.code).toBe(0);
     expect(JSON.parse(searched.out)).toEqual({ ...answer, match: "ngram" });
     const help = await run("help");
@@ -105,7 +107,7 @@ describe("CLI transport contract", () => {
   });
   for (const [command, flags, path] of [
     ["health", [], "/health"], ["list", [], "/api/memories"],
-    ["search", ["--query", "Thai ภาษาไทย"], "/api/search"],
+    ["search", ["--query", "Thai ภาษาไทย", "--mode", "text"], "/api/search"],
     ["backfill", ["--batch", "2"], "/api/backfill"], ["reindex", [], "/api/reindex"],
   ] as [string, string[], string][]) test(`routes HTTP ${command}`, async () => {
     expect((await run(command, ...flags)).code).toBe(0); expect(requests[0]?.path).toBe(path);
@@ -498,5 +500,68 @@ describe("CLI help marks the legacy 13 without removing them (#31 R8)", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("kb ");
     expect(r.out).toContain("peer add");
+  });
+});
+
+// ── #30 (overnight R7 #30 part + R14): `search` over the knowledge tier ──────
+
+describe("CLI search over kb (#30 R7)", () => {
+  test("bare search is the knowledge keyword search, posted to the registry route", async () => {
+    response = { match: "ngram", scan_reason: null, hits: [] };
+    const r = await run("search", "--bank", "test-bank", "--query", "ลืม");
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.out)).toEqual(response);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      path: "/api/knowledge/test-bank/searchKnowledgeKeyword",
+      method: "POST",
+      authorization: `Bearer ${TOKEN}`,
+      body: { workspace_name: "test-bank", query: "ลืม" },
+    });
+  });
+
+  test("--mode keyword with --limit forwards an integer limit", async () => {
+    const r = await run("search", "--query", "ลืม", "--mode", "keyword", "--limit", "3");
+    expect(r.code).toBe(0);
+    expect(requests[0]?.path).toBe("/api/knowledge/test-bank/searchKnowledgeKeyword");
+    expect(requests[0]?.body).toEqual({ workspace_name: "test-bank", query: "ลืม", limit: 3 });
+  });
+
+  test("--mode semantic targets searchKnowledgeSemantic; --profile becomes embedding_profile", async () => {
+    const r = await run("search", "--query", "keys", "--mode", "semantic", "--profile", "all-minilm", "--limit", "2");
+    expect(r.code).toBe(0);
+    expect(requests[0]?.path).toBe("/api/knowledge/test-bank/searchKnowledgeSemantic");
+    expect(requests[0]?.body).toEqual({ workspace_name: "test-bank", query: "keys", limit: 2, embedding_profile: "all-minilm" });
+  });
+
+  test("--mode text|vector keeps the legacy memories search route", async () => {
+    const r = await run("search", "--query", "keys", "--mode", "vector");
+    expect(r.code).toBe(0);
+    expect(requests[0]?.path).toBe("/api/search");
+    expect(new URLSearchParams(requests[0]!.search).get("mode")).toBe("vector");
+  });
+
+  for (const args of [
+    ["search"], ["search", "--query", "x", "--mode", "fuzzy"],
+    ["search", "--query", "x", "--profile", "all-minilm"],
+    ["search", "--query", "x", "--mode", "text", "--profile", "all-minilm"],
+    ["search", "--query", "x", "--limit", "0"],
+  ]) test(`rejects ${JSON.stringify(args)} before any network call`, async () => {
+    expect((await run(...args)).code).toBe(1);
+    expect(requests).toHaveLength(0);
+  });
+
+  test("a governed refusal is printed unchanged and exits nonzero", async () => {
+    response = { version: "arra-error/v1", code: "invalid_value", path: "/limit", message: "expected 1..50" };
+    responseStatus = 400;
+    const r = await run("search", "--query", "x", "--mode", "semantic");
+    expect(r.code).toBe(1);
+    expect(JSON.parse(r.out)).toEqual(response);
+  });
+
+  test("help documents the knowledge search and the legacy modes", async () => {
+    const r = await run("help");
+    expect(r.out).toContain("search --bank NAME --query TEXT [--mode keyword|semantic]");
+    expect(r.out).toContain("searchKnowledgeKeyword");
   });
 });
