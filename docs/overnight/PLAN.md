@@ -231,3 +231,7 @@ are part of done.
   **GATE 5 on `2db2bc0`+fixes: TS 1446/1, the 1 failure fixed in `ad46ebc` (4/4) · Python 268 OK · probe 47 methods ×4 transports,
   isolation 0 · v3 harness: PASS 10 / FAIL 0 / GAP 27 of 37 steps** (the GAPs are tools not built yet, honestly unscored).
 - 00:43 wave 2 status: chat and v3-frame merged; lifecycle, search-query and sessions are in repair round 3 (`wf_34eb9ce4-70b`); search-embed is in its fix round.
+- 00:44 WAVE 3 launched (`wf_79096e2c-9f4`) from `acb70ac`: v3-trace (V3 + K5 listTraces + V7, Sonnet) · v3-forum (V4 threads over
+  sessions/messages with R3 membership + K12a titles + K9–K11 closeSession/filters, Opus) · v3-stats (K6 listTerms usage + K7
+  knowledgeStats + V8, Sonnet) · ui-33 (chat with citations, revision diff, evidence review, screenshots as proof, Sonnet).
+  Still waiting on search-query (V5 search, 46% of real v3 calls) and lifecycle (V2 reads).
