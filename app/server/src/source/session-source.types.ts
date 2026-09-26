@@ -16,8 +16,8 @@
 /**
  * One session as the source index knows it -- identity plus display
  * metadata, never full content. `sourceBank`/`provider`/`sessionUuid` are
- * exactly the `relic_session` target's identity triple
- * (`contracts/evidence-v1.ts` `TARGET_KEYS.relic_session`); this type is
+ * exactly the `relic_session` target's identity triple (the evidence
+ * codec's `TARGET_KEYS.relic_session`, in `evidence-v1.ts`); this type is
  * provider-agnostic in principle, but its three identity fields are named to
  * match that codec directly, since Relic is the only implementation this
  * dispatch ships.

@@ -500,6 +500,17 @@ class IsolationTests(unittest.TestCase):
         # and this test has been failing since that merge, unnoticed because the
         # Python suite was not run on it.
         TS_ROOT / "publication" / "chat.ts",
+        # The #28 Unit D Relic `SessionSource` adapter builds `evidence-v1`
+        # targets (`relic_session`, `relic_event`) to pin into `createTrace`/
+        # `createSessionLink` calls, so it reuses the governed JCS
+        # canonicalizer, the strict-hash helper and the evidence codec for the
+        # same reason every kernel above does: it must not carry a second
+        # canonicalizer. Listed as exact files, deliberately -- a future
+        # `source/` provider (e.g. `session-viewer`, `lanceglass`) is not a
+        # sibling of any reviewed barrel and must be reviewed too.
+        TS_ROOT / "source" / "relic.buildRelicEventTarget.ts",
+        TS_ROOT / "source" / "relic.buildRelicSessionTarget.ts",
+        TS_ROOT / "source" / "relic.captureDigest.ts",
     )
 
     #: A pure-move split extracted every barrel above into flat

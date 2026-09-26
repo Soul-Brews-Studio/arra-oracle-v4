@@ -1,10 +1,10 @@
 /**
  * `RelicAdapterError` -- internal-only. Nothing here crosses a transport, so
- * this is NOT the governed `arra-error/v1` codec (`contracts/errors.ts`) or
- * the publication codec (`publication/errors.ts`): a `SessionSource` is
- * consumed by trusted server code building evidence to pin, never directly
- * by a request handler (see the contract doc's "why internal" section), so
- * there is no wire shape to keep stable here.
+ * this is NOT the governed `arra-error/v1` codec (the server's error contract
+ * module) or the publication codec (`publication/errors.ts`): a
+ * `SessionSource` is consumed by trusted server code building evidence to
+ * pin, never directly by a request handler (see the contract doc's "why
+ * internal" section), so there is no wire shape to keep stable here.
  */
 
 export const RELIC_ADAPTER_ERROR_CODES = [
