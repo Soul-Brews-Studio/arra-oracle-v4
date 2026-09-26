@@ -38,10 +38,12 @@ export function groupKnowledgeHits(
   const better = (a: number | null, b: number | null) =>
     a !== null && b !== null && (order === "descending" ? a > b : a < b);
   const byNode = new Map<string, RankedChunk[]>();
+  const seen = new Set<string>();
   for (const chunk of chunks) {
-    if (heads.get(chunk.node_id)?.revision_id !== chunk.revision_id) continue;
+    if (heads.get(chunk.node_id)?.revision_id !== chunk.revision_id || seen.has(chunk.id)) continue;
+    seen.add(chunk.id);
     const group = byNode.get(chunk.node_id) ?? [];
-    if (!group.some((seen) => seen.id === chunk.id)) group.push(chunk);
+    group.push(chunk);
     byNode.set(chunk.node_id, group);
   }
   const hits: KnowledgeHit[] = [];
