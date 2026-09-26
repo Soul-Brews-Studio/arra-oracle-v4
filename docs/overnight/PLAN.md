@@ -275,3 +275,14 @@ are part of done.
   ```
   The 3 FAILs are one defect: R21 is not on this head yet (a raw `score` is still returned). The search-polish slice implements it. The GAP is #33's
   browser proof, which ui-33 is producing.
+- 02:38 Waves 3/4 verdicts so far: ACCEPTED v3-forum, v3-reads (first time), v3-search. MERGED v3-search (the doc amendment renumbered) and v3-reads
+  (handlers union: V5 + V2 tools). v3-forum's merge is in progress via the parameterised merge workflow (`wf_7a802f41-e76`): the surface-pin lists need a
+  union (closeSession on the writer, listSessionMembers on both). REFUTED twice → repair (`wf_d26c60ae-8cf`): **ui-33** (the side-by-side diff mispairs
+  consecutive changed lines; #33 AC3 unresolved evidence not labelled) and **v3-stats** (term usage counted from the derived projection while its coverage flag
+  claimed completeness). v3-trace and v3-list are in fix rounds; search-polish (R21) is in its second verification.
+- 02:54 v3-trace REFUTED twice. The real finding: the `listTraces` keyset cursor skips rows when a created_at tie straddles the 1000-row window. Also v3's
+  project and depth filters were silently dropped, a walk test was flaky under load, and R18 D4 was unpinned. Repair launched (`wf_f3ada243-fcc`, Opus).
+- 03:00 **v3-forum merge ACCEPTED** (`a8357f1`, via the parameterised merge workflow): the surface-pin unions are writer 32 and reader 20 context methods; 14 v3 tools are
+  advertised; the forum's `listSessions.member_peer_name` is classified under R3 (otherwise a bound credential could probe another peer's sessions).
+  A stale fixture profile name left by the search merges was fixed. **Full suite 1767 pass / 0 fail, 117/117 files · Python 268 OK ·
+  v3 acceptance harness PASS 27 / FAIL 0 / GAP 10 of 37** (the GAPs are list, trace ×6, inbox and stats, all in repair).
