@@ -198,3 +198,7 @@ are part of done.
   malformed `session_name` over MCP; the legacy writer stores it raw, and the new strict reader then throws for the whole
   workspace, so the audit listing is denied for everyone. There was also a 520-line fixture. Repair workflow
   `wf_de3ce6e1-49a` (Opus) is fixing both ends: the writer validates, and one bad row cannot deny the listing.
+- 23:33 ops-root ACCEPTED after the repair round (poisoning fixed at both ends; mutation-checked) and MERGED. Three conflicts were
+  resolved: `mcp/index.ts` keeps both the R3 binding check and the R5 operations branch; the `connections.ts` comment
+  keeps the #105 correction; the contract keeps both amendments. **R19**: `connections.method` = the SPEC §7.2 auth method,
+  `bearer` (red → green). The UI v2 bundle was rebuilt from the merged source; two slices had each committed their own. Gate 3 is running.
