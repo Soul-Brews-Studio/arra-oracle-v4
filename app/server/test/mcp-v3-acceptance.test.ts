@@ -132,7 +132,10 @@ describe("v3 client session over the real wire, inside the writer gate (v3-sessi
         throw new Error(`no session run: ${setupError ?? MISSING.join(", ")}`);
       });
     } else if (verdict.verdict === "GAP") {
-      test.todo(`${title} [GAP: ${verdict.reason}]`);
+      // Bun's types want a body; it only runs under --todo, where a GAP must not pass.
+      test.todo(`${title} [GAP: ${verdict.reason}]`, () => {
+        throw new Error(`GAP: ${verdict.reason}`);
+      });
     } else {
       test(title, () => {
         expect(verdict.errors, step.assert.notes).toEqual([]);

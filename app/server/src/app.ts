@@ -147,6 +147,11 @@ export function createApp(
         // policy I/O, so an over-long bank is 400 rather than a 503 from the
         // loader doing work for a request that was never valid.
         if (!isValidWorkspace(params.bank)) return errorResponse(400);
+        // A7/D8 (R18): X-Arra-Peer is the connection-level speaker ASSERTION.
+        // Same bounded name grammar as the bank, checked before any policy
+        // I/O; whether this credential may assert it is the service's call.
+        const peerHeader = request.headers.get("x-arra-peer");
+        if (peerHeader !== null && !isValidWorkspace(peerHeader)) return errorResponse(400);
         const encoding = checkBodyEncoding(request);
         if (encoding) return errorResponse(encoding.status);
 
@@ -205,6 +210,7 @@ export function createApp(
           readAuthorization(request),
           readEnvelope,
           request.headers.get("user-agent") ?? "",
+          peerHeader,
         );
         if (pending.handshake !== null) {
           pending.handshake.headers.set("cache-control", "no-store");

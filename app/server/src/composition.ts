@@ -19,6 +19,8 @@ export type RuntimeConfig = {
   readonly policyPath: string;
   readonly origin: string;
   readonly port: number;
+  /** R18 D10: the v3-compatible MCP family. Absent = off. */
+  readonly v3Compat?: boolean;
 };
 
 /**
@@ -130,6 +132,8 @@ export async function composeService(config: RuntimeConfig): Promise<OperationSe
         workspace_name: string;
         session_name?: string | null;
         client_label?: string | null;
+        peer_name?: string | null;
+        requested_as?: string | null;
         transport?: string | null;
         remote_ip?: string | null;
         auth: { principal_id: string; credential_id: string; policy_version: string };
@@ -163,7 +167,10 @@ export async function composeService(config: RuntimeConfig): Promise<OperationSe
         duration_ms: entry.duration_ms,
         workspace_name: entry.workspace_name,
         // peer_name stays a DOMAIN field: the principal never populates it.
-        peer_name: null,
+        // It carries only the speaker the connection ASSERTED (X-Arra-Peer,
+        // R18 A7), which the service already checked against the grant.
+        peer_name: entry.peer_name ?? null,
+        requested_as: entry.requested_as ?? null,
         session_name: entry.session_name ?? null,
         client_label: entry.client_label ?? null,
         auth: entry.auth,
@@ -171,7 +178,17 @@ export async function composeService(config: RuntimeConfig): Promise<OperationSe
     },
   };
 
-  return createOperationService({ policyPath: config.policyPath }, deps);
+  return createOperationService({ policyPath: config.policyPath, v3Compat: config.v3Compat === true }, deps);
+}
+
+/**
+ * R18 D10: `ARRA_MCP_V3_COMPAT` turns on the v3-compatible MCP family
+ * (`mcp/legacy-v3/`). Trusted operator configuration, read here and nowhere
+ * else, never from a request. Only the exact value "1" enables it, so a typo
+ * or "true" leaves the default (off) in place rather than guessing.
+ */
+export function composeV3Compat(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.ARRA_MCP_V3_COMPAT === "1";
 }
 
 /**

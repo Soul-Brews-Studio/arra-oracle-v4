@@ -91,6 +91,8 @@ export interface CallRecord {
   peer_name?: string | null;
   session_name?: string | null;
   client_label?: string | null;
+  /** D6 (R18): the `arra_*` alias the caller used; `tool` is then its canonical name. */
+  requested_as?: string | null;
   /** Present for admitted operations; absent only for legacy internal writes. */
   auth?: AuditAttribution | null;
 }
@@ -128,6 +130,7 @@ export async function logCall(rec: CallRecord): Promise<void> {
             ? {
                 input: truncate(rec.input),
                 result: truncate(rec.result),
+                ...(rec.requested_as ? { requested_as: rec.requested_as } : {}),
                 auth: {
                   principal_id: rec.auth.principal_id,
                   credential_id: rec.auth.credential_id,

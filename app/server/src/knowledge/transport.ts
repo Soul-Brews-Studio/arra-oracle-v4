@@ -289,6 +289,9 @@ export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
   });
 
   return {
+    /** Advertising only (#31): false hides kb_* and the v3 family from tools/list. */
+    datasetConfigured: config.datasetRoot !== undefined,
+
     async getBundle(action: KnowledgeAction): Promise<KnowledgeBundle> {
       // Every action except `content:write` is a READ (#94 widened
       // `KnowledgeAction` to add `audit:read`): branching on `!== "content:write"`
@@ -334,6 +337,8 @@ export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
  * editing files this task does not own.
  */
 export type KnowledgeAccess = {
+  /** False only when no dataset root is configured; see `transport.isDatasetConfigured.ts`. */
+  readonly datasetConfigured?: boolean;
   getBundle(action: KnowledgeAction): Promise<KnowledgeBundle>;
   getEphemeralWriter?(): Promise<import("../publication/service").EvidenceWriterBundle>;
 };
