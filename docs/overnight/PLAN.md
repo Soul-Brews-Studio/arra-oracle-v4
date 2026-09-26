@@ -286,3 +286,10 @@ are part of done.
   advertised; the forum's `listSessions.member_peer_name` is classified under R3 (otherwise a bound credential could probe another peer's sessions).
   A stale fixture profile name left by the search merges was fixed. **Full suite 1767 pass / 0 fail, 117/117 files · Python 268 OK ·
   v3 acceptance harness PASS 27 / FAIL 0 / GAP 10 of 37** (the GAPs are list, trace ×6, inbox and stats, all in repair).
+- 03:01 Flake fix `9720fb1`: the chat-model stub's teardown gets a 30 s hook bound (it hit 5 s once under load; 3/3 green after).
+- 03:01 **GitHub CI is still red, on timing only**: shards take about 1300 s on the runner against about 200 s locally. Wall-clock embed-coexistence tests,
+  a "WIDE node" test (explicit 5 s bound) and 3 unnamed hook timeouts fail. **ci-green slice** launched (`wf_0b28e913-5b7`, Opus): replace wall-clock
+  windows with handshakes, route explicit timeouts through one TEST_TIMEOUT_MS helper, reproduce slow-runner conditions locally red → green,
+  then push the slice branch and watch a real GitHub run finish green.
+- 03:01 **demo slice** launched (`wf_47183233-920`): `app/just/demo.sh` is Nat's "LET PLAY" loop through the real CLI and the v3 MCP adapter against real local
+  Ollama, with a verbatim transcript in `docs/overnight/DEMO.md` and a stubbed-model test so CI keeps it honest.
