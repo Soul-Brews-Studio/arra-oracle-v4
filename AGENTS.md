@@ -1,12 +1,12 @@
 # arra-oracle-v4 — current agent guide
 
-**Version**: `v26.9.27-alpha.420`
+**Version**: `v26.9.27-alpha.432`
 
-**Date**: 2026-09-27 04:20 GMT+7
+**Date**: 2026-09-27 04:32 GMT+7
 
 Updated by Claude Opus 5.5 (AI) 2026-09-27 from measured source, on `v4/overnight-26sep` `e00b50b`. Claude Sonnet 5 wrote the previous version (2026-09-26); Codex wrote the one before.
 
-Read this guide, [DESIGN.md](DESIGN.md), and the relevant historical [SPEC.md](SPEC.md) section before changing behavior. The old SPEC remains evidence, not current authority for storage/schema/runtime. Latest direction is recorded in [discussion #36](https://github.com/Soul-Brews-Studio/arra-oracle-v4/discussions/36), building on #21 and #35. The overnight rulings R1–R22 (2026-09-26/27) live in [`docs/overnight/DECISIONS.md`](docs/overnight/DECISIONS.md); the evidence for them is in [`docs/overnight/PROOF.md`](docs/overnight/PROOF.md), which the overnight driver writes. Read DECISIONS.md before reopening anything it already settled.
+Read this guide, [DESIGN.md](DESIGN.md), and the relevant historical [SPEC.md](SPEC.md) section before changing behavior. The old SPEC remains evidence, not current authority for storage/schema/runtime. Latest direction is recorded in [discussion #36](https://github.com/Soul-Brews-Studio/arra-oracle-v4/discussions/36), building on #21 and #35. The overnight rulings R1–R22 (2026-09-26/27) live in [`docs/overnight/DECISIONS.md`](docs/overnight/DECISIONS.md); the evidence for them will be in [`docs/overnight/PROOF.md`](docs/overnight/PROOF.md), which the overnight driver writes at the end of the run; it is not yet written on `e00b50b`, so the link is dead until then. Read DECISIONS.md before reopening anything it already settled.
 
 ## Current implementation versus target
 
@@ -90,15 +90,20 @@ Every number here was measured on `e00b50b` on 2026-09-27: counts come from the 
 
   ```text
   GET /, /v2/index.html, /knowledge.html, /health   no token      200
-  GET /api/health                                   no token      401
+  GET /api/health?bank=default                      no token      401
+  GET /api/health                  (no ?bank)       no token      400
   GET /                                             foreign Host  400
   ```
+
+  A missing, repeated or malformed `?bank` is refused with 400 before admission (`app.ts:79-85`, `:253-259`), so the 401 needs a bank. Both are pinned: `auth-integration.test.ts:97-107` (401) and `mcp-correctness.test.ts:435-437` (400).
 - **Membership boundary (R3).**
   - `listMessages`, `getMessage` and `listSessionMembers` take an optional `requester_peer_name` (`publication/context.requireMessageReadAuthority.ts`, `service.requireCurrentMembership.ts`):
-    - A named requester must be a current member of the session. A non-member or departed peer gets `invalid_reference` (HTTP 400, MCP `isError`), the same answer as a reference that does not exist.
+    - A named requester must be a current member of the session. The two list methods and `getMessage` answer a non-member differently, on purpose:
+      - `listMessages` and `listSessionMembers`: a stranger, a departed member or a peer that does not exist gets `invalid_reference` at `/requester_peer_name` (HTTP 400, MCP `isError`) (`service.listMessages.ts`, `service.listSessionMembers.ts:39`). Session existence is already visible through `listSessions`, so this reveals nothing new.
+      - `getMessage`: a non-member reads `null` (HTTP 200 / MCP result text `null`, no `isError`), the same as an absent id (`service.getMessage.ts:18-26`, `:41-52`; `context-ingestion-v1.md` R3 amendment). A refusal would confirm that the id exists (`authorization-v1.md` §3). Do not "fix" this into a 400.
     - With no requester named, the caller needs `audit:read` on the workspace (the operator view); otherwise the answer is 403 `forbidden`.
   - An `arra-auth/v1` grant may list `peers: [...]`. When it does, every caller-asserted peer field in `knowledge/registry.peerFields.ts` must be one of them, or the request gets 403 at that field (`knowledge/transport.requireBoundPeers.ts`). The field table is exhaustive over the registry.
-  - Live probe: isolation 191 PASS / 0 FAIL across HTTP, MCP and CLI.
+  - Live probe: isolation 191 PASS / 0 FAIL across HTTP, MCP and CLI. Its #87 rows show both answers on all three transports: `getMessage` for an operator-named non-member or a departed member is 200 with `null`, and `listMessages` for the same requesters is `invalid_reference`.
 - **Taxonomy (R6, R10).** A sealed vocabulary refuses create, rename, retire and reparent on every transport. `conclusion` is a reserved type term (`publication/taxonomy.constants.ts:44`), not a table (#89).
 - **UI.** The built `app/ui/v2` bundle is served at `/v2/`. A name scan of its non-test source finds 35 of the 57 methods called, covering nodes, revision history and diff, lifecycle, evidence review, traces and chat; neither knowledge search method is called. `cd app/ui/v2 && bun test` gives 106 pass / 0 fail across 9 files. Screenshots are in `docs/overnight/UI-PROOF.md`.
 - **Built, but not wired into requests.** The Relic session-source adapter (`app/server/src/source/relic.*`, `session-source-relic-v1.md`) is read-only and has no route. The Honcho round-trip bundle (`arra_migrate/honcho_roundtrip`, #8 phase 1) is tested against a fixture. The live run against stock Honcho was not done.
@@ -172,7 +177,7 @@ The earlier libSQL, SQL-FK, Rust-owner, 1024-d default, no-code and open-forgett
   - Python `unittest discover`: 268 OK, 1 skipped.
 
   The last full sharded suite is gate 9 on `87f9f06`; from there to `e00b50b` only `docs/overnight/PLAN.md` changed: 1972 pass / 0 fail across 134/134 files in 183 s (`docs/overnight/PLAN.md`).
-- CI: `.github/workflows/ci.yml` runs on every push and pull request (R13). It runs typecheck, build, the sharded `app/server` suite (`test:parallel`, `TEST_SHARDS=4`, `TEST_TIMEOUT_MS=60000`), and the `app/migrate-py` `unittest discover` suite (268 tests, 1 skipped). It also runs the two `tests/fixtures/*-v1/` suites that discovery does not reach (17 + 22), `app/benchmarks` (123), and the `app/ui/v2` build. The UI's own 106 unit tests are not in CI. **CI has not yet gone green on GitHub.** The latest completed run on the integration branch (run 36268890136, on `47eb786`) failed in the sharded suite, all on shard 2: two unnamed hook timeouts and the session-link "WIDE node" test. `docs/overnight/PLAN.md` (03:01) attributes these failures to runner timing, with shards taking about 1300 s there against about 200 s locally. The run for `e00b50b` was still in progress at 04:10, and the ci-green slice is not on this base.
+- CI: `.github/workflows/ci.yml` runs on every push and pull request (R13). It runs typecheck, build, the sharded `app/server` suite (`test:parallel`, `TEST_SHARDS=4`, `TEST_TIMEOUT_MS=60000`), and the `app/migrate-py` `unittest discover` suite (268 tests, 1 skipped). It also runs the two `tests/fixtures/*-v1/` suites that discovery does not reach (17 + 22), `app/benchmarks` (123), and the `app/ui/v2` build. The UI's own 106 unit tests are not in CI. **CI has not gone green on the integration branch** (`gh run list`, 2026-09-27 04:30). The run for this base, 36271463787 on `e00b50b`, failed in the sharded suite with 6 failing tests and every one of the 4 shards exiting 1. The named failures are the `embedPendingChunks` hung-embedder handshake test (shard 0) and the session-link "WIDE node" test (shard 1); the other 4 are unnamed in the log. The run before it, 36268890136 on `47eb786`, failed with 4 tests on two shards: shard 2 had two unnamed hook timeouts and the "WIDE node" test, and shard 3 had one unnamed failure. When the sharded suite fails, the later Python, benchmark and UI-build steps are skipped. `docs/overnight/PLAN.md` (03:01) attributes these failures to runner timing, with shards taking about 1300 s there against about 200 s locally. The ci-green slice's own branch passed once (36271049858, `f7aafb0` on `v4/on-ci-green`), but that slice is not on this base.
 - Still target, not built: a per-workspace FTS index or statistics, which would close the R22 residual fully; a live #8 round-trip against stock Honcho; #7 recall judgments that no agent wrote; a workspace-creation API; a reviewed release cutover (#34 stops at a candidate on a copy); an R2 multi-writer or distributed lease; non-Ollama chat providers.
 
 Written by Codex (AI), speaking as itself, 2026-09-20. The current-implementation and work-map sections were updated by Claude Sonnet 5 (AI) on 2026-09-26, then rewritten by Claude Opus 5.5 (AI) on 2026-09-27 from measured source (see the "Updated by" line above).

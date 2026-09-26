@@ -2,8 +2,9 @@
 
 Read [the current guide](../AGENTS.md) and [full target design](../DESIGN.md). The
 overnight rulings R1–R22 live in [`docs/overnight/DECISIONS.md`](../docs/overnight/DECISIONS.md),
-and their evidence is in [`docs/overnight/PROOF.md`](../docs/overnight/PROOF.md), which the
-overnight driver writes. Counts below were measured on `e00b50b` on 2026-09-27.
+and their evidence will be in [`docs/overnight/PROOF.md`](../docs/overnight/PROOF.md), which the
+overnight driver writes at the end of the run; it is not yet written on `e00b50b`. Counts
+below were measured on `e00b50b` on 2026-09-27.
 
 This is a local prototype with bearer-token auth from a local policy file. It is **not**
 unauthenticated. The 19-table target is built and served, but the default migrator does not
@@ -143,9 +144,14 @@ policy admission, but not the Host/Origin gate, which runs on every request (`ap
 
 ```text
 GET /, /v2/index.html, /knowledge.html, /health   no token      200
-GET /api/health                                   no token      401
+GET /api/health?bank=default                      no token      401
+GET /api/health                  (no ?bank)       no token      400
 GET /                                             foreign Host  400
 ```
+
+A missing, repeated or malformed `?bank` is refused with 400 before admission (`app.ts:79-85`,
+`:253-259`), so the 401 needs a bank (`test/auth-integration.test.ts:97-107`,
+`test/mcp-correctness.test.ts:435-437`).
 
 The bearer's policy grants (`content:read`/`write`, `audit:read`, `diagnostics:read`,
 `maintenance:backfill`/`reindex`) gate every protected method. The dev policy from
@@ -157,8 +163,13 @@ gets 403.
 Message reads are behind membership (R3). `listMessages`, `getMessage` and
 `listSessionMembers` take a `requester_peer_name`:
 
-- A requester that is not a current member gets `invalid_reference` (HTTP 400, or MCP
-  `isError`), the same answer as a reference that does not exist.
+- `listMessages` and `listSessionMembers`: a requester that is not a current member (a
+  stranger, a departed member, a peer that does not exist) gets `invalid_reference` at
+  `/requester_peer_name` (HTTP 400, or MCP `isError`).
+- `getMessage`: a non-member reads `null` (HTTP 200, MCP result text `null` with no
+  `isError`), the same as an absent id, so the answer never reveals that the id exists
+  (`publication/service.getMessage.ts:18-26`; `authorization-v1.md` §3;
+  `context-ingestion-v1.md` R3 amendment).
 - A caller who names no requester must hold `audit:read` on the workspace (the operator view);
   otherwise the answer is 403 `forbidden`.
 
@@ -407,11 +418,23 @@ keys come from real recorded calls, and its output shapes cite v3 source.
 build, `test:parallel` with `TEST_SHARDS=4` and `TEST_TIMEOUT_MS=60000`, the Python
 `unittest discover` suite plus the two explicit fixture suites above, the `app/benchmarks`
 tests, and the `app/ui/v2` build. It does not run the UI unit tests. CI had not gone green on
-GitHub by 2026-09-27 04:10. The last completed integration-branch run (36268890136, on
-`47eb786`) failed in the sharded suite, all on shard 2: two unnamed hook timeouts, at 30 s and
-10.5 s, and the session-link "WIDE node" test. `docs/overnight/PLAN.md` (03:01) attributes
-these failures to runner timing, and the ci-green slice that addresses them is not on this
-base.
+the integration branch by 2026-09-27 04:30 (`gh run list`):
+
+```text
+run          commit   shards failed   failing tests   named failures
+-----------  -------  --------------  --------------  ------------------------------------------
+36271463787  e00b50b  0, 1, 2, 3      6               embedPendingChunks handshake (shard 0),
+                                                      session-link "WIDE node" (shard 1);
+                                                      the other 4 are unnamed in the log
+36268890136  47eb786  2, 3            4               shard 2: two unnamed hook timeouts (30 s,
+                                                      10.5 s) and "WIDE node"; shard 3: one
+                                                      unnamed failure
+```
+
+A failed sharded suite skips the Python, benchmark and UI-build steps.
+`docs/overnight/PLAN.md` (03:01) attributes these failures to runner timing. The ci-green
+slice's own branch passed once (36271049858, `f7aafb0` on `v4/on-ci-green`), but that slice
+is not on this base.
 
 **The live acceptance probe is not part of this repo.** It is the independent acceptor's
 instrument, a gitignored scratch directory in the overnight integration worktree:
