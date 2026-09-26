@@ -169,8 +169,7 @@ describe("real persistence: search chunks inside the real gate", () => {
   const REV_A1 = pad("revA1");
   const REV_B1 = pad("revB1");
   const CHUNKER_VERSION = "chunker/v1";
-  // #30 R7: `indexRevisionChunks`/`listSearchChunks` refuse any
-  // `embedding_profile` name outside the closed registry.
+  // #30 R7: index/list refuse any `embedding_profile` outside the registry.
   const PROFILE = { name: activeEmbeddingProfileId(), dims: 384 };
 
   const drive = async (
@@ -289,21 +288,11 @@ describe("real persistence: search chunks inside the real gate", () => {
   }, 300_000);
 
   test("F5: listSearchChunks is scoped to one embedding_profile, not merged across all of them", async () => {
-    // #30 overnight R7 amendment: the closed embedding-profile registry
-    // (`search-chunk.profiles.ts`) refuses any request -- write OR list --
-    // naming a profile other than the current active one, so this test can
-    // no longer INDEX two rows under two different caller-chosen profile
-    // names the way the pre-registry version did. R7 itself is a statement
-    // about the PHYSICAL SCHEMA, not the registry: "one table holds several
-    // embedding profiles, as built" -- rows from a retired or otherwise
-    // non-active profile are never deleted and stay physically present, only
-    // a REQUEST naming them is refused. This test reaches that state the
-    // same way F8 reaches its own unreachable-through-the-API stored state:
-    // by planting the second profile's row directly (`insertLegacyProfileChunk`),
-    // simulating a row written before the registry existed (or by a
-    // deployment that has since moved its active profile on). The scoping
-    // property under test -- `listSearchChunks` never merges rows from a
-    // profile it was not asked for -- is exactly as real either way.
+    // #30 R7: the closed registry refuses any request naming a non-active
+    // profile, so the second profile's row (one table, several profiles, as
+    // built) is planted directly, like F8's stored states -- a row from before
+    // the registry, or from a since-retired profile. The scoping property is
+    // unchanged: `listSearchChunks` never merges rows across profiles.
     const LEGACY_PROFILE = "ollama/all-minilm@legacy000000/384/none";
     const LEGACY_CHUNK_ID = "1".repeat(64);
     const fixture = await createFixture([ALPHA]);

@@ -237,4 +237,48 @@ describe("getSearchFreshness: text_index never leaks another workspace's counts 
       await fixture.cleanup();
     }
   }, TEST_TIMEOUT_MS);
+
+  /**
+   * Fix round 2 (verifier nonblocking): the test above only covers a
+   * workspace with ZERO chunks, so the mutation `scopedChunks > 0 ||
+   * scopedChunks === allChunks` -- which hands the table-wide figures to any
+   * workspace owning at least one chunk, the realistic multi-tenant leak --
+   * still passed it. Here both workspaces own chunks; neither owns all of
+   * them, so neither may see the shared table's numbers.
+   */
+  test("alpha and beta each own chunks: neither sees the table-wide text_index figures", async () => {
+    const fixture = await createFixture([ALPHA, BETA]);
+    try {
+      const nodeA = pad("rc-nodeJa");
+      const nodeB = pad("rc-nodeJb");
+      const revA = pad("rc-revJa");
+      const revB = pad("rc-revJb");
+      const indexIn = (workspace: string, node: string, revision: string) =>
+        ctx("indexRevisionChunks", { ...indexRequest(node, revision), workspace_name: workspace });
+      const parsed = await drive(
+        fixture.datasetRoot,
+        [
+          publish(fixture.workspaces[ALPHA]!, nodeA, "op-rc-ja"),
+          indexIn(ALPHA, nodeA, revA),
+          pub("publishRevision", {
+            operation_id: "op-rc-jb",
+            content: revisionEnvelope(BETA, fixture.workspaces[BETA]!, nodeB),
+          }),
+          indexIn(BETA, nodeB, revB),
+          hx("buildTextIndex", {}),
+          freshness(),
+          ctx("getSearchFreshness", { workspace_name: BETA }),
+        ],
+        { revisionIds: [revA, revB] },
+      );
+      expect(parsed.op1.value.rows, JSON.stringify(parsed.op1)).toHaveLength(1);
+      expect(parsed.op3.value.rows, JSON.stringify(parsed.op3)).toHaveLength(1);
+      expect(parsed.op4.ok, JSON.stringify(parsed.op4)).toBe(true);
+      for (const fresh of [parsed.op5.value, parsed.op6.value]) {
+        expect(fresh.text_index).toEqual({ indexed_rows: null, unindexed_rows: null });
+      }
+    } finally {
+      await fixture.cleanup();
+    }
+  }, TEST_TIMEOUT_MS);
 });
