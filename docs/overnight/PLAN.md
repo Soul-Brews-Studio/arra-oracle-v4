@@ -298,3 +298,5 @@ are part of done.
   pure insertion) and v3-stats (honest coverage when the term projection lags). MERGED v3-stats (handlers union; a new test fake got explicit throwing stubs
   for the 5 search adapter methods) and ui-33 (clean). The UI bundle was rebuilt once from the merged source. **v3 harness now PASS 28 / FAIL 0 / GAP 9.**
   Gate 7 is running.
+- 03:15 **GATE 7 on `3969622`: typecheck OK · TS 1828 pass / 0 fail (121/121 files, 192s) · Python 268 OK · probe 56 methods, HTTP/MCP/CLI 56 each,
+  isolation 0 · v3 harness PASS 28 / FAIL 0 / GAP 9.** The 5 probe gaps are the newest methods with no acceptor fixture yet.
