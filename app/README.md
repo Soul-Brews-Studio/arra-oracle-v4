@@ -415,27 +415,9 @@ The v3 client acceptance harness (`app/server/test/mcp-v3-acceptance.test.ts`) r
 recorded real v3 client session over `POST /mcp/:bank` on a fresh gated dataset. Its argument
 keys come from real recorded calls, and its output shapes cite v3 source.
 
-`.github/workflows/ci.yml` runs this same set on every push and pull request: typecheck,
-build, `test:parallel` with `TEST_SHARDS=4` and `TEST_TIMEOUT_MS=60000`, the Python
-`unittest discover` suite plus the two explicit fixture suites above, the `app/benchmarks`
-tests, and the `app/ui/v2` build. It does not run the UI unit tests. CI had not gone green on
-the integration branch by 2026-09-27 04:30 (`gh run list`):
-
-```text
-run          commit   shards failed   failing tests   named failures
------------  -------  --------------  --------------  ------------------------------------------
-36271463787  e00b50b  0, 1, 2, 3      6               embedPendingChunks handshake (shard 0),
-                                                      session-link "WIDE node" (shard 1);
-                                                      the other 4 are unnamed in the log
-36268890136  47eb786  2, 3            4               shard 2: two unnamed hook timeouts (30 s,
-                                                      10.5 s) and "WIDE node"; shard 3: one
-                                                      unnamed failure
-```
-
-A failed sharded suite skips the Python, benchmark and UI-build steps.
-`docs/overnight/PLAN.md` (03:01) attributes these failures to runner timing. The ci-green
-slice's own branch passed once (36271049858, `f7aafb0` on `v4/on-ci-green`), but that slice
-is not on this base.
+CI is green on the integration branch: run 36275352354 (`0a98289`) passed with 1985 tests / 0 failures
+across 139 files on Linux. The earlier failures were Linux E2BIG (argv strings over 128 KiB)
+and runner timing, both fixed by the ci-green slice (R13).
 
 **The live acceptance probe is not part of this repo.** It is the independent acceptor's
 instrument, a gitignored scratch directory in the overnight integration worktree:
@@ -496,7 +478,6 @@ closes until the integration PR is reviewed.
 
 Real remaining limits:
 
-- R22 (workspace-local keyword order) is not on this base.
 - #7 needs relevance judgments that no agent wrote.
 - #8's live round-trip against stock Honcho needs a container runtime.
 - `arra-migrate-copy` stops at a candidate on a copy, with no cutover.
