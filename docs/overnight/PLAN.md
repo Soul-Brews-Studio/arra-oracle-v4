@@ -172,3 +172,12 @@ are part of done.
   reviewed as none, and the new tests are red 6/10 without the change and green 10/10 with it.
 - 22:42 First GitHub Actions runs ever on this repo: run `36252777625` (integration) and `36252787312` (v4/on-ci).
   Install, typecheck and build passed; the suite was still running.
+- 22:46 GATE 2 on `9012c59`: **1336 pass / 0 fail**, 81/81 files, 161s. Probe: HTTP 44/44 and MCP 44/44 (baseline
+  31/31). The 4 remaining "isolation FAILs" and 2 #85 FAILs are the acceptor's checks encoding the PRE-ruling
+  contract: they call as the audit:read operator, whom R3 allows, and they demand the secret `public_id` that R4
+  deliberately removes. Sent to Codex as TASK 4: update the checks to R3/R4 or refute the rulings. CLI=0 is the
+  probe not yet knowing the `kb <method>` grammar.
+- 22:46 WAVE 1.5 final: fts-ngram and bench-harness ACCEPTED and merged. **migration REFUTED**: the verifier measured a
+  regression in the existing Python suite (139 OK → 44 failures in `test_revision_v1`). **honcho-rt REFUTED**:
+  mutations to the ordering and per-field diff survive. Neither merges; a repair workflow (`wf_3f721cdd-94a`)
+  is running a second fix-and-verify round.
