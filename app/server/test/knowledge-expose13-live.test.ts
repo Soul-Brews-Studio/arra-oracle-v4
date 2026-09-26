@@ -62,6 +62,7 @@ const NODE_Y = pad("expose13nodeY");
 const TRACE_1 = pad("expose13trace1");
 const TRACE_2 = pad("expose13trace2");
 const LINK_1 = pad("expose13link1");
+const LINK_2 = pad("expose13link2");
 const SESSION_1_ID = pad("expose13sess1");
 const SESSION_2_ID = pad("expose13sess2");
 const SESSION_1_NAME = "expose13-session-a";
@@ -137,6 +138,22 @@ function buildSteps(seededAlpha: Fixture["workspaces"][string]): Step[] {
     from_session_name: SESSION_1_NAME,
     to_session_name: SESSION_2_NAME,
     relation: "continues",
+    evidence_ref: null,
+    created_by_peer_name: null,
+  });
+
+  // Session-link-v1.md Decision 4's 2026-09-26 amendment (overnight R7 (#28
+  // part), Unit B): once `linkRequest()` above lands SESSION_1 --continues-->
+  // SESSION_2, the REVERSE edge SESSION_2 --forked_from--> SESSION_1 closes a
+  // two-node loop that crosses relations, and must be refused exactly like a
+  // same-relation loop -- over the REAL transport, not just the in-process
+  // kernel test in `session-link-service.test.ts`.
+  const reverseCrossRelationLinkRequest = () => ({
+    id: LINK_2,
+    workspace_name: ALPHA,
+    from_session_name: SESSION_2_NAME,
+    to_session_name: SESSION_1_NAME,
+    relation: "forked_from",
     evidence_ref: null,
     created_by_peer_name: null,
   });
@@ -279,6 +296,12 @@ function buildSteps(seededAlpha: Fixture["workspaces"][string]): Step[] {
       cursor: null,
       limit: 10,
     }),
+    // Unit B live proof: the mixed continues/forked_from cycle is refused
+    // over BOTH transports, against the SAME real dataset state (LINK_2 is
+    // never written by either attempt, so the MCP retry hits the identical
+    // fresh-write cycle check the HTTP attempt did, not a replay).
+    s("link_reverse_cycle_refused_http", "http", "write", "createSessionLink", reverseCrossRelationLinkRequest()),
+    s("link_reverse_cycle_refused_mcp", "mcp", "write", "createSessionLink", reverseCrossRelationLinkRequest()),
 
     // ── #29 lifecycle: retireNode/supersedeNode -> listLifecycleHistory -> getRecallEligibility ──
     s("supersede_http", "http", "write", "supersedeNode", supersedeRequest()),
@@ -415,6 +438,22 @@ runIt(
     expect(out.link_list_to_mcp.ok).toBe(true);
     expect(out.link_list_to_mcp.value.rows).toHaveLength(1);
     expect(out.link_list_to_mcp.value.rows[0].from_session_name).toBe(SESSION_1_NAME);
+
+    // Unit B: a mixed continues/forked_from cycle is refused live, over both
+    // transports -- HTTP maps `invalid_request` to 400 (`STATUS_FOR_CODE`),
+    // MCP carries the same governed envelope as `isError` text.
+    expect(out.link_reverse_cycle_refused_http.status, JSON.stringify(out.link_reverse_cycle_refused_http)).toBe(400);
+    expect(out.link_reverse_cycle_refused_http.body).toMatchObject({
+      version: "arra-publication-error/v1",
+      code: "invalid_request",
+      path: "/to_session_name",
+    });
+    expect(out.link_reverse_cycle_refused_mcp.isError, JSON.stringify(out.link_reverse_cycle_refused_mcp)).toBe(true);
+    expect(JSON.parse(out.link_reverse_cycle_refused_mcp.message)).toMatchObject({
+      version: "arra-publication-error/v1",
+      code: "invalid_request",
+      path: "/to_session_name",
+    });
 
     // ── lifecycle ───────────────────────────────────────────────────────
     expect(out.supersede_http.status, JSON.stringify(out.supersede_http)).toBe(200);

@@ -60,6 +60,16 @@ export const SESSION_LINK_FIELDS = [
 export const SESSION_RELATIONS = ["continues", "forked_from", "related_to"] as const;
 export type SessionRelation = (typeof SESSION_RELATIONS)[number];
 
+/**
+ * The two DIRECTED relations subject to the cycle walk. `related_to` is
+ * symmetric and exempt -- see `assertSessionLinkAcyclic`'s header and
+ * `session-link-v1.md` Decision 4's 2026-09-26 amendment (overnight R7 (#28
+ * part), Unit B). A causal loop that mixes `continues` and `forked_from`
+ * edges is refused exactly like a same-relation loop: the walk follows
+ * EITHER relation, not only the one named on the proposed edge.
+ */
+export const DIRECTED_SESSION_RELATIONS = ["continues", "forked_from"] as const;
+
 export const SESSION_LINK_DIRECTIONS = ["from", "to"] as const;
 export type SessionLinkDirection = (typeof SESSION_LINK_DIRECTIONS)[number];
 

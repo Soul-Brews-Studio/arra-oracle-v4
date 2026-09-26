@@ -262,6 +262,109 @@ describe("real persistence: session links inside the real gate", () => {
     }
   }, 300_000);
 
+  test("a mixed continues/forked_from loop is refused at the request that closes it", async () => {
+    // Amendment 2026-09-26 (overnight R7 (#28 part), Unit B): the cycle walk
+    // now follows BOTH directed relations, not only the one named on the
+    // proposed edge. sess-a --continues--> sess-b already exists (created by
+    // op${SEED}); a request for sess-b --forked_from--> sess-a closes a
+    // two-node loop that crosses relations. Before this fix the walk queried
+    // `relation = 'forked_from'` only, never saw the stored `continues` edge,
+    // and returned "created" (measured in .tmp/understand/issue-28 run2:
+    // "oob_cross_relation_cycle: returned created").
+    const fixture = await createSessionLinkFixture([ALPHA]);
+    try {
+      const parsed = await drive(fixture.datasetRoot, [
+        ...seedOps(),
+        ctx("createSessionLink", createSessionLinkRequest(ALPHA)),
+        ctx("createSessionLink", createSessionLinkRequest(ALPHA, {
+          id: sessionLinkId("linkBA"), from_session_name: "sess-b", to_session_name: "sess-a",
+          relation: "forked_from",
+        })),
+      ]);
+      const created = parsed[`op${SEED}`];
+      expect(created.ok, JSON.stringify(created)).toBe(true);
+      expect(created.value.outcome).toBe("created");
+
+      const crossRelationLoop = parsed[`op${SEED + 1}`];
+      expect(crossRelationLoop.ok).toBe(false);
+      expect(crossRelationLoop).toMatchObject({
+        name: "PublicationError",
+        version: "arra-publication-error/v1",
+        code: "invalid_request",
+        path: "/to_session_name",
+      });
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 300_000);
+
+  test("a legal diamond across continues AND forked_from stays accepted", async () => {
+    // X --continues--> Y --continues--> W, and X --forked_from--> Z
+    // --forked_from--> W: W is reached twice via two DIFFERENT relations.
+    // This is a legitimate reconvergence (a diamond), not a cycle, and must
+    // stay accepted now that the walk unions both relations.
+    const fixture = await createSessionLinkFixture([ALPHA]);
+    try {
+      const parsed = await drive(fixture.datasetRoot, [
+        ctx("registerPeer", peerRequest(ALPHA)),
+        ctx("registerSession", sessionRequest(ALPHA, { session_id: sessionLinkId("sessX"), name: "sess-x" })),
+        ctx("registerSession", sessionRequest(ALPHA, { session_id: sessionLinkId("sessY"), name: "sess-y" })),
+        ctx("registerSession", sessionRequest(ALPHA, { session_id: sessionLinkId("sessZ"), name: "sess-z" })),
+        ctx("registerSession", sessionRequest(ALPHA, { session_id: sessionLinkId("sessW"), name: "sess-w" })),
+        ctx("createSessionLink", createSessionLinkRequest(ALPHA, {
+          id: sessionLinkId("linkYW"), from_session_name: "sess-y", to_session_name: "sess-w",
+          relation: "continues",
+        })),
+        ctx("createSessionLink", createSessionLinkRequest(ALPHA, {
+          id: sessionLinkId("linkXY"), from_session_name: "sess-x", to_session_name: "sess-y",
+          relation: "continues",
+        })),
+        ctx("createSessionLink", createSessionLinkRequest(ALPHA, {
+          id: sessionLinkId("linkZW"), from_session_name: "sess-z", to_session_name: "sess-w",
+          relation: "forked_from",
+        })),
+        ctx("createSessionLink", createSessionLinkRequest(ALPHA, {
+          id: sessionLinkId("linkXZ"), from_session_name: "sess-x", to_session_name: "sess-z",
+          relation: "forked_from",
+        })),
+      ]);
+
+      for (let i = 5; i <= 8; i += 1) {
+        const result = parsed[`op${i}`];
+        expect(result.ok, JSON.stringify(result)).toBe(true);
+        expect(result.value.outcome).toBe("created");
+      }
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 300_000);
+
+  test("related_to stays exempt from the cycle walk even facing a directed loop", async () => {
+    // sess-a --continues--> sess-b exists; the reverse edge sess-b
+    // --related_to--> sess-a is a DIFFERENT, symmetric relation and must not
+    // be refused -- `related_to` never traverses, never bounds, never
+    // enforces a cycle policy, per Decision 4 (unchanged by this amendment).
+    const fixture = await createSessionLinkFixture([ALPHA]);
+    try {
+      const parsed = await drive(fixture.datasetRoot, [
+        ...seedOps(),
+        ctx("createSessionLink", createSessionLinkRequest(ALPHA)),
+        ctx("createSessionLink", createSessionLinkRequest(ALPHA, {
+          id: sessionLinkId("linkBAr"), from_session_name: "sess-b", to_session_name: "sess-a",
+          relation: "related_to",
+        })),
+      ]);
+      const created = parsed[`op${SEED}`];
+      expect(created.ok, JSON.stringify(created)).toBe(true);
+
+      const relatedReverse = parsed[`op${SEED + 1}`];
+      expect(relatedReverse.ok, JSON.stringify(relatedReverse)).toBe(true);
+      expect(relatedReverse.value.outcome).toBe("created");
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 300_000);
+
   test("a STORED back-edge cycle is caught as integrity_failure at root", async () => {
     // sess-b->sess-c and sess-c->sess-b (both `continues`) are planted
     // DIRECTLY, bypassing every service check -- a well-behaved writer could
