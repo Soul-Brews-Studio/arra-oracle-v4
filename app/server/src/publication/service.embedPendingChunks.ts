@@ -2,6 +2,7 @@ import { type ChatModelFn } from "./chat";
 import { failPublication } from "./errors";
 import {
   CHUNKER_VERSION,
+  EMBEDDING_DIMENSION,
   EmbedTimeoutError,
   MAX_EMBED_ATTEMPTS,
   SEARCH_CHUNK_FIELDS,
@@ -31,8 +32,17 @@ import { type Clock, type DatasetAdapter, type OwnerCore } from "./service.types
  * Read at import, like `storage.ts`'s `ARRA_DATA_DIR`, so a test can set
  * `ARRA_EMBED_TIMEOUT_MS` before dynamically importing this module and never
  * has to wait out a production-sized timeout.
+ *
+ * Fix round: guarded against `Number(undefined) === NaN` being the ONLY
+ * previous safety net -- an env var set to the empty string reads as
+ * `Number("") === 0`, which timed out every embedder call before it could
+ * ever leave the process. Anything that is not a finite positive number
+ * falls back to the 30s default instead.
  */
-const EMBED_CALL_TIMEOUT_MS = Number(process.env.ARRA_EMBED_TIMEOUT_MS ?? 30_000);
+const EMBED_CALL_TIMEOUT_MS = ((): number => {
+  const raw = Number(process.env.ARRA_EMBED_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 30_000;
+})();
 
 export type EmbedPendingChunksResult = {
   /** Rows this call examined -- bounded by `request.limit`. */
@@ -48,6 +58,14 @@ export type EmbedPendingChunksResult = {
   /** Still pending/retryable AFTER this run, workspace/chunker/active-profile
    *  scoped -- 0 means this workspace is fully caught up. */
   remaining: number;
+  /** Fix round: rows this call planned to write but did NOT, because their
+   *  stored `(status, attempts)` had already moved by the time this call's
+   *  turn on `core.serial` ran -- a concurrent `writeChunkEmbedding` (or
+   *  another `embedPendingChunks` run) got there first while THIS call's
+   *  embedder request was still in flight, outside the queue. Never
+   *  overwritten; simply left as whatever the winning writer left them at.
+   *  0 in the overwhelming common case of no contention. */
+  skipped: number;
 };
 
 /**
@@ -71,6 +89,34 @@ function raceWithTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
       },
     );
   });
+}
+
+/**
+ * Fix round finding 2: the embedder's response was previously trusted
+ * blind -- indexed into positionally and written straight into a
+ * `fixed_size_list<float32>[384]` column with no shape or value check of
+ * its own. `embed.ts`'s OWN validation is not a substitute: it checks
+ * against `process.env.EMBEDDING_DIMENSIONS` (configurable, defaults to
+ * 384), not this registry's FROZEN `EMBEDDING_DIMENSION` -- an operator
+ * misconfiguring that env var (or a swapped-in embedder module that skips
+ * its own check entirely) must not be able to reach
+ * `service.makeAdapter.ts`'s hand-built Arrow buffer with a wrong-length or
+ * non-finite vector, which throws `integrity_failure` deep inside a shared
+ * `core.serial` turn and poisons the writer for every OTHER queued caller
+ * (measured: a short batch or a NaN vector each turned an unrelated,
+ * concurrent `publishRevision` into `{code: 'recovery_required'}`). Any
+ * out-of-contract shape here becomes `embedder_bad_response` for the WHOLE
+ * batch instead -- a normal, closed, per-row `failed` outcome, never a
+ * write attempt.
+ */
+function isValidEmbeddingBatch(value: unknown, expectedCount: number): value is number[][] {
+  if (!Array.isArray(value) || value.length !== expectedCount) return false;
+  return value.every(
+    (vector) =>
+      Array.isArray(vector) &&
+      vector.length === EMBEDDING_DIMENSION &&
+      vector.every((component) => typeof component === "number" && Number.isFinite(component)),
+  );
 }
 
 /**
@@ -116,12 +162,12 @@ export async function embedPendingChunks(
   const candidates = await writer.query(SEARCH_CHUNKS, `${scope} AND ${eligibleClause}`, request.limit);
 
   if (candidates.length === 0) {
-    return { attempted: 0, embedded: 0, reused: 0, failed: 0, remaining: 0 };
+    return { attempted: 0, embedded: 0, reused: 0, failed: 0, remaining: 0, skipped: 0 };
   }
 
   type Plan =
     | { kind: "reuse"; row: Record<string, unknown>; embedding: number[] }
-    | { kind: "embed"; row: Record<string, unknown> };
+    | { kind: "embed"; row: Record<string, unknown>; embedding: number[] | null };
   const planned: Plan[] = [];
   const toEmbedTexts: string[] = [];
   for (const row of candidates) {
@@ -141,7 +187,7 @@ export async function embedPendingChunks(
       if (embedding === null) failPublication("integrity_failure", "");
       planned.push({ kind: "reuse", row, embedding });
     } else {
-      planned.push({ kind: "embed", row });
+      planned.push({ kind: "embed", row, embedding: null });
       toEmbedTexts.push(row.text as string);
     }
   }
@@ -154,10 +200,29 @@ export async function embedPendingChunks(
     } else {
       const controller = new AbortController();
       try {
-        embeddedVectors = await raceWithTimeout(
+        const vectors = await raceWithTimeout(
           options.embedder(toEmbedTexts, controller.signal),
           EMBED_CALL_TIMEOUT_MS,
         );
+        if (isValidEmbeddingBatch(vectors, toEmbedTexts.length)) {
+          embeddedVectors = vectors;
+          // Assigned by POSITION, once, here -- never via a running cursor
+          // inside the write loop below, which would go out of sync the
+          // moment that loop skips a stale plan (fix round finding 3) and
+          // hand a later "embed" plan the WRONG vector.
+          let cursor = 0;
+          for (const plan of planned) {
+            if (plan.kind === "embed") {
+              plan.embedding = vectors[cursor]!;
+              cursor += 1;
+            }
+          }
+        } else {
+          // Out-of-contract response: wrong count, wrong-length vector(s),
+          // or a non-finite component. Never partially trusted -- see
+          // `isValidEmbeddingBatch`'s doc.
+          batchError = "embedder_bad_response";
+        }
       } catch (error) {
         controller.abort();
         batchError = classifyEmbedError(error);
@@ -169,14 +234,46 @@ export async function embedPendingChunks(
     await core.contextBoundary("before_write", false);
     core.markAttemptedWrite();
 
+    // Fix round finding 3: refresh right before the per-row current-state
+    // check below, matching `writeChunkEmbedding.ts`'s own convention.
+    await writer.refresh(SEARCH_CHUNKS);
+
     const now = () => BigInt(options.clock()) * 1000n;
     let embedded = 0;
     let reused = 0;
     let failedCount = 0;
+    let skipped = 0;
     const written: Record<string, unknown>[] = [];
-    let embedCursor = 0;
 
     for (const plan of planned) {
+      // Fix round finding 3 ("lost acknowledged write"): `plan.row` was read
+      // BEFORE the (possibly slow, possibly-timed-out) embedder call above,
+      // entirely outside this `core.serial` turn -- a concurrent
+      // `writeChunkEmbedding` or another `embedPendingChunks` run can
+      // complete its OWN turn in that window and move this exact row to a
+      // state this plan knows nothing about. `attempts` is this table's own
+      // monotonically-increasing write counter (every transition here and
+      // in `writeChunkEmbedding` increments it), so "attempts AND status
+      // both still match what this plan read" is exactly "nobody else has
+      // touched this row since this call read it". A mismatch means
+      // somebody else already won that race; their write is never
+      // clobbered by this batch's stale plan -- this row is simply skipped,
+      // left exactly as the winning writer left it.
+      const id = plan.row.id as string;
+      const current = await writer.query(
+        SEARCH_CHUNKS,
+        `${contextScope(request.workspace_name)} AND id = ${quote(id)}`,
+        1,
+      );
+      if (
+        current.length !== 1 ||
+        current[0]!.attempts !== plan.row.attempts ||
+        current[0]!.status !== plan.row.status
+      ) {
+        skipped += 1;
+        continue;
+      }
+
       const termIds = storedTermIds(plan.row.term_ids);
       let physical: Record<string, unknown>;
       if (plan.kind === "reuse") {
@@ -204,12 +301,13 @@ export async function embedPendingChunks(
         };
         failedCount += 1;
       } else {
-        const vector = embeddedVectors![embedCursor];
-        embedCursor += 1;
+        // Assigned by position, before this turn even started -- see the
+        // comment where `plan.embedding` is set, above.
+        if (plan.embedding === null) failPublication("integrity_failure", "");
         physical = {
           ...plan.row,
           term_ids: termIds,
-          embedding: vector,
+          embedding: plan.embedding,
           status: "ready",
           attempts: (plan.row.attempts as bigint) + 1n,
           last_attempt_at: now(),
@@ -258,6 +356,6 @@ export async function embedPendingChunks(
     await core.contextBoundary("after_readback", true);
 
     const remaining = await writer.count(SEARCH_CHUNKS, `${scope} AND ${eligibleClause}`);
-    return { attempted: candidates.length, embedded, reused, failed: failedCount, remaining };
+    return { attempted: candidates.length, embedded, reused, failed: failedCount, remaining, skipped };
   });
 }

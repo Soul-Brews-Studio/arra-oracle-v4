@@ -17,16 +17,23 @@
 //    records each sub-result under its own index -- how the hang test
 //    proves `publishRevision` is never blocked by a concurrent
 //    `embedPendingChunks` call stuck in its embedder.
+type Op = { facade?: "context" | "publication" | "taxonomy" | "harness"; method: string; request: any };
+
 const [, , datasetRoot, payloadJson] = Bun.argv;
 const payload = JSON.parse(payloadJson ?? "{}") as {
   ops: Array<
-    | { facade?: "context" | "publication" | "taxonomy" | "harness"; method: string; request: any }
-    | { concurrent: Array<{ facade?: "context" | "publication" | "taxonomy" | "harness"; method: string; request: any }> }
+    | Op
+    | { concurrent: Op[] }
+    // Fix round finding 6a: a DETERMINISTIC alternative to `concurrent` --
+    // `second` starts only once the stub embedder has genuinely been
+    // invoked for `first` (a real handshake, not a hope about scheduling
+    // order). See the module header and the `embedderInvokedPromise` below.
+    | { handshake: { first: Op; second: Op } }
   >;
   clockMs?: number;
   revisionIds?: string[];
   embedTimeoutMs?: number;
-  embedderMode?: "none" | "fixed" | "hang" | "reject-once" | "always-fail";
+  embedderMode?: "none" | "fixed" | "hang" | "reject-once" | "always-fail" | "short-batch" | "wrong-dims" | "nan-values";
   embedDims?: number;
 };
 
@@ -43,6 +50,19 @@ const DIMS = payload.embedDims ?? 384;
 const embedCalls: string[][] = [];
 let rejectOnceUsed = false;
 
+/**
+ * Fix round finding 6a: resolved the FIRST time the stub embedder is
+ * actually invoked, for ANY mode. A `{handshake: {first, second}}` op
+ * awaits this before starting `second` -- proof that the embedder call is
+ * genuinely in flight (and, for `hang`, genuinely stuck) when the
+ * concurrent write begins, rather than hoping `Promise.all` schedules it
+ * that way.
+ */
+let embedderInvokedResolve: (() => void) | null = null;
+const embedderInvokedPromise = new Promise<void>((resolve) => {
+  embedderInvokedResolve = resolve;
+});
+
 function fixedVector(seed: number): number[] {
   return Array.from({ length: DIMS }, (_, i) => ((seed + i) % 97) / 97);
 }
@@ -52,6 +72,7 @@ const embedder =
     ? undefined
     : async (texts: string[], _signal?: AbortSignal): Promise<number[][]> => {
         embedCalls.push(texts);
+        embedderInvokedResolve?.();
         if (payload.embedderMode === "hang") {
           return new Promise<number[][]>(() => {
             /* never resolves */
@@ -63,6 +84,25 @@ const embedder =
         }
         if (payload.embedderMode === "always-fail") {
           throw new Error("503 service unavailable, every time");
+        }
+        // Fix round finding 2 -- three shapes of "the embedder answered but
+        // the answer is out of contract", each of which must become a
+        // closed `embedder_bad_response` failure, never a write attempt:
+        if (payload.embedderMode === "short-batch") {
+          // One fewer vector than texts requested.
+          return texts.slice(1).map((text, i) => fixedVector(text.length + i));
+        }
+        if (payload.embedderMode === "wrong-dims") {
+          // Right count, wrong width (simulates `EMBEDDING_DIMENSIONS`
+          // misconfigured away from the frozen physical 384).
+          return texts.map((text, i) => fixedVector(text.length + i).slice(0, DIMS - 1));
+        }
+        if (payload.embedderMode === "nan-values") {
+          return texts.map((text, i) => {
+            const vector = fixedVector(text.length + i);
+            vector[0] = Number.NaN;
+            return vector;
+          });
         }
         return texts.map((text, i) => fixedVector(text.length + i));
       };
@@ -132,8 +172,6 @@ const service = await openContextWriter(datasetRoot!, {
   },
 });
 
-type Op = { facade?: "context" | "publication" | "taxonomy" | "harness"; method: string; request: any };
-
 async function runOp(op: Op): Promise<Record<string, unknown>> {
   if (op.facade === "harness") {
     return { ok: true, value: await harness[op.method]!(op.request) };
@@ -163,6 +201,23 @@ try {
         }),
       );
       results[label] = { concurrent: settled, elapsedMs: (Bun.nanoseconds() - batchStarted) / 1_000_000 };
+      continue;
+    }
+    if ("handshake" in op) {
+      const batchStarted = Bun.nanoseconds();
+      const firstStarted = Bun.nanoseconds();
+      const firstPromise = runOp(op.handshake.first).then((outcome) => ({
+        ...outcome,
+        elapsedMs: (Bun.nanoseconds() - firstStarted) / 1_000_000,
+      }));
+      // The load-bearing wait: `second` never starts until the stub
+      // embedder inside `first` has genuinely been called.
+      await embedderInvokedPromise;
+      const secondStarted = Bun.nanoseconds();
+      const secondOutcome = await runOp(op.handshake.second);
+      const second = { ...secondOutcome, elapsedMs: (Bun.nanoseconds() - secondStarted) / 1_000_000 };
+      const first = await firstPromise;
+      results[label] = { first, second, elapsedMs: (Bun.nanoseconds() - batchStarted) / 1_000_000 };
       continue;
     }
     results[label] = await runOp(op);

@@ -203,6 +203,23 @@ const harness: Record<string, (request: any) => Promise<unknown>> = {
     const result = (await tbl.delete(`id = '${request.id}'`)) as unknown as { numDeletedRows?: number };
     return { numDeletedRows: result?.numDeletedRows ?? null };
   },
+  /**
+   * Fix-round finding 5 test scaffolding: builds the REAL shared lexical
+   * index (`src/fts/fts.ts`'s `ensureFtsIndexOn`, R14/R7's own
+   * `FTS_INDEX_OPTIONS`) on `search_chunks_v1.text` -- exactly what the
+   * concurrently-developed search-query slice will eventually call at
+   * startup, used here only to prove `getSearchFreshness` never leaks its
+   * table-wide `indexStats()` numbers as one workspace's own freshness.
+   * This harness does not add a product method; it calls the SAME already-
+   * shared, already-tested function search-query is expected to wire in.
+   */
+  async buildTextIndex() {
+    const ftsPath = new URL("../../../../src/fts/fts.ts", import.meta.url).pathname;
+    const { ensureFtsIndexOn } = await import(ftsPath);
+    const tbl = await harnessTable("search_chunks_v1");
+    const indices = await ensureFtsIndexOn(tbl, "text", false);
+    return { indices };
+  },
 };
 
 const trace: string[] = [];

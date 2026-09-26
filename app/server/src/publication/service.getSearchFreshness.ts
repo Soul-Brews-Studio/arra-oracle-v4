@@ -57,6 +57,26 @@ export async function getSearchFreshness(
 
   await reader.refresh(SEARCH_CHUNKS);
   const textIndex = await reader.textIndexStats(SEARCH_CHUNKS, TEXT_INDEX_COLUMN);
+  // Fix round finding 5: `textIndexStats` answers for the ONE shared
+  // physical table (R7) -- LanceDB's `indexStats()` has no per-predicate
+  // variant, so `indexedRows`/`unindexedRows` are never actually scoped to
+  // `request.workspace_name`. Presenting them as this workspace's own
+  // freshness is a cross-workspace leak (measured: a workspace with zero
+  // chunks of its own reported another workspace's counts verbatim, once a
+  // shared index existed). It is only safe to attribute the table-wide
+  // figures to THIS workspace when this workspace demonstrably holds every
+  // row currently in the table; otherwise the true per-workspace split is
+  // not knowable from this API at all, and unknown stays `null` rather than
+  // guessed -- the same "unknown, not zero" rule this method applies
+  // everywhere else.
+  let scopedTextIndex: { indexedRows: number; unindexedRows: number } | null = null;
+  if (textIndex !== null) {
+    const [scopedChunks, allChunks] = await Promise.all([
+      reader.count(SEARCH_CHUNKS, scope),
+      reader.count(SEARCH_CHUNKS, "1 = 1"),
+    ]);
+    if (scopedChunks === allChunks) scopedTextIndex = textIndex;
+  }
 
   const profileId = activeEmbeddingProfileId();
   const profileScope =
@@ -83,8 +103,8 @@ export async function getSearchFreshness(
   return {
     content: { nodes, revisions },
     text_index: {
-      indexed_rows: textIndex === null ? null : textIndex.indexedRows,
-      unindexed_rows: textIndex === null ? null : textIndex.unindexedRows,
+      indexed_rows: scopedTextIndex === null ? null : scopedTextIndex.indexedRows,
+      unindexed_rows: scopedTextIndex === null ? null : scopedTextIndex.unindexedRows,
     },
     vectors: { profile_id: profileId, pending, ready, failed, last_attempt_at: lastAttemptAt },
   };

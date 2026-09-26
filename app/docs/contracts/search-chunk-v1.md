@@ -355,3 +355,94 @@ those tests' own subject matter.
 Not in this amendment: retrieval (`searchChunks`, `searchChunkText`/`searchChunkVector`, the
 FTS index on `search_chunks_v1.text`) — a concurrently-developed slice's file ownership, per
 the overnight brief.
+
+## Amendment 2026-09-26 (overnight R7 (#30 part) + R8) — fix round
+
+An independent Opus verifier refuted the previous amendment on six points, all measured
+against the merge base. Each is fixed here, cited against
+`docs/overnight/DECISIONS.md` R7/R8; none reopens a closed decision.
+
+1. **The startup digest probe was not actually bounded.** §12 said "never blocking", but
+   `composition.ts`'s `runStartupIndexWork` awaited `fetchOllamaModelDigest()` with no
+   `AbortSignal`, and measured against a real TCP endpoint that accepts a connection and
+   never answers, that call only settles after Bun's own **300007 ms** default `fetch`
+   timeout — five minutes of every content save blocked on every boot a hung-but-reachable
+   Ollama existed. Fixed by extracting the whole digest step into a new module,
+   `search-chunk.pinActiveEmbeddingModelDigest.ts`, whose live probe is always wrapped in
+   `AbortSignal.timeout(ARRA_STARTUP_DIGEST_TIMEOUT_MS ?? 2000)`.
+2. **The active profile's identity was not actually pinned (TODO 4).** The digest was
+   re-measured fresh on every boot from a live probe with no persistence, so two boots of
+   the IDENTICAL installed model produced two different `profile_id`s whenever Ollama's
+   reachability differed between them — measured: boot 1 unmeasured, boot 2 measured,
+   `reconcileSearchChunks` then reported `missing:1` and `getSearchFreshness` reported
+   `ready:0` for vectors a real embed had already written. Fixed: once a real digest is
+   measured, it is persisted to a small sidecar file under
+   `ARRA_KNOWLEDGE_DATASET_ROOT` (`search-chunk.writePinnedModelDigest.ts`,
+   `.embedding-model-digest.json`, keyed by model name so a changed `EMBEDDING_MODEL`
+   never silently reattaches a stale pin). Every later boot reuses the pinned digest with
+   **no network probe at all**, so identity cannot depend on that boot's Ollama
+   reachability once established. Also fixed: `MODEL` in `search-chunk.profiles.ts` was the
+   bare literal `"all-minilm"`, independent of `embed.ts`'s own `process.env.EMBEDDING_MODEL`
+   — an operator setting that env var embedded under a different model than the one
+   `profile_id` claimed. Both now read the identical env var/default
+   (`ACTIVE_EMBEDDING_MODEL_NAME`).
+3. **The embedder's response was trusted with no validation of its own.** `embed.ts`'s dims
+   check runs against the CONFIGURABLE `process.env.EMBEDDING_DIMENSIONS`, not this
+   registry's frozen 384 — measured, a short batch (fewer vectors than texts requested) or a
+   vector containing a non-finite value each reached `service.makeAdapter.ts`'s hand-built
+   Arrow buffer and **poisoned the shared writer**: the very next, unrelated
+   `publishRevision` failed with `recovery_required`. `embedPendingChunks` now validates
+   count, per-vector length (against the frozen `EMBEDDING_DIMENSION`) and finiteness
+   BEFORE ever touching `core.serial`; any violation becomes the existing, closed
+   `embedder_bad_response` for the whole batch, never a write attempt.
+4. **A concurrent `writeChunkEmbedding` could be silently overwritten (a lost acknowledged
+   write).** Candidate rows are read, and the embedder is called, entirely OUTSIDE
+   `core.serial` (by design, for criterion 1) — but the write-back previously trusted that
+   snapshot blindly. Measured: a `writeChunkEmbedding` call landing while the worker's own
+   embedder call was still in flight completed first (`status: ready`), and the worker's
+   stale plan then overwrote it back to `status: failed, error_code: embedder_timeout` once
+   its own timeout fired. `embedPendingChunks` now re-reads each row's CURRENT
+   `(status, attempts)` inside its `core.serial` turn immediately before writing, and skips
+   (never overwrites) any row that no longer matches what the plan was built from. The
+   result gains a `skipped` count for exactly this case (0 in the ordinary, uncontended
+   path).
+5. **`getSearchFreshness.text_index` could leak another workspace's counts.** `indexStats()`
+   answers for the ONE shared physical table (R7), with no per-predicate variant — measured,
+   once a shared FTS index existed, a workspace with zero chunks of its own reported
+   ANOTHER workspace's `indexed_rows`/`unindexed_rows` verbatim. Fixed: the table-wide
+   figures are now only ever attributed to the requesting workspace when it demonstrably
+   holds every row currently in the table (`count(scope) === count("1 = 1")`); otherwise
+   both fields are `null` (unknown), consistent with this method's existing "unknown is
+   never a guessed zero" rule.
+6. **Several tests passed without pinning the property they claimed to.** The criterion-1
+   hang test used `Promise.all` (`concurrent`), which a "move the embedder call inside
+   `core.serial`" mutation still passed, because `publishRevision` happened to win the
+   queue on scheduling alone. `search-chunk-embed-worker.test.ts` gained a
+   `{handshake: {first, second}}` op (`fixtures/search-chunk-v1/embed/gated-embed.ts`):
+   `second` starts only once the stub embedder is CONFIRMED invoked for `first`, a genuine
+   proof rather than a hope about ordering. `search-chunk-reconcile.test.ts` gained two
+   cases the prior suite never exercised despite the production code already being
+   correct: `stale > 0` alongside `missing > 0` (a superseding publish that leaves the new
+   head unindexed), and a revision indexed only under a non-active/retired profile id
+   counting as `missing` for the active one.
+
+Also fixed, disclosed as nonblocking by the same review: `ARRA_EMBED_TIMEOUT_MS` set to an
+empty or non-numeric value previously read as `Number("") === 0`, timing out every embedder
+call immediately; both it and the new `ARRA_STARTUP_DIGEST_TIMEOUT_MS` now fall back to their
+documented defaults for anything that is not a finite positive number.
+
+Proof: `app/server/test/search-chunk-embedding-digest.test.ts` (new — findings 1 and 4,
+against a real hung TCP listener and a real fake-Ollama HTTP server, on fresh `mkdtemp`
+roots), plus the strengthened `search-chunk-embed-worker.test.ts` and
+`search-chunk-reconcile.test.ts`. All new tests were run failing-first against a temporary
+revert of the specific fix line(s) before being restored green.
+
+Not fixed here, disclosed rather than papered over: `reconcileSearchChunks.missing_source`
+still over/under-counts when `exhausted` is false (no cursor; a pre-existing, separately
+disclosed limitation, §6), `classifyEmbedError` still folds a refused connection into
+`embedder_bad_response` rather than `embedder_unavailable`, and the transport admission
+tests were not extended to `getSearchFreshness`/`embedPendingChunks` (verified correct by
+hand in scratch, not pinned by a committed test). `search-chunk.profiles.ts` still exports
+six functions from one file, over the one-function-per-file convention; splitting it was
+judged too large a mechanical change to risk in this fix round given the number of importers,
+and is left for a follow-up.

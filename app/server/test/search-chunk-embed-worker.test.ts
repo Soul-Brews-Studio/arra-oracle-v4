@@ -17,7 +17,12 @@
 
 import { describe, expect, test } from "bun:test";
 import { createFixture, revisionEnvelope, runGated, type SeededWorkspace } from "./helpers/publication-fixture";
-import { CHUNKER_VERSION, MAX_EMBED_ATTEMPTS, activeEmbeddingProfileId } from "../src/publication/search-chunk";
+import {
+  CHUNKER_VERSION,
+  MAX_EMBED_ATTEMPTS,
+  activeEmbeddingProfileId,
+  deriveChunkId,
+} from "../src/publication/search-chunk";
 
 const CHILD = new URL("./fixtures/search-chunk-v1/embed/gated-embed.ts", import.meta.url).pathname;
 const ALPHA = "alpha-workspace";
@@ -116,6 +121,194 @@ describe("embedPendingChunks: criterion 1, a hung embedder never blocks a concur
       await fixture.cleanup();
     }
   }, TEST_TIMEOUT_MS);
+
+  /**
+   * Fix round finding 6a (test-quality): the test above uses `concurrent`
+   * (`Promise.all`), which the independent verifier showed is decided by
+   * SCHEDULING, not by the property under test -- mutation M4 (moving the
+   * embedder call inside `core.serial`) still passed it 6/0, because
+   * `publishRevision` happens to win the queue before the worker's own read
+   * step finishes, regardless of where the embedder call sits. This version
+   * uses `{handshake: {first, second}}` (`gated-embed.ts`): `second` (the
+   * concurrent publish) starts ONLY once the stub embedder has genuinely
+   * been invoked for `first` -- proof the embedder call is really in
+   * flight, not a hope about ordering. A handshake-ordered version of this
+   * exact test passes at HEAD (publish ~ms) and fails under M4 (publish
+   * >1s, over the embed timeout) -- see the fix-round PR description.
+   */
+  test("(deterministic handshake) publishRevision proceeds while the embedder is CONFIRMED in flight", async () => {
+    const fixture = await createFixture([ALPHA]);
+    try {
+      const seeded = fixture.workspaces[ALPHA]!;
+      const nodeA = pad("ew-hsA1");
+      const nodeB = pad("ew-hsB1");
+      const revA = pad("ew-hsrevA1");
+      const revB = pad("ew-hsrevB1");
+      const parsed = await drive(
+        fixture.datasetRoot,
+        [
+          publish(seeded, nodeA, "op-ew-hs-a1"),
+          ctx("indexRevisionChunks", indexRequest(nodeA, revA)),
+          { handshake: { first: embed(), second: publish(seeded, nodeB, "op-ew-hs-b1") } },
+          listChunks(revA),
+        ],
+        { revisionIds: [revA, revB], embedderMode: "hang", embedTimeoutMs: 300 },
+      );
+      expect(parsed.op0.value.outcome).toBe("accepted");
+      expect(parsed.op1.value.rows).toHaveLength(1);
+
+      const { first: embedResult, second: publishResult } = parsed.op2;
+      // The embedder call was CONFIRMED already in flight (the handshake)
+      // before this write even started.
+      expect(publishResult.ok, JSON.stringify(publishResult)).toBe(true);
+      expect(publishResult.value.outcome).toBe("accepted");
+      expect(publishResult.elapsedMs).toBeLessThan(250);
+
+      expect(embedResult.ok, JSON.stringify(embedResult)).toBe(true);
+      expect(embedResult.value.failed).toBe(1);
+      expect(embedResult.elapsedMs).toBeGreaterThanOrEqual(280);
+
+      const listed = parsed.op3.value;
+      expect(listed[0].status).toBe("failed");
+      expect(listed[0].error_code).toBe("embedder_timeout");
+    } finally {
+      await fixture.cleanup();
+    }
+  }, TEST_TIMEOUT_MS);
+});
+
+describe("embedPendingChunks: a concurrent writeChunkEmbedding is never clobbered by a stale batch plan (fix round finding 3)", () => {
+  /**
+   * `plan.row` (this batch's candidate snapshot) is read BEFORE the
+   * embedder call, entirely outside `core.serial`. If a DIFFERENT writer
+   * (`writeChunkEmbedding`) completes its own turn on the SAME row while
+   * this batch's embedder call is still in flight, the worker must never
+   * overwrite that newer state with its own stale plan when its turn
+   * finally comes. Proven with a genuine handshake: `writeChunkEmbedding`
+   * (`second`) starts only once the worker's `hang`-mode embedder call is
+   * CONFIRMED in flight for `first`, so this is a real race, not a hope.
+   */
+  test("writeChunkEmbedding's write survives; the worker reports it as skipped, not failed", async () => {
+    const fixture = await createFixture([ALPHA]);
+    try {
+      const seeded = fixture.workspaces[ALPHA]!;
+      const nodeA = pad("ew-raceA1");
+      const revA = pad("ew-racerevA1");
+      const chunkId = deriveChunkId(revA, CHUNKER_VERSION, PROFILE_ID, 0n);
+      const manualVector = Array.from({ length: 384 }, (_, i) => i / 384);
+      const parsed = await drive(
+        fixture.datasetRoot,
+        [
+          publish(seeded, nodeA, "op-ew-race-1"),
+          ctx("indexRevisionChunks", indexRequest(nodeA, revA)),
+          {
+            handshake: {
+              first: embed(),
+              second: ctx("writeChunkEmbedding", { workspace_name: ALPHA, id: chunkId, embedding: manualVector }),
+            },
+          },
+          listChunks(revA),
+        ],
+        { revisionIds: [revA], embedderMode: "hang", embedTimeoutMs: 300 },
+      );
+      expect(parsed.op0.value.outcome).toBe("accepted");
+      expect(parsed.op1.value.rows).toHaveLength(1);
+
+      const { first: embedResult, second: writeResult } = parsed.op2;
+      expect(writeResult.ok, JSON.stringify(writeResult)).toBe(true);
+      expect(writeResult.value.outcome).toBe("embedded");
+      expect(writeResult.value.row.status).toBe("ready");
+      expect(writeResult.value.row.attempts).toBe("1");
+
+      // The worker's own batch loses the race, and reports the loss
+      // honestly instead of silently dropping the row or overwriting it.
+      expect(embedResult.ok, JSON.stringify(embedResult)).toBe(true);
+      expect(embedResult.value).toEqual({
+        attempted: 1,
+        embedded: 0,
+        reused: 0,
+        failed: 0,
+        remaining: 0,
+        skipped: 1,
+      });
+
+      // The row is left EXACTLY as `writeChunkEmbedding` left it -- never
+      // reverted to failed/embedder_timeout by the worker's stale plan.
+      const listed = parsed.op3.value;
+      expect(listed).toHaveLength(1);
+      expect(listed[0].status).toBe("ready");
+      expect(listed[0].attempts).toBe("1");
+      expect(listed[0].error_code).toBeNull();
+      expect(listed[0].embedded_at).not.toBeNull();
+    } finally {
+      await fixture.cleanup();
+    }
+  }, TEST_TIMEOUT_MS);
+});
+
+describe("embedPendingChunks: an out-of-contract embedder response never reaches the writer (fix round finding 2)", () => {
+  /**
+   * `embed.ts`'s own dims check runs against the CONFIGURABLE
+   * `EMBEDDING_DIMENSIONS` env var, not this registry's frozen 384 --
+   * measured, a short batch or a non-finite vector each reached
+   * `service.makeAdapter.ts`'s hand-built Arrow buffer and poisoned the
+   * shared writer (`recovery_required` on the NEXT, unrelated
+   * `publishRevision`). Each scenario below must instead become a normal,
+   * closed `failed`/`embedder_bad_response` row, with the writer left
+   * completely usable for the very next call.
+   */
+  const scenarios: Array<{ label: string; embedderMode: "short-batch" | "wrong-dims" | "nan-values" }> = [
+    { label: "fewer vectors than texts requested", embedderMode: "short-batch" },
+    { label: "vectors of the wrong width", embedderMode: "wrong-dims" },
+    { label: "a vector containing a non-finite value", embedderMode: "nan-values" },
+  ];
+  for (const { label, embedderMode } of scenarios) {
+    test(`${label} -> embedder_bad_response, never a poisoned writer`, async () => {
+      const fixture = await createFixture([ALPHA]);
+      try {
+        const seeded = fixture.workspaces[ALPHA]!;
+        const nodeA = pad(`ew-bad-${embedderMode}`);
+        const nodeB = pad(`ew-bad2-${embedderMode}`);
+        const revA = pad(`ew-badr-${embedderMode}`);
+        const revB = pad(`ew-badr2-${embedderMode}`);
+        const parsed = await drive(
+          fixture.datasetRoot,
+          [
+            publish(seeded, nodeA, "op-ew-bad-1"),
+            ctx("indexRevisionChunks", indexRequest(nodeA, revA)),
+            embed(),
+            listChunks(revA),
+            // An unrelated publish AFTER the bad response must still
+            // succeed -- proof the shared writer was never poisoned.
+            publish(seeded, nodeB, "op-ew-bad-2"),
+          ],
+          { revisionIds: [revA, revB], embedderMode },
+        );
+        expect(parsed.op0.value.outcome).toBe("accepted");
+        const embedResult = parsed.op2;
+        expect(embedResult.ok, JSON.stringify(embedResult)).toBe(true);
+        expect(embedResult.value).toEqual({
+          attempted: 1,
+          embedded: 0,
+          reused: 0,
+          failed: 1,
+          remaining: 1,
+          skipped: 0,
+        });
+
+        const listed = parsed.op3.value;
+        expect(listed).toHaveLength(1);
+        expect(listed[0].status).toBe("failed");
+        expect(listed[0].error_code).toBe("embedder_bad_response");
+
+        const followUp = parsed.op4;
+        expect(followUp.ok, JSON.stringify(followUp)).toBe(true);
+        expect(followUp.value.outcome).toBe("accepted");
+      } finally {
+        await fixture.cleanup();
+      }
+    }, TEST_TIMEOUT_MS);
+  }
 });
 
 describe("embedPendingChunks: a failed attempt retries and converges on ready", () => {
@@ -140,14 +333,14 @@ describe("embedPendingChunks: a failed attempt retries and converges on ready", 
       expect(parsed.op0.value.outcome).toBe("accepted");
 
       const firstEmbed = parsed.op2;
-      expect(firstEmbed.value).toEqual({ attempted: 1, embedded: 0, reused: 0, failed: 1, remaining: 1 });
+      expect(firstEmbed.value).toEqual({ attempted: 1, embedded: 0, reused: 0, failed: 1, remaining: 1, skipped: 0 });
       const afterFirst = parsed.op3.value;
       expect(afterFirst[0].status).toBe("failed");
       expect(afterFirst[0].attempts).toBe("1");
       expect(afterFirst[0].error_code).toBe("embedder_bad_response");
 
       const secondEmbed = parsed.op4;
-      expect(secondEmbed.value).toEqual({ attempted: 1, embedded: 1, reused: 0, failed: 0, remaining: 0 });
+      expect(secondEmbed.value).toEqual({ attempted: 1, embedded: 1, reused: 0, failed: 0, remaining: 0, skipped: 0 });
       const afterSecond = parsed.op5.value;
       expect(afterSecond[0].status).toBe("ready");
       expect(afterSecond[0].attempts).toBe("2");
@@ -186,10 +379,10 @@ describe("embedPendingChunks: content-hash reuse costs zero embedder calls", () 
       );
       expect(parsed.op0.value.outcome).toBe("accepted");
       const firstEmbed = parsed.op2;
-      expect(firstEmbed.value).toEqual({ attempted: 1, embedded: 1, reused: 0, failed: 0, remaining: 0 });
+      expect(firstEmbed.value).toEqual({ attempted: 1, embedded: 1, reused: 0, failed: 0, remaining: 0, skipped: 0 });
 
       const secondEmbed = parsed.op5;
-      expect(secondEmbed.value).toEqual({ attempted: 1, embedded: 0, reused: 1, failed: 0, remaining: 0 });
+      expect(secondEmbed.value).toEqual({ attempted: 1, embedded: 0, reused: 1, failed: 0, remaining: 0, skipped: 0 });
 
       const listedB = parsed.op6.value;
       expect(listedB[0].status).toBe("ready");
@@ -220,7 +413,7 @@ describe("embedPendingChunks: no embedder configured fails closed, never a netwo
         { revisionIds: [revA], embedderMode: "none" },
       );
       const result = parsed.op2;
-      expect(result.value).toEqual({ attempted: 1, embedded: 0, reused: 0, failed: 1, remaining: 1 });
+      expect(result.value).toEqual({ attempted: 1, embedded: 0, reused: 0, failed: 1, remaining: 1, skipped: 0 });
       const listed = parsed.op3.value;
       expect(listed[0].status).toBe("failed");
       expect(listed[0].error_code).toBe("embedder_unavailable");
@@ -249,7 +442,7 @@ describe("embedPendingChunks: the retry budget is bounded", () => {
       }
       // The (MAX_EMBED_ATTEMPTS + 1)th call finds nothing left to retry.
       const last = parsed[`op${2 + MAX_EMBED_ATTEMPTS}`];
-      expect(last.value).toEqual({ attempted: 0, embedded: 0, reused: 0, failed: 0, remaining: 0 });
+      expect(last.value).toEqual({ attempted: 0, embedded: 0, reused: 0, failed: 0, remaining: 0, skipped: 0 });
       expect(parsed.embedCalls).toHaveLength(MAX_EMBED_ATTEMPTS);
     } finally {
       await fixture.cleanup();
@@ -282,7 +475,7 @@ describe("R8: index first, embed later, like backfill -- the whole loop, made re
       expect(before.vectors).toMatchObject({ pending: 1, ready: 0, failed: 0 });
 
       const embedded = parsed.op3.value;
-      expect(embedded).toEqual({ attempted: 1, embedded: 1, reused: 0, failed: 0, remaining: 0 });
+      expect(embedded).toEqual({ attempted: 1, embedded: 1, reused: 0, failed: 0, remaining: 0, skipped: 0 });
 
       const after = parsed.op4.value;
       expect(after.vectors).toMatchObject({ pending: 0, ready: 1, failed: 0 });

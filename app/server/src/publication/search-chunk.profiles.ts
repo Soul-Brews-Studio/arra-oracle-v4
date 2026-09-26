@@ -40,7 +40,20 @@ import type { Tokens } from "../contracts/common";
 export const EMBEDDING_DIMENSION = 384;
 
 const PROVIDER = "ollama" as const;
-const MODEL = "all-minilm";
+
+/**
+ * MEASURED FIX (fix round, #30 verifier finding 4): this used to be the bare
+ * literal `"all-minilm"`, while `embed.ts` -- the module that actually calls
+ * Ollama -- resolves its model from `process.env.EMBEDDING_MODEL` (default
+ * `"all-minilm"`). An operator who sets `EMBEDDING_MODEL` embeds with THAT
+ * model but every vector was still labelled `all-minilm` in `profile_id`,
+ * silently mislabeling the stored identity. Reading the SAME env var with
+ * the SAME default here is the only way the two can never disagree; it is a
+ * plain string read (no network), so it is exactly as safe to do at import
+ * time as `storage.ts`'s own `ARRA_DATA_DIR` convention.
+ */
+export const ACTIVE_EMBEDDING_MODEL_NAME = process.env.EMBEDDING_MODEL ?? "all-minilm";
+const MODEL = ACTIVE_EMBEDDING_MODEL_NAME;
 
 /**
  * MEASURED, not assumed: `embed.ts`'s `embed()` returns exactly what
