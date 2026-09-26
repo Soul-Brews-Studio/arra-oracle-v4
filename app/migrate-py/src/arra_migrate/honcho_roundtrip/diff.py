@@ -30,6 +30,7 @@ from .bundle import (
     Tier1Bundle,
     _parse_json_metadata,
 )
+from .configuration_shape import apply_workspace_configuration_shape
 
 
 def _has_value(v: Any) -> bool:
@@ -50,13 +51,27 @@ def _parse_ts(value: Any) -> datetime | None:
 
 
 def _ts_equal(a: Any, b: Any) -> bool:
-    """Equal after wire-precision normalization, regardless of whether either
-    side is still a `datetime` or has already come back as a wire string
-    (folded fields do; a real Honcho's own JSON response would too)."""
+    """Equal regardless of whether either side is still a `datetime` or has
+    already come back as a wire string (folded fields do; a real Honcho's own
+    JSON response would too). Performs no precision rounding itself -- it
+    relies on `wire.to_wire_timestamp` refusing a sub-millisecond `datetime`
+    outright (see that function), so by the time a value reaches here both
+    sides are always already millisecond-clean."""
 
     if a is None or b is None:
         return a is None and b is None
     return _parse_ts(a) == _parse_ts(b)
+
+
+def _normalized_configuration(raw: Any) -> dict[str, Any]:
+    """The INPUT side of a workspace/session `configuration` comparison, shaped
+    the same way `apply_workspace_configuration_shape` predicts stock Honcho
+    will actually store and return it -- comparing the raw input value would
+    always disagree wherever a reserved sub-key gets dropped, which is
+    declared lossy (`bundle.LOSSY_FIELDS_BY_CONSTRUCTION`), not a real
+    difference to report."""
+
+    return apply_workspace_configuration_shape(_parse_json_metadata(raw))
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +194,14 @@ def _diff_workspace(input_bundle: Tier1Bundle, returned_bundle: Tier1Bundle, rep
     handled = {
         "name": (iw["name"], ow["name"], True),
         "h_metadata": (_parse_json_metadata(iw.get("h_metadata")), ow.get("h_metadata") or {}, True),
+        # Compared directly, not left to `_check_row_columns` -- a column
+        # declared lossy "by construction" (see LOSSY_FIELDS_BY_CONSTRUCTION)
+        # still has a real expected value once `apply_workspace_configuration_
+        # shape` normalizes the reserved-key collision away; leaving it to
+        # fall through as an unconditionally-lossy column would let a target
+        # that drops the WHOLE column (not just a reserved sub-key) pass
+        # silently -- 2026-09-26 fix-round finding, probe P4.
+        "configuration": (_normalized_configuration(iw.get("configuration")), ow.get("configuration") or {}, True),
     }
     _check_row_columns("workspaces", iw, handled, set(), report)
 
@@ -221,6 +244,9 @@ def _diff_sessions(input_bundle: Tier1Bundle, returned_bundle: Tier1Bundle, repo
             "name": (i["name"], o["name"], True),
             "workspace_name": (i["workspace_name"], o["workspace_name"], True),
             "h_metadata": (_parse_json_metadata(i.get("h_metadata")), o.get("h_metadata") or {}, True),
+            # Same reasoning as `_diff_workspace`'s "configuration" entry --
+            # SessionConfiguration has the same reserved-key shape.
+            "configuration": (_normalized_configuration(i.get("configuration")), o.get("configuration") or {}, True),
         }
         _check_row_columns("sessions", i, handled, set(), report)
 
@@ -324,8 +350,10 @@ def diff_against_input(input_bundle: Tier1Bundle, returned_bundle: Tier1Bundle) 
         if sp.get("left_at") is not None:
             report.declared_notes.append(
                 f"session_peers[{sp['session_name']}/{sp['peer_name']}]: left_at={sp['left_at']!r} in v4, but "
-                "Honcho's SessionPeerConfig has no removal call -- the peer remains an ACTIVE member of the session "
-                "after import. Declared, not a bug: see bundle.LOSSY_FIELDS session_peers.left_at."
+                "this harness makes no call to Honcho's own DELETE .../sessions/{id}/peers -- a deliberate policy "
+                "choice ('reproduce v4's history' vs 'reproduce v4's current state'), not an API limitation -- so "
+                "the peer remains an ACTIVE member of the session after import. Declared, not a bug: see "
+                "bundle.LOSSY_FIELDS session_peers.left_at and export_to_honcho's docstring."
             )
 
     return report

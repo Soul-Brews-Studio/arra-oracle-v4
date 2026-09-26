@@ -68,7 +68,12 @@ def _utc_aware(row: dict[str, Any]) -> dict[str, Any]:
 def _read_table(source: Any, table_name: str, workspace_name: str, *, name_field: str = "workspace_name") -> list[dict[str, Any]]:
     try:
         handle = source.open_table(table_name)
-    except FileNotFoundError:
+    except (FileNotFoundError, ValueError):
+        # LanceDB's own `open_table` raises `ValueError` for a missing table
+        # (measured 2026-09-26: "Table 'x' was not found"), never
+        # `FileNotFoundError` -- the original except clause here could never
+        # actually fire. `FileNotFoundError` is kept too in case a future
+        # lancedb version changes its mind.
         return []
     rows = handle.to_arrow().to_pylist()
     return [_utc_aware(r) for r in rows if r.get(name_field) == workspace_name]

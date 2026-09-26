@@ -66,7 +66,7 @@ LOSSY_FIELDS: tuple[LossyField, ...] = (
     LossyField("sessions", "configuration", "SessionConfiguration extends WorkspaceConfiguration (schemas/configuration.py:137) -- same reserved-key-collision constraint, same reason text, as workspaces.configuration above."),
     LossyField("sessions", "is_active", "not exposed on SessionCreate; server-managed. (Constant True in this fixture, so not exercised as a mismatch here.)"),
     LossyField("session_peers", "joined_at", "SessionPeerConfig (the only body the add/set-peers routes accept) has exactly observe_me/observe_others -- no timestamp field exists to send or receive one through."),
-    LossyField("session_peers", "left_at", "same as joined_at -- Principle 1's 'leaving is a timestamp, not a DELETE' has no API-level equivalent in stock Honcho. See export_to_honcho's docstring for the resulting behaviour: a departed peer is still sent, and stays, as a CURRENT member."),
+    LossyField("session_peers", "left_at", "same as joined_at -- Principle 1's 'leaving is a timestamp, not a DELETE' has no representation in the two-boolean SessionPeerConfig body this harness sends. Honcho DOES have DELETE .../sessions/{id}/peers; not calling it is this harness's own policy choice, not an API limitation -- see export_to_honcho's docstring for the resulting behaviour: a departed peer is still sent, and stays, as a CURRENT member."),
     LossyField("session_peers", "configuration", "SessionPeerConfig has no generic configuration field, only the two typed booleans."),
     LossyField("session_peers", "internal_metadata", "no field on SessionPeerConfig at all."),
     LossyField("messages", "id", "Message (API schema) exposes only public_id (aliased `id`); the internal autoincrement BigInteger id is never serialized over the API."),
@@ -190,11 +190,15 @@ def _session_payload(sess: dict[str, Any]) -> dict[str, Any]:
 
 
 def _message_payload(msg: dict[str, Any]) -> dict[str, Any]:
-    """Content limit and metadata-limit pre-checks happen HERE, before any
-    request is built -- a batch of 100 that fails on message 97 has already
-    sent 96 messages nobody asked to send partially (issue #8 repro E is the
-    same class of defect one step earlier: send first, discover the limit
-    from a 422 second)."""
+    """Content limit and metadata-limit pre-checks happen HERE, before THIS
+    message's own request body is built -- a batch of 100 that fails on
+    message 97 has already sent 96 messages nobody asked to send partially
+    (issue #8 repro E is the same class of defect one step earlier: send
+    first, discover the limit from a 422 second). Scoped to messages only --
+    `export_to_honcho` still creates the workspace/peers/sessions/session_peers
+    before reaching any message, so a message-level limit violation is
+    discovered only after those earlier resources already exist on the
+    target, not before every request in the whole export."""
 
     ident = msg.get("public_id") or msg.get("id")
     limits.check_content_limit(msg["content"], where=f"messages[{ident}].content")
@@ -238,7 +242,7 @@ def export_to_honcho(target: HonchoTarget, bundle: Tier1Bundle) -> None:
     v4's current state" -- this issue does not decide). `left_at` and
     `joined_at` are declared LOSSY for exactly this reason, and
     `diff.diff_against_input` records the resulting membership fact under
-    `RoundTripReport.declared_notes` rather than silently matching or
+    `diff.DiffReport.declared_notes` rather than silently matching or
     silently failing on it.
     """
 

@@ -25,17 +25,19 @@ See `test_honcho_roundtrip_names.py` (name encoding), `test_honcho_roundtrip_dum
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from arra_migrate.honcho_roundtrip.bundle import (
     LOSSY_FIELDS,
     LOSSY_FIELDS_BY_CONSTRUCTION,
     Tier1Bundle,
+    _message_payload,
     confirm_fields_absent_from_export,
     export_from_honcho,
     export_to_honcho,
@@ -43,7 +45,8 @@ from arra_migrate.honcho_roundtrip.bundle import (
 )
 from arra_migrate.honcho_roundtrip.diff import diff_against_input, honcho_to_bundle
 from arra_migrate.honcho_roundtrip.dump import WORKSPACE_NAME, build_spec_15_5_bank
-from arra_migrate.honcho_roundtrip.limits import MESSAGE_BATCH_MAX, TierOneLimitError
+from arra_migrate.honcho_roundtrip.limits import CONTENT_MAX_CHARS, MESSAGE_BATCH_MAX, TierOneLimitError
+from arra_migrate.honcho_roundtrip.pin import NotALoopbackTargetError, require_loopback_url
 from arra_migrate.honcho_roundtrip.target import FakeHonchoTarget, HttpHonchoTarget
 
 T0 = datetime(2026, 9, 21, 9, 0, 0, tzinfo=timezone.utc)
@@ -299,12 +302,143 @@ class TestFakeTargetEnforcesTheDocumentedSchema(unittest.TestCase):
         self.assertEqual(row["configuration"], {"peer_card": {"max_tokens": 500}})
 
 
+def _single_message_bundle(**overrides: object) -> Tier1Bundle:
+    """One workspace, one peer, one session, one message -- everything an
+    exporter-side limit pre-check test needs and nothing it doesn't."""
+
+    msg = {
+        "id": 1, "public_id": "msg-pub-01", "workspace_name": "ws-limits",
+        "session_name": "session-one", "peer_name": "nat", "content": "hi",
+        "token_count": 1, "seq_in_session": 1, "h_metadata": None, "internal_metadata": None,
+        "created_at": T0, "role": None, "in_reply_to": None, "read": None, "read_at": None,
+    }
+    msg.update(overrides)
+    return Tier1Bundle(
+        workspaces=[{"id": "ws-01", "name": "ws-limits", "created_at": T0,
+                     "h_metadata": None, "internal_metadata": None, "configuration": None, "mission": None}],
+        peers=[{"id": "peer-01", "name": "nat", "workspace_name": "ws-limits",
+                "h_metadata": None, "internal_metadata": None, "configuration": None, "created_at": T0}],
+        sessions=[{"id": "sess-01", "name": "session-one", "workspace_name": "ws-limits",
+                   "is_active": True, "h_metadata": None, "internal_metadata": None,
+                   "configuration": None, "created_at": T0}],
+        session_peers=[{"workspace_name": "ws-limits", "session_name": "session-one", "peer_name": "nat",
+                        "configuration": None, "internal_metadata": None, "joined_at": T0, "left_at": None}],
+        messages=[msg],
+    )
+
+
+class ExporterLimitPreChecksTests(unittest.TestCase):
+    """Mutations M5 (content pre-check removed), M6 (message metadata
+    pre-check removed) and M16 (depth check removed) all SURVIVED before this
+    fix round -- 2026-09-26 fix-round finding: nothing exercised `bundle.
+    _message_payload`'s OWN pre-checks directly. Going through `export_to_honcho`
+    + `FakeHonchoTarget` instead would NOT kill these mutations: the Fake
+    re-checks the same limits independently (by design -- see its module
+    docstring), so removing the exporter's pre-check would still raise, just
+    one layer later, and the test would stay green either way. Calling
+    `_message_payload` directly is deliberate here -- `bundle.py`'s own
+    docstring for `_workspace_payload` says exactly this: it is "a pure
+    function ... so tests can inspect the payload SHAPE directly"."""
+
+    def test_content_over_25000_chars_is_refused_by_the_exporter(self) -> None:
+        msg = _single_message_bundle(content="x" * (CONTENT_MAX_CHARS + 1)).messages[0]
+        with self.assertRaises(TierOneLimitError):
+            _message_payload(msg)
+
+    def test_message_metadata_over_100_top_level_keys_is_refused_by_the_exporter(self) -> None:
+        msg = _single_message_bundle(h_metadata=json.dumps({f"k{i}": 1 for i in range(101)})).messages[0]
+        with self.assertRaises(TierOneLimitError):
+            _message_payload(msg)
+
+    def test_message_metadata_over_depth_5_is_refused_by_the_exporter(self) -> None:
+        nested: dict[str, object] = {"v": 1}
+        for _ in range(6):
+            nested = {"n": nested}
+        msg = _single_message_bundle(h_metadata=json.dumps(nested)).messages[0]
+        with self.assertRaises(TierOneLimitError):
+            _message_payload(msg)
+
+
+def _bundle_with_n_messages(n: int) -> Tier1Bundle:
+    """One workspace/peer/session, *n* messages in seq order -- for exercising
+    `export_to_honcho`'s MESSAGE_BATCH_MAX chunking for real."""
+
+    workspace_name, session_name = "ws-batch", "session-one"
+    messages = [
+        {
+            "id": i, "public_id": f"msg-pub-{i:04d}", "workspace_name": workspace_name,
+            "session_name": session_name, "peer_name": "nat", "content": f"message {i}",
+            "token_count": 2, "seq_in_session": i, "h_metadata": None, "internal_metadata": None,
+            "created_at": T0 + timedelta(seconds=i), "role": None, "in_reply_to": None,
+            "read": None, "read_at": None,
+        }
+        for i in range(1, n + 1)
+    ]
+    return Tier1Bundle(
+        workspaces=[{"id": "ws-01", "name": workspace_name, "created_at": T0,
+                     "h_metadata": None, "internal_metadata": None, "configuration": None, "mission": None}],
+        peers=[{"id": "peer-01", "name": "nat", "workspace_name": workspace_name,
+                "h_metadata": None, "internal_metadata": None, "configuration": None, "created_at": T0}],
+        sessions=[{"id": "sess-01", "name": session_name, "workspace_name": workspace_name,
+                   "is_active": True, "h_metadata": None, "internal_metadata": None,
+                   "configuration": None, "created_at": T0}],
+        session_peers=[{"workspace_name": workspace_name, "session_name": session_name, "peer_name": "nat",
+                        "configuration": None, "internal_metadata": None, "joined_at": T0, "left_at": None}],
+        messages=messages,
+    )
+
+
+class RecordingHonchoTarget(FakeHonchoTarget):
+    """Records the size of every `create_messages` batch it actually
+    receives, on top of everything `FakeHonchoTarget` already enforces
+    (including refusing a batch over `MESSAGE_BATCH_MAX`)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.batch_sizes: list[int] = []
+
+    def create_messages(self, workspace_id: str, session_id: str, messages: list[dict[str, object]]) -> list[dict[str, object]]:
+        self.batch_sizes.append(len(messages))
+        return super().create_messages(workspace_id, session_id, messages)
+
+
+class MessageBatchChunkingTests(unittest.TestCase):
+    """Issue #8 repro E / mutation M1 (2026-09-26 fix-round finding): no test
+    ever sent more than `MESSAGE_BATCH_MAX` messages through `export_to_honcho`
+    end to end -- replacing `_chunked(payloads, limits.MESSAGE_BATCH_MAX)` with
+    a single unchunked batch (`[payloads]`) stayed green across the rest of
+    this slice's tests. `FakeHonchoTarget.create_messages` itself refuses more
+    than `MESSAGE_BATCH_MAX` messages in one call (see
+    `TestFakeTargetEnforcesTheDocumentedSchema` above), so an un-chunked send
+    raises HERE, in-process, not only against a live 422."""
+
+    def test_a_session_with_101_messages_is_chunked_at_the_batch_max(self) -> None:
+        bundle = _bundle_with_n_messages(MESSAGE_BATCH_MAX + 1)
+        target = RecordingHonchoTarget()
+
+        export_to_honcho(target, bundle)  # must not raise
+
+        self.assertEqual(target.batch_sizes, [MESSAGE_BATCH_MAX, 1])
+
+    def test_the_chunked_messages_still_round_trip_in_seq_order(self) -> None:
+        bundle = _bundle_with_n_messages(MESSAGE_BATCH_MAX + 5)
+        target = FakeHonchoTarget()
+
+        export_to_honcho(target, bundle)
+        export = export_from_honcho(target, "ws-batch", ["session-one"])
+        returned = honcho_to_bundle(export, "ws-batch")
+        report = diff_against_input(bundle, returned)
+
+        self.assertEqual(report.problems, [], report.problems)
+
+
 class TestLiveRoundTrip(unittest.TestCase):
     """The live leg. Executed ONLY if HONCHO_ROUNDTRIP_LIVE_BASE_URL points
     at a real, disposable instance the caller stood up per pin.HONCHO_V3_2_0
     (see docker/ next to this test's package for the manual compose steps --
-    this test never starts a container itself, and never points at
-    white.local or any shared instance).
+    this test never starts a container itself, and refuses any non-loopback
+    URL -- see pin.require_loopback_url -- so it can never reach white.local
+    or any other shared or remote instance).
     """
 
     def test_round_trip_against_a_real_pinned_honcho_instance(self) -> None:
@@ -319,8 +453,10 @@ class TestLiveRoundTrip(unittest.TestCase):
                 "docker/README.md for how to bring up the pinned instance and set "
                 "this variable to run this leg for real."
             )
-        if "white.local" in base_url:
-            self.fail("HONCHO_ROUNDTRIP_LIVE_BASE_URL must never point at the shared white.local instance")
+        try:
+            require_loopback_url(base_url)
+        except NotALoopbackTargetError as exc:
+            self.fail(str(exc))
 
         root = Path(tempfile.mkdtemp(prefix="arra-honcho-rt-live-"))
         self.addCleanup(shutil.rmtree, root, ignore_errors=True)

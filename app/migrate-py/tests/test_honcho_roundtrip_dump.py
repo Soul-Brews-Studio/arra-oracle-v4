@@ -91,6 +91,30 @@ class DumpTier1ReadOnlyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             dump_tier1(self.root, "does-not-exist")
 
+    def test_a_missing_dependent_table_comes_back_empty_not_raised(self) -> None:
+        """LanceDB's own `open_table` raises `ValueError` for a missing table
+        (measured 2026-09-26: "Table 'x' was not found"), never
+        `FileNotFoundError` -- a dataset with a workspace row but no
+        `session_peers` table at all (e.g. one that predates that table's
+        introduction) must dump as an empty list for it, not blow up."""
+
+        from arra_migrate.models.workspace import Workspace as ActiveWorkspace
+
+        db = lancedb.connect(str(self.root))
+        db.create_table("workspaces", schema=ActiveWorkspace).add([ActiveWorkspace(
+            id="ws-01", name="lonely-workspace", created_at=datetime(2026, 1, 1),
+            h_metadata=None, internal_metadata=None, configuration=None, mission=None,
+        )])
+        # peers/sessions/session_peers/messages tables never created at all.
+
+        dumped = dump_tier1(self.root, "lonely-workspace")
+
+        self.assertEqual(len(dumped.workspaces), 1)
+        self.assertEqual(dumped.peers, [])
+        self.assertEqual(dumped.sessions, [])
+        self.assertEqual(dumped.session_peers, [])
+        self.assertEqual(dumped.messages, [])
+
     def test_messages_come_back_seq_ordered_within_each_session(self) -> None:
         build_spec_15_5_bank(self.root)
         dumped = dump_tier1(self.root, WORKSPACE_NAME)
@@ -110,27 +134,46 @@ class DumpTier1ReadOnlyTests(unittest.TestCase):
     def test_dump_tier1_never_mutates_the_source(self) -> None:
         """`dump_tier1` wraps the connection in a read-only guard -- a call
         that would create/drop/rename a table must raise, proving the guard
-        is load-bearing rather than a docstring promise."""
+        is load-bearing rather than a docstring promise.
+
+        Mutation M8 (2026-09-26 fix-round finding): the previous version of
+        this test only asserted `lancedb.connect` was called once and never
+        attempted a forbidden call, so replacing `source = _ReadOnlySource(db)`
+        with `source = db` inside `dump_tier1` (removing the guard entirely)
+        still passed unnoticed. This version spies on the `_ReadOnlySource`
+        NAME `dump_tier1` actually calls -- it can only observe an instance if
+        `dump_tier1`'s own code really constructs one, so it fails under that
+        exact mutation instead of passing regardless.
+        """
 
         build_spec_15_5_bank(self.root)
 
         import arra_migrate.honcho_roundtrip.dump as dump_module
 
-        original_connect = dump_module.lancedb.connect
-        captured: list[Path] = []
+        original_read_only_source = dump_module._ReadOnlySource
+        instances: list[dump_module._ReadOnlySource] = []
 
-        def spy_connect(path: str):
-            db = original_connect(path)
-            captured.append(db)
-            return db
+        class SpyReadOnlySource(original_read_only_source):
+            def __init__(self, db: object) -> None:
+                super().__init__(db)
+                instances.append(self)
 
-        dump_module.lancedb.connect = spy_connect
+        dump_module._ReadOnlySource = SpyReadOnlySource
         try:
-            dump_tier1(self.root, WORKSPACE_NAME)
+            dumped = dump_tier1(self.root, WORKSPACE_NAME)
         finally:
-            dump_module.lancedb.connect = original_connect
+            dump_module._ReadOnlySource = original_read_only_source
 
-        self.assertEqual(len(captured), 1)
+        # The read itself must still succeed -- the guard must not interfere
+        # with any READ `dump_tier1` legitimately makes.
+        self.assertEqual(len(dumped.workspaces), 1)
+
+        self.assertEqual(len(instances), 1, "dump_tier1 did not wrap its connection in _ReadOnlySource")
+        guard = instances[0]
+        with self.assertRaises(RuntimeError):
+            guard.create_table("should-never-be-created", schema=None)
+        with self.assertRaises(RuntimeError):
+            guard.drop_table("workspaces")
 
 
 class DumpTier1Target19ShapeTests(unittest.TestCase):

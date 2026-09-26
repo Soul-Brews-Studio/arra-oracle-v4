@@ -13,9 +13,12 @@ commit (``pin.HONCHO_V3_2_0``), not guessed:
     walked -- that is Honcho's own behaviour, reproduced here on purpose, not
     a shortcut), and the key-count cap applies to the TOP level only.
 
-A limit violation is refused here, before any request is built, rather than
-discovered as a 422 after `bundle.py` has already sent part of a session's
-messages -- see ``export_to_honcho``.
+A limit violation is refused here, before that message's own request body is
+built, rather than discovered as a 422 after `bundle.py` has already sent
+part of a session's messages -- see ``export_to_honcho``. This is scoped to
+messages: the workspace/peers/sessions/session_peers ahead of them in
+``export_to_honcho`` are still created first, so a message-level violation is
+found only after those earlier resources already exist on the target.
 """
 
 from __future__ import annotations

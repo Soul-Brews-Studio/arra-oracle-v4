@@ -37,7 +37,7 @@ confirmed 2026-09-26 by reading ``src/schemas/api.py`` and
     top-level keys (``model_config = ConfigDict(extra="allow")``), but their
     four RESERVED sub-schema names (``reasoning``/``peer_card``/``summary``/
     ``dream``) are typed nested models that silently drop any sub-key they do
-    not declare -- see ``_apply_workspace_configuration_shape``.
+    not declare -- see ``apply_workspace_configuration_shape``.
   * ``PeerSpec.configuration`` is a plain ``dict[str, Any] | None`` with NO
     typed sub-schema at all -- unlike workspace/session configuration, an
     arbitrary peer configuration value round-trips completely.
@@ -88,6 +88,7 @@ from typing import Any, Protocol, runtime_checkable
 import requests
 
 from . import limits, names
+from .configuration_shape import apply_workspace_configuration_shape
 
 
 @runtime_checkable
@@ -201,29 +202,6 @@ def _check_resource_name(name: str, *, where: str) -> None:
         )
 
 
-_CONFIG_RESERVED_FIELDS: dict[str, frozenset[str]] = {
-    "reasoning": frozenset({"enabled", "custom_instructions"}),
-    "peer_card": frozenset({"use", "create"}),
-    "summary": frozenset({"enabled", "messages_per_short_summary", "messages_per_long_summary"}),
-    "dream": frozenset({"enabled"}),
-}
-
-
-def _apply_workspace_configuration_shape(configuration: dict[str, Any]) -> dict[str, Any]:
-    """``WorkspaceConfiguration``/``SessionConfiguration`` allow arbitrary
-    extra top-level keys, but a value placed under one of the four RESERVED
-    names is parsed into that nested typed model, which drops any sub-key it
-    does not itself declare (pydantic's default for a nested ``BaseModel`` is
-    to ignore, not preserve, unknown fields). Not applied to peer
-    configuration, which has no typed sub-schema at all."""
-
-    out = dict(configuration)
-    for key, allowed in _CONFIG_RESERVED_FIELDS.items():
-        if isinstance(out.get(key), dict):
-            out[key] = {k: v for k, v in out[key].items() if k in allowed}
-    return out
-
-
 @dataclass
 class _FakeMessage:
     public_id: str
@@ -265,7 +243,7 @@ class FakeHonchoTarget:
         row = {
             "id": workspace_id,
             "metadata": dict(metadata),
-            "configuration": _apply_workspace_configuration_shape(configuration),
+            "configuration": apply_workspace_configuration_shape(configuration),
             "created_at": _now(),
         }
         self._workspaces[workspace_id] = row
@@ -299,7 +277,7 @@ class FakeHonchoTarget:
             return dict(existing)
         row = {
             "id": session_id, "workspace_id": workspace_id, "is_active": True,
-            "metadata": dict(metadata), "configuration": _apply_workspace_configuration_shape(configuration),
+            "metadata": dict(metadata), "configuration": apply_workspace_configuration_shape(configuration),
             "created_at": _now(),
         }
         self._sessions[(workspace_id, session_id)] = row

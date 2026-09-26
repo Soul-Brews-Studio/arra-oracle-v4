@@ -14,6 +14,7 @@ with `flagged=set()`).
 from __future__ import annotations
 
 import copy
+import json
 import shutil
 import tempfile
 import unittest
@@ -203,6 +204,145 @@ class CorruptingTargetIsCaughtTests(unittest.TestCase):
         # to fail -- assert on the general shape, not one specific message.
         self.assertTrue(
             any("dropped" in p or "content" in p or "created_at" in p for p in report.problems),
+            report.problems,
+        )
+
+
+class ConfigDroppingHonchoTarget(FakeHonchoTarget):
+    """2026-09-26 fix-round finding, probe P4: a target that stores `{}` for
+    EVERY workspace/session configuration, no matter what was actually sent.
+    Before this fix round, `_diff_workspace`/`_diff_sessions` never compared
+    `configuration` at all -- it fell through to `_check_row_columns`, which
+    treated the WHOLE column as declared-lossy (`LOSSY_FIELDS_BY_CONSTRUCTION`)
+    and only ever recorded it as "confirmed lossy", never checked it against
+    anything -- so this wholesale drop passed with `problems=[]`."""
+
+    def create_workspace(self, workspace_id: str, metadata: dict[str, Any], configuration: dict[str, Any]) -> dict[str, Any]:
+        return super().create_workspace(workspace_id, metadata, {})
+
+    def create_session(self, workspace_id: str, session_id: str, metadata: dict[str, Any], configuration: dict[str, Any]) -> dict[str, Any]:
+        return super().create_session(workspace_id, session_id, metadata, {})
+
+
+class WorkspaceAndSessionConfigurationAreActuallyComparedTests(unittest.TestCase):
+    """`diff_against_input` must compare workspace/session `configuration`
+    against its expected, schema-normalized value -- not treat the whole
+    column as unconditionally lossy just because a RESERVED sub-key can lose a
+    sub-field (see `WorkspaceConfigurationReservedKeyCollisionTests` for that
+    narrower, legitimate case)."""
+
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp(prefix="arra-honcho-diff-wsconfig-"))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.bank = build_spec_15_5_bank(self.root)
+        # No RESERVED key here (see CONFIG_RESERVED_FIELDS) -- an ordinary
+        # `extra="allow"` top-level key, which must round-trip byte for byte.
+        self.bank.workspaces[0]["configuration"] = json.dumps({"notes": "must survive (extra=allow)"})
+        for sess in self.bank.sessions:
+            sess["configuration"] = json.dumps({"notes": "session extra key"})
+
+    def test_a_real_configuration_round_trips_with_no_problems(self) -> None:
+        report = _round_trip(self.bank)
+        self.assertEqual(report.problems, [], report.problems)
+
+    def test_wholesale_dropped_workspace_and_session_configuration_is_caught(self) -> None:
+        target = ConfigDroppingHonchoTarget()
+        export_to_honcho(target, self.bank)
+        export = export_from_honcho(target, WORKSPACE_NAME, SESSION_NAMES)
+        returned = honcho_to_bundle(export, WORKSPACE_NAME)
+        report = diff_against_input(self.bank, returned)
+
+        self.assertFalse(report.ok)
+        self.assertTrue(any(p.startswith("workspaces.configuration") for p in report.problems), report.problems)
+        self.assertTrue(any(p.startswith("sessions.configuration") for p in report.problems), report.problems)
+
+
+class PeerConfigurationDroppingHonchoTarget(FakeHonchoTarget):
+    """Mutation M11 (2026-09-26 fix-round finding): drops peer configuration to
+    `{}` on every create. `CorruptingHonchoTarget` above never touches peer
+    CONFIGURATION (only metadata and messages), so this gap survived
+    independently of that class."""
+
+    def create_peer(self, workspace_id: str, peer_id: str, metadata: dict[str, Any], configuration: dict[str, Any]) -> dict[str, Any]:
+        return super().create_peer(workspace_id, peer_id, metadata, {})
+
+
+class PeerConfigurationCorruptionIsCaughtTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp(prefix="arra-honcho-diff-peerconfig-"))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.bank = build_spec_15_5_bank(self.root)
+
+    def test_dropped_peer_configuration_is_caught(self) -> None:
+        # "nat" carries a real configuration in the SPEC bank (`{"observe_me": true}`).
+        target = PeerConfigurationDroppingHonchoTarget()
+        export_to_honcho(target, self.bank)
+        export = export_from_honcho(target, WORKSPACE_NAME, SESSION_NAMES)
+        returned = honcho_to_bundle(export, WORKSPACE_NAME)
+        report = diff_against_input(self.bank, returned)
+
+        self.assertFalse(report.ok)
+        self.assertTrue(any(p.startswith("peers.configuration") for p in report.problems), report.problems)
+
+
+class MetadataDroppingHonchoTarget(FakeHonchoTarget):
+    """Mutations M12/M13 (2026-09-26 fix-round finding): drops WORKSPACE and
+    SESSION metadata to `{}`. `CorruptingHonchoTarget` above only ever
+    corrupts PEER metadata, so removing the workspace/session `h_metadata`
+    comparisons in `diff.py` survived independently."""
+
+    def create_workspace(self, workspace_id: str, metadata: dict[str, Any], configuration: dict[str, Any]) -> dict[str, Any]:
+        return super().create_workspace(workspace_id, {}, configuration)
+
+    def create_session(self, workspace_id: str, session_id: str, metadata: dict[str, Any], configuration: dict[str, Any]) -> dict[str, Any]:
+        return super().create_session(workspace_id, session_id, {}, configuration)
+
+
+class WorkspaceAndSessionMetadataCorruptionIsCaughtTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp(prefix="arra-honcho-diff-metadata-"))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.bank = build_spec_15_5_bank(self.root)
+
+    def test_dropped_workspace_and_session_metadata_is_caught(self) -> None:
+        target = MetadataDroppingHonchoTarget()
+        export_to_honcho(target, self.bank)
+        export = export_from_honcho(target, WORKSPACE_NAME, SESSION_NAMES)
+        returned = honcho_to_bundle(export, WORKSPACE_NAME)
+        report = diff_against_input(self.bank, returned)
+
+        self.assertFalse(report.ok)
+        self.assertTrue(any(p.startswith("workspaces.h_metadata") for p in report.problems), report.problems)
+        self.assertTrue(any(p.startswith("sessions.h_metadata") for p in report.problems), report.problems)
+
+
+class SessionPeerDroppingHonchoTarget(FakeHonchoTarget):
+    """Mutation M17 (2026-09-26 fix-round finding): silently drops the LAST
+    peer out of every `add_session_peers` call. `CorruptingHonchoTarget` above
+    never touches session membership at all, so removing
+    `_diff_session_peers`'s comparison survived independently."""
+
+    def add_session_peers(self, workspace_id: str, session_id: str, peers: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        trimmed = dict(list(peers.items())[:-1]) if len(peers) > 1 else dict(peers)
+        return super().add_session_peers(workspace_id, session_id, trimmed)
+
+
+class SessionPeerMembershipCorruptionIsCaughtTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp(prefix="arra-honcho-diff-sessionpeers-"))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.bank = build_spec_15_5_bank(self.root)
+
+    def test_a_silently_dropped_session_member_is_caught(self) -> None:
+        target = SessionPeerDroppingHonchoTarget()
+        export_to_honcho(target, self.bank)
+        export = export_from_honcho(target, WORKSPACE_NAME, SESSION_NAMES)
+        returned = honcho_to_bundle(export, WORKSPACE_NAME)
+        report = diff_against_input(self.bank, returned)
+
+        self.assertFalse(report.ok)
+        self.assertTrue(
+            any("session_peers[" in p and "expected members" in p for p in report.problems),
             report.problems,
         )
 
