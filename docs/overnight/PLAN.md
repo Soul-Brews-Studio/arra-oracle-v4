@@ -300,3 +300,7 @@ are part of done.
   Gate 7 is running.
 - 03:15 **GATE 7 on `3969622`: typecheck OK · TS 1828 pass / 0 fail (121/121 files, 192s) · Python 268 OK · probe 56 methods, HTTP/MCP/CLI 56 each,
   isolation 0 · v3 harness PASS 28 / FAIL 0 / GAP 9.** The 5 probe gaps are the newest methods with no acceptor fixture yet.
+- 03:16 Style audit (Nat: 350–500 lines, one function per file). Tracked files over 500 lines: 40. **38 were already over at baseline `f919369`**
+  (large legacy test files). Tonight added 2 test files over the cap (`knowledge-expose13-live.test.ts` 509, `lifecycle-eligibility.test.ts` 544);
+  they are split after ci-green lands. Pre-existing non-test offenders: `revision_v1.py` 773 and `rehearsal.py` 592 (legacy Python). Multi-export src
+  files: 12 of 561, the worst `contracts/common.ts` (19 exports, pre-existing). All reported as known debt, not hidden.
