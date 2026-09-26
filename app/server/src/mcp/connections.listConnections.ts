@@ -26,12 +26,26 @@ import { parseListConnections } from "../publication/context.parseListConnection
 import { failPublication } from "../publication/errors";
 import { openConnectionsTable } from "./connections";
 
+/** Matches the writer's own latch test in `connections.ts`/`calls.ts`. */
+const TABLE_ABSENT = /was not found|Table '.*' was not found/i;
+
 export async function listConnections(
   requestBytes: Uint8Array,
 ): Promise<{ rows: Record<string, unknown>[]; next_after_id: string | null; total: string | null }> {
   const request = parseListConnections(requestBytes);
-  const tbl = await openConnectionsTable();
-  await tbl.checkoutLatest();
+  let tbl: Awaited<ReturnType<typeof openConnectionsTable>>;
+  try {
+    tbl = await openConnectionsTable();
+    await tbl.checkoutLatest();
+  } catch (error) {
+    // See the sibling comment in `calls.listMcpCalls.ts`: a missing
+    // `connections` table reads as empty, never as a raw SDK message (which
+    // would carry the absolute dataset path) reaching an MCP client.
+    if (error instanceof Error && TABLE_ABSENT.test(error.message)) {
+      return { rows: [], next_after_id: null, total: request.include_total ? "0" : null };
+    }
+    throw error;
+  }
 
   const workspaceScope = `workspace_name = ${quote(request.workspace_name)}`;
   const scope = request.after_id === null ? workspaceScope : `${workspaceScope} AND id > ${quote(request.after_id)}`;

@@ -52,7 +52,14 @@ export interface ConnectionEvent {
   workspace_name: string;
   /** Transport family: "http", "mcp", or "unknown" when the caller did not say. */
   method: string;
-  /** Authenticated principal id. Never a token, credential or digest. */
+  /**
+   * DECISIONS.md R5 (#102): the CREDENTIAL id, matching SPEC §7.2 ("token id
+   * or oauth client_id") -- despite the field's name, this is deliberately
+   * NOT the principal/person/service id the credential belongs to (one
+   * principal can hold several credentials, each a distinct row here). See
+   * `composition.ts`'s `logCall` wrapper, which is the one caller and states
+   * the same ruling. Never a bearer token or a digest either way.
+   */
   principal: string;
   /** Client-supplied label. Untrusted text — truncated, never interpreted. */
   label: string;
@@ -88,7 +95,8 @@ export function connectionFoldFailureCount(): number {
 }
 
 /**
- * Test seam: clears the latch, the cached connection and the failure count.
+ * Test seam: clears the latch, the cached connection, the failure count and
+ * any pending per-id fold queue.
  *
  * It does NOT re-point the store. `DATA_DIR` is captured from the environment
  * at module load (`storage.ts`), so setting `ARRA_DATA_DIR` after import has
@@ -100,6 +108,7 @@ export function resetConnectionFoldState(): void {
   handle = null;
   tableAbsent = false;
   foldFailures = 0;
+  foldQueues.clear();
 }
 
 /**
@@ -114,31 +123,71 @@ export async function openConnectionsTable() {
 }
 
 /**
+ * Per-id queue so overlapping folds for the SAME (workspace, method,
+ * principal, label) key run one at a time instead of interleaving.
+ *
+ * #102 fix-round finding (verifier, 2026-09-26): `foldConnection` is launched
+ * fire-and-forget from `composition.ts` and the caller's response returns
+ * before it settles, so the NEXT admitted request for the same caller can
+ * start a second `foldConnection` before the first one's read-modify-write
+ * has committed — even when the two requests were sequential and AWAITED on
+ * the client side. Measured: `Promise.all` of 5 concurrent folds for one
+ * caller produced 5 ROWS SHARING ONE id (every fold read "no prior row" and
+ * added), which `listConnections.ts`'s duplicate-id check then correctly
+ * refuses as `integrity_failure` for the WHOLE page — a page that used to be
+ * empty (nothing read this root before R5) and now fails outright. Queueing
+ * per id removes the interleave without awaiting the fold on the request's
+ * hot path: the caller of `foldConnection` still gets an immediately-pending
+ * promise it can fire-and-forget exactly as before; only the ACTUAL
+ * read-modify-write bodies for one id are serialized against each other, at
+ * the same key granularity the row already has.
+ */
+const foldQueues = new Map<string, Promise<void>>();
+
+/**
  * Fold one request into the caller's row.
  *
  * Read-modify-write rather than a merge expression: LanceDB's merge-insert
  * cannot express "requests = requests + 1" against the row it is matching, and
  * a blind overwrite would reset the counters this table exists to accumulate.
  *
- * The race is real and bounded: two concurrent requests from the SAME caller
- * can both read `requests: 4` and both write `5`, losing one increment. That
- * is accepted knowingly. These are population statistics, not an audit trail —
- * `mcp_calls` is the audit trail, it is append-only, and it loses nothing. A
- * lock here would put contention on the hot request path to protect a number
- * whose only consumer is a dashboard. Under-counting is also the SAFE
- * direction: this row can never claim more traffic than actually happened.
+ * Concurrency for the SAME id is now serialized by `foldQueues` above, so the
+ * lost-increment race this comment used to accept no longer happens for a
+ * single caller. It remains true across DIFFERENT ids (unrelated keys never
+ * wait on each other) and this is still deliberately NOT awaited by the
+ * request path that triggers it (`composition.ts`): these are population
+ * statistics, not an audit trail — `mcp_calls` is the audit trail, it is
+ * append-only, and it loses nothing.
  */
 export async function foldConnection(event: ConnectionEvent): Promise<void> {
   if (tableAbsent) return;
+  // Truncate and compute `id` BEFORE queueing: the queue key IS the fold key,
+  // and this mirrors the pre-existing ordering ("truncate before the key").
+  const label = truncateRequired(event.label);
+  const id = foldId(event.workspace_name, event.method, event.principal, label);
+  const previous = foldQueues.get(id) ?? Promise.resolve();
+  // `performFold` never rejects (its own try/catch turns every failure into a
+  // counter/log line), so `queued` never rejects either — this chain cannot
+  // poison itself for the next caller of the same id.
+  const queued = previous.then(() => performFold(event, id, label));
+  foldQueues.set(id, queued);
+  try {
+    await queued;
+  } finally {
+    // Bounded cleanup: drop the entry once nobody has queued behind us, so a
+    // caller seen only once does not keep its settled promise forever. A
+    // caller queued behind us in the meantime owns the entry now — leave it.
+    if (foldQueues.get(id) === queued) foldQueues.delete(id);
+  }
+}
+
+async function performFold(event: ConnectionEvent, id: string, label: string): Promise<void> {
   try {
     const tbl = await openConnectionsTable();
     await tbl.checkoutLatest(); // a Table handle pins a version — see db.ts
-    // Truncate BEFORE the key, not after. `label` is client-supplied and
-    // unbounded; storing a trimmed value while keying on the full one would
-    // give two 5000-char labels distinct ids and identical stored text, so the
-    // table would show duplicate-looking rows nobody could tell apart.
-    const label = truncateRequired(event.label);
-    const id = foldId(event.workspace_name, event.method, event.principal, label);
+    // `label` and `id` are computed by the caller (`foldConnection`), BEFORE
+    // truncation was moved there so the queue key and the stored key can
+    // never disagree — see the ordering note on `foldConnection` above.
     // MILLISECONDS, as a plain JS number. This is the ONLY shape that survives
     // a round trip through a `timestamp[us]` column on this client. Measured,
     // all four candidates, write-then-read against a real table copy:

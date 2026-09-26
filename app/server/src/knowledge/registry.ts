@@ -34,9 +34,35 @@
  * against a real dataset, not as a batch.
  */
 
-import { listMcpCalls as listMcpCallsFromOperationsRoot } from "../mcp/calls.listMcpCalls";
-import { listConnections as listConnectionsFromOperationsRoot } from "../mcp/connections.listConnections";
 import type { EvidenceReaderBundle, EvidenceWriterBundle } from "../publication/service";
+
+/**
+ * LAZY, deliberately -- matching `composition.ts`'s own discipline ("these
+ * raw modules are imported lazily inside the builder so that merely
+ * importing the composition graph cannot trigger their import-time
+ * environment reads"). A STATIC top-level import here was tried first and
+ * reverted: `mcp/calls.listMcpCalls.ts` / `mcp/connections.listConnections.ts`
+ * import `../mcp/calls` / `../mcp/connections`, which import `../storage`,
+ * whose `DATA_DIR` is a `const` read from `process.env.ARRA_DATA_DIR` at
+ * MODULE LOAD. A static import here pulls `storage.ts` into the STATIC
+ * import graph of `app.ts` (via `knowledge/transport.ts` -> `composition.ts`),
+ * which four test files (`transport-service`, `transport-ownership`,
+ * `knowledge-chat-transport`, `knowledge-chat-writer-gate`) import statically
+ * too -- so whichever of those Bun loads first freezes `DATA_DIR` for every
+ * later file in the same `bun test` process, including ones that set
+ * `ARRA_DATA_DIR` in their own `beforeAll`. Measured regression: `bun test
+ * test/transport-service.test.ts test/mcp-correctness.test.ts` went from
+ * 31 pass / 0 fail to 16 pass / 15 fail, and opened a real `<checkout>/app/data`.
+ * A dynamic `import()` inside the closure below defers module resolution to
+ * FIRST CALL, by which point every test file's own `beforeAll` has already
+ * set `ARRA_DATA_DIR` for its own (fresh, `runOwnedChild`-owned) process.
+ */
+async function listMcpCallsFromOperationsRoot(bytes: Uint8Array): Promise<unknown> {
+  return (await import("../mcp/calls.listMcpCalls")).listMcpCalls(bytes);
+}
+async function listConnectionsFromOperationsRoot(bytes: Uint8Array): Promise<unknown> {
+  return (await import("../mcp/connections.listConnections")).listConnections(bytes);
+}
 
 /**
  * `audit:read` widened in for #94 (`listMcpCalls`/`listConnections`): the

@@ -37,12 +37,33 @@ import { parseListMcpCalls } from "../publication/context.parseListMcpCalls";
 import { failPublication } from "../publication/errors";
 import { openCallLogTable } from "./calls";
 
+/** Matches the writer's own latch test in `calls.ts`/`connections.ts`. */
+const TABLE_ABSENT = /was not found|Table '.*' was not found/i;
+
 export async function listMcpCalls(
   requestBytes: Uint8Array,
 ): Promise<{ rows: Record<string, unknown>[]; next_after_id: string | null; total: string | null }> {
   const request = parseListMcpCalls(requestBytes);
-  const tbl = await openCallLogTable();
-  await tbl.checkoutLatest();
+  let tbl: Awaited<ReturnType<typeof openCallLogTable>>;
+  try {
+    tbl = await openCallLogTable();
+    await tbl.checkoutLatest();
+  } catch (error) {
+    // A store with no `mcp_calls` table (an unmigrated `ARRA_DATA_DIR`, or a
+    // fresh deployment nothing has written to yet) is equivalent to an empty
+    // table from this reader's point of view -- NOT an error the caller
+    // should see. Before this branch existed, the raw LanceDB SDK message
+    // (including the absolute dataset path) reached the client verbatim over
+    // MCP, which `revision-publication-v1.md` / `context-ingestion-v1.md`
+    // both forbid for every OTHER governed method; HTTP already maps unknown
+    // errors to a bare `{"error":"internal"}` (`knowledge/transport.ts`), but
+    // MCP's `tool_error` path (`auth/service.ts`) carries `error.message`
+    // through unchanged, so this had to be stopped here, at the source.
+    if (error instanceof Error && TABLE_ABSENT.test(error.message)) {
+      return { rows: [], next_after_id: null, total: request.include_total ? "0" : null };
+    }
+    throw error;
+  }
 
   const workspaceScope = `workspace_name = ${quote(request.workspace_name)}`;
   // Two predicates, deliberately, matching the target19 reader this mirrors:
