@@ -283,6 +283,89 @@ describe("pairDiffLines", () => {
   });
 });
 
+/** Fix-round 2 findings. (blocking) `pairDiffLines` mispaired every edit of
+ *  two or more consecutive lines -- pinned here end to end, through the real
+ *  LCS op stream, on the verifier's exact bodies. (nonblocking) the size guard
+ *  ran BEFORE any equality check, so an unchanged 2,001-line body read "too
+ *  large to diff" instead of "unchanged"; an empty body diffed as one removed
+ *  empty line (`"".split("\n")` is `[""]`); and a term renamed between two
+ *  revisions (same `term_id`, new name/label snapshot) read "no term changes",
+ *  hiding exactly the label-snapshot history #33 asks the UI to render. */
+describe("revisionDiff fix-round 2", () => {
+  test("two consecutive edited lines pair in order through the real op stream", () => {
+    const a = revision({ id: "r1", revision_no: "1", body: "keep\nalpha\nbeta\nend" });
+    const b = revision({ id: "r2", revision_no: "2", body: "keep\nALPHA\nBETA\nend" });
+    expect(pairDiffLines(linesOf(revisionDiff(a, b)))).toEqual([
+      { kind: "equal", left: "keep", right: "keep" },
+      { kind: "changed", left: "alpha", right: "ALPHA" },
+      { kind: "changed", left: "beta", right: "BETA" },
+      { kind: "equal", left: "end", right: "end" },
+    ]);
+  });
+
+  test("an unchanged body over the size bound is still reported line-equal, not too large", () => {
+    const side = Math.ceil(Math.sqrt(MAX_DIFF_CELLS)) + 1;
+    const body = Array.from({ length: side }, (_, i) => `line-${i}`).join("\n");
+    const a = revision({ id: "r1", revision_no: "1", body, author_peer_name: "alice" });
+    const b = revision({ id: "r2", revision_no: "2", body, author_peer_name: "carol" });
+    const diff = revisionDiff(a, b);
+    expect(diff.body.tooLarge).toBe(false);
+    const lines = linesOf(diff);
+    expect(lines.length).toBe(side);
+    expect(lines.every((l) => l.op === "equal")).toBe(true);
+  });
+
+  test("a large body with one edited line is diffed (common prefix/suffix are not in the table)", () => {
+    const side = Math.ceil(Math.sqrt(MAX_DIFF_CELLS)) + 1;
+    const from = Array.from({ length: side }, (_, i) => `line-${i}`);
+    const to = [...from];
+    to[1000] = "EDITED";
+    const a = revision({ id: "r1", revision_no: "1", body: from.join("\n") });
+    const b = revision({ id: "r2", revision_no: "2", body: to.join("\n") });
+    const lines = linesOf(revisionDiff(a, b));
+    expect(lines.filter((l) => l.op !== "equal")).toEqual([
+      { op: "removed", text: "line-1000" },
+      { op: "added", text: "EDITED" },
+    ]);
+    expect(lines.length).toBe(side + 1);
+  });
+
+  test("an empty body has no lines: empty -> Thai is only added lines", () => {
+    const a = revision({ id: "r1", revision_no: "1", body: "" });
+    const b = revision({ id: "r2", revision_no: "2", body: "ภาษาไทย\nบรรทัดสอง" });
+    expect(linesOf(revisionDiff(a, b))).toEqual([
+      { op: "added", text: "ภาษาไทย" },
+      { op: "added", text: "บรรทัดสอง" },
+    ]);
+  });
+
+  test("Thai -> empty body is only removed lines, and empty -> empty is no lines", () => {
+    const a = revision({ id: "r1", revision_no: "1", body: "ภาษาไทย\nบรรทัดสอง" });
+    const b = revision({ id: "r2", revision_no: "2", body: "" });
+    expect(linesOf(revisionDiff(a, b))).toEqual([
+      { op: "removed", text: "ภาษาไทย" },
+      { op: "removed", text: "บรรทัดสอง" },
+    ]);
+    expect(linesOf(revisionDiff(b, b))).toEqual([]);
+  });
+
+  test("a term renamed between revisions (same term_id) is reported as relabelled", () => {
+    const before = term("t-topic", "topic", "storage");
+    const after = { ...before, term_name_snapshot: "storage_renamed" };
+    const a = revision({ id: "r1", revision_no: "1", term_snapshot_json: JSON.stringify([before]) });
+    const b = revision({ id: "r2", revision_no: "2", term_snapshot_json: JSON.stringify([after]) });
+    expect(revisionDiff(a, b).termChanges).toEqual([{ change: "relabelled", from: before, term: after }]);
+  });
+
+  test("a changed label_snapshot alone is also a relabel", () => {
+    const before = term("t-topic", "topic", "storage");
+    const after = { ...before, label_snapshot: "ที่เก็บข้อมูล" };
+    const a = revision({ id: "r1", revision_no: "1", term_snapshot_json: JSON.stringify([before]) });
+    const b = revision({ id: "r2", revision_no: "2", term_snapshot_json: JSON.stringify([after]) });
+    expect(revisionDiff(a, b).termChanges).toEqual([{ change: "relabelled", from: before, term: after }]);
+  });
+});
+
 describe("compareRevisionNo", () => {
   test("orders numerically, descending, even past 2^53", () => {
     const values = ["2", "10", "9007199254740993", "1"];
