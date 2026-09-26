@@ -381,6 +381,9 @@ keyword|semantic`.
 - No freshness report (unindexed-row count, pending/failed per profile).
 - A first build over a large pre-existing chunk table, and each refresh rebuild, runs in the
   owner's serialized queue: publications queued behind it wait for it.
+- The seam scan is a workspace-scoped scan (`chunk_index > 0` plus one escaped prefix clause per
+  cut position, 2 or 3 of them), not an index lookup: a 3-4 code point query whose index answer is short of `limit`
+  pays it, in the same way a query under 3 code points pays the short-query scan.
 - BM25 `score` comes from one index shared by every workspace, so its value can depend on other
   workspaces' text (ranking only; the answer SET is workspace-scoped). The legacy path exposes
   `score` the same way.
