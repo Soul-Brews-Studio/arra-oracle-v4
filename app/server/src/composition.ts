@@ -201,6 +201,8 @@ export function composeKnowledgeAccess(env: NodeJS.ProcessEnv = process.env): Kn
  */
 export async function runStartupIndexWork(): Promise<void> {
   const store = await import("./db");
-  // Do not rebuild an existing index on every restart, and never mutate on read.
+  // Do not rebuild a matching index on every restart, and never mutate on read.
+  // An index whose live details differ from the shared trigram config (an older
+  // deployment's icu) is rebuilt here once, before listen (R14, #10).
   await store.ensureFtsIndex(false);
 }
