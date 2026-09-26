@@ -393,7 +393,7 @@ typecheck                               clean                                   
 v3 client acceptance harness            PASS 37 / FAIL 0 / GAP 0 (39 tests)     2026-09-27, e00b50b
 UI v2 unit tests                        106 pass / 0 fail, 9 files              2026-09-27, e00b50b
 full sharded suite (6 shards)           1972 pass / 0 fail, 134/134 files, 183 s
-                                        gate 9 on 87f9f06; e00b50b is its docs-only child
+                                        gate 9 on 87f9f06; to e00b50b only docs/overnight/PLAN.md changed
 ```
 
 The v3 client acceptance harness (`app/server/test/mcp-v3-acceptance.test.ts`) replays a
