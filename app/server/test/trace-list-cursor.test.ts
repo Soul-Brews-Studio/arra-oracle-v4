@@ -33,6 +33,14 @@ const NEEDLE_INDEXES = [0, 1000, TOTAL - 1]; // spans three widened scan windows
 // digits.
 const idFor = (i: number) => traceId(`bulk${i.toString().padStart(4, "0")}`);
 
+// Explicit, sized from measurement (fix round 2): the 21-page unfiltered walk
+// took 2.05 s at load average ~6 when every row cost three reads of its own,
+// and hit bun's 5 s default 4/4 times at load 14-18 (verifier). With the
+// page's rows read in one `IN (...)` batch it takes ~0.09 s at load ~6. 30 s
+// is two orders of magnitude of headroom over that, and still fails fast
+// on a real hang.
+const WALK_TIMEOUT_MS = 30_000;
+
 type Row = { id: string; created_at: string; derived_from_count: number };
 type ListTracesReader = {
   listTraces(b: Uint8Array): Promise<{
@@ -51,7 +59,7 @@ const context = () => reader.context as unknown as ListTracesReader;
 const req = (overrides: Record<string, unknown> = {}) =>
   new TextEncoder().encode(
     JSON.stringify({
-      workspace_name: WS, parent_id: null, prev_id: null, query_contains: null,
+      workspace_name: WS, parent_id: null, prev_id: null, depth: null, query_contains: null,
       after_created_at: null, after_id: null, limit: 100, ...overrides,
     }),
   );
@@ -111,7 +119,7 @@ describe("K5 kernel: the keyset cursor crosses the MAX_SCANNED_TRACES boundary",
     // all, per `trace-list-service.test.ts`'s own comment) -- TOTAL planted
     // plus that one.
     expect(seen.size).toBe(TOTAL + 1);
-  });
+  }, WALK_TIMEOUT_MS);
 
   test("query_contains reaches a match past TWO 1000-row windows, never a dead end short of it", async () => {
     const wantIds = NEEDLE_INDEXES.map(idFor);
@@ -130,5 +138,5 @@ describe("K5 kernel: the keyset cursor crosses the MAX_SCANNED_TRACES boundary",
     }
     // Newest first: index TOTAL-1, then 1000, then 0.
     expect(found).toEqual([idFor(TOTAL - 1), idFor(1000), idFor(0)]);
-  });
+  }, WALK_TIMEOUT_MS);
 });

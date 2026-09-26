@@ -43,6 +43,7 @@ export async function oracle_trace_list(args: Record<string, unknown>, context: 
     const result = (await context.kb("listTraces", {
       parent_id: null,
       prev_id: null,
+      depth: null,
       query_contains,
       after_created_at,
       after_id,

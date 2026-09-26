@@ -64,6 +64,7 @@ export async function oracle_trace_chain(args: Record<string, unknown>, context:
     const successors = (await context.kb("listTraces", {
       parent_id: null,
       prev_id: cursor.id,
+      depth: null,
       query_contains: null,
       after_created_at: null,
       after_id: null,

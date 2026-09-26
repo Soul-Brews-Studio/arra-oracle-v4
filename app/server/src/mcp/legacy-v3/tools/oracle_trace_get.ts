@@ -84,6 +84,7 @@ export async function oracle_trace_get(args: Record<string, unknown>, context: V
   const childrenPage = (await context.kb("listTraces", {
     parent_id: id,
     prev_id: null,
+    depth: null,
     query_contains: null,
     after_created_at: null,
     after_id: null,
@@ -94,6 +95,7 @@ export async function oracle_trace_get(args: Record<string, unknown>, context: V
   const nextPage = (await context.kb("listTraces", {
     parent_id: null,
     prev_id: id,
+    depth: null,
     query_contains: null,
     after_created_at: null,
     after_id: null,

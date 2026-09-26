@@ -92,7 +92,7 @@ afterAll(async () => {
 });
 
 const req = (overrides: Record<string, unknown> = {}) =>
-  bytes({ workspace_name: ALPHA, parent_id: null, prev_id: null, query_contains: null, after_created_at: null, after_id: null, limit: 10, ...overrides });
+  bytes({ workspace_name: ALPHA, parent_id: null, prev_id: null, depth: null, query_contains: null, after_created_at: null, after_id: null, limit: 10, ...overrides });
 
 describe("K5 kernel: listTraces", () => {
   test("newest first: (created_at desc, id asc) is a total order even across a millisecond tie", async () => {
@@ -118,6 +118,24 @@ describe("K5 kernel: listTraces", () => {
   test("prev_id filters to the trace whose prev_id points here (none, here)", async () => {
     const result = await context().listTraces(req({ prev_id: A }));
     expect(result.rows).toEqual([]);
+  });
+
+  test("depth filters on the stored depth column (fix round 2)", async () => {
+    const one = await context().listTraces(req({ depth: "1" }));
+    expect((one.rows as { id: string }[]).map((r) => r.id)).toEqual([C]);
+    const zero = await context().listTraces(req({ depth: "0" }));
+    const zeroIds = (zero.rows as { id: string }[]).map((r) => r.id);
+    expect(zeroIds).not.toContain(C);
+    expect(zeroIds).toEqual(expect.arrayContaining([A, B, D]));
+    expect((await context().listTraces(req({ depth: "7" }))).rows).toEqual([]);
+  });
+
+  test("depth is int64 decimal text or null, never a number or a negative (fix round 2)", async () => {
+    await expect(context().listTraces(req({ depth: 1 }))).rejects.toBeTruthy();
+    await expect(context().listTraces(req({ depth: "-1" }))).rejects.toBeTruthy();
+    await expect(context().listTraces(req({ depth: "1 OR 1=1" }))).rejects.toBeTruthy();
+    const { depth: _omitted, ...withoutDepth } = JSON.parse(new TextDecoder().decode(req()));
+    await expect(context().listTraces(bytes(withoutDepth))).rejects.toBeTruthy();
   });
 
   test("query_contains is a bounded substring scan, not a fuzzy match", async () => {
@@ -158,7 +176,7 @@ describe("K5 kernel: listTraces", () => {
 });
 
 describe("K5 transport: content:read on HTTP and MCP", () => {
-  test("listTraces is a registry entry under content:read, scoped at the request root, and classified in PEER_FIELDS", () => {
+  test("listTraces is a registry entry under content:read, scoped at the request root (PEER_FIELDS: transport-peer-fields.test.ts)", () => {
     expect(KNOWLEDGE_METHODS.listTraces?.action).toBe("content:read");
     expect(KNOWLEDGE_METHODS.listTraces?.scopePath).toEqual([]);
   });
@@ -170,7 +188,7 @@ describe("K5 transport: content:read on HTTP and MCP", () => {
     const service = createOperationService({ policyPath }, deps);
     const app = createApp({ origin: ORIGIN }, service, createMcpAdapter(service), { knowledge: { policyPath, access } });
     const headers = { host: "127.0.0.1:3939", "content-type": "application/json", authorization: `Bearer ${READ_TOKEN}` };
-    const body = { workspace_name: ALPHA, parent_id: null, prev_id: null, query_contains: null, after_created_at: null, after_id: null, limit: 10 };
+    const body = { workspace_name: ALPHA, parent_id: null, prev_id: null, depth: null, query_contains: null, after_created_at: null, after_id: null, limit: 10 };
 
     const listed = await app.handle(new Request(`${ORIGIN}/mcp/${ALPHA}`, {
       method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),

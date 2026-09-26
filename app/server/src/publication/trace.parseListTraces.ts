@@ -2,6 +2,7 @@ import { fail } from "../contracts/errors";
 import { requireClosedObject } from "../contracts/common";
 import { parseRequest } from "./trace.parseRequest";
 import { name } from "./trace.name";
+import { nullableInt64Text } from "./trace.nullableInt64Text";
 import { nullablePointer } from "./trace.nullablePointer";
 import { nullableShortText } from "./trace.nullableShortText";
 import { nullableTimestamp } from "./trace.nullableTimestamp";
@@ -16,6 +17,7 @@ const LIST_TRACES_KEYS = [
   "workspace_name",
   "parent_id",
   "prev_id",
+  "depth",
   "query_contains",
   "after_created_at",
   "after_id",
@@ -40,6 +42,9 @@ export function parseListTraces(bytes: Uint8Array): ListTracesRequest {
     workspace_name: name(request.get("workspace_name"), ["workspace_name"]),
     parent_id: nullablePointer(request.get("parent_id"), ["parent_id"]),
     prev_id: nullablePointer(request.get("prev_id"), ["prev_id"]),
+    // Same int64 decimal text `createTrace` stores `depth` from; required
+    // but nullable, like every other filter key here (K3's idiom).
+    depth: nullableInt64Text(request.get("depth"), ["depth"]),
     query_contains: nullableShortText(request.get("query_contains"), ["query_contains"]),
     after_created_at,
     after_id,

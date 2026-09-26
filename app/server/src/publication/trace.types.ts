@@ -72,7 +72,8 @@ export type ListTraceHitsRequest = {
 
 /**
  * K5 (docs/overnight/V3-PARITY.md §5): list traces newest first, optionally
- * filtered to one `parent_id` or `prev_id`, or to traces whose `query`
+ * filtered to one `parent_id` or `prev_id`, to one `depth` (int64 decimal
+ * text, the column `createTrace` writes), or to traces whose `query`
  * contains a substring. `after_created_at`/`after_id` are a COMPOUND keyset
  * cursor -- `created_at` alone is not a total order (two traces can share a
  * millisecond) -- so the parser requires both present or both absent, never
@@ -82,6 +83,7 @@ export type ListTracesRequest = {
   workspace_name: string;
   parent_id: string | null;
   prev_id: string | null;
+  depth: string | null;
   query_contains: string | null;
   after_created_at: string | null;
   after_id: string | null;
