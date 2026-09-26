@@ -45,6 +45,8 @@ const TAXONOMY_READS = ["lookupVocabularyByName", "lookupTermByName"];
 const TAXONOMY_WRITES = ["seedReservedVocabularies", "createVocabulary", "createTerm"];
 const PUBLISH = [...TAXONOMY_READS, ...TAXONOMY_WRITES, "getPeer", "registerPeer", "publishRevision", "indexRevisionChunks"];
 const PUBLISH_REQUIRES = [...TAXONOMY_READS, ...TAXONOMY_WRITES, "publishRevision", "indexRevisionChunks"];
+/** The forum writes (V4): speaker, session, membership, post, reopen link. */
+const FORUM_WRITE = ["getPeer", "registerPeer", "getSession", "registerSession", "joinSession", "appendMessages", "createSessionLink"];
 /** K1 chunk search (#30 wave 2), named as V3-PARITY.md §5 designs it. */
 const K1 = ["searchChunksKeyword", "searchChunksSemantic"];
 
@@ -236,20 +238,26 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
   spec({
     name: "oracle_thread",
     action: "content:write",
-    uses: ["getPeer", "registerPeer", "getSession", "registerSession", "joinSession", "appendMessages", "createSessionLink"],
-    requires: ["getPeer", "registerPeer", "getSession", "registerSession", "joinSession", "appendMessages", "createSessionLink"],
-    description: "Start or continue a thread (a v4 session). Needs a speaking peer. thread_id is the session name, a string.",
+    uses: [...FORUM_WRITE, "listSessionMembers"],
+    requires: [...FORUM_WRITE, "listSessionMembers"],
+    description:
+      "Post to a thread, starting one when threadId is omitted. A thread is a v4 session and thread_id is its name (a string);" +
+      " the speaking peer (argument `peer`, else the X-Arra-Peer header, bound by the credential's peers list) is the author" +
+      " and a member. `to` adds other registered oracles as members. A non-member must pass join:true: v4 never joins silently." +
+      " A closed thread is continued with reopen:true, which starts a NEW thread linked 'continues' to it and carries its members." +
+      " No auto-answer: oracle_response is always null. title is display metadata; model is not stored yet.",
     inputSchema: obj(
       {
-        message: str("Required."),
+        message: str("Required. Not trimmed; must not be blank."),
         threadId: { type: ["string", "integer"], description: "Session name. An integer is a v3 id and is not found." },
-        title: str(""),
-        role: str(""),
-        reopen: { type: "boolean" },
-        join: { type: "boolean" },
-        to: strings(""),
-        peer: str(""),
-        idempotency_key: str(""),
+        title: str("Display title of a new thread."),
+        role: str("Stored as given; no default is invented."),
+        to: strings("Registered peers to add as members."),
+        join: { type: "boolean", description: "Join an existing thread before posting." },
+        reopen: { type: "boolean", description: "Continue a closed thread in a new, linked thread." },
+        model: str("Not stored yet; named in compat_warnings."),
+        peer: str("Optional speaker, bound by the credential's peers list."),
+        idempotency_key: str("Optional. Makes a retry replay instead of posting twice."),
       },
       ["message"],
     ),
@@ -259,26 +267,54 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
     action: "content:read",
     uses: ["listSessions"],
     requires: ["listSessions"],
-    description: "List threads (sessions) in this bank, by name.",
-    inputSchema: obj({ status: str(""), limit: int(""), offset: int("") }),
+    description:
+      "List threads (sessions) by id. With a speaking peer, only the threads it belongs to (all:true for every thread in this bank)." +
+      " status active or closed filters exactly; answered and pending are not stored in v4 and are refused." +
+      " message_count and last_message are null (never read per thread). Page with next_cursor, not offset.",
+    inputSchema: obj({
+      status: str("active or closed."),
+      limit: int("1..100, default 20."),
+      cursor: str("next_cursor from a previous page."),
+      all: { type: "boolean", description: "Every thread in this bank, not only the speaker's." },
+      offset: int("Not supported (keyset paging); 0 or absent only."),
+      peer: str("Optional speaker, bound by the credential's peers list."),
+    }),
   }),
   spec({
     name: "oracle_thread_read",
     action: "content:read",
     uses: ["getSession", "listMessages"],
     requires: ["getSession", "listMessages"],
-    description: "Read a thread's messages in order, as the speaking peer (membership is a read boundary). Reading never moves a read cursor.",
-    inputSchema: obj({ threadId: { type: ["string", "integer"] }, limit: int(""), peer: str("") }, ["threadId"]),
+    description:
+      "Read a thread's messages in order, as the speaking peer: membership is the read boundary, so a non-member is refused" +
+      " (an audit:read credential may read with no speaker). limit N returns the last N. Reading never moves a read cursor.",
+    inputSchema: obj(
+      {
+        threadId: { type: ["string", "integer"], description: "Session name. An integer is a v3 id and is not found." },
+        limit: int("The last N messages (1..1000); all when omitted, up to 1000."),
+        peer: str("Optional speaker, bound by the credential's peers list."),
+      },
+      ["threadId"],
+    ),
   }),
   spec({
     name: "oracle_thread_update",
     action: "content:write",
     uses: ["getSession", "closeSession"],
-    // closeSession (K9, ruling D7) is used when present; without it the tool
-    // still answers active/answered/pending, and `closed` is not_yet_available.
-    requires: ["getSession"],
-    description: "Close a thread. answered and pending are not stored states in v4 and are refused.",
-    inputSchema: obj({ threadId: { type: ["string", "integer"] }, status: str("Required.") }, ["threadId", "status"]),
+    requires: ["getSession", "closeSession"],
+    description:
+      "Close a thread, one way, recording which member closed it and why. active is a no-op on an open thread and refused on a" +
+      " closed one (continue it with oracle_thread reopen:true). answered and pending are not stored states in v4 and are refused.",
+    inputSchema: obj(
+      {
+        threadId: { type: ["string", "integer"] },
+        status: str("Required. closed or active."),
+        reason: str("Why it was closed; recorded with the close."),
+        peer: str("Optional speaker, bound by the credential's peers list."),
+        idempotency_key: str("Optional. Makes a retry replay the same close."),
+      },
+      ["threadId", "status"],
+    ),
   }),
   // ── traces (V3, V7) ───────────────────────────────────────────────────
   spec({

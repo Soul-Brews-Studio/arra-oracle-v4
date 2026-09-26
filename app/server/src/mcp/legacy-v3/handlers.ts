@@ -13,6 +13,10 @@ import { guide } from "./guide";
 import { oracle_handoff } from "./tools/oracle_handoff";
 import { oracle_learn } from "./tools/oracle_learn";
 import { oracle_research_note } from "./tools/oracle_research_note";
+import { oracle_thread } from "./tools/oracle_thread";
+import { oracle_thread_read } from "./tools/oracle_thread_read";
+import { oracle_thread_update } from "./tools/oracle_thread_update";
+import { oracle_threads } from "./tools/oracle_threads";
 
 export type V3ToolContext = {
   readonly tool: string;
@@ -33,4 +37,9 @@ export const V3_HANDLERS: Readonly<Record<string, V3Handler>> = Object.freeze({
   oracle_learn,
   oracle_research_note,
   oracle_handoff,
+  // V4 + V10 forum over sessions and messages (V3-PARITY.md §4.2-§4.4).
+  oracle_thread,
+  oracle_threads,
+  oracle_thread_read,
+  oracle_thread_update,
 });
