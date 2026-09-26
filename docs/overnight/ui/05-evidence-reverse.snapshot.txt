@@ -1,133 +1,126 @@
-[p1 "arra-oracle-v4 — memory" | space "ui-33 fix-round proof"(86): 1 managed, 0 untracked — p1* "arra-oracle-v4 — memory"]
+[p1 "arra-oracle-v4 — memory" | space "ui-33 fix-round 2 proof"(88): 1 managed, 0 untracked — p1* "arra-oracle-v4 — memory"]
 root
   container
     container
       text "BANK"
-      textbox [ref=246, loc=css:input[placeholder="default"]]
+      textbox [ref=1, loc=css:input[placeholder="default"]]
         text "default"
     container
       text "WORKSPACE"
-      textbox [ref=247, loc=css:input[placeholder="workspace_name"]]
+      textbox [ref=2, loc=css:input[placeholder="workspace_name"]]
         text "default"
     container
       text "TOKEN"
-      textbox [ref=248, loc=css:input[placeholder="bearer…"]]
-    button [ref=249]
+      textbox [ref=3, loc=css:input[placeholder="bearer…"]]
+    button [ref=4]
       text "ping"
   container
-    button [ref=250]
+    button [ref=5]
       text "overview"
-    button [ref=251]
+    button [ref=6]
       text "explore"
-    button [ref=252]
+    button [ref=7]
       text "messages"
-    button [ref=253]
+    button [ref=8]
       text "forum"
-    button [ref=254]
+    button [ref=9]
       text "knowledge"
   container
     container
       text "Workspaces"
       text ">"
       text "default"
-      button [ref=255]
+      button [ref=35]
         text "Back"
     container
       container
-        text "4"
+        text "1"
         text "PEERS"
       text "|"
       container
-        text "2"
+        text "0"
         text "SESSIONS"
       text "|"
       container
-        text "7"
+        text "6"
         text "NODES"
-      button [ref=256]
+      button [ref=36]
         text "refresh all"
     container
       container
         container
           container
-            button [ref=257]
+            button [ref=37]
               text "⌄"
             text "PEERS"
-            button [ref=258]
+            button [ref=38]
               text "↻"
-          textbox [ref=259, loc=css:input[placeholder="filter loaded peers…"]]
+          textbox [ref=39, loc=css:input[placeholder="filter loaded peers…"]]
             text "filter loaded peers…"
-          container
-            button [ref=260]
-              text "alice"
-            button [ref=261]
-              text "bob"
-            button [ref=262]
-              text "carol"
-            button [ref=263]
-              text "dave"
+          button [ref=40]
+            text "alice"
           container
             container
               text "showing"
-              text "4"
-              text "of 4"
+              text "1"
+              text "of 1"
             container
               text "page"
               text "1"
               text "(walked)"
             container
-              button [ref=264]
+              button [ref=41]
                 text "‹ prev"
-              button [ref=265]
+              button [ref=42]
                 text "next ›"
         container
           container
-            button [ref=266]
+            button [ref=43]
               text "⌄"
             text "SESSIONS"
-            button [ref=267]
+            button [ref=44]
               text "↻"
-          textbox [ref=268, loc=css:input[placeholder="filter loaded sessions…"]]
+          textbox [ref=45, loc=css:input[placeholder="filter loaded sessions…"]]
             text "filter loaded sessions…"
           container
-            button [ref=269]
-              text "sess-a"
-            button [ref=270]
-              text "sess-b"
+            paragraph
+              text "no sessions"
+            paragraph
+              text "nothing on this page matches."
           container
             container
               text "showing"
-              text "2"
-              text "of 2"
+              text "0"
+              text "of 0"
             container
               text "page"
               text "1"
               text "(walked)"
             container
-              button [ref=271]
+              button [ref=46]
                 text "‹ prev"
-              button [ref=272]
+              button [ref=47]
                 text "next ›"
       container
         container
-          button [ref=273]
+          button [ref=48]
             text "Nodes"
-          button [ref=274]
+          button [ref=49]
             text "Chat"
-          button [ref=275]
+          button [ref=50]
             text "Messages"
-          button [ref=276]
+          button [ref=51]
             text "Evidence"
-          button [ref=277]
+          button [ref=52]
             text "Config"
-        container [ref=278]
+        container [ref=53]
           container
             heading
               text "TRACE"
             container
-              textbox [ref=279, loc=css:input[placeholder="trace id (nanoid21)"]]
+              textbox [ref=54, loc=css:input[placeholder="trace id (nanoid21)"]]
                 text "trace id (nanoid21)"
-              button [ref=280]
+              button [ref=55]
                 text "Look up"
             container
               paragraph
@@ -138,22 +131,15 @@ root
             container
               heading
                 text "SESSION LINKS"
-              button [ref=281]
+              button [ref=56]
                 text "from"
-              button [ref=282]
+              button [ref=57]
                 text "to"
-            unordered_list
-              list_item
-                container
-                  text "sess-a"
-                  container
-                    text "--"
-                    text "continues"
-                    text "-->"
-                  text "sess-b"
-                container
-                  text "alice"
-                  text "2026-09-26T18:58:33.580Z"
+            container
+              paragraph
+                text "no session selected"
+              paragraph
+                text "pick a session on the left to see its links"
           container
             heading
               text "DIRECT EVIDENCE"
@@ -161,41 +147,54 @@ root
               container
                 container
                   text "rev"
-                  text "r_jcGH7H"
+                  text "UImLnT91"
                   text "…"
                 text "head"
-              container
-                paragraph
-                  text "TERMS ("
-                  text "2"
-                  text ")"
-                unordered_list
-                  list_item
-                    text "type"
-                    text ":"
-                    text "conclusion"
-                  list_item
-                    text "memory_horizon"
-                    text ":"
-                    text "long_term"
-              container
-                paragraph
-                  text "LINKS ("
-                  text "0"
-                  text ")"
-                paragraph
-                  text "this revision cites nothing"
+              paragraph
+                text "TERMS ("
+                text "1"
+                text ")"
+              unordered_list
+                list_item
+                  text "type"
+                  text ":"
+                  text "note"
+              paragraph
+                text "LINKS ("
+                text "0"
+                text ")"
+              paragraph
+                text "this revision cites nothing"
           container
             heading
               text "REVERSE EVIDENCE"
             unordered_list
               list_item
-                text "MDBCaKBkrc"
+                text "4wGVF_qNcf"
                 text "…"
                 text "rev"
                 text "1"
                 text "node_revision"
-                text "derived_from"
+                text "discusses"
+                text "locator only"
+                text "citing node superseded/retired"
+                paragraph
+                  text "locator only"
+                  text ":"
+                  text "only the locator was recorded when cited; no content was captured to check it against"
+                paragraph
+                  text "citing node superseded/retired"
+                  text ":"
+                  text "the citing node is no longer recall-eligible (getRecallEligibility)"
+              list_item
+                text "k9z_tgnzo4"
+                text "…"
+                text "rev"
+                text "1"
+                text "node_revision"
+                text "supports"
+                text "captured"
+                text "citing node current"
           container
             heading
               text "LIFECYCLE"
@@ -207,7 +206,7 @@ root
           container
             heading
               text "LIFECYCLE ACTIONS"
-            button [ref=283]
+            button [ref=60]
               text "Retire…"
-            button [ref=284]
+            button [ref=61]
               text "Supersede…"

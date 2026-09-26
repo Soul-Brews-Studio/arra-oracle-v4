@@ -13,6 +13,179 @@ underlying claims wrong, not merely incomplete.
 never `app/.tmp` or `app/data`. `ARRA_CHAT_PROVIDER=ollama` (`gemma3:4b`, already running on
 this machine) so peer chat answers for real.
 
+## Fix round 2 (commits `b4e68b5`..HEAD): diff pairing and AC3 evidence labels
+
+A second independent verifier REFUTED fix round 1 on two blocking findings. Both are fixed
+here, failing-first, and shown live. This section is newer than everything below it; where the
+two disagree (the "no PNG" notes, snapshots 04/05), this section is the current state.
+
+### Blocking 1: side-by-side diff mispaired consecutive edits
+
+`pairDiffLines` only looked at the NEXT op. An edit of k >= 2 consecutive lines produced k-1
+removed rows, one false "changed" row (the LAST old line beside the FIRST new line), then k-1
+added rows. `keep/alpha/beta/end -> keep/ALPHA/BETA/end` read "beta became ALPHA".
+
+**Fix** (`state/pairDiffLines.ts`, now its own file): collect each hunk (a maximal run of
+non-equal ops), then pair the i-th removed line with the i-th added line. That gives min(k,m)
+changed rows, and the rest are removed or added rows. Each column keeps its own order.
+
+Live, through the UI's own `listAcceptedHistory` → `revisionDiff` → `pairDiffLines`
+(`.tmp/ui33-round2-live-labels.ts`, a fresh dataset):
+
+```
+equal: keep | keep
+changed: alpha | ALPHA
+changed: beta | BETA
+equal: end | end
+changed: บรรทัดหนึ่ง | บรรทัดหนึ่ง (แก้)
+removed: บรรทัดสอง | —
+removed: บรรทัดสาม | —
+equal: tail | tail
+added: — | extra line
+```
+
+Picture: `ui/11-revision-diff-pairing.png`.
+
+### Blocking 2: #33 AC3, stale or unavailable evidence must be visibly labelled
+
+`AssociationPanel` and `DependentsPanel` rendered no `capture_status` and no target state. An
+`unresolved` code citation looked the same as a `captured` one.
+
+**Fix**: every evidence row now carries badges, and each one comes from a field the API
+actually returns:
+
+| label | source |
+|---|---|
+| `captured` / `locator only` / `unresolved` | the link row's `capture_status` (a retained claim from citation time, per association-evidence-v1 §3; the detail text says "when cited") |
+| `stale: not head` (names the current head) | `getRevisionAssociations(node, EXACT cited rev)` → `is_snapshot_head: false`, `snapshot_head_revision_id` |
+| `target unavailable` | the same call answered `null`: no such revision on accepted history |
+| `target superseded/retired` | `getRecallEligibility(cited node)` → `eligible: false` |
+| `citing node superseded/retired` / `citing node current` | `getRecallEligibility(citing node)`. Current-mode `scanDependents` does not filter lifecycle (§4) |
+| `historical citing revision` | occurrence `is_snapshot_head: false` |
+| `checking…` / `… status unknown` / `… not checked` | lookup still in flight / failed (with its error) / past the 32-target cap |
+
+Live checks are made only for `node_revision` targets. A url, code or issue target sits outside
+this dataset, so it gets only its capture claim. A `warn`/`bad` label prints its detail as
+visible text, not only as a tooltip.
+
+Live, through the UI's own modules (`getRevisionAssociations` → `resolveCitedRevisions` →
+`directEvidenceLabels`; `scanDependents` → `resolveCitingNodes` → `reverseEvidenceLabels`):
+
+```
+DIRECT  url           locator_only  -> warn:locator only
+        code          unresolved    -> bad:unresolved
+        node_revision captured      -> ok:captured, warn:stale: not head, warn:target superseded/retired
+REVERSE D (retired)   locator_only  -> warn:locator only, warn:citing node superseded/retired
+        E (current)   captured      -> ok:captured, ok:citing node current
+```
+
+Pictures: `ui/09-evidence-direct-labels.png`, `ui/10-evidence-reverse-labels.png`,
+`ui/12-evidence-direct-labels-narrow.png` (760 px wide). Accessibility snapshots
+`ui/04-evidence-direct.snapshot.txt` and `ui/05-evidence-reverse.snapshot.txt` were refreshed
+against the same dataset and now contain every label.
+
+Seed (`.tmp/ui33-seed-round2.py`, real HTTP on a fresh `mktemp -d` dataset):
+- nodeA gets rev1 and then rev2.
+- nodeC cites a `url` (locator_only), a `code` range at commit `acb70ac` (unresolved) and
+  nodeA/**rev1** (captured).
+- nodeA is then superseded by nodeB.
+- nodeD (locator_only) and nodeE (captured) both cite nodeB's head, and nodeD is then retired.
+- nodeF carries the consecutive-edit diff.
+
+The label run and the pictures used two fresh datasets seeded by this same script, so node ids
+differ between them.
+
+### How the pictures were made (read before trusting them)
+
+CDP `Page.captureScreenshot` still times out in this environment, as it did in round 1:
+- 15 s default, then 90 s, then `captureBeyondViewport`. `fromSurface:false` answered "Unable
+  to capture screenshot".
+- `Page.startScreencast` produced zero frames while reporting `visible: true`.
+- Load average was 13–15.
+
+The PNGs are therefore NOT compositor screenshots. Each one is rendered inside the ego-browser
+page itself (`.tmp/ui33-render.js`):
+1. Clone the live `#root` DOM together with every loaded stylesheet.
+2. Wrap the clone in an SVG `<foreignObject>` at the stated width.
+3. Draw it onto a `<canvas>` and export it with `toDataURL`.
+
+That is Chromium's own layout and paint of the real DOM and CSS, so wrapping, overflow and
+badge placement are real. It is a re-layout of a clone at the given width, however, not a
+capture of the live window. Scroll positions, focus rings and hover state are not carried over.
+The fleet rule (browser work through ego-browser only) ruled out Playwright's headless shell.
+
+### AC2 layout defect found while rendering the proof
+
+A `code` target is one unbreakable ~190-char JSON line. `DetailTabs` is a flex item with
+`min-width:auto`, so that line set the panel's minimum width. Measured live: a 1,807 px
+document inside an 853 px viewport. The fix is `min-w-0` on the panel, plus wrapping the target
+JSON instead of truncating it (the path sits at the end of the line). Picture 12 shows it
+wrapping at 760 px.
+
+A 760 px emulation still gives `scrollWidth` 589 against `innerWidth` 507 (page zoom is 1.5×),
+so part of a horizontal overflow remains at very narrow widths. It comes from the fixed-width
+left rail, which this slice did not touch. The app still has no responsive breakpoints.
+
+### Nonblocking findings addressed
+
+- **Oversized unchanged bodies.** `revisionDiff` emits the common prefix and suffix directly,
+  and only the differing middle counts against `MAX_DIFF_CELLS`. An unchanged 2,001-line body
+  now reads "unchanged", not "too large". A single edited line in a long body now diffs.
+- **Empty bodies.** An empty body has no lines. Before, `"" -> Thai` showed a removed `""` row.
+- **Renamed terms.** A kept term whose name or label snapshot changed is reported `relabelled`
+  and rendered `~ old → new`. Before, it read "no term changes".
+- **`chatError` with a pointer.** `invalid_value at /max_items` now reads as a server refusal,
+  not "could not reach the server".
+- **LifecyclePanel after a failed read.** A failed history read replaces the "never superseded
+  or retired" empty state instead of sitting beside it.
+- **Retire/supersede state across nodes.** The outcome and error reset when the node changes,
+  and `LifecycleActions` is keyed by node. Checked live: a retire form opened and half-filled on
+  nodeE is gone after switching to nodeB (`confirmVisible: false`).
+- **`MAX_LIFECYCLE_PAGE`.** The unused and wrong constant (200 > server max 100) is removed.
+- **One export per file.** `pairDiffLines` and `compareRevisionNo` moved to their own files.
+  The new modules export one function each.
+
+### Tests (failing-first)
+
+Red, before any fix (commit `964d260`): **56 pass / 24 fail**. On top of that, 3 test files
+could not load because the label and resolver modules did not exist yet. Decisive red lines:
+- `pairDiffLines`: expected 2000 rows, received 3999.
+- The verifier repro diffed as `removed alpha / changed beta→ALPHA / added BETA`.
+- `AssociationPanel` markup had no "locator only".
+- `LifecyclePanel` markup contained "never superseded or retired" next to the error.
+
+Green: `bun test src` in `app/ui/v2` gives **106 pass / 0 fail** across 9 files. New test
+files:
+- `state/pairDiffLines.test.ts` (12 tests)
+- `state/directEvidenceLabels.test.ts` (13)
+- `state/reverseEvidenceLabels.test.ts` (7)
+- `state/resolveCitedRevisions.test.ts` (9, stubbed `fetch`)
+- `components/evidencePanels.test.ts` (7, `react-dom/server` render, no new dependency)
+
+`revisionDiff.test.ts` gained 7 tests and `chatError.test.ts` gained 3.
+
+Other checks:
+- `tsc -p app/ui/v2`: clean.
+- `app/server` `bun run typecheck`: clean.
+- `test:ui-scope`: 13/13.
+- Python architecture guard: 268 OK (skipped=1).
+- Rebuilding `public/v2` from the committed source reproduces the committed bundle with no diff.
+
+### Still not done (see `deviations_from_ruling`)
+
+- **Dependents of older revisions.** Reverse evidence covers only the head revision. A citation
+  of an OLDER revision of the selected node is not listed, because `scanDependents` targets one
+  exact revision and the panel asks about the head.
+- **Some wiring has no automated test.** `useEvidenceStatus`, the `KnowledgeView` wiring and
+  the `LifecycleActions` key/reset have none (no DOM test library, and no new dependencies).
+  They rest on the live checks above.
+- **`asError` reads the wrong field.** It still reads `pointer` while the server sends `path`,
+  so pointers never show in UI errors. The `chatError` side is now robust to the corrected shape.
+
+---
+
+# Fix round 1 (kept for the record)
+
 ## What the verifier found, and what this round changed
 
 1. **Blocking — `revisionDiff` was not field-level.** It compared only title/body/terms/links
@@ -211,12 +384,13 @@ under `docs/overnight/ui/`.
    table still renders (`change_reason` correctly flagged), and in place of a line-by-line table
    the page shows "Body too large to diff (2,001 vs 2,001 lines) — field changes above are
    still complete." — finding #2, live.
-4. **`04-evidence-direct.snapshot.txt`** — node3's Evidence tab: `DIRECT EVIDENCE` shows its one
-   term and its one link (`node_revision` / `derived_from` / the raw target JSON) — direct
-   evidence, live.
-5. **`05-evidence-reverse.snapshot.txt`** — node1's Evidence tab: `REVERSE EVIDENCE` lists node3
-   (truncated id) citing node1's rev1 via `node_revision`/`derived_from` — reverse evidence,
-   live, same identity as #4 seen from the other side.
+4. **`04-evidence-direct.snapshot.txt`**, REFRESHED in fix round 2 against the round-2
+   dataset: nodeC's Evidence tab. Its three links carry `locator only`, `unresolved` and
+   `captured` + `stale: not head` + `target superseded/retired`. The round-1 capture of node3
+   (no labels) is gone.
+5. **`05-evidence-reverse.snapshot.txt`**, REFRESHED in fix round 2: nodeB's Evidence tab.
+   The retired citer shows `locator only` + `citing node superseded/retired`, and the current
+   citer shows `captured` + `citing node current`.
 6. **`06-lifecycle-retired.snapshot.txt`** — node2's Evidence tab: `LIFECYCLE` shows "not
    eligible — superseded or retired" plus the retirement event and its reason.
 7. **`07-lifecycle-superseded.snapshot.txt`** — node5's Evidence tab: `LIFECYCLE` shows the
