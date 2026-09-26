@@ -21,6 +21,7 @@
     "src/**/*.ts",
     "test/**/*.ts",
     "../cli.ts",
-    "../cli.test.ts"
+    "../cli.test.ts",
+    "../cli/**/*.ts"
   ]
 }
