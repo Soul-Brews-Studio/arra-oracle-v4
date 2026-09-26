@@ -18,6 +18,11 @@ export type WantedTerms = {
  * the revision-v1 snapshot shape. `label_snapshot` is always null for new
  * content (`service.validateTermReferences.ts`). The kernel still validates
  * every reference, cardinality and required vocabulary at publish time.
+ *
+ * Vocabularies and terms are created BEFORE that publish, so a publish the
+ * kernel then refuses (a required vocabulary, a digest conflict) leaves them
+ * in place. That residue is the same rows any later call would create under
+ * the same derived ids, so it is idempotent, not a leak of the refused content.
  */
 export async function termSnapshot(kb: Kb, bank: string, tool: string, wanted: WantedTerms): Promise<string> {
   const reserved = await ensureReservedVocabularies(kb, bank);

@@ -22,19 +22,21 @@ import { loadPolicy } from "./auth/loader";
 
 /** Build a fully wired app from explicit configuration. */
 export async function buildApp(config: { policyPath: string; origin: string; assets?: string; v3Compat?: boolean }) {
+  // R18 D10: explicit configuration wins; otherwise the operator's env. Read
+  // once, so the service and the X-Arra-Peer header read agree.
+  const v3Compat = config.v3Compat ?? composeV3Compat();
   const service = await composeService({
     policyPath: config.policyPath,
     origin: config.origin,
     port: 0,
-    // R18 D10: explicit configuration wins; otherwise the operator's env.
-    v3Compat: config.v3Compat ?? composeV3Compat(),
+    v3Compat,
   });
   // #31: the same process is the sole knowledge writer (see
   // knowledge/transport.ts's file header). Opened once here and shared by
   // both the HTTP route and the MCP `kb_*` tools below.
   const access = composeKnowledgeAccess();
   configureKnowledgeAccess(access);
-  return createApp({ origin: config.origin }, service, createMcpAdapter(service), {
+  return createApp({ origin: config.origin, v3Compat }, service, createMcpAdapter(service), {
     assets: config.assets,
     knowledge: { policyPath: config.policyPath, access },
   });

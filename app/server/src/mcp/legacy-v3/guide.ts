@@ -16,6 +16,7 @@ export function guide(): string {
     "- No file is read or written on the server. LanceDB is canonical; oracle_learn and oracle_handoff return file: null.",
     "- Search is keyword (character trigram, finds Thai inside words) or semantic, never a fused hybrid.",
     "- A field v4 cannot fill is present as null and named in compat_warnings; a refusal is {success:false, error, compat:{version, code, tool, detail}}.",
+    "- A request body over 256 KiB is refused with HTTP 413 before any tool runs, so no tool can answer it. Publish larger content with POST /api/knowledge/<bank>/publishRevision (1 MiB cap).",
     "",
     "There is no MCP bridge: v4 never runs another MCP server or a command on your behalf.",
     "",

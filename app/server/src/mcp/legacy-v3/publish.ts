@@ -1,3 +1,4 @@
+import { CANONICAL_VERSION, SCHEMA_VERSION } from "../../contracts/revision-v1";
 import { CompatError } from "./compat-error";
 import type { V3ToolContext } from "./handlers";
 import { derivedId } from "./ids.derivedId";
@@ -63,8 +64,8 @@ export async function publish(context: V3ToolContext, input: PublishInput): Prom
     valid_from: null,
     valid_to: null,
     change_reason: input.changeReason,
-    schema_version: "1",
-    canonical_version: "arra-revision/v1",
+    schema_version: SCHEMA_VERSION,
+    canonical_version: CANONICAL_VERSION,
     term_snapshot_json: await termSnapshot(kb, bank, tool, input.terms),
     link_snapshot_json: JSON.stringify(input.links.map((link, position) => ({ position: String(position), ...link }))),
     h_metadata: null,

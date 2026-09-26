@@ -4,7 +4,8 @@
 // 1. Optional operator pre-ops through `openContextWriter` with the trusted
 //    `taxonomyOperator: true` option (R6): the only way to stage a sealed
 //    adapter vocabulary. That writer is closed before the app opens its own.
-// 2. Boots the production `buildApp` (flag on) against the dataset, with its
+// 2. Boots the production pieces `buildApp` wires (composeService + createApp,
+//    flag on for both) against the dataset, with its
 //    `KnowledgeAccess` optionally wrapped so `indexRevisionChunks` throws for
 //    the steps that ask for it -- the one fault V1 must absorb.
 // 3. Replays scripted MCP calls through `app.handle()`, with `{$ref}` captures,
@@ -113,7 +114,8 @@ const { configureKnowledgeAccess, createMcpAdapter } = await import("../../../..
 const { createApp } = await import("../../../../src/app");
 const service = await composition.composeService({ policyPath, origin: "http://127.0.0.1:3939", port: 0, v3Compat: true });
 configureKnowledgeAccess(wrapped);
-const app = createApp({ origin: "http://127.0.0.1:3939" }, service, createMcpAdapter(service), { knowledge: { policyPath, access: wrapped } });
+// The flag goes to the app too, as buildApp passes it: only then is X-Arra-Peer read.
+const app = createApp({ origin: "http://127.0.0.1:3939", v3Compat: true }, service, createMcpAdapter(service), { knowledge: { policyPath, access: wrapped } });
 
 const captured: Record<string, unknown> = {};
 const resolve = (value: unknown): unknown => {

@@ -74,7 +74,7 @@ afterAll(async () => {
 
 function appWith(v3Compat: boolean) {
   const service = createOperationService({ policyPath, v3Compat }, deps);
-  return { service, app: createApp({ origin: ORIGIN }, service, createMcpAdapter(service)) };
+  return { service, app: createApp({ origin: ORIGIN, v3Compat }, service, createMcpAdapter(service)) };
 }
 
 async function rpc(v3Compat: boolean, who: keyof typeof TOKENS, body: Record<string, unknown>, peer?: string) {
@@ -290,6 +290,26 @@ describe("V0 #9 and #10: errors, audit and the speaker header", () => {
     expect((await call(true, "rw", "____IMPORTANT", {}, "   ")).status).toBe(400);
     expect((await call(true, "rw", "____IMPORTANT", {}, "x".repeat(257))).status).toBe(400);
   });
+
+  test("with the flag off the header is not read at all: no 400, no 403, no audit peer (base behavior)", async () => {
+    configureKnowledgeAccess(configured);
+    const bare = await rpc(false, "rw", { method: "tools/list", params: {} });
+    for (const peer of ["   ", "x".repeat(257), "nat"]) {
+      expect(await rpc(false, "rw", { method: "tools/list", params: {} }, peer)).toEqual(bare);
+    }
+    const payload = { payload: { workspace_name: BANK, node_id: "n".repeat(21) } };
+    await call(false, "rw", "kb_getAcceptedHead", payload, "nat");
+    await call(false, "rw", "kb_getAcceptedHead", payload, "neo");
+    expect(audit).toHaveLength(2);
+    for (const row of audit) expect(row).toMatchObject({ tool: "kb_getAcceptedHead", peer_name: null });
+    // The service drops it too, whatever a caller of runMcp passes.
+    const service = createOperationService({ policyPath, v3Compat: false }, deps);
+    const seen: unknown[] = [];
+    const envelope = async () => ({ method: "tools/call", id: 1, params: { name: "kb_getAcceptedHead", arguments: payload } });
+    const result = await service.runMcp(`Bearer ${TOKENS.rw}`, BANK, envelope, async (_n, _a, ops) => void seen.push(ops.assertedPeer), "", "nat");
+    expect(result.kind).toBe("ok");
+    expect(seen).toEqual([null]);
+  });
 });
 
 describe("V0 #11: ____IMPORTANT is the v4 guide", () => {
@@ -300,6 +320,22 @@ describe("V0 #11: ____IMPORTANT is the v4 guide", () => {
     const text = toolText(res);
     for (const phrase of ["not carried", "excluded from recall", "Nothing is deleted", "v4 ids", ...NOT_CARRIED]) expect(text).toContain(phrase);
     expect(calls).toEqual([]);
+  });
+
+  test("it carries A9's hint: an over-256-KiB body is refused as HTTP 413 before any tool runs, publish it over HTTP", async () => {
+    configureKnowledgeAccess(configured);
+    const text = toolText(await call(true, "ro", "____IMPORTANT"));
+    for (const phrase of ["256 KiB", "HTTP 413", "POST /api/knowledge/<bank>/publishRevision", "1 MiB"]) expect(text).toContain(phrase);
+  });
+});
+
+describe("the index profile uses embed.ts's own EMBEDDING_MODEL rule", () => {
+  test("unset is all-minilm; any set value, even blank or padded, is used as-is (embed.ts and migrate-py use a plain default)", async () => {
+    const { indexProfile } = await import("../src/knowledge/transport.indexProfile");
+    for (const value of [undefined, "", " all-minilm ", "nomic-embed-text"]) {
+      const env = value === undefined ? {} : { EMBEDDING_MODEL: value };
+      expect(indexProfile(env).embedding_profile.name).toBe(value ?? "all-minilm");
+    }
   });
 });
 

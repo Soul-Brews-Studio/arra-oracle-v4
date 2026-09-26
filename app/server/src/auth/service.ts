@@ -324,9 +324,13 @@ export function createOperationService(
       readEnvelope: () => Promise<McpEnvelope | null>,
       dispatch: (tool: string, args: Record<string, unknown>, ops: ToolOperations) => Promise<unknown>,
       userAgent = "",
-      assertedPeer: string | null = null,
+      headerPeer: string | null = null,
     ): Promise<McpResult> {
       const v3Compat = config.v3Compat === true;
+      // A7/D8 (R18): the speaker assertion belongs to the v3 family. With the
+      // flag off it is dropped here as well as in app.ts, so no binding check,
+      // no ops.assertedPeer and no audit peer_name: base behavior.
+      const assertedPeer = v3Compat ? headerPeer : null;
       // One snapshot and one clock value for the entire projection.
       //
       // snapshot() throws on a missing or malformed policy. Letting that escape
