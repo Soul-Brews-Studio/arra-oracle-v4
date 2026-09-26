@@ -39,6 +39,10 @@ const session = (label: string, name: string) => kb(label, "getSession", { sessi
 const membersAt = (label: string, name: unknown) =>
   kb(label, "listSessionMembers", { session_name: name, after_name: null, limit: 100 }, { as: "audit" });
 const members = (label: string, name: string) => membersAt(label, ref(name));
+/** The same payload over HTTP `/api/knowledge/<bank>/<method>` (the CLI's route too). */
+const http = (label: string, method: string, payload: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+  ({ label, bank: F, tool: `http:${method}`, args: { workspace_name: F, ...payload }, ...extra });
+const HTTP_REASON = 'done: \u0e25\u0e37\u0e21 "quoted" \\ ok';
 const say = (label: string, peer: string, args: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({ label, bank: F, peer, tool: "oracle_thread", args, ...extra });
 const read = (label: string, peer: string | undefined, args: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({ label, bank: F, ...(peer ? { peer } : {}), tool: "oracle_thread_read", args, ...extra });
 const update = (label: string, peer: string | undefined, args: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({ label, bank: F, ...(peer ? { peer } : {}), tool: "oracle_thread_update", args, ...extra });
@@ -173,6 +177,17 @@ beforeAll(async () => {
     // (513 two-byte characters: bytes, not characters, are counted).
     say("long_title", "tia", { message: "x", title: "\u00e9".repeat(513) }, { as: "free" }),
     kb("tia_peer", "getPeer", { peer_name: "tia" }),
+    // The two K9/K10 kernels over HTTP too (the live probe has no fixture for them).
+    say("th_http", "nat", { message: "http close target" }, { as: "free", capture: { name: "TH_HTTP", path: ["thread_id"] } }),
+    http("http_members_stranger", "listSessionMembers", { session_name: ref("TH_HTTP"), after_name: null, limit: 10, requester_peer_name: "neo" }),
+    http("http_members_member", "listSessionMembers", { session_name: ref("TH_HTTP"), after_name: null, limit: 10, requester_peer_name: "nat" }, { as: "free" }),
+    http("http_members_operator", "listSessionMembers", { session_name: ref("TH_HTTP"), after_name: null, limit: 10 }, { as: "audit" }),
+    http("http_members_ro", "listSessionMembers", { session_name: ref("TH_HTTP"), after_name: null, limit: 10 }, { as: "ro" }),
+    http("http_close_other", "closeSession", { session_name: ref("TH_HTTP"), reason: "x", peer_name: "nat", operation_id: "h-1" }),
+    http("http_close_null", "closeSession", { session_name: ref("TH_HTTP"), reason: "x", peer_name: null, operation_id: "h-2" }),
+    http("http_close_ro", "closeSession", { session_name: ref("TH_HTTP"), reason: "x", peer_name: "nat", operation_id: "h-0" }, { as: "ro" }),
+    http("http_close_member", "closeSession", { session_name: ref("TH_HTTP"), reason: HTTP_REASON, peer_name: "nat", operation_id: "h-3" }, { as: "free" }),
+    http("http_close_again", "closeSession", { session_name: ref("TH_HTTP"), reason: HTTP_REASON, peer_name: "nat", operation_id: "h-3" }, { as: "free" }),
     { label: "list_rw", bank: F, tool: "tools/list", args: {} },
     { label: "list_ro", bank: F, as: "ro", tool: "tools/list", args: {} },
   ];
@@ -492,5 +507,26 @@ describe("fix round: an over-long title is refused before any write", () => {
   test("a title over 1024 UTF-8 bytes is unsupported_argument at /title, and the speaker was not registered", () => {
     compat("long_title", "unsupported_argument", "/title");
     expect(ok("tia_peer")).toBeNull();
+  });
+});
+
+describe("fix round: closeSession and listSessionMembers over HTTP /api/knowledge", () => {
+  test("listSessionMembers: a stranger is 400 invalid_reference, a member and the operator read, content:read alone is 403", () => {
+    expect(out.http_members_stranger).toMatchObject({ status: 400, value: { code: "invalid_reference", path: "/requester_peer_name" } });
+    for (const label of ["http_members_member", "http_members_operator"]) {
+      expect(out[label].status, JSON.stringify(out[label])).toBe(200);
+      expect(out[label].value.rows.map((r: any) => r.peer_name)).toEqual(["nat"]);
+    }
+    expect(out.http_members_ro).toMatchObject({ status: 403, value: { code: "forbidden", path: "/requester_peer_name" } });
+  });
+
+  test("closeSession: another peer and a peerless non-operator are 403 /peer_name, read-only is 403; a member closes once, then replays", () => {
+    expect(out.http_close_other).toMatchObject({ status: 403, value: { code: "forbidden", path: "/peer_name" } });
+    expect(out.http_close_null).toMatchObject({ status: 403, value: { code: "forbidden", path: "/peer_name" } });
+    expect(out.http_close_ro.status).toBe(403);
+    expect(out.http_close_member.status, JSON.stringify(out.http_close_member)).toBe(200);
+    expect(out.http_close_member.value.outcome).toBe("closed");
+    expect(JSON.parse(out.http_close_member.value.row.internal_metadata).closed).toMatchObject({ by_peer: "nat", reason: HTTP_REASON });
+    expect(out.http_close_again.value).toEqual({ outcome: "idempotent", row: out.http_close_member.value.row });
   });
 });

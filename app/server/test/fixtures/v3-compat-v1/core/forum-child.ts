@@ -4,6 +4,8 @@
 // Boots the production pieces `buildApp` wires (composeService +
 // composeKnowledgeAccess + createApp, v3 flag on) against a fresh dataset and
 // replays scripted MCP calls through `app.handle()`, with `{$ref}` captures.
+// A step whose tool is `http:<method>` POSTs its args instead to
+// `/api/knowledge/<bank>/<method>`, the route HTTP and the CLI dispatch through.
 // No seam at all: every call crosses the real auth service, the real peer
 // binding and the real kernels. Prints one JSON object of raw outcomes; the
 // parent asserts.
@@ -87,6 +89,22 @@ for (const step of payload.steps) {
     authorization: `Bearer ${TOKEN[step.as ?? "rw"]}`,
   };
   if (step.peer !== undefined) headers["x-arra-peer"] = step.peer;
+  if (step.tool.startsWith("http:")) {
+    const res = await app.handle(new Request(`http://127.0.0.1:3939/api/knowledge/${step.bank}/${step.tool.slice("http:".length)}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(resolve(step.args)),
+    }));
+    const raw = await res.text();
+    let value: unknown = raw;
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      // plain text stays text
+    }
+    outcomes[step.label] = { status: res.status, isError: res.status !== 200, value };
+    continue;
+  }
   const method = step.tool === "tools/list" ? "tools/list" : "tools/call";
   const params = method === "tools/list" ? {} : { name: step.tool, arguments: resolve(step.args) };
   const res = await app.handle(new Request(`http://127.0.0.1:3939/mcp/${step.bank}`, {
