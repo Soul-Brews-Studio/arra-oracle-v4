@@ -37,6 +37,8 @@ export { type JoinSessionRequest, parseJoinSession } from "./context.parseJoinSe
 export { type GetPeerRequest, parseGetPeer } from "./context.parseGetPeer";
 export { type GetSessionRequest, parseGetSession } from "./context.parseGetSession";
 export { type GetMessageRequest, parseGetMessage } from "./context.parseGetMessage";
+export { REQUESTER_KEY, requesterPeerName } from "./context.requesterPeerName";
+export { type RequestAuthority, requireMessageReadAuthority } from "./context.requireMessageReadAuthority";
 export { rowWireBytes } from "./context.rowWireBytes";
 export { type ListMcpCallsRequest, parseListMcpCalls } from "./context.parseListMcpCalls";
 export { MCP_CALL_FIELDS, encodeMcpCallRow } from "./context.encodeMcpCallRow";

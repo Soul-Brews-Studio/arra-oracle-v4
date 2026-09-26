@@ -10,8 +10,12 @@ import { type DatasetAdapter } from "./service.types";
  * The peer must exist AND hold a CURRENT active membership.
  *
  * Applied to replays as well as new items: a historical replay after the peer
- * left is refused. That refusal never deletes history -- reads still return the
- * message; only new or replayed appends require present membership.
+ * left is refused. That refusal never deletes history -- the stored message
+ * stays readable through the audit:read operator view.
+ *
+ * Also the READ boundary (#87 / R3): getContext, and listMessages/getMessage
+ * when they name a `requester_peer_name`, use this same check, so a departed
+ * member reads nothing it could not also append to.
  */
 export async function requireCurrentMembership(
   adapter: DatasetAdapter,

@@ -7,7 +7,9 @@
 // identities separately: counts alone cannot prove WHICH row was written.
 const [, , datasetRoot, payloadJson] = Bun.argv;
 const payload = JSON.parse(payloadJson ?? "{}") as {
-  ops: Array<{ method: string; request: unknown }>;
+  // `authority` is the transport-built RequestAuthority the #87 message reads
+  // take as their second argument (R3); every other method ignores it.
+  ops: Array<{ method: string; request: unknown; authority?: unknown }>;
   clockMs: number;
   sourceNamespace?: string | null;
   failAt?: { boundary: string; occurrence: number };
@@ -52,14 +54,14 @@ const service = await openContextWriter(datasetRoot!, {
 });
 
 for (const [index, op] of payload.ops.entries()) {
-  const call = (service.context as Record<string, (b: Uint8Array) => Promise<unknown>>)[op.method];
+  const call = (service.context as Record<string, (b: Uint8Array, authority?: unknown) => Promise<unknown>>)[op.method];
   const label = `op${index}`;
   if (typeof call !== "function") {
     results[label] = { ok: false, code: "no_such_method" };
     continue;
   }
   try {
-    results[label] = { ok: true, value: await call(new TextEncoder().encode(JSON.stringify(op.request))) };
+    results[label] = { ok: true, value: await call(new TextEncoder().encode(JSON.stringify(op.request)), op.authority) };
   } catch (error) {
     results[label] = { ok: false, ...describeError(error) };
   }

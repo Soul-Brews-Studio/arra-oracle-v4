@@ -14,14 +14,16 @@ import { listSearchChunks } from "./service.listSearchChunks";
 import { listSessions } from "./service.listSessions";
 import { listSessionLinks } from "./service.listSessionLinks";
 import { listTraceHits } from "./service.listTraceHits";
+import { type RequestAuthority } from "./context";
 import { type DatasetAdapter } from "./service.types";
 
 export function createContextReadMethods(reader: DatasetAdapter) {
   return {
     getPeer: (requestBytes: Uint8Array) => getPeer(reader, requestBytes),
     getSession: (requestBytes: Uint8Array) => getSession(reader, requestBytes),
-    getMessage: (requestBytes: Uint8Array) => getMessage(reader, requestBytes),
-    listMessages: (requestBytes: Uint8Array) => listMessages(reader, requestBytes),
+    // #87 / R3: the two message reads also take the transport-built authority.
+    getMessage: (requestBytes: Uint8Array, authority: RequestAuthority) => getMessage(reader, requestBytes, authority),
+    listMessages: (requestBytes: Uint8Array, authority: RequestAuthority) => listMessages(reader, requestBytes, authority),
     listPeers: (requestBytes: Uint8Array) => listPeers(reader, requestBytes),
     listSessions: (requestBytes: Uint8Array) => listSessions(reader, requestBytes),
     getReadCursor: (requestBytes: Uint8Array) => getReadCursor(reader, requestBytes),

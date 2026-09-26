@@ -18,7 +18,7 @@ const servicePath = new URL("../../../../src/publication/service.ts", import.met
 const helperPath = new URL("../../../helpers/context-fixture.ts", import.meta.url).pathname;
 
 type Json = Record<string, unknown>;
-type Facade = Record<string, (bytes: Uint8Array) => Promise<unknown>>;
+type Facade = Record<string, (bytes: Uint8Array, authority?: unknown) => Promise<unknown>>;
 type Bundle = { publication: Facade; taxonomy: Facade; context: Facade; close(): Promise<void> };
 
 const { openContextReader, openContextWriter, openKnowledgeWriter, openPublicationWriter } = (await import(
@@ -90,7 +90,12 @@ const options = (extra: Json = {}) => ({
   ...extra,
 });
 
-const send = (facade: Facade, method: string, body: Json) => facade[method]!(encodeRequest(body));
+// #87 / R3: this child reads as the trusted local operator. Message reads now
+// take an explicit authority; the audit:read operator view is what these
+// lanes always exercised (workspace-scoped reads, history kept after leaving).
+// Every other method ignores the second argument.
+const OPERATOR = Object.freeze({ operator: true, peers: null });
+const send = (facade: Facade, method: string, body: Json) => facade[method]!(encodeRequest(body), OPERATOR);
 
 if (mode === "surfaces") {
   const bundle = await openContextWriter(root!, options());

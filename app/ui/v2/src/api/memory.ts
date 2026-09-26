@@ -88,8 +88,24 @@ export const registerSession = (b: Bank, session_name: string) => call(b, "regis
 export const joinSession = (b: Bank, session_name: string, peer_name: string) =>
   call(b, "joinSession", { session_name, peer_name });
 
-export const listMessages = (b: Bank, session_name: string, limit = 50, after_seq: string | null = null) =>
-  call(b, "listMessages", { session_name, limit, after_seq });
+/** #87 / R3: membership is a read boundary on `listMessages`/`getMessage`.
+ *  Name a `requester_peer_name` and the server answers only if that peer is a
+ *  CURRENT member of the session. Omit it and the call is the operator view,
+ *  which needs `audit:read` on the bank -- the dev-stack operator token has it;
+ *  a `content:read`-only token gets 403 `forbidden`. */
+export const listMessages = (
+  b: Bank,
+  session_name: string,
+  limit = 50,
+  after_seq: string | null = null,
+  requester_peer_name: string | null = null,
+) =>
+  call(b, "listMessages", {
+    session_name,
+    limit,
+    after_seq,
+    ...(requester_peer_name === null ? {} : { requester_peer_name }),
+  });
 
 /** `message` and `source` are CLOSED objects server-side: an extra key is a
  *  refusal, not an ignored field. Keys here match `MESSAGE_KEYS` exactly. */

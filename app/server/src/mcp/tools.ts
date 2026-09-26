@@ -11,6 +11,7 @@
 // path to exist.
 
 import { KNOWLEDGE_METHOD_NAMES } from "../knowledge/registry";
+import { PEER_FIELDS } from "../knowledge/registry.peerFields";
 
 export const MEMORY_TOOLS = [
   {
@@ -28,7 +29,11 @@ export const MEMORY_TOOLS = [
             "Free-text type in the current spike; default note. Controlled taxonomy validation is planned, not implemented.",
         },
         session_name: { type: "string", description: "File it in a session. Organisation, not scope." },
-        peer_name: { type: "string", description: "Who wrote it." },
+        peer_name: {
+          type: "string",
+          description:
+            "Who wrote it. When this credential's grant carries an arra-auth/v1 peers binding, it must be one of those peers, else the call is refused (forbidden) and nothing is stored.",
+        },
         subject_peer_name: { type: "string", description: "Who it is ABOUT, if different." },
       },
       required: ["content"],
@@ -115,15 +120,42 @@ export const MEMORY_TOOLS = [
  * SAME registry entry the HTTP transport uses, so both surfaces share one
  * parser and one validator.
  */
+/**
+ * #87 / R3 (docs/overnight/DECISIONS.md): the message reads carry an
+ * authorization rule a generic "exact request body" line would hide, so the
+ * catalogue states it and declares the one optional payload key.
+ */
+const READ_BOUNDARY_NOTE =
+  " Membership is a read boundary: set payload.requester_peer_name to read as that peer, which must be a CURRENT" +
+  " member of the message's session (a stranger or departed member is refused; getMessage answers null)." +
+  " Omit it for the operator view, which needs audit:read on this bank; a content:read-only credential that" +
+  " names no requester is refused with forbidden.";
+const REQUESTER_PROPERTY = {
+  requester_peer_name: {
+    type: "string",
+    description: "Optional. The peer reading; omit (or null) for the audit:read operator view.",
+  },
+};
+const READ_BOUNDARY_METHODS: ReadonlySet<string> = new Set(["getMessage", "listMessages"]);
+
+/** Methods whose payload names an ACTING peer (`registry.peerFields.ts`). */
+const BINDING_NOTE =
+  " If this credential's grant carries an arra-auth/v1 peers binding, every acting-peer field must name a bound" +
+  " peer, else forbidden.";
+
 export const KNOWLEDGE_TOOLS = KNOWLEDGE_METHOD_NAMES.map((method) => ({
   name: `kb_${method}`,
-  description: `Publication/taxonomy/context/evidence kernel method "${method}", scoped to this connection's bank.`,
+  description:
+    `Publication/taxonomy/context/evidence kernel method "${method}", scoped to this connection's bank.` +
+    (READ_BOUNDARY_METHODS.has(method) ? READ_BOUNDARY_NOTE : "") +
+    (Object.hasOwn(PEER_FIELDS, method) ? BINDING_NOTE : ""),
   inputSchema: {
     type: "object",
     properties: {
       payload: {
         type: "object",
         description: "The exact request body this method's HTTP route expects.",
+        ...(READ_BOUNDARY_METHODS.has(method) ? { properties: REQUESTER_PROPERTY } : {}),
       },
     },
     required: ["payload"],

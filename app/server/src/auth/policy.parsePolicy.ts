@@ -49,6 +49,7 @@ export function parsePolicy(raw: Uint8Array): Policy {
     if (hasDuplicate(principal.workspaces.map((w) => w.name))) reject("policy_invalid");
     for (const w of principal.workspaces) {
       if (hasDuplicate(w.actions)) reject("policy_invalid");
+      if (w.peers !== null && hasDuplicate(w.peers)) reject("policy_invalid");
     }
     if (hasDuplicate(principal.globalActions)) reject("policy_invalid");
   }

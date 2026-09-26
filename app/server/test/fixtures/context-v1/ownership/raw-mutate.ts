@@ -41,4 +41,16 @@ if (mode === "deactivate-session") {
   console.log(`EVENT raw:deactivated rows=${rows.length}`);
 }
 
+// #87: a stored message that fails its own integrity check (`token_count`
+// below zero), so a read boundary can be tested against corrupt storage.
+if (mode === "corrupt-message") {
+  const table = await db.openTable("messages");
+  await table.update({ token_count: "-1" }, { where: `workspace_name = ${quote(workspace!)} AND public_id = ${quote(name!)}` });
+  const rows = await table
+    .query()
+    .where(`workspace_name = ${quote(workspace!)} AND public_id = ${quote(name!)} AND token_count < 0`)
+    .toArray();
+  console.log(`EVENT raw:corrupted rows=${rows.length}`);
+}
+
 console.log("EVENT done");

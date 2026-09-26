@@ -22,6 +22,7 @@ import {
   sessionRequest,
   sourcedItem,
 } from "./helpers/context-fixture";
+import { OPERATOR } from "./helpers/read-boundary-fixture";
 import { ContractError } from "../src/contracts/errors";
 import { prepareNewMessage } from "../src/contracts/source-ingestion-v1";
 import { PublicationError } from "../src/publication/errors";
@@ -196,7 +197,10 @@ describe("request grammar is closed, and keeps the GOVERNED envelope", () => {
   test("the read requests are closed too", () => {
     expect(parseGetPeer(bytes({ workspace_name: WS, peer_name: "p" }))).toEqual({ workspace_name: WS, peer_name: "p" });
     expect(parseGetSession(bytes({ workspace_name: WS, session_name: "s" }))).toEqual({ workspace_name: WS, session_name: "s" });
-    expect(parseGetMessage(bytes({ workspace_name: WS, public_id: id("m1") }))).toEqual({ workspace_name: WS, public_id: id("m1") });
+    // #87 / R3: the omitted optional requester reads back as an explicit null.
+    expect(parseGetMessage(bytes({ workspace_name: WS, public_id: id("m1") }))).toEqual({
+      workspace_name: WS, public_id: id("m1"), requester_peer_name: null,
+    });
     expect(parseJoinSession(bytes({ workspace_name: WS, session_name: "s", peer_name: "p" }))).toEqual({
       workspace_name: WS, session_name: "s", peer_name: "p",
     });
@@ -519,7 +523,9 @@ describe("real persistence: registration, shapes and reads", () => {
     if (line === undefined) throw new Error(`no output: ${result.stderr.slice(0, 600)}`);
     return JSON.parse(line);
   };
-  const op = (method: string, request: unknown) => ({ method, request });
+  // #87 / R3: message reads take the transport-built authority; these lanes
+  // read through the audit:read operator view unless a test says otherwise.
+  const op = (method: string, request: unknown, authority: unknown = OPERATOR) => ({ method, request, authority });
 
   test("the writer bundle has EXACTLY the contracted shape", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -783,7 +789,9 @@ describe("real persistence: ordered batch ingestion", () => {
     if (line === undefined) throw new Error(`no output: ${result.stderr.slice(0, 600)}`);
     return JSON.parse(line);
   };
-  const op = (method: string, request: unknown) => ({ method, request });
+  // #87 / R3: message reads take the transport-built authority; these lanes
+  // read through the audit:read operator view unless a test says otherwise.
+  const op = (method: string, request: unknown, authority: unknown = OPERATOR) => ({ method, request, authority });
 
   /** Peer, session and membership, so messages have somewhere to land. */
   const setup = () => [
@@ -962,7 +970,9 @@ describe("core: the sourced path and the reader bundle", () => {
     if (line === undefined) throw new Error(`no output: ${result.stderr.slice(0, 600)}`);
     return JSON.parse(line);
   };
-  const op = (method: string, request: unknown) => ({ method, request });
+  // #87 / R3: message reads take the transport-built authority; these lanes
+  // read through the audit:read operator view unless a test says otherwise.
+  const op = (method: string, request: unknown, authority: unknown = OPERATOR) => ({ method, request, authority });
   const setup = () => [
     op("registerPeer", peerRequest(ALPHA)),
     op("registerSession", sessionRequest(ALPHA)),

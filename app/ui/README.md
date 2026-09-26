@@ -35,6 +35,11 @@ Two consequences worth knowing before using it:
 - A peer must `joinSession` before `getContext` returns anything for them.
   Membership is enforced per item, so a non-member sees an empty context rather
   than an error.
+- Membership is also the read boundary on `listMessages`/`getMessage` (#87,
+  `docs/overnight/DECISIONS.md` R3). The v2 transcript pane reads with no
+  `requester_peer_name`, which is the operator view and needs `audit:read` on
+  the bank; the dev-stack token has it. A `content:read`-only token gets 403
+  there and must name a peer that is a current member of the session.
 - `answerChat` falls back to a refusal envelope when no chat model is wired
   server-side, which is the default for a local server. The dialectic panel
   says so rather than letting you debug a working system.

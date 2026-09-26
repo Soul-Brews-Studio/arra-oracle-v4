@@ -14,8 +14,10 @@
 
 import { admit, type Admission, type GlobalAction, type Policy, type WorkspaceAction } from "./policy";
 import { loadPolicy } from "./loader";
+import { peerBinding } from "./policy.peerBinding";
+import { isBoundAuthor } from "./service.isBoundAuthor";
 import { TOOL_NAMES } from "../mcp/tools";
-import { KNOWLEDGE_METHODS } from "../knowledge/registry";
+import { KNOWLEDGE_METHODS, type RequestAuthority } from "../knowledge/registry";
 
 export type AuthFailure = "unauthenticated" | "forbidden" | "policy_unavailable" | "invalid_request";
 
@@ -219,6 +221,16 @@ export function createOperationService(
     return contextFrom(admitOrDeny(policy, authorization, now, { kind: "global", action }));
   }
 
+  /** #87 / R3: the admitting grant's `peers` binding (null = unbound). A
+   *  snapshot/admission mismatch is a wiring fault, so it fails closed. */
+  function bindingOf(policy: Policy, admission: Admission): readonly string[] | null {
+    try {
+      return peerBinding(policy, admission);
+    } catch {
+      return deny("policy_unavailable");
+    }
+  }
+
   const scopeOf = (context: RequestContext, action: WorkspaceAction | GlobalAction): string => {
     const record = recordFor(context, { action });
     return record.workspace!;
@@ -311,9 +323,14 @@ export function createOperationService(
         subject_peer_name?: string;
       } | null,
     ) {
-      const context = admitWorkspace(authorization, workspace, "content:write");
+      const policy = snapshot();
+      const admission = admitOrDeny(policy, authorization, clock(), { kind: "workspace", workspace, action: "content:write" });
+      const context = contextFrom(admission);
       const row = buildRow();
       if (row === null) deny("invalid_request");
+      // #87 / R3: the row's author is caller-asserted, so the grant's `peers`
+      // binding, read from the SAME snapshot, bounds it.
+      if (!isBoundAuthor(row, bindingOf(policy, admission))) deny("forbidden");
       // Scope comes from the ADMITTED context, never from the caller's payload.
       return deps.insert({ ...row, workspace_name: scopeOf(context, "content:write") });
     },
@@ -368,14 +385,14 @@ export function createOperationService(
       }
       const now = clock();
       const granted = new Map<WorkspaceAction, RequestContext>();
+      let firstAdmission: Admission | null = null;
       let sawUnauthenticated = false;
       let sawForbidden = false;
       for (const action of MCP_ACTION_ORDER) {
         try {
-          granted.set(
-            action,
-            contextFrom(admitOrDeny(policy, authorization, now, { kind: "workspace", workspace, action })),
-          );
+          const admission = admitOrDeny(policy, authorization, now, { kind: "workspace", workspace, action });
+          firstAdmission ??= admission;
+          granted.set(action, contextFrom(admission));
         } catch (error) {
           const code = (error as { code?: string }).code;
           if (code === "unauthenticated") sawUnauthenticated = true;
@@ -386,6 +403,15 @@ export function createOperationService(
       if (granted.size === 0) {
         if (sawUnauthenticated && sawForbidden) return { kind: "denied", code: "policy_unavailable" };
         return { kind: "denied", code: sawUnauthenticated ? "unauthenticated" : "forbidden" };
+      }
+      // #87 / R3, from this SAME snapshot: the audit:read operator view and
+      // the grant's `peers` binding (one principal, one workspace grant, so
+      // it is the same whichever of the four actions admitted first).
+      let authority: RequestAuthority;
+      try {
+        authority = Object.freeze({ operator: granted.has("audit:read"), peers: bindingOf(policy, firstAdmission!) });
+      } catch {
+        return { kind: "denied", code: "policy_unavailable" };
       }
 
       // Only now is the body read: an unadmitted caller never gets this far.
@@ -448,8 +474,11 @@ export function createOperationService(
       };
       const ops: ToolOperations = Object.freeze({
         bank,
+        authority,
         insert: (row) => {
           requires("content:write");
+          // #87 / R3: `remember`'s author is bound like HTTP's, before the store.
+          if (!isBoundAuthor(row, authority.peers)) deny("forbidden");
           return deps.insert({ ...row, workspace_name: bank });
         },
         list: (limit, filters) => {
@@ -542,6 +571,9 @@ export function createOperationService(
  */
 export type ToolOperations = {
   readonly bank: string;
+  /** #87 / R3: data, not a capability -- what the admitted caller may do
+   *  beyond each tool's action, for the knowledge dispatcher to pass on. */
+  readonly authority: RequestAuthority;
   insert(row: {
     name: string;
     content: string;

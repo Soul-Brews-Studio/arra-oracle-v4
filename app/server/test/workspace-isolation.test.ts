@@ -44,6 +44,7 @@ import { createTraceRequest, hitInput } from "./helpers/trace-fixture";
 import { getReadCursorRequest, advanceReadCursorRequest, expectedPointer } from "./helpers/read-cursor-fixture";
 import { getAssociationsRequest, reconcileRequest } from "./helpers/association-fixture";
 import { CHUNKER_VERSION } from "../src/publication/search-chunk";
+import { OPERATOR } from "./helpers/read-boundary-fixture";
 
 const CHILD = new URL("./fixtures/isolation-v1/core/gated-isolation.ts", import.meta.url).pathname;
 const CLOCK_MS = Date.parse("2026-09-21T00:00:00.000Z");
@@ -51,7 +52,8 @@ const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
 const TEST_TIMEOUT_MS = 300_000;
 
-const ctx = (method: string, request: unknown) => ({ facade: "context", method, request });
+const ctx = (method: string, request: unknown, authority?: unknown) =>
+  authority === undefined ? { facade: "context", method, request } : { facade: "context", method, request, authority };
 const pub = (method: string, request: unknown) => ({ facade: "publication", method, request });
 const tax = (method: string, request: unknown) => ({ facade: "taxonomy", method, request });
 const ev = (method: string, request: unknown) => ({ facade: "evidence", method, request });
@@ -164,10 +166,12 @@ describe("peers, sessions, membership and messages: colliding identity across wo
         // Same public_id, same session name, same peer name -- different workspace.
         ctx("appendMessages", appendRequest(ALPHA, "sess-a", [messageItem({ public_id: msgId, message: { content: "alpha content" } })])),
         ctx("appendMessages", appendRequest(BETA, "sess-a", [messageItem({ public_id: msgId, message: { content: "beta content" } })])),
-        ctx("getMessage", { workspace_name: ALPHA, public_id: msgId }),
-        ctx("getMessage", { workspace_name: BETA, public_id: msgId }),
-        ctx("listMessages", { workspace_name: ALPHA, session_name: "sess-a", after_seq: null, limit: 10 }),
-        ctx("listMessages", { workspace_name: BETA, session_name: "sess-a", after_seq: null, limit: 10 }),
+        // #87 / R3: workspace isolation is asserted through the audit:read
+        // operator view; the member view is pinned in context-read-boundary.
+        ctx("getMessage", { workspace_name: ALPHA, public_id: msgId }, OPERATOR),
+        ctx("getMessage", { workspace_name: BETA, public_id: msgId }, OPERATOR),
+        ctx("listMessages", { workspace_name: ALPHA, session_name: "sess-a", after_seq: null, limit: 10 }, OPERATOR),
+        ctx("listMessages", { workspace_name: BETA, session_name: "sess-a", after_seq: null, limit: 10 }, OPERATOR),
       ]);
       const alphaAppend = ok(parsed.op6, "alpha append");
       const betaAppend = ok(parsed.op7, "beta append");
