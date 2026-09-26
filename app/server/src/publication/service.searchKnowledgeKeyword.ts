@@ -1,4 +1,4 @@
-import { FTS_MIN_QUERY_CODE_POINTS, overfetch, type FtsMatch } from "../fts/fts";
+import { FTS_CANDIDATE_CEILING, FTS_MIN_QUERY_CODE_POINTS, type FtsMatch } from "../fts/fts";
 import { failPublication } from "./errors";
 import {
   chunkMayHoldQuery,
@@ -41,17 +41,15 @@ const SEAM_ONLY_MAX_CODE_POINTS = 2 * (FTS_MIN_QUERY_CODE_POINTS - 1);
  *
  * - `match: "ngram"`: the shared trigram index on `search_chunks_v1.text`
  *   (`FTS_INDEX_OPTIONS`, the same config as the legacy memories index) finds
- *   candidate chunks, BM25's best first -- any chunk sharing a trigram with
- *   the query, so a chunk holding part of an occurrence cut by a chunk
- *   boundary is a candidate too. Each node is re-checked against its WHOLE
- *   head text, never against one chunk, which drops the trigram over-matches
- *   (หลงทาง vs หลงลืม) and keeps occurrences that straddle a boundary or
- *   outrun a chunk.
+ *   candidate chunks -- any chunk sharing a trigram with the query, so a
+ *   chunk holding part of an occurrence cut by a chunk boundary is a
+ *   candidate too. Each node is re-checked against its WHOLE head text, never
+ *   against one chunk, which drops the trigram over-matches (หลงทาง vs
+ *   หลงลืม) and keeps occurrences that straddle a boundary or outrun a chunk.
  *   A query of 3-4 code points can be cut so that no chunk holds a trigram of
- *   it; when the index answers fewer than `limit`, a seam scan
- *   (`seamPredicate`) adds those nodes, each marked `match:
- *   "substring_scan"`, and the whole answer is ordered together.
- * - `match: "substring_scan"`: a bounded, escaped ILIKE scan in node-id order
+ *   it; for such a query a seam scan (`seamPredicate`) also runs, always, and
+ *   the nodes only it finds are marked `match: "substring_scan"`.
+ * - `match: "substring_scan"`: an escaped ILIKE scan in node-id order
  *   (`keywordScanPredicate`, which crosses chunk seams too), when the query
  *   is under 3 code points (`scan_reason: "short_query"`: a trigram index has
  *   nothing to look up and would answer [] silently) or when the index is
@@ -60,37 +58,37 @@ const SEAM_ONLY_MAX_CODE_POINTS = 2 * (FTS_MIN_QUERY_CODE_POINTS - 1);
  *
  * ORDER (overnight R22, docs/overnight/DECISIONS.md): `search_chunks_v1` has
  * ONE FTS index shared by every workspace, and BM25's IDF and average document
- * length are computed over all of it. So BM25 only SELECTS candidates -- the
- * workspace-prefiltered, overfetched rounds above -- and never orders them.
- * Every path (index, seam, scan) orders its hits by `keywordHitOrder`, from
- * the node's own current head: occurrences of the query in its text
- * (`countFolded`, R14's case-folded rule), descending; then the head's
- * acceptance instant (`node_revisions.created_at`), descending; then node id.
- * `hits[].rank` (R21) is the 1-based position in that order and no raw score
- * is ever on the wire (R21 measured one moving 5.65 -> 2.38; R22 the ORDER
- * moving A3,A1,A2 -> A3,A2,A1, both on another workspace's writes alone).
+ * length are computed over all of it. So BM25 may only SELECT candidates, and
+ * even that as little as possible: each source (index, seam scan, scan) is
+ * read ONCE for up to `FTS_CANDIDATE_CEILING` workspace-prefiltered candidate
+ * chunks -- all of them, unless the workspace holds more -- and the WHOLE set
+ * is ordered by `keywordHitOrder` before `limit` applies: occurrences of the
+ * query in the node's current head text (`countFolded`, R14's case-folded
+ * rule), descending; then the head's acceptance instant
+ * (`node_revisions.created_at`), descending; then node id. `hits[].rank` (R21)
+ * is the 1-based position in that order, no raw score is ever on the wire,
+ * and a bounded answer is the head of the unbounded one.
  *
- * The bound, stated rather than hidden: a round reads at most `fetch`
- * candidates (`fts/fts.overfetch.ts`; the first is `limit *
- * FTS_CANDIDATE_FACTOR`), in BM25 order on the index path and node-id order on
- * the scans. When the workspace holds no more candidate chunks than the round
- * that ends the loop reads -- always, when it holds at most `limit *
- * FTS_CANDIDATE_FACTOR` -- the answer is a function of this workspace's rows
- * alone. Past that, WHICH candidates the index path reads is BM25's corpus-wide
- * pick, and another workspace's writes can change it (measured and pinned by
- * `search-chunk-retrieval-overfetch-bound.test.ts`): the answer is then the
- * best of those, in this order, still only this workspace's nodes. A
- * per-workspace index closes that. Semantic search's `distance` has no such
- * leak (verified in the `search-chunk-v1.md` R21 amendment: it is the L2
- * distance between the query vector and one stored row's own vector, never a
- * corpus-wide statistic) and keeps its raw number and order.
+ * The bound, stated rather than hidden: while the workspace holds fewer than
+ * `FTS_CANDIDATE_CEILING` candidate chunks for the query, every one is read
+ * and the answer is a function of this workspace's rows alone. A candidate is
+ * any chunk sharing a trigram -- stale revisions, retired and superseded
+ * nodes and every embedding profile included -- so this counts chunks, not
+ * matches. Past it the index read holds BM25's corpus-wide top
+ * `FTS_CANDIDATE_CEILING`, so which of this workspace's nodes are considered
+ * can move with another workspace's writes, and BM25 ties make even identical
+ * datasets differ (`search-chunk-retrieval-candidate-ceiling.test.ts`); the
+ * scans read the first ones in node-id order instead, which stays
+ * workspace-local. A per-workspace index closes it. Semantic search's
+ * `distance` has no such leak (the `search-chunk-v1.md` R21 amendment) and
+ * keeps its own overfetch and order.
  *
  * Candidates are chunks; answers are NODES: `chunkMayHoldQuery` first drops,
  * without a read, every chunk no occurrence can touch; each surviving chunk
  * must then belong to its node's captured head revision, whose text holds the
- * query, on a recall-eligible node (`currentEligibleChunks`), and a node's
- * chunks collapse into one hit. The candidate reads and every follow-up read
- * are scoped to the workspace. The overfetch bound is `fts/fts.overfetch.ts`'s.
+ * query, on a recall-eligible node (`currentEligibleChunks`, which asks the
+ * costly #29 seam only down R22's order, until `limit` nodes pass), and a
+ * node's chunks collapse into one hit. Every read is scoped to the workspace.
  * Keyword and semantic answers are never fused (R7).
  */
 export async function searchKnowledgeKeyword(reader: DatasetAdapter, requestBytes: Uint8Array, requestTimeMs?: number) {
@@ -106,46 +104,41 @@ export async function searchKnowledgeKeyword(reader: DatasetAdapter, requestByte
   const match: FtsMatch = indexed ? "ngram" : "substring_scan";
   const scanReason: ScanReason | null = indexed ? null : short ? "short_query" : "index_unavailable";
 
-  const current = currentEligibleChunks(reader, request.workspace_name, query, requestTimeMs);
-  /**
-   * One overfetch round: candidates -> pre-filter -> current, matching,
-   * eligible -> hits in R22 order, so the loop's `slice(0, limit)` keeps the
-   * head of THAT order. No candidate keeps a source rank: the index's BM25
-   * `_score` is never read.
-   */
-  const answer = async (rows: Record<string, unknown>[], found: FtsMatch, skip: ReadonlySet<string>) => {
-    const candidates: RankedChunk[] = rows.map((row) => rankedChunk(row, null)).filter((chunk) => chunkMayHoldQuery(chunk.text, chunk.chunk_index, query));
-    const kept = await current(candidates);
-    const hits: OrderedHit[] = groupKnowledgeHits(kept.chunks, kept.heads, "descending", query)
-      .filter((hit) => !skip.has(hit.node_id))
-      .map((hit) => {
-        const { occurrences, accepted_at } = kept.heads.get(hit.node_id)!;
-        // A keyword head always carries both keys; one without them is a bug, never a guess.
-        if (occurrences === undefined || accepted_at === undefined) failPublication("integrity_failure", "");
-        return { ...hit, occurrences, accepted_at, found };
-      })
-      .sort(keywordHitOrder);
-    return { fetched: rows.length, kept: hits };
-  };
-  /** Chunks matching `predicate` in node-id order: the unranked scans. */
-  const scan = (predicate: string) => (fetch: number) =>
-    reader.orderedProjection(SEARCH_CHUNKS, `(${scope}) AND ${predicate}`, [...SEARCH_HIT_COLUMNS], { column: "node_id", ascending: true }, fetch);
+  /** Candidate rows -> the chunks an occurrence can touch. No candidate keeps
+   *  a source rank: the index's BM25 `_score` is never read. */
+  const candidates = (rows: Record<string, unknown>[]): RankedChunk[] =>
+    rows.map((row) => rankedChunk(row, null)).filter((chunk) => chunkMayHoldQuery(chunk.text, chunk.chunk_index, query));
+  /** Every chunk matching `predicate`, up to the ceiling, in node-id order: the unranked scans. */
+  const scan = (predicate: string) =>
+    reader.orderedProjection(SEARCH_CHUNKS, `(${scope}) AND ${predicate}`, [...SEARCH_HIT_COLUMNS], { column: "node_id", ascending: true }, FTS_CANDIDATE_CEILING);
 
-  let hits: OrderedHit[];
+  let fromIndex: RankedChunk[] = [];
+  let fromScan: RankedChunk[] = [];
   if (indexed) {
-    hits = await overfetch(limit, async (fetch) => answer(await reader.fullTextSearchChunks(query, scope, fetch), "ngram", new Set()));
+    fromIndex = candidates(await reader.fullTextSearchChunks(query, scope, FTS_CANDIDATE_CEILING));
     const seam = seamPredicate(query);
-    if (hits.length < limit && codePoints <= SEAM_ONLY_MAX_CODE_POINTS && seam !== null) {
-      const seen = new Set(hits.map((hit) => hit.node_id));
-      const fetchSeam = scan(seam);
-      const seamHits = await overfetch(limit - hits.length, async (fetch) => answer(await fetchSeam(fetch), "substring_scan", seen));
-      // One answer, one order: a seam hit is ordered with the index hits, not after them.
-      hits = [...hits, ...seamHits].sort(keywordHitOrder);
-    }
+    if (codePoints <= SEAM_ONLY_MAX_CODE_POINTS && seam !== null) fromScan = candidates(await scan(seam));
   } else {
-    const fetchScan = scan(keywordScanPredicate(query));
-    hits = await overfetch(limit, async (fetch) => answer(await fetchScan(fetch), "substring_scan", new Set()));
+    fromScan = candidates(await scan(keywordScanPredicate(query)));
   }
+
+  // One ordered pass over every candidate: the first `limit` eligible nodes
+  // in R22's order, and only those, come back.
+  const kept = await currentEligibleChunks(reader, request.workspace_name, query, requestTimeMs)([...fromIndex, ...fromScan], limit);
+  // A node the index found is an index hit, shown by its index chunks; the
+  // seam scan adds only the nodes the index could not see.
+  const indexIds = new Set(fromIndex.map((chunk) => chunk.id));
+  const indexNodes = new Set(kept.chunks.filter((chunk) => indexIds.has(chunk.id)).map((chunk) => chunk.node_id));
+  const shown = kept.chunks.filter((chunk) => indexIds.has(chunk.id) || !indexNodes.has(chunk.node_id));
+  const hits: OrderedHit[] = groupKnowledgeHits(shown, kept.heads, "descending", query)
+    .map((hit) => {
+      const { occurrences, accepted_at } = kept.heads.get(hit.node_id)!;
+      // A keyword head always carries both keys; one without them is a bug, never a guess.
+      if (occurrences === undefined || accepted_at === undefined) failPublication("integrity_failure", "");
+      const found: FtsMatch = indexNodes.has(hit.node_id) ? "ngram" : "substring_scan";
+      return { ...hit, occurrences, accepted_at, found };
+    })
+    .sort(keywordHitOrder);
 
   return {
     match,

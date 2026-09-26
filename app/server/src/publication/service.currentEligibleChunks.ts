@@ -1,7 +1,7 @@
 import { containsFolded, countFolded } from "../fts/fts";
 import { failPublication } from "./errors";
 import { encodeNodeRow } from "./rows";
-import { chunkSourceText, type HitHead, type RankedChunk } from "./search-chunk";
+import { chunkSourceText, keywordHitOrder, type HitHead, type RankedChunk } from "./search-chunk";
 import { quote } from "./storage";
 import { NODE_REVISIONS, NODES } from "./service.constants";
 import { contextScope } from "./service.contextScope";
@@ -36,7 +36,12 @@ type HeadRevision = { title: string; text: string | undefined; matches: boolean;
  *    retired and superseded nodes never surface, nor (#29 slice B) an
  *    inactive node or one outside its validity window at `requestTimeMs`,
  *    ONE `as_of` for the whole request. Asked last, and only for nodes that
- *    survived 1 and 2, because it costs several reads per node;
+ *    survived 1 and 2, because it costs several reads per node. With
+ *    `firstEligible` (keyword search, which has a query) it is asked only
+ *    down overnight R22's order (`keywordHitOrder`, over the keys read in 2),
+ *    until that many nodes pass, and only those nodes are kept: the same
+ *    nodes as judging every one and keeping the first `firstEligible`, at a
+ *    cost bounded by the limit rather than by the candidate count;
  * 4. every read is scoped to `workspace`, so a chunk can only resolve against
  *    its own workspace's nodes. The candidate query is scoped too; this is
  *    the second belt, not the first.
@@ -59,7 +64,7 @@ export function currentEligibleChunks(
   workspace: string,
   query: string | null,
   requestTimeMs?: number,
-): (chunks: readonly RankedChunk[]) => Promise<{ chunks: RankedChunk[]; heads: Map<string, HitHead> }> {
+): (chunks: readonly RankedChunk[], firstEligible?: number) => Promise<{ chunks: RankedChunk[]; heads: Map<string, HitHead> }> {
   const scope = contextScope(workspace);
   const memo = {
     /** node id -> captured head revision id, or null (no such node / no head). */
@@ -71,7 +76,7 @@ export function currentEligibleChunks(
   };
   const columns = query === null ? ["id", "node_id", "title"] : ["id", "node_id", "title", "body", "created_at"];
 
-  return async (chunks) => {
+  return async (chunks, firstEligible) => {
     const unknownNodes = unique(chunks.map((chunk) => chunk.node_id)).filter((id) => !memo.heads.has(id));
     for (const batch of batches(unknownNodes)) {
       const rows = await reader.query(NODES, `${scope} AND id IN (${inList(batch)})`);
@@ -114,10 +119,35 @@ export function currentEligibleChunks(
     }
     const matching = atHead.filter((chunk) => memo.revisions.get(chunk.revision_id)!.matches);
 
-    const unjudged = unique(matching.map((chunk) => chunk.node_id)).filter((id) => !memo.eligible.has(id));
-    const eligible = await recallEligibleNodeIds(reader, workspace, unjudged, requestTimeMs);
-    for (const id of unjudged) memo.eligible.set(id, eligible.has(id));
-    const current = matching.filter((chunk) => memo.eligible.get(chunk.node_id) === true);
+    const judge = async (ids: readonly string[]) => {
+      const unjudged = ids.filter((id) => !memo.eligible.has(id));
+      const eligible = await recallEligibleNodeIds(reader, workspace, unjudged, requestTimeMs);
+      for (const id of unjudged) memo.eligible.set(id, eligible.has(id));
+      return ids.filter((id) => memo.eligible.get(id) === true);
+    };
+    const nodes = unique(matching.map((chunk) => chunk.node_id));
+    let keep: Set<string>;
+    if (firstEligible === undefined) {
+      keep = new Set(await judge(nodes));
+    } else {
+      // R22's keys for a matching head were read with its text; one without
+      // them (no query) is a caller bug, never a guess.
+      const ordered = nodes
+        .map((node_id) => {
+          const { occurrences, accepted_at } = memo.revisions.get(memo.heads.get(node_id)!)!;
+          if (occurrences === undefined || accepted_at === undefined) failPublication("integrity_failure", "");
+          return { node_id, occurrences, accepted_at };
+        })
+        .sort(keywordHitOrder)
+        .map((key) => key.node_id);
+      keep = new Set();
+      for (let at = 0; at < ordered.length && keep.size < firstEligible; ) {
+        const batch = ordered.slice(at, at + firstEligible - keep.size);
+        at += batch.length;
+        for (const id of await judge(batch)) keep.add(id);
+      }
+    }
+    const current = matching.filter((chunk) => keep.has(chunk.node_id));
 
     const heads = new Map<string, HitHead>();
     for (const chunk of current) {
