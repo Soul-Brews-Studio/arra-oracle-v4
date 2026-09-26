@@ -243,7 +243,9 @@ dataset, including a same-payload MCP replay of `createTrace` landing `already_s
 
 ## Amendment 2026-09-26 (overnight R7 (#28 part))
 
-This amendment covers the v3-parity review's K13 hygiene defect (depth validation, below).
+This amendment covers the v3-parity review's K13 hygiene defect (depth validation, below),
+found while auditing the trace kernel `docs/overnight/DECISIONS.md` R7 required exposing
+over HTTP/MCP (section 10 above) — the same #28 slice, not a separate ruling.
 
 The v3-parity review (`docs/overnight/V3-PARITY.md` K13, defect 4) measured that
 `createTrace` accepted **any** nonnegative `depth`, regardless of the resolved
