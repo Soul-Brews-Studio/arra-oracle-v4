@@ -531,3 +531,53 @@ slice introduced or could fix from the UI side.
 None. No file under `app/docs/contracts/` was touched (search-chunk-v1.md and its R21/R22
 amendments were already written by the search-query/search-polish slices), and no new
 dependency was added.
+
+## Fix round (2026-09-27): scanReason leak + click routing
+
+An independent Opus verifier REFUTED this slice on two blocking findings.
+
+1. **`scanReason` leaked from keyword into semantic results.** `useKnowledgeSearch`'s inline
+   branches never cleared `scanReason` on a successful SEMANTIC response, so a keyword-mode
+   note ("used a plain substring scan…") kept rendering on real semantic hits. Extracted the
+   response→state transition into a pure, unit-tested function,
+   `state/applySearchOutcome.ts`, and fixed the semantic branch to always reset `scanReason`.
+   Failing-first: `src/state/applySearchOutcome.test.ts`'s "semantic success clears a
+   scanReason left over from an earlier keyword search" failed
+   (`expect(received).toBeNull(); Received: "short_query"`) against the extracted-but-unfixed
+   function, then passed after adding `scanReason: null` to the semantic branch. While
+   extracting this, also fixed a second, related bug the extraction surfaced: `run`'s
+   `useCallback` was memoized on `[bank]` only, so reading the five response-state variables
+   directly out of its closure captured stale values from mount, not the latest state — the
+   five separate `useState`s were consolidated into one `SearchOutcome` object updated via a
+   functional `setOutcome(prev => applySearchOutcome(mode, result, prev))`, which is correct
+   regardless of `run`'s own dependency list.
+2. **Clicking a hit didn't open the node view.** The old handler called `onSelectNode` +
+   switched Explore's own tab to `nodes` — a paged, type-filterable `listNodes` view that never
+   renders title/body/history, and shows nothing highlighted at all if the hit is off-page or
+   filtered out. Extracted the navigation decision into `state/searchHitRoute.ts` (`{ view:
+   "knowledge", node: nodeId }`) and wired it through a new `onOpenSearchHit` prop from `App.tsx`
+   (which owns `push`) down through `ExploreView`, so a hit now navigates to `KnowledgeView` at
+   `#/knowledge?node=…` — the view that unconditionally renders `NodeHead` + `RevisionHistory`
+   for whatever id is in the URL. Failing-first: `src/state/searchHitRoute.test.ts` failed with
+   `Cannot find module './searchHitRoute'` before the file existed, passed after adding it.
+   Not re-verified with a fresh browser screenshot in this fix round (time-boxed); the fix is a
+   plumbing change traced by reading `App.tsx`/`useRoute.ts`/`KnowledgeView.tsx`, backed by the
+   new unit test asserting the route patch shape, plus `tsc` confirming the prop wiring
+   type-checks end to end.
+
+Also fixed two cheap nonblocking findings from the same review: the search-results title now has
+`min-w-0 truncate` (was pushing the `ngram`/`substring_scan` badge off-screen for long titles),
+and `DetailTabs.tsx`'s doc comment now says "Six tabs" (was "Five", stale since the search tab
+was added). Added a wire-shape test for `api/search.ts` (`src/api/search.test.ts`, stubbing
+`fetch`) covering the method-name/body-shape mutant the verifier's mutation run (M6) found no
+coverage for.
+
+Re-run: `bun test src` — **125 pass, 0 fail** (118 before this round; +7 new: 3
+`applySearchOutcome`, 2 `searchHitRoute`, 2 `api/search`). `tsc -p tsconfig.json` — clean.
+`bun run build` — succeeded (new bundle hashes, content changed by the fix). `bun run
+test:ui-scope` (`app/server`) — 13 pass, 0 fail, unchanged. Python architecture guard — 268
+pass, OK (skipped=1), unchanged; no new TS file imports the publication kernel. Acceptor live
+probe re-run on this worktree: **57/57/57 methods, isolation 191 pass / 0 fail, 0 fatal** —
+identical to the pre-fix-round run the verifier captured (`out/verify-ui-search-1.md`), including
+the same 26 payload-fixture gaps (`searchKnowledgeKeyword`/`searchKnowledgeSemantic` among them);
+confirms that scoreboard is unaffected by this UI-only fix, not a regression it introduced.

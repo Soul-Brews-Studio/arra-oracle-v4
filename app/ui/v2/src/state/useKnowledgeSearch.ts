@@ -8,33 +8,38 @@
  * keystroke a user is still typing should not fire a request per character,
  * and a reply for a since-abandoned query must never overwrite a later one's
  * result.
+ *
+ * The five response-shaped fields (errorCode/keywordHits/semanticHits/
+ * scanReason/embeddingProfile) live in ONE `SearchOutcome` object, not five
+ * separate `useState`s, and are only ever replaced via `applySearchOutcome`
+ * inside a functional `setOutcome` update. Fix-round finding: `run` is
+ * memoized on `[bank]` only, so reading those state variables directly out
+ * of the closure (as this used to) captured whatever they were bound to at
+ * mount, not the latest value -- a functional update sidesteps that
+ * regardless of `run`'s own dependency list.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { type ApiResult } from "../api/client";
-import { type Bank, asError } from "../api/memory";
+import { type Bank } from "../api/memory";
 import { searchKnowledgeKeyword, searchKnowledgeSemantic } from "../api/search";
-import { type KeywordHitWire, type SemanticHitWire } from "./searchHitView";
+import { applySearchOutcome, type SearchOutcome } from "./applySearchOutcome";
 
 export type SearchMode = "keyword" | "semantic";
 
 const DEBOUNCE_MS = 300;
 
-function describe(result: ApiResult): string {
-  if (result.error !== undefined) return result.error;
-  const envelope = asError(result.body);
-  if (envelope !== null) return String(envelope.code);
-  return `HTTP ${result.status}`;
-}
+const EMPTY_OUTCOME: SearchOutcome = {
+  errorCode: null,
+  keywordHits: [],
+  semanticHits: [],
+  scanReason: null,
+  embeddingProfile: null,
+};
 
 export function useKnowledgeSearch(bank: Bank) {
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<SearchMode>("keyword");
   const [loading, setLoading] = useState(false);
-  const [errorCode, setErrorCode] = useState<string | null>(null);
-  const [keywordHits, setKeywordHits] = useState<KeywordHitWire[]>([]);
-  const [semanticHits, setSemanticHits] = useState<SemanticHitWire[]>([]);
-  const [scanReason, setScanReason] = useState<"short_query" | "index_unavailable" | null>(null);
-  const [embeddingProfile, setEmbeddingProfile] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<SearchOutcome>(EMPTY_OUTCOME);
 
   const requestId = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -44,33 +49,19 @@ export function useKnowledgeSearch(bank: Bank) {
       const id = ++requestId.current;
       if (q.trim() === "") {
         setLoading(false);
-        setErrorCode(null);
-        setKeywordHits([]);
-        setSemanticHits([]);
-        setScanReason(null);
+        setOutcome(EMPTY_OUTCOME);
         return;
       }
       setLoading(true);
-      setErrorCode(null);
+      setOutcome((prev) => ({ ...prev, errorCode: null }));
       const result = m === "keyword" ? await searchKnowledgeKeyword(bank, q) : await searchKnowledgeSemantic(bank, q);
       if (id !== requestId.current) return; // a newer query has already started
       setLoading(false);
-      if (!result.ok) {
-        setErrorCode(describe(result));
-        setKeywordHits([]);
-        setSemanticHits([]);
-        setScanReason(null);
-        return;
-      }
-      if (m === "keyword") {
-        const body = result.body as { hits?: KeywordHitWire[]; scan_reason?: "short_query" | "index_unavailable" | null };
-        setKeywordHits(Array.isArray(body.hits) ? body.hits : []);
-        setScanReason(body.scan_reason ?? null);
-      } else {
-        const body = result.body as { hits?: SemanticHitWire[]; embedding_profile?: string };
-        setSemanticHits(Array.isArray(body.hits) ? body.hits : []);
-        setEmbeddingProfile(body.embedding_profile ?? null);
-      }
+      // `applySearchOutcome` is the single, unit-tested place that decides
+      // the next state from one response -- see its own comment for the
+      // fix-round bug (a keyword scanReason surviving into semantic hits)
+      // this replaced the inline branches with.
+      setOutcome((prev) => applySearchOutcome(m, result, prev));
     },
     [bank],
   );
@@ -90,9 +81,9 @@ export function useKnowledgeSearch(bank: Bank) {
     mode,
     setMode,
     loading,
-    errorCode,
-    hits: mode === "keyword" ? keywordHits : semanticHits,
-    scanReason,
-    embeddingProfile,
+    errorCode: outcome.errorCode,
+    hits: mode === "keyword" ? outcome.keywordHits : outcome.semanticHits,
+    scanReason: outcome.scanReason,
+    embeddingProfile: outcome.embeddingProfile,
   };
 }

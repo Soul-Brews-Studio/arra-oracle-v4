@@ -32,7 +32,7 @@ import { ListPanel } from "./ListPanel";
 export type ExploreTab = "nodes" | "search" | "chat" | "messages" | "evidence" | "config";
 export const EXPLORE_TABS: ExploreTab[] = ["nodes", "search", "chat", "messages", "evidence", "config"];
 
-/** The right-hand detail panel. Five tabs, one already-fetched-elsewhere
+/** The right-hand detail panel. Six tabs, one already-fetched-elsewhere
  *  view each -- this component switches between them and lays them out; it
  *  fetches nothing itself, matching `Transcript`/`DialecticPanel`'s own
  *  presentational contract. Chat and Messages are the EXISTING dialectic and

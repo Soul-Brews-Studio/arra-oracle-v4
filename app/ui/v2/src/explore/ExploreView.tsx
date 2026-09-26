@@ -39,6 +39,7 @@ export function ExploreView({
   onSelectNode,
   onTabChange,
   onBack,
+  onOpenSearchHit,
 }: {
   bank: Bank;
   selectedPeer: string | null;
@@ -50,6 +51,10 @@ export function ExploreView({
   onSelectNode: (id: string | null) => void;
   onTabChange: (t: ExploreTab) => void;
   onBack: () => void;
+  /** Fix-round finding: opens the EXISTING node view (`KnowledgeView`,
+   *  `#/knowledge?node=…`), not this view's own "nodes" tab -- see
+   *  `state/searchHitRoute.ts` for why that tab is the wrong destination. */
+  onOpenSearchHit: (nodeId: string) => void;
 }) {
   const listing = useListing(bank);
   const k = useKnowledge(bank);
@@ -263,12 +268,12 @@ export function ExploreView({
             hits: search.hits,
             scanReason: search.scanReason,
             embeddingProfile: search.embeddingProfile,
-            // Opens the hit the same way the plain node list already does:
-            // select it and switch to the "nodes" tab, the existing node view.
-            onOpenNode: (nodeId) => {
-              onSelectNode(nodeId);
-              onTabChange("nodes");
-            },
+            // Fix-round finding: this used to `onSelectNode` + switch to the
+            // "nodes" tab, which shows a paged, filterable list row at best
+            // (nothing at all if the hit is off-page) and never the node's
+            // title/body/history. `onOpenSearchHit` navigates to the actual
+            // node view instead -- see `state/searchHitRoute.ts`.
+            onOpenNode: onOpenSearchHit,
           }}
         />
       </div>
