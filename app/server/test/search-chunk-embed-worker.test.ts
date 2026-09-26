@@ -100,14 +100,10 @@ describe("embedPendingChunks: criterion 1, a hung embedder never blocks a concur
 
       const [embedResult, publishResult] = parsed.op2.concurrent;
       // The load-bearing property: publishRevision is NOT queued behind the
-      // hung embedder call (which is still "hanging" from the stub's own
-      // perspective -- it never resolves on its own). It SETTLES FIRST; the
-      // embed call, which can only end by timing out, settles after it.
-      //
-      // R13: this was `publishResult.elapsedMs < 250`, a wall-clock proxy
-      // for that order, and a slow runner broke it with the order intact
-      // (GitHub: 323-351 ms; locally under contention: 322-727 ms). The
-      // order itself is now observed (`settledSeq`, gated-embed.ts).
+      // hung embedder call (which never resolves on its own). It SETTLES
+      // FIRST; the embed call, which can only end by timing out, after it.
+      // R13: observed order (`settledSeq`), no longer `elapsedMs < 250`,
+      // which a slow runner broke with the order intact (search-chunk-v1 §17).
       expect(publishResult.ok, JSON.stringify(publishResult)).toBe(true);
       expect(publishResult.value.outcome).toBe("accepted");
       expect(publishResult.settledSeq).toBeLessThan(embedResult.settledSeq);
@@ -143,19 +139,10 @@ describe("embedPendingChunks: criterion 1, a hung embedder never blocks a concur
    * flight, not a hope about ordering. A handshake-ordered version of this
    * exact test passes at HEAD (publish ~ms) and fails under M4 (publish
    * >1s, over the embed timeout) -- see the fix-round PR description.
-   *
-   * R13 (CI must actually pass): that version still decided M4 with a clock,
-   * `publishResult.elapsedMs < 250` against a 300 ms embed timeout, and a
-   * slow runner broke it with nothing wrong (GitHub: 323-351 ms). Settle
-   * order alone does NOT replace it: under M4 the worker's write-back also
-   * queues behind the publish, so the publish still settles first (measured,
-   * M4 passed 2/0). The embedder is therefore HELD (`embedderMode: "hold"`):
-   * it answers only after the publish has settled, so a publish that
-   * settles at all proves it never waited for the embedder, at any machine
-   * speed. Under M4 the publish cannot run until the worker's own timeout
-   * abandons the held call, which the stub observes as `abortedWhileHeld`.
-   * The timeout's own failure path (failed, `embedder_timeout`, elapsed at
-   * least the timeout) stays asserted by the test above.
+   * R13 (search-chunk-v1 §17): that clock (`elapsedMs < 250`) broke on a slow
+   * runner, and settle order alone lets M4 pass (2/0), so the embedder is HELD
+   * until the publish settles; under M4 the publish runs only after the
+   * timeout abandons the held call (`abortedWhileHeld`). Timeout path: above.
    */
   test("(deterministic handshake) publishRevision proceeds while the embedder is CONFIRMED in flight", async () => {
     const fixture = await createFixture([ALPHA]);
@@ -173,17 +160,15 @@ describe("embedPendingChunks: criterion 1, a hung embedder never blocks a concur
           { handshake: { first: embed(), second: publish(seeded, nodeB, "op-ew-hs-b1") } },
           listChunks(revA),
         ],
-        // The timeout only matters if something queues the publish behind
-        // the held embedder (M4): it is what finally lets the publish run.
+        // The timeout matters only under M4: it is what finally lets the publish run.
         { revisionIds: [revA, revB], embedderMode: "hold", embedTimeoutMs: scaledMs(10_000) },
       );
       expect(parsed.op0.value.outcome).toBe("accepted");
       expect(parsed.op1.value.rows).toHaveLength(1);
 
       const { first: embedResult, second: publishResult, abortedWhileHeld } = parsed.op2;
-      // The embedder call was CONFIRMED already in flight (the handshake)
-      // before this write even started, and was still held, unanswered and
-      // not abandoned, when the write settled.
+      // CONFIRMED in flight before this write started (the handshake), and
+      // still held, unanswered and not abandoned, when the write settled.
       expect(publishResult.ok, JSON.stringify(publishResult)).toBe(true);
       expect(publishResult.value.outcome).toBe("accepted");
       expect(abortedWhileHeld).toBe(false);
