@@ -218,3 +218,5 @@ are part of done.
   benchmarks OK · probe: 45 methods, HTTP 45 / MCP 45 / CLI 45, isolation 0.** #32 chat checks now PASS: a live model answer with
   citations, with authorization applied before the model sees anything. Remaining: FAIL #29 ×2 (lifecycle slice), #30 (search-query
   slice); GAP getChatSettings (probe fixture), #29 recall (needs the search surface), #33 browser.
+- 23:46 relic, following "keep using relic to understand me": the last v4 mention before tonight is 2026-09-25 20:51 (+07) in neo-oracle
+  `9c77f5f5` #1568: *"use fleet cli bring arra oracle v4 back!"*. v4 was already his priority the evening before this run.

@@ -29,7 +29,9 @@ this issue.
 
 from __future__ import annotations
 
+import ipaddress
 from dataclasses import dataclass, field
+from urllib.parse import urlparse
 
 
 @dataclass(frozen=True)
@@ -64,12 +66,61 @@ HONCHO_V3_2_0 = HonchoPin(
         # The deriver/dreamer/LLM-backed reasoning paths are OUT of the SPEC
         # §15 tier-1 scope this issue tests (workspaces/peers/sessions/
         # session_peers/messages only) and require a working LLM credential
-        # this harness has no business holding. Left unset/disabled so an
-        # LLM call succeeding or failing can never perturb the tier-1 CRUD
-        # round trip this test measures. If a future issue extends scope to
+        # this harness has no business holding. Disabled so an LLM call
+        # succeeding or failing can never perturb the tier-1 CRUD round trip
+        # this test measures. If a future issue extends scope to
         # conclusions/representations, the deriver needs to be turned back on
         # and `structured_output_mode=json_object` revisited explicitly --
         # do not assume this pin still applies unchanged.
-        "DERIVER_WORKERS": "0",
+        #
+        # NOT `DERIVER_WORKERS=0` -- an earlier version of this pin set that,
+        # which fails Honcho's own `WORKERS: Field(default=1, gt=0, le=100)`
+        # (`src/config.py`) at `AppSettings()` import time, so the api
+        # container would never even boot. `DERIVER_ENABLED` is the actual
+        # on/off switch (`src/config.py`); confirmed 2026-09-26 against the
+        # pinned commit, not carried over from the earlier, unverified value.
+        "DERIVER_ENABLED": "false",
+        # Background embedding defaults to ON (`EMBED_MESSAGES`, `src/config.py`)
+        # and is not implied by `DERIVER_ENABLED` -- left on, a boot with no
+        # LLM/embedding credential would still try to reach an external
+        # provider on every message create.
+        "EMBED_MESSAGES": "false",
     },
 )
+
+
+class NotALoopbackTargetError(ValueError):
+    """`HONCHO_ROUNDTRIP_LIVE_BASE_URL` does not point at a loopback address."""
+
+
+def require_loopback_url(base_url: str) -> None:
+    """Refuse any live-leg target whose host is not loopback.
+
+    A bare substring check for ``"white.local"`` (the specific shared instance
+    issue #8's 2026-09-20 scope correction named) only catches that one
+    hostname -- a cloud Honcho, a teammate's machine, or a typo'd hostname
+    would all sail through unchecked and receive real writes. The scope
+    correction's actual rule is narrower than "not white.local": this harness
+    only ever writes to a throwaway instance IT stood up, which by
+    construction is always reachable on loopback (``pin.HonchoPin.bind_host``
+    is ``127.0.0.1``) -- so loopback-only is the direct enforcement of that
+    rule, not a new one invented here.
+    """
+
+    host = urlparse(base_url).hostname
+    if host is None:
+        raise NotALoopbackTargetError(f"{base_url!r} has no parseable host")
+    if host == "localhost":
+        return
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        raise NotALoopbackTargetError(
+            f"{base_url!r} must point at a loopback address (127.0.0.1 or localhost), not {host!r} -- "
+            "issue #8's 2026-09-20 scope correction rules out any shared or remote Honcho instance"
+        ) from None
+    if not ip.is_loopback:
+        raise NotALoopbackTargetError(
+            f"{base_url!r} must point at a loopback address (127.0.0.1 or localhost), not {host!r} -- "
+            "issue #8's 2026-09-20 scope correction rules out any shared or remote Honcho instance"
+        )
