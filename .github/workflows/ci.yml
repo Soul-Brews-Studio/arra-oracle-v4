@@ -90,6 +90,10 @@ jobs:
         working-directory: app/server
         env:
           TEST_SHARDS: 4
+          # bun defaults to 5 s per test; the runner is ~5x slower than the dev
+          # box (shards took 914-1036 s in run 36253113031), and two gated tests
+          # crossed 5 s there.
+          TEST_TIMEOUT_MS: 60000
         run: bun run test:parallel
 
       # app/migrate-py has no pytest.ini/pyproject [tool.pytest] section and no
@@ -97,6 +101,14 @@ jobs:
       # -> "No module named pytest"). The real, documented command is
       # unittest discover (app/docs/contracts/v1-codecs.md:59-62), which this
       # slice ran clean: 139 tests, 1 skipped, OK, ~8s.
+      - name: Upload shard logs when the suite fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-parallel-shard-logs
+          path: app/server/.tmp/test-parallel/
+          if-no-files-found: ignore
+
       - name: Test — Python (app/migrate-py, unittest discover)
         run: |
           PYTHONPATH=app/migrate-py/src app/migrate-py/.venv/bin/python \

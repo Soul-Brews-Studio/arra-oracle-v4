@@ -76,7 +76,11 @@ const results: ShardResult[] = await Promise.all(
   shards.map(async (shard, index) => {
     const t0 = performance.now();
     const scratch = mkdtempSync(join(tmpdir(), `arra-shard-${index}-`));
-    const proc = Bun.spawn(["bun", "test", ...shard.files], {
+    // TEST_TIMEOUT_MS raises bun's 5 s per-test default. Gated-process tests
+    // that finish in ~2 s here took ~5-6.5 s on a GitHub runner (measured,
+    // run 36253113031), so CI sets it; locally it stays unset.
+    const timeout = process.env.TEST_TIMEOUT_MS ? ["--timeout", process.env.TEST_TIMEOUT_MS] : [];
+    const proc = Bun.spawn(["bun", "test", ...timeout, ...shard.files], {
       cwd: here,
       env: { ...process.env, TMPDIR: scratch },
       stdout: "pipe",
@@ -118,6 +122,15 @@ for (const r of results) {
 if (sum("fail") > 0) problems.push(`${sum("fail")} failing test(s)`);
 
 for (const r of results) for (const f of r.failures) console.log(`  [shard ${r.index}] ${f.trim()}`);
+// A shard can fail with no named test (a hook timeout, a crash before the
+// summary). Print its log tail so the cause is visible in CI output, not only
+// in a .tmp file the runner throws away.
+for (const r of results) {
+  if (r.exitCode !== 0 && r.failures.length === 0) {
+    const tail = readFileSync(join(logDir, `shard-${r.index}.log`), "utf8").split("\n").slice(-40).join("\n");
+    console.log(`  [shard ${r.index}] exited ${r.exitCode} with no named failure; last 40 log lines:\n${tail}`);
+  }
+}
 console.log(
   `\n ${sum("pass")} pass\n ${sum("fail")} fail\nRan ${sum("pass") + sum("fail")} tests across ${sum("ranFiles")}/${files.length} files in ${shardCount} shards. [${((performance.now() - started) / 1000).toFixed(2)}s]`,
 );
