@@ -1,30 +1,36 @@
 # arra-oracle-v4 — active local app
 
-Read [the current guide](../AGENTS.md) and [full target design](../DESIGN.md). Tonight's
-rulings on the open gaps below live in [`docs/overnight/DECISIONS.md`](../docs/overnight/DECISIONS.md).
+Read [the current guide](../AGENTS.md) and [full target design](../DESIGN.md). The
+overnight rulings R1–R22 live in [`docs/overnight/DECISIONS.md`](../docs/overnight/DECISIONS.md),
+and their evidence is in [`docs/overnight/PROOF.md`](../docs/overnight/PROOF.md), which the
+overnight driver writes. Counts below were measured on `e00b50b` on 2026-09-27.
 
-This is a local prototype with bearer-token auth from a local policy file — **not**
-unauthenticated, and not the completed 19-table design's default migration path (the
-19-table target is built and served, but only through a dev-stopgap dataset creator; see
-below).
+This is a local prototype with bearer-token auth from a local policy file. It is **not**
+unauthenticated. The 19-table target is built and served, but the default migrator does not
+create it. A target19 dataset comes from the dev stopgap creator, or from the operator-only
+copy migration `arra-migrate-copy` (#34), which writes a new candidate from a copy of a
+legacy source. Both are described below.
 
 ```text
 Python LanceModel registries                 local LanceDB, two roots
   models/        (active15, 15 tables) ----->  ARRA_DATA_DIR
-                                                  memories, mcp_calls (write),
-                                                  connections (write) — legacy
-                                                  8 MCP tools, /api/memories,
-                                                  /api/search, the CLI
+                                                  memories: 8 legacy MCP tools,
+                                                  /api/memories, /api/search,
+                                                  13 legacy CLI commands
+                                                  mcp_calls, connections: the
+                                                  operations root (R5), written
+                                                  AND read here
 
   target_v1/     (target19, 19 tables) ----->  ARRA_KNOWLEDGE_DATASET_ROOT
-    (dev stopgap creator only,                   nodes/revisions/taxonomy/
-     no reviewed migration CLI)                  context/evidence/trace/... 44
-                                                  kb_* methods, HTTP+MCP+CLI
-                                                  (no migration between roots)
+    dev:  create_target19_dataset.py             nodes/revisions/taxonomy/context/
+    ops:  arra-migrate-copy (#34),               evidence/trace/lifecycle/search:
+          new candidate from a copy              57 registry methods on HTTP,
+                                                  MCP (kb_*) and CLI (kb <method>)
                           |                              |
                           v                              v
                        TypeScript / Bun 1.3.14 / Elysia 1.4.30 :3939
                        HTTP + MCP + source-run CLI, bearer auth required
+                       25 v3-compatible MCP tools only with ARRA_MCP_V3_COMPAT=1
 ```
 
 ## Ownership and paths
@@ -32,14 +38,16 @@ Python LanceModel registries                 local LanceDB, two roots
 | Path | Responsibility |
 |---|---|
 | `migrate-py/src/arra_migrate/models/` | Active Python schema registry (active15) |
-| `migrate-py/src/arra_migrate/target_v1/` | Target Python schema registry (target19); no reviewed migration CLI yet |
+| `migrate-py/src/arra_migrate/target_v1/` | Target Python schema registry (target19, `arra-v4-target/1`, 19 tables / 228 fields) |
+| `migrate-py/src/arra_migrate/copy_migration/` | `arra-migrate-copy` (#34, R11/R17): operator-only copy of a legacy15 source into a NEW target19 candidate. No cutover, and not reachable over HTTP, MCP or the CLI |
 | `migrate-py/src/arra_migrate/__main__.py` | active15 table creation and drift checks (`python -m arra_migrate[, --check]`) |
-| `just/scripts/create_target19_dataset.py` | Dev-only stopgap that creates a target19 dataset and seeds its first `workspaces` row |
+| `just/scripts/create_target19_dataset.py` | Dev-only stopgap that creates a target19 dataset and seeds its first `workspaces` row, with `created_at` truncated to milliseconds (R1) |
 | `just/scripts/write_dev_policy.py` | Dev-only auth policy + bearer token writer (`arra-auth/v1` shape) |
-| `just/scripts/run_dev_server.py` | Execs the server as the sole target19 writer, holding the fd-42 gate |
-| `server/src/` | Elysia HTTP/MCP, storage and application behavior. `src/knowledge/registry.ts` is the 46-method target19 method table; `src/mcp/tools.ts` is the MCP catalogue (8 memory + 46 `kb_*` = 54 tools) |
-| `cli.ts`, `cli/` | CLI: 13 legacy memory commands plus `kb <method>` for every registry method, and daily-loop aliases (#31), including `search --mode keyword\|semantic` over the knowledge tier (#30) |
-| `cli.test.ts`, `server/test/` | Regression tests; isolated fixtures/stubs; run per-kernel with `bun run test:<kernel>` (see Verification below) |
+| `just/scripts/run_dev_server.py` | Execs the server as the sole target19 writer, holding the fd-42 gate; defaults `ARRA_CHAT_PROVIDER=ollama` (line 45) |
+| `server/src/` | Elysia HTTP/MCP, storage and application behavior. `src/knowledge/registry.ts` is the 57-method target19 method table. `src/mcp/tools.ts` is the MCP catalogue: 8 memory + 57 `kb_*` = 65 tools. `src/mcp/legacy-v3/` holds the 25 v3-compatible tools, served only with `ARRA_MCP_V3_COMPAT=1`. `src/chat-model*.ts` is the chat provider (R9) |
+| `cli.ts`, `cli/` | CLI: 13 legacy memory commands, `kb <method>` for every registry method, 6 daily-loop aliases (#31), and `search --mode keyword\|semantic` over the knowledge tier (#30) |
+| `cli.test.ts`, `server/test/` | Regression tests (133 files under `server/test/` plus `cli.test.ts`); isolated fixtures/stubs; run per-kernel with `bun run test:<kernel>` (see Verification below) |
+| `ui/v2/` | React UI, built into `server/public/v2` and served at `/v2/`; its own 9 unit-test files run with `bun test` there |
 | ~~`migrate-rs/`, root `migrate-rust/`~~ | Rust experiments, removed — never schema owners. Recoverable from git history |
 | ~~root `index-ts/`, `query-ts/`~~ | Spikes over the removed Rust dataset, removed — no producer, no importer. Recoverable from git history |
 | `docs/history/` | Original dated POC reports, preserved verbatim |
@@ -48,13 +56,14 @@ The Python registry defines Arrow types; opening it from TypeScript does not add
 
 ## Local run with an isolated dataset
 
-`bun run --cwd app/server start` refuses to boot without `ARRA_AUTH_POLICY` (an
-absolute path to an owner-only, 0600 `arra-auth/v1` policy file) — measured:
-`ARRA_AUTH_POLICY must be an absolute path to the policy file`, exit 1. The
-sequence below is the one that actually starts a working server, measured
-against a fresh `mktemp -d` on this checkout. It also builds the target19
-dataset the knowledge transport needs, since the plain `arra_migrate` migrator
-only creates active15.
+`bun run --cwd app/server start` refuses to boot without `ARRA_AUTH_POLICY`, an
+absolute path to an owner-only (0600) `arra-auth/v1` policy file. It exits 1 with
+`ARRA_AUTH_POLICY must be an absolute path to the policy file`
+(`composition.ts:84-87`). The sequence below starts a working server. It was re-run on
+2026-09-27 against a fresh `mktemp -d` on `e00b50b`, with only `PORT` changed to a random
+free port: every step exited 0, `/health` answered 200, and `tools/list` returned 65 tools. It also builds the
+target19 dataset the knowledge transport needs, since the plain `arra_migrate`
+migrator only creates active15.
 
 `app/just/dev-stack.sh` runs all of this for you, under `app/.tmp/`, if you
 just want a running server; the manual form is here so each step is legible.
@@ -66,8 +75,9 @@ ROOT="$(mktemp -d)"; PY=app/migrate-py/.venv/bin/python
 ARRA_DATA_DIR="$ROOT/legacy15" $PY -m arra_migrate
 ARRA_DATA_DIR="$ROOT/legacy15" $PY -m arra_migrate --check
 
-# Dev stopgap: no reviewed target19 CLI exists yet. Creates the 19 tables and
-# seeds one workspace row ('default') directly.
+# Dev stopgap: creates the 19 tables and seeds one workspace row ('default')
+# directly, created_at truncated to milliseconds (R1). The reviewed path from
+# existing legacy data is arra-migrate-copy (#34), which writes to a NEW directory.
 $PY app/just/scripts/create_target19_dataset.py "$ROOT/target19"
 
 # Writes dev-policy.json (0600) + dev-token.txt (0600, 64 lowercase hex),
@@ -83,6 +93,20 @@ ARRA_KNOWLEDGE_DATASET_ROOT="$ROOT/target19" PORT=3939 \
 
 Startup requires Bun exactly `1.3.14` and Elysia exactly `1.4.30`, or it refuses.
 
+Optional switches, read at startup, never from a request:
+
+```text
+ARRA_CHAT_PROVIDER   unset: answerChat answers model_unavailable | ollama (the only
+                     implemented provider) | anthropic, openai (named slots, unimplemented)
+ARRA_CHAT_MODEL      default gemma3:4b      512 output tokens, 60 s (pinned, not env)
+ARRA_CHAT_URL        default OLLAMA_URL, else http://127.0.0.1:11434
+ARRA_MCP_V3_COMPAT   exactly "1" enables the 25 v3-compatible MCP tools; anything else is off
+EMBEDDING_MODEL      default all-minilm -> embedding profile ollama/all-minilm/384/none
+```
+
+`run_dev_server.py` sets `ARRA_CHAT_PROVIDER=ollama` unless you set it yourself, so the
+dev stack answers chat with the local Ollama. A bare `bun run start` leaves chat off.
+
 Startup leaves exactly one full-text index on `memories.content`: character trigrams, `ngram(3,3)` with stemming and stop-word removal off (R14; one shared constant in `server/src/fts/fts.constants.ts`). An existing index whose live `indexDetails` already match is kept untouched. One that differs, such as the `icu` index earlier builds created, is rebuilt once under the same name at the next startup; any second FTS index on the column is dropped. Explicit reindex remains a global maintenance operation and always rebuilds.
 
 Keyword search (`recall` text mode, `GET /api/search?mode=text`) is a substring contract: every row returned contains the query, case-insensitively, and the answer says how it was found. `match: "ngram"` is the trigram index, with each candidate re-checked so trigram over-matches (`หลงทาง` against a stored `หลงลืม`) are dropped. `match: "substring_scan"` is a bounded, escaped scan for queries under 3 characters, which a trigram index cannot look up. `icu` was replaced because it cannot find Thai inside a word: `ลืม` against a stored `หลงลืม` returned nothing (#10).
@@ -95,56 +119,136 @@ The same absolute `ARRA_DATA_DIR` must reach migration and server. Default relat
 production concurrency or auth.
 
 Default embedder configuration is Ollama `all-minilm`, 384 dimensions, with `OLLAMA_URL`,
-`EMBEDDING_MODEL`, and `EMBEDDING_DIMENSIONS` overrides. Do not change a live table's
-dimension/profile through environment settings and assume compatibility. Ollama is an
-HTTP service; locality depends on the configured URL. No cloud call is needed for the
-regression suite.
+`EMBEDDING_MODEL`, and `EMBEDDING_DIMENSIONS` overrides. On the knowledge tier the embedding
+profile id is `ollama/<EMBEDDING_MODEL>/384/none` (`publication/search-chunk.profiles.ts:75-84`),
+and a request naming any other profile is refused. The model digest is part of the profile's
+identity (R20):
+
+- every `embedPendingChunks` run measures it from Ollama `GET /api/tags`;
+- the first vector write pins it in `<knowledge root>/.embedding-profile-pins.json`;
+- a later run that measures a different digest fails with `embedding_profile_mismatch`;
+- a run that cannot measure one embeds nothing and answers `blocked: "digest_unmeasured"`;
+- boot never probes and never pins.
+
+Do not change a live table's dimension or profile through environment settings and assume
+compatibility. Ollama is an HTTP service; locality depends on the configured URL. No cloud
+call is needed for the regression suite, whose models are stubs.
 
 ## Current interfaces
 
 Every route needs `Authorization: Bearer <64 lowercase hex>` except `/health` and the
-static UI (`GET /`, `/knowledge.html`, `/v2/*`), which are deliberately public and skip
-policy admission — not the Host/Origin gate, which still runs on every request
-(`app.ts:414-444`; `authorization-integration-v1.md:34`). Measured: `GET /` and
-`GET /v2/index.html` both return 200 with no token. The bearer's policy grants
-(`content:read`/`write`, `audit:read`, `diagnostics:read`, `maintenance:backfill`/`reindex`)
-gate every protected method; see `write_dev_policy.py` above for the dev shape.
+static UI (`GET /`, `/knowledge.html`, `/v2/*`). Those are deliberately public and skip
+policy admission, but not the Host/Origin gate, which runs on every request (`app.ts:137-140`,
+`app.ts:429-458`; `authorization-integration-v1.md:34`). Measured 2026-09-27:
+
+```text
+GET /, /v2/index.html, /knowledge.html, /health   no token      200
+GET /api/health                                   no token      401
+GET /                                             foreign Host  400
+```
+
+The bearer's policy grants (`content:read`/`write`, `audit:read`, `diagnostics:read`,
+`maintenance:backfill`/`reindex`) gate every protected method. The dev policy from
+`write_dev_policy.py` grants the first four on its workspace, and no global maintenance. A
+grant may also carry `peers: [...]` (R3). Every caller-asserted peer field
+(`server/src/knowledge/registry.peerFields.ts`) must then be in that list, or the request
+gets 403.
+
+Message reads are behind membership (R3). `listMessages`, `getMessage` and
+`listSessionMembers` need a `requester_peer_name` that is a current member of the session.
+A caller who names no requester must hold `audit:read` on the workspace (the operator view);
+otherwise the answer is 403.
 
 MCP endpoint: `/mcp/:bank`, with bank = `workspaces.name` (not credentials). `tools/list`
-returns up to **54 tools**, filtered to what the caller's token grants: 8 legacy memory tools
-plus 46 `kb_<method>` tools generated from `src/knowledge/registry.ts`, one per knowledge
-kernel method. The 13 session-link, trace, lifecycle and search-chunk methods were exposed on
-2026-09-26 (overnight R7/R8); before that they had no route. The two knowledge search methods
-(#30, R7/R14) were added the same night.
+returns up to **65 tools**, filtered to what the caller's token grants: 8 legacy memory tools
+plus 57 `kb_<method>` tools generated from `src/knowledge/registry.ts`, one per knowledge
+kernel method (33 `content:read`, 22 `content:write`, 2 `audit:read`). `kb_*` tools are
+listed only when `ARRA_KNOWLEDGE_DATASET_ROOT` is configured. Measured live with the dev
+policy: 65.
 
 ```text
 remember recall get_memory list_memories
 bank_info call_log call_stats status
 
 kb_getAcceptedHead kb_listAcceptedHistory kb_listNodes kb_publishRevision
-kb_getVocabulary kb_getTerm kb_createVocabulary kb_createTerm kb_renameTerm
-kb_retireTerm kb_reparentTerm kb_seedReservedVocabularies kb_getPeer kb_getSession
-kb_getMessage kb_listMessages kb_listPeers kb_listSessions kb_getReadCursor
-kb_registerPeer kb_registerSession kb_joinSession kb_appendMessages
+kb_getVocabulary kb_getTerm kb_lookupVocabularyByName kb_lookupTermByName
+kb_listTerms kb_listTermUsage kb_knowledgeStats kb_createVocabulary kb_createTerm
+kb_renameTerm kb_retireTerm kb_reparentTerm kb_seedReservedVocabularies kb_getPeer
+kb_getSession kb_getMessage kb_listMessages kb_listPeers kb_listSessions
+kb_getReadCursor kb_registerPeer kb_registerSession kb_joinSession kb_appendMessages
 kb_advanceReadCursor kb_getContext kb_listMcpCalls kb_listConnections kb_answerChat
-kb_listSessionLinks kb_createSessionLink kb_getTrace kb_listTraceHits kb_createTrace
+kb_getChatSettings kb_listSessionLinks kb_createSessionLink kb_closeSession
+kb_listSessionMembers kb_getTrace kb_listTraceHits kb_createTrace kb_listTraces
 kb_getRecallEligibility kb_listLifecycleHistory kb_retireNode kb_supersedeNode
-kb_listSearchChunks kb_indexRevisionChunks kb_writeChunkEmbedding
-kb_reconcileSearchChunks kb_searchKnowledgeKeyword kb_searchKnowledgeSemantic
-kb_getRevisionAssociations kb_scanDependents kb_reconcileRevisionAssociations
+kb_listSearchChunks kb_getSearchFreshness kb_indexRevisionChunks
+kb_writeChunkEmbedding kb_reconcileSearchChunks kb_embedPendingChunks
+kb_searchKnowledgeKeyword kb_searchKnowledgeSemantic kb_getRevisionAssociations
+kb_scanDependents kb_reconcileRevisionAssociations
 ```
 
-Knowledge search (#30; `app/docs/contracts/search-chunk-v1.md`, amendment "overnight R7 (#30
-part) + R14") answers NODES of the target-19 tier at their current head revision, never retired
-or superseded ones, one hit per node: `kb_searchKnowledgeKeyword` uses the same shared
-`ngram(3,3)` substring contract as the legacy path (`match: "ngram"` or `"substring_scan"`),
-checked against the node's whole head text, so an occurrence cut by a chunk boundary is still
-found; its index on `search_chunks_v1.text` is built and refreshed by the writer in
-`indexRevisionChunks`. `kb_searchKnowledgeSemantic` embeds the query with the configured Ollama
-model (`EMBEDDING_MODEL`, whose name is also the default profile) and ranks READY chunk vectors
-of that one embedding profile by squared L2 `distance`. The two are never fused. CLI:
-`search --bank B --query Q --mode keyword|semantic`; a bare `search` stays the legacy memories
-search (`--mode text|vector`, default `text`).
+**v3-compatible tools** (R18; design in `docs/overnight/V3-PARITY.md`). The family lives in
+`server/src/mcp/legacy-v3/` and is served only with `ARRA_MCP_V3_COMPAT=1` (exactly `1`,
+`composition.ts:199-201`). It lets an existing arra-oracle v3 client talk to v4 unchanged.
+Measured live with the flag on: `tools/list` returns 90 (8 + 57 + 25).
+
+```text
+carried (25)   ____IMPORTANT
+               oracle_learn oracle_research_note oracle_handoff oracle_supersede
+               oracle_search oracle_ask oracle_read oracle_list oracle_stats
+               oracle_concepts oracle_reflect oracle_recap oracle_inbox oracle_verify
+               oracle_thread oracle_threads oracle_thread_read oracle_thread_update
+               oracle_trace oracle_trace_get oracle_trace_list oracle_trace_chain
+               oracle_trace_distill oracle_search_chain
+not carried    oracle_mcp_call oracle_mcp_list_tools   run a caller-chosen command
+               oracle_trace_link oracle_trace_unlink   traces are immutable (D11)
+               oracle_profile                          0 calls, hardcoded persona (D5)
+```
+
+A not-carried name answers 403, byte-identical to an unknown tool. An inbound `arra_*`
+alias resolves to its `oracle_*` tool and is never listed (D6). `X-Arra-Peer` names the
+speaker and is read only while the flag is on; it is bound by the grant's `peers` (D8).
+
+Recall tools (search, ask, reflect, recap, inbox) exclude superseded, retired, inactive and
+out-of-window nodes. Browse tools (list, read) include them, flagged (D3). No v3 corpus is
+imported (D9).
+
+Knowledge search (#30; `app/docs/contracts/search-chunk-v1.md`) answers with NODES of the
+target19 tier, one hit per node, at the node's current head revision. Only recall-eligible
+nodes appear: not retired, not superseded, `is_active`, and inside `[valid_from, valid_to)` at
+request time (#29).
+
+- `kb_searchKnowledgeKeyword` uses the same shared `ngram(3,3)` substring contract as the
+  legacy path.
+  - Every hit is re-checked against the node's whole head text, so an occurrence cut by a
+    chunk boundary is still found.
+  - The answer carries `match: "ngram"` or `"substring_scan"`, plus `scan_reason`:
+    `short_query` below 3 code points, or `index_unavailable`.
+  - The index on `search_chunks_v1.text` is built and refreshed by the writer in
+    `indexRevisionChunks`. A fresh dataset answers `index_unavailable` until the first run,
+    as measured.
+  - Hits carry an integer `rank`, never the raw BM25 score (R21).
+  - **R22 is ruled but not on this base.** Hit order is still BM25 order over the one index
+    every workspace shares (`publication/service.searchKnowledgeKeyword.ts:53-66`), so another
+    workspace's writes can reorder this workspace's hits.
+- `kb_searchKnowledgeSemantic` embeds the query with the composed local Ollama model and ranks
+  READY chunk vectors of the active profile (`ollama/all-minilm/384/none` by default) by
+  `metric: "l2_squared"` `distance`. No embedder, or a failing one, answers `model_unavailable`
+  (R21).
+
+The two searches are never fused (R7).
+
+Index first, embed later: `indexRevisionChunks` saves chunks with no vector, and
+`embedPendingChunks` fills the vectors later, like a backfill. `getSearchFreshness` reports
+pending and ready counts plus `model_digest {pinned, last_measured}`.
+
+CLI: `search --bank B --query Q --mode keyword|semantic [--profile P]`. A bare `search` stays
+the legacy memories search (`--mode text|vector`, default `text`).
+
+Chat (`kb_answerChat`, `content:read`, R9) grounds an answer in `getContext` evidence, using the
+local Ollama model. `coverage` is `"full"` only when nothing was excluded, and an unauthorized
+exclusion is reported as `{reason:"unauthorized", count}` (R4). `kb_getChatSettings` shows the
+provider, model and limits, never the URL. Measured on the dev stack:
+`{"provider":"ollama","model":"gemma3:4b","max_output_tokens":512,"timeout_ms":60000}`.
 
 HTTP surface:
 
@@ -157,7 +261,7 @@ POST /mcp/:bank                           POST /mcp/:bank/:workspace  (always 40
 GET  /  /knowledge.html  /v2/*            static assets
 ```
 
-`POST /api/knowledge/:bank/:method` is the HTTP leg of the 46 `kb_*` methods above — one
+`POST /api/knowledge/:bank/:method` is the HTTP leg of the 57 `kb_*` methods above — one
 RPC-style route per method, body `workspace_name` must equal `:bank`, capped at 1 MiB
 (the MCP leg caps at 256 KiB). Backfill and reindex are global maintenance operations in
 this prototype; a `?bank` on either gives 400. Do not infer bank isolation from an
@@ -203,17 +307,39 @@ unchanged and the command exits nonzero. Credential handling (`ARRA_TOKEN` only,
 loopback/HTTPS rule, redirect refusal, never printing the token) is the exact same code path the 13
 legacy commands use.
 
-Friendly aliases wrap a `kb` call with plain flags for the daily loop (`--bank` still required):
+Six friendly aliases (`app/cli/kb.aliases.ts`) wrap a `kb` call with plain flags for the daily
+loop (`--bank` still required), and `search --mode keyword|semantic` reaches the two knowledge
+searches:
 
 ```bash
-bun app/cli.ts peer add --bank example --name nat
-bun app/cli.ts session add --bank example --name standup
-bun app/cli.ts message append --bank example --session standup --peer nat --content 'hello'
-bun app/cli.ts nodes list --bank example --limit 20
-bun app/cli.ts nodes list --bank example --limit 20 --history   # include retired/superseded, labelled
-bun app/cli.ts context get --bank example --peer nat --session standup
-bun app/cli.ts chat ask --bank example --peer nat --session standup --question 'what happened?'
+bun app/cli.ts peer add --bank example --name nat                                   # registerPeer
+bun app/cli.ts session add --bank example --name standup                            # registerSession
+bun app/cli.ts kb joinSession --bank example \
+  --json '{"workspace_name":"example","session_name":"standup","peer_name":"nat"}'  # no alias
+bun app/cli.ts message append --bank example --session standup --peer nat --content 'hello'  # appendMessages
+bun app/cli.ts nodes list --bank example --limit 20                                 # listNodes
+bun app/cli.ts nodes list --bank example --limit 20 --history   # include_inactive: retired/superseded, labelled
+bun app/cli.ts context get --bank example --peer nat --session standup              # getContext
+bun app/cli.ts chat ask --bank example --peer nat --session standup --question 'what happened?'  # answerChat
+bun app/cli.ts search --bank example --query 'ลืม' --mode keyword                   # searchKnowledgeKeyword
+bun app/cli.ts search --bank example --query 'deploy' --mode semantic               # searchKnowledgeSemantic
 ```
+
+Measured on a fresh dev stack on 2026-09-27, run in this order: every line except
+`chat ask` exited 0, and `context get` returned the appended message (`chat ask` was not run,
+to keep the local model out of it).
+
+The `kb joinSession` step is required. Without it, `message append` answers
+`"outcome":"stopped"` with `invalid_reference` and still exits 0, and then `context get` exits 1
+with `invalid_reference` at `/peer_name`. Membership is a boundary (R3), and no alias covers
+joining.
+
+Two more behaviours:
+
+- `chat ask` waits up to 75 s, longer than the server's 60 s model bound, so a slow answer
+  arrives as the server's own result (`app/cli.ts:187-194`).
+- `bun app/cli.ts help` does not list `--history` for `nodes list`, although the alias
+  accepts it.
 
 These are thin: they map a handful of flags onto the method's known closed-key request shape (minting a
 `peer_id`/`session_id`/`public_id` when one is not given) and otherwise do no validation the server does
@@ -223,16 +349,19 @@ directly. Implementation lives under `app/cli/` (one function per file); `app/cl
 
 ## Verification and remaining scope
 
-`bun run --cwd app/server test` runs the **entire** 68-file suite in one process
-(measured 2026-09-26: 1123 tests, ~497s wall, almost serial). Prefer one of:
+`bun run --cwd app/server test` runs the **entire** suite in one process: 133 files under
+`app/server/test/` plus `app/cli.test.ts`, 134 in all. The single-process run was measured
+only at baseline `f919369` (68 files, 1123 tests, about 497 s, almost serial). Prefer one of:
 
 ```bash
 bun run --cwd app/server test:fast          # <35s-per-file tier only
-bun run --cwd app/server test:<kernel>      # e.g. test:context, test:taxonomy, test:auth
-TEST_SHARDS=4 bun run --cwd app/server test:parallel   # full suite, sharded across N `bun test` processes
+bun run --cwd app/server test:<kernel>      # e.g. test:context, test:taxonomy, test:auth, test:mcp
+TEST_SHARDS=6 bun run --cwd app/server test:parallel   # full suite, sharded (default 6; CI uses 4)
 bun run --cwd app/server typecheck
 bun run --cwd app/server build
 bun test app/cli.test.ts
+(cd app/server && bun test test/mcp-v3-acceptance.test.ts)   # v3 client acceptance harness
+(cd app/ui/v2 && bun test)                                  # UI unit tests, not in CI
 
 # Python (app/migrate-py) — there is no pytest config or dependency; this is the real command:
 uv sync --project app/migrate-py --frozen
@@ -242,8 +371,10 @@ PYTHONPATH=app/migrate-py/src app/migrate-py/.venv/bin/python \
 # `discover` does NOT reach tests/fixtures/*-v1/ (neither directory has an
 # __init__.py; both files document this and give this exact command). Run
 # them explicitly, with the ResourceWarning-as-error the fixture-lane contract
-# requires (app/docs/contracts/taxonomy-write-v1.md:98). Measured: 139 OK
-# (discover) + 17 OK (publication) + 22 OK (taxonomy).
+# requires (app/docs/contracts/taxonomy-write-v1.md:98). Measured 2026-09-27 on
+# e00b50b: 268 OK, 1 skipped (discover) + 17 OK (publication) + 22 OK (taxonomy).
+# Discovery includes the kernel-import guard in tests/test_revision_v1.py, which
+# fails when a new TS file imports the publication kernel without review.
 cd app/migrate-py
 PYTHONPATH=src:tests .venv/bin/python -W error::ResourceWarning \
   tests/fixtures/publication-v1/test_export_publication_fixture.py -v
@@ -252,13 +383,50 @@ PYTHONPATH=src:tests .venv/bin/python -W error::ResourceWarning \
 ```
 
 `app/benchmarks` has its own 123 Python tests (`test_harness_*.py`, `test_retrieval_metrics.py`)
-outside both discovery roots above. Run them with the same venv:
+outside both discovery roots above. Measured 2026-09-27: 123 OK. Run them with the same venv:
 `cd app/benchmarks && ../migrate-py/.venv/bin/python -m unittest discover -s . -p 'test_*.py'`.
 
-`.github/workflows/ci.yml` runs this same set (typecheck, build, `test:parallel` with
-`TEST_SHARDS=4`, the Python `unittest discover` suite plus the two explicit fixture
-suites above, the `app/benchmarks` tests, and the `app/ui/v2` build) on every push and
-pull request.
+Results measured on this base:
+
+```text
+typecheck                               clean                                   2026-09-27, e00b50b
+v3 client acceptance harness            PASS 37 / FAIL 0 / GAP 0 (39 tests)     2026-09-27, e00b50b
+UI v2 unit tests                        106 pass / 0 fail, 9 files              2026-09-27, e00b50b
+full sharded suite (6 shards)           1972 pass / 0 fail, 134/134 files, 183 s
+                                        gate 9 on 87f9f06; e00b50b is its docs-only child
+```
+
+The v3 client acceptance harness (`app/server/test/mcp-v3-acceptance.test.ts`) replays a
+recorded real v3 client session over `POST /mcp/:bank` on a fresh gated dataset. Its argument
+keys come from real recorded calls, and its output shapes cite v3 source.
+
+`.github/workflows/ci.yml` runs this same set on every push and pull request: typecheck,
+build, `test:parallel` with `TEST_SHARDS=4` and `TEST_TIMEOUT_MS=60000`, the Python
+`unittest discover` suite plus the two explicit fixture suites above, the `app/benchmarks`
+tests, and the `app/ui/v2` build. It does not run the UI unit tests. CI had not gone green on
+GitHub by 2026-09-27 04:10. The last completed integration-branch run (36268890136, on
+`47eb786`) failed in the sharded suite, all on shard 2: two unnamed hook timeouts, at 30 s and
+10.5 s, and the session-link "WIDE node" test. `docs/overnight/PLAN.md` (03:01) attributes
+these failures to runner timing, and the ci-green slice that addresses them is not on this
+base.
+
+**The live acceptance probe is not part of this repo.** It is the independent acceptor's
+instrument, a gitignored scratch directory in the overnight integration worktree:
+
+```bash
+bash <overnight worktree>/.tmp/acceptor/live-probe/run.sh <checkout> <label> [--issues]
+```
+
+It starts the real gated server on a fresh `mktemp -d` with stub models and three principals
+over two workspaces. It calls every knowledge method on HTTP, MCP and CLI, plus the isolation
+probes, and writes a matrix. The optional `--issues` flag adds the per-issue acceptance
+checks. Exit 2 means a harness gap such as a missing payload fixture, not a product failure.
+
+Measured on `e00b50b`:
+
+- `run.sh … final-docs`: 57 methods, 57 on HTTP, 57 on MCP, 57 on CLI; isolation 191 PASS /
+  0 FAIL; 26 payload gaps, which are the stateful methods only `--issues` seeds.
+- `--issues`: the same matrix with 6 gaps, and issue checks 137 PASS / 0 FAIL / 7 GAP.
 
 `bun run typecheck` shells out to a bare `tsc` on PATH; `package.json` intentionally
 carries no `typescript` devDependency (measured: `tsc --version` only resolves because a
@@ -272,11 +440,26 @@ untouched.
 
 The roadmap is [#22](https://github.com/Soul-Brews-Studio/arra-oracle-v4/issues/22).
 Auth (#25), schema codecs (#23), current-scope MCP fixes (#24) and immutable revision
-commit/recovery (#26) are **closed** — see AGENTS.md for what's measured working versus
-still gated. Taxonomy (#27), peer/message/trace provenance (#28), lifecycle (#29), derived
-search (#30), the unified API/MCP/CLI contract (#31), context/chat (#32), the UI (#33) and
-migration/release proof (#34) remain open, alongside the defects AGENTS.md's work map
-lists (#85, #87, #89, #102, #103, #105, #75). `DESIGN.md` is a publication-time snapshot of
-#36 from 2026-09-20 and is now stale on several headline claims (auth, table counts, tool
-counts) — consult fresh source, this file, AGENTS.md and `docs/overnight/DECISIONS.md`
-instead.
+commit/recovery (#26) are **closed**.
+
+These are still **open on GitHub** (measured 2026-09-27):
+
+- the roadmap issues: taxonomy (#27), peer/message/trace provenance (#28), lifecycle (#29),
+  derived search (#30), the unified API/MCP/CLI contract (#31), context/chat (#32), the UI
+  (#33), migration/release proof (#34);
+- the defects #85, #87, #89, #102, #103, #105 and #75;
+- the verification gates #7, #8 and #10.
+
+On the overnight integration branch each one has a ruling in `docs/overnight/DECISIONS.md`
+and code. AGENTS.md's work map shows the acceptor's per-issue checks on this base. None
+closes until the integration PR is reviewed.
+
+Real remaining limits:
+
+- R22 (workspace-local keyword order) is not on this base.
+- #7 needs relevance judgments that no agent wrote.
+- #8's live round-trip against stock Honcho needs a container runtime.
+- `arra-migrate-copy` stops at a candidate on a copy, with no cutover.
+
+`DESIGN.md`'s body is the 2026-09-20 snapshot of #36. Its closing amendment section lists what
+is built now against what is still target.
