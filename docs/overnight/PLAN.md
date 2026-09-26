@@ -349,3 +349,4 @@ are part of done.
   #33 as partial (no browser in its probe). PROOF.md §3b records this. PR **#109** says `Fixes` only for #87, #102, #103, #105 and #89, and `Refs` for the rest.
   19 issues got evidence comments, and the 9 where my label was stronger than the acceptor's got corrections.
 - 06:11 **GitHub CI GREEN ON THE FREEZE**: https://github.com/Soul-Brews-Studio/arra-oracle-v4/actions/runs/36277285008 (`7d03bce`): typecheck, build, **2005 tests / 143 files**, demo.test.ts, 3 Python suites and the UI build all passed on Linux. Code is unchanged since the freeze (docs only). Redundant docs-only CI runs were cancelled.
+- 06:11 Last slice, time-boxed: **ui-search** (`wf_a5dad160-9e7`). The UI calls neither knowledge search method; it adds a search box (keyword and semantic, rank-only, Thai inside-word) with a screenshot as proof. It merges only if accepted and the gate stays green; otherwise it is reported as an unmerged branch.
