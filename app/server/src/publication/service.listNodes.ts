@@ -4,6 +4,7 @@ import { quote } from "./storage";
 import { contextOne } from "./service.contextOne";
 import { NODE_REVISIONS, NODES, SUPERSEDE_LOG, scopeOf } from "./service.constants";
 import { deriveNodeType } from "./service.deriveNodeType";
+import { eligibilityReasonsOf } from "./service.eligibilityReasonsOf";
 import { terminalEventsFor } from "./service.terminalEventsFor";
 import { parseListNodes } from "./service.parseListNodes";
 import { requireWorkspace } from "./service.requireWorkspace";
@@ -34,12 +35,23 @@ export async function listNodes(
   reader: DatasetAdapter,
   requestBytes: Uint8Array,
   /**
+   * R18 D3: the validity-window `as_of` for `eligible_only`, in epoch
+   * milliseconds -- the transport's real request time
+   * (`knowledge/registry.ts` passes `Date.now()`, exactly as it does for
+   * `getRecallEligibility` and the #30 searches), so this kernel still takes
+   * no clock. Read ONLY under `eligible_only: true`, where a missing or
+   * non-finite value is refused `invalid_request` rather than defaulted:
+   * unlike `getRecallEligibility`'s legacy fallback, no pre-existing caller
+   * sends `eligible_only`, so there is no harness to keep compatible.
+   */
+  requestTimeMs?: number,
+  /**
    * Test-only: overrides `MAX_SCANNED_NODES`. No production caller passes a
-   * 3rd argument (`service.makeReadMethods.ts` calls with exactly 2), and
-   * this is not part of the wire request grammar `parseListNodes` closes over
-   * -- it exists so a test can reach the scan-window-edge boundary with a
-   * handful of published nodes instead of `MAX_SCANNED_NODES` of them (K4 fix
-   * round, overnight R18; see `test/list-nodes-tie-edge.test.ts`).
+   * 4th argument (`service.makeReadMethods.ts` passes at most 3), and this is
+   * not part of the wire request grammar `parseListNodes` closes over -- it
+   * exists so a test can reach the scan-window-edge boundary with a handful
+   * of published nodes instead of `MAX_SCANNED_NODES` of them (K4 fix round,
+   * overnight R18; see `test/list-nodes-tie-edge.test.ts`).
    */
   scanWindowForTests?: number,
 ): Promise<{
@@ -51,6 +63,11 @@ export async function listNodes(
   total: string | null;
 }> {
   const request = parseListNodes(requestBytes);
+  // Refused before any read, the same place `evaluateNodeEligibility` checks
+  // its own `asOf`: a recall view with no request time has no answer.
+  if (request.eligible_only && (typeof requestTimeMs !== "number" || !Number.isFinite(requestTimeMs))) {
+    failPublication("invalid_request", "");
+  }
   await requireWorkspace(reader, request.workspace_name);
 
   await reader.refresh(NODES);
@@ -217,6 +234,13 @@ export async function listNodes(
     if (revision === null) failPublication("integrity_failure", "");
     const encodedRevision = encodeRevisionRow(revision);
 
+    // R18 D3: the recall view. `lifecycle` is already null here (the
+    // terminal check above ran first, and `eligible_only` excludes history
+    // mode at parse time), so this adds exactly `is_active` and the validity
+    // window -- decided by the SAME function `getRecallEligibility` uses, on
+    // the head revision this loop already read, with no extra point read.
+    if (request.eligible_only && eligibilityReasonsOf(lifecycle, encodedRevision, requestTimeMs!).length > 0) continue;
+
     if (request.type_term !== null) {
       // Filters on `node_revisions.term_snapshot_json` (via the SAME decoder
       // `deriveNodeType` already uses for the same field elsewhere), NOT on
@@ -276,7 +300,10 @@ export async function listNodes(
 
   let total: string | null = null;
   if (request.include_total) {
-    if (request.type_term === null && request.all_term_ids === null && request.any_term_ids === null) {
+    // `eligible_only` (R18 D3) joins the term filters here: `is_active` and
+    // the validity window live inside `node_revisions`, the same reason the
+    // default view's count below deliberately stops at terminal events.
+    if (request.type_term === null && request.all_term_ids === null && request.any_term_ids === null && !request.eligible_only) {
       // Native, predicate-scoped count -- never materializes a row into JS.
       const n = await reader.count(NODES, scope);
       if (request.include_inactive) {

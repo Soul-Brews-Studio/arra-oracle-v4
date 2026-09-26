@@ -605,3 +605,74 @@ housekeeping task rather than done here mid-fix-round.
 - `oracle_reflect` now samples the K3 `legacy_type:principle` pool alongside `learning`,
   closing the gap §7's "V6 upgrades oracle_list, oracle_reflect" line named and this round's
   verifier found undisclosed.
+
+## 15. Amendment 2026-09-26 (overnight R18 (K3 + K4 + V6 + list/reflect) + D3)
+
+An independent Opus verifier refuted the v3-list slice: the V6 recall tools (`oracle_reflect`,
+`oracle_recap`, `oracle_inbox` and inbox's `total`) returned nodes this kernel's own
+`getRecallEligibility` calls ineligible — a head with `is_active: false`, a validity window that
+excludes request time. They listed through `listNodes`'s DEFAULT view, which (§12, R7) drops only
+nodes with a terminal `supersede_log` row. `docs/overnight/DECISIONS.md` R18 D3 adopts
+`V3-PARITY.md` A6: recall paths show only recall-eligible nodes, by `getRecallEligibility`'s rule
+(#29). §§1-14 are unchanged; this section widens `listNodes` once more and records the tool changes.
+
+**1. `listNodes` gains `eligible_only`, the recall view.** An optional key, admitted only when sent
+(the `include_inactive` idiom of §12 point 4). Omitted means `false`, so every existing caller is
+byte-identical and the default view keeps exactly its §12 meaning. Present, it is strictly boolean
+(`null` or a non-boolean is `invalid_request` at `/eligible_only`), and `eligible_only: true` with
+`include_inactive: true` is `invalid_request` at `/eligible_only`, a contradiction rather than one
+key silently winning. `true` returns exactly the nodes `getRecallEligibility` would call eligible at
+the request time: no terminal event, head `is_active`, inside `[valid_from, valid_to)`.
+
+- **One rule, two callers.** The predicates moved, unchanged, out of
+  `service.evaluateNodeEligibility.ts` into `service.eligibilityReasonsOf.ts`, a pure function over
+  the terminal label and the encoded head revision. `evaluateNodeEligibility` (behind
+  `getRecallEligibility` and search's `recallEligibleNodeIds`) and `listNodes` both call it, so a
+  listing and the eligibility check cannot disagree. `listNodes` already reads each candidate's head
+  revision, so the view costs no extra point read.
+- **Clock discipline (§4, R7).** `as_of` is the transport's request time: `knowledge/registry.ts`
+  now passes `Date.now()` to `listNodes` exactly as it does to `getRecallEligibility`.
+  `listNodes(reader, bytes, requestTimeMs?, scanWindowForTests?)` reads it only under
+  `eligible_only: true`, and refuses a missing or non-finite value with `invalid_request` instead of
+  defaulting (no pre-existing caller sends the key, so no legacy fallback is needed). §14's
+  test-only `scanWindowForTests` moves from the 3rd to the 4th parameter; still no production
+  caller passes it.
+- **`total`.** `include_total` is `null` under `eligible_only`: `is_active` and the window live in
+  `node_revisions`, with no native count — the same reason §12 stops the default count at terminal
+  events.
+
+**2. The V6 tools.** `oracle_reflect` draws, `oracle_recap` lists, and `oracle_inbox` both pages
+and counts through `eligible_only: true`, so inbox's `total` counts exactly the set `files` pages
+through. `oracle_list` stays a BROWSE path (history mode, D3): every row is kept, and each row the
+recall tools would drop carries `ineligible_reasons`, taken from one `getRecallEligibility` call per
+row — the kernel's own reasons at request time, not a copy of the rule. The three recall tools'
+descriptions now say forgotten and out-of-window entries are excluded too.
+
+**3. Smaller fixes from the same review.** `oracle_reflect` follows `next_after_id` past scan
+windows that held no match (at most 10 kernel pages each way) instead of answering `no_results` for
+a sparse pool. `oracle_recap` collapses whitespace in titles (v3's `compact()`), so a title cannot
+open a heading. Its character budget now includes its own footer, and a dispatch-level warning
+(e.g. `cwd`) extends that footer instead of adding a second `---` block. Default limits follow v3:
+`oracle_list` 10, `oracle_inbox` 10, `oracle_recap` 8; the larger maxima are kept as a superset.
+`oracle_list` refuses a non-string or blank `type`, as v3 did. `parseListNodes` validates `order`
+against `LIST_NODES_ORDERS` itself.
+
+**Known limit, stated.** Each `listNodes` call gets its own `Date.now()` at the transport. A walk of
+several calls (inbox's page walk and its count walk) therefore uses request times milliseconds
+apart. A validity boundary that falls between two of them can put one node in `files` and not in
+`total`, or the reverse. Pinning one `as_of` per tool call would need the registry to accept a
+caller-supplied time. That would be a historical-browse channel, which V3-PARITY.md §4.3 refuses
+(`asOf` is `unsupported_argument`), so it is not done.
+
+**Evidence.** Failing first, then green:
+- `app/server/test/list-nodes-eligible-only.test.ts` (kernel view, `as_of` boundary, parity with
+  `getRecallEligibility` node by node, grammar, clock refusal);
+- `app/server/test/mcp-v3-list-eligibility.test.ts` (real gate and wire: forgotten, expired and
+  not-yet-valid learnings and handoffs are absent from reflect, recap, inbox and inbox's `total`,
+  and present and flagged in `oracle_list`; a bank with only ineligible nodes gives reflect
+  `no_results`);
+- `app/server/test/mcp-v3-list-stub.test.ts` (stub `kb`: `eligible_only` on every recall request,
+  the sparse-pool walk, recap's budget and titles).
+
+`list-nodes-tie-edge.test.ts` also asserts the narrowed scan window is live, so it cannot pass
+vacuously if the seam stops being honored.

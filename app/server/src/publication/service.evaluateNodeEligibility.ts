@@ -4,6 +4,7 @@ import { quote } from "./storage";
 import { NODES, NODE_REVISIONS } from "./service.constants";
 import { contextOne } from "./service.contextOne";
 import { contextScope } from "./service.contextScope";
+import { eligibilityReasonsOf } from "./service.eligibilityReasonsOf";
 import { terminalEventsFor, type LifecycleLabel } from "./service.terminalEventsFor";
 import { type DatasetAdapter } from "./service.types";
 
@@ -44,7 +45,9 @@ export type EligibilityResult = {
  *
  * The first two are the caller's own resolution of `workspace`/`nodeId`
  * (this function re-resolves them itself so it is safe to call standalone);
- * the rest are decided here. The validity window is a HALF-OPEN interval,
+ * the rest are decided by `service.eligibilityReasonsOf.ts` on the rows read
+ * here (moved there unchanged in the R18 D3 round, so `listNodes`'s
+ * `eligible_only` view applies the identical rule). The validity window is a HALF-OPEN interval,
  * `[valid_from, valid_to)`, at `asOf`: a revision becomes valid AT its
  * `valid_from` instant and stops being valid AT (not after) its `valid_to`
  * instant, matching the append-only, never-ambiguous style the rest of this
@@ -98,13 +101,10 @@ export async function evaluateNodeEligibility(
 
   const lifecycle = (await terminalEventsFor(reader, workspace, [nodeId])).get(nodeId) ?? null;
 
-  const reasons: EligibilityReason[] = [];
-  if (lifecycle !== null) reasons.push(lifecycle.kind);
-  if (encodedRevision.is_active !== true) reasons.push("inactive");
-  const validFrom = encodedRevision.valid_from as string | null;
-  const validTo = encodedRevision.valid_to as string | null;
-  if (validFrom !== null && asOf < Date.parse(validFrom)) reasons.push("not_yet_valid");
-  if (validTo !== null && asOf >= Date.parse(validTo)) reasons.push("expired");
+  // The predicates themselves live in `service.eligibilityReasonsOf.ts`
+  // (overnight R18 D3), shared verbatim with `listNodes`'s `eligible_only`
+  // view so a listing and this check can never disagree.
+  const reasons = eligibilityReasonsOf(lifecycle, encodedRevision, asOf);
 
   return { eligible: reasons.length === 0, reasons, head_revision_id: headId, lifecycle };
 }

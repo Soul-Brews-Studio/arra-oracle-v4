@@ -196,7 +196,8 @@ export type TermSnapshotEntry = {
 export type PublicationReaderService = {
   getAcceptedHead(requestBytes: Uint8Array): Promise<unknown>;
   listAcceptedHistory(requestBytes: Uint8Array): Promise<unknown>;
-  listNodes(requestBytes: Uint8Array): Promise<unknown>;
+  /** `requestTimeMs` is the `eligible_only` view's `as_of` (R18 D3), supplied by the transport. */
+  listNodes(requestBytes: Uint8Array, requestTimeMs?: number): Promise<unknown>;
 };
 
 export type PublicationWriterService = PublicationReaderService & {

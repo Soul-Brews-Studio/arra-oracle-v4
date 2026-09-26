@@ -96,6 +96,19 @@ export type ListNodesRequest = {
    */
   include_inactive: boolean;
   /**
+   * R18 D3 (overnight, v3-list fix round): the RECALL view. Optional, admitted
+   * only when sent -- omitted means `false`, so every caller that predates it
+   * is byte-identical. `true` narrows the default view further, to exactly
+   * the nodes `getRecallEligibility` would call eligible at the transport's
+   * request time: DESIGN.md §9's full rule (no terminal event, head
+   * `is_active`, inside `[valid_from, valid_to)`), evaluated by the SAME
+   * `service.eligibilityReasonsOf.ts` that check uses. Strictly boolean once
+   * present (the `include_inactive` rule), and `true` together with
+   * `include_inactive: true` is a contradiction, refused rather than letting
+   * one key silently win.
+   */
+  eligible_only: boolean;
+  /**
    * K3 (overnight R18): every term id here must be assigned on the
    * candidate's CURRENT head revision (its `term_snapshot_json`, the same
    * source `type_term`/`deriveNodeType` already read -- never a live
@@ -141,7 +154,8 @@ const ALL_TERM_IDS_KEY = "all_term_ids";
 const ANY_TERM_IDS_KEY = "any_term_ids";
 const ORDER_KEY = "order";
 const AFTER_UPDATED_AT_KEY = "after_updated_at";
-const OPTIONAL_KEYS = [INCLUDE_INACTIVE_KEY, ALL_TERM_IDS_KEY, ANY_TERM_IDS_KEY, ORDER_KEY, AFTER_UPDATED_AT_KEY] as const;
+const ELIGIBLE_ONLY_KEY = "eligible_only";
+const OPTIONAL_KEYS = [INCLUDE_INACTIVE_KEY, ALL_TERM_IDS_KEY, ANY_TERM_IDS_KEY, ORDER_KEY, AFTER_UPDATED_AT_KEY, ELIGIBLE_ONLY_KEY] as const;
 
 export function parseListNodes(requestBytes: Uint8Array): ListNodesRequest {
   const o = parseRequest(requestBytes);
@@ -173,6 +187,17 @@ export function parseListNodes(requestBytes: Uint8Array): ListNodesRequest {
     include_inactive = rawIncludeInactive;
   }
 
+  // R18 D3: optional, strictly boolean once present, and never combined with
+  // history mode -- "only eligible" and "include the inactive" cannot both
+  // hold, so the request is refused instead of one key silently winning.
+  let eligible_only = false;
+  if (o.has(ELIGIBLE_ONLY_KEY)) {
+    const rawEligibleOnly = o.get(ELIGIBLE_ONLY_KEY);
+    if (typeof rawEligibleOnly !== "boolean") failPublication("invalid_request", `/${ELIGIBLE_ONLY_KEY}`);
+    if (rawEligibleOnly && include_inactive) failPublication("invalid_request", `/${ELIGIBLE_ONLY_KEY}`);
+    eligible_only = rawEligibleOnly;
+  }
+
   const rawTypeTerm = o.get("type_term");
   let type_term: string | null = null;
   if (rawTypeTerm !== null && rawTypeTerm !== undefined) {
@@ -193,8 +218,10 @@ export function parseListNodes(requestBytes: Uint8Array): ListNodesRequest {
   let order: ListNodesOrder = "id_asc";
   if (o.has(ORDER_KEY)) {
     const rawOrder = o.get(ORDER_KEY);
-    if (rawOrder !== "id_asc" && rawOrder !== "updated_desc") failPublication("invalid_request", `/${ORDER_KEY}`);
-    order = rawOrder;
+    // Validated against `LIST_NODES_ORDERS` itself, so that exported set IS
+    // the grammar rather than a second list that could drift from it.
+    if (!(LIST_NODES_ORDERS as readonly unknown[]).includes(rawOrder)) failPublication("invalid_request", `/${ORDER_KEY}`);
+    order = rawOrder as ListNodesOrder;
   }
 
   // K4: `after_updated_at` only means anything paired with `order:
@@ -225,6 +252,7 @@ export function parseListNodes(requestBytes: Uint8Array): ListNodesRequest {
     include_total: rawIncludeTotal,
     type_term,
     include_inactive,
+    eligible_only,
     all_term_ids,
     any_term_ids,
     order,
