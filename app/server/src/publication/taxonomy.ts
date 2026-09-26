@@ -40,6 +40,8 @@ export {
 
 export { type GetVocabularyRequest, parseGetVocabulary } from "./taxonomy.parseGetVocabulary";
 export { parseGetTerm } from "./taxonomy.parseGetTerm";
+export { type LookupVocabularyByNameRequest, parseLookupVocabularyByName } from "./taxonomy.parseLookupVocabularyByName";
+export { type LookupTermByNameRequest, parseLookupTermByName } from "./taxonomy.parseLookupTermByName";
 export { type GetTermRequest } from "./taxonomy.types";
 export { type RetireTermRequest, parseRetireTerm } from "./taxonomy.parseRetireTerm";
 export { type CreateVocabularyRequest, parseCreateVocabulary } from "./taxonomy.parseCreateVocabulary";

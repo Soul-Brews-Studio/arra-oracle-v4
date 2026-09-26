@@ -175,3 +175,22 @@ All of these come before any seal refusal, so an unauthorized caller never learn
 - A sixth `type` term re-seeded before this change stays in the dataset. It is sealed like the rest, and only the operator can retire it.
 - The publication fixture (`migrate-py/tests/export_publication_fixture.py`) builds `type` with `term_policy: open`, not the sealed bootstrap. Tests over that fixture, such as the association suite's rename and retire of `note`, pass as ordinary writers only because of that. They do not exercise a production-shaped `type`.
 - `DESIGN.md` still says "authorized vocabulary admins may extend `type`". Today that admin is the in-process operator only. Left for the docs pass (P6).
+
+## Amendment 2026-09-26 (overnight R18 (V0 + K2 + VA fixes))
+
+v4-overnight, v3-frame slice (Claude Opus 5.5, AI). Ruling: `docs/overnight/DECISIONS.md` R18, design `docs/overnight/V3-PARITY.md` §5 (K2) and §3 A4. The text above is not rewritten; this section adds two reads to "Results and read evidence" and changes nothing else.
+
+**Why.** The by-name lookups existed only inside create, rename and seed (`service.lookupVocabularyByName.ts`, `service.lookupTermByName.ts`). A caller that knows a name but not the id another writer chose (the UI, the migration, a different adapter) had no read for it: `createTerm` on an occupied name answers `conflict /name` with no id, and nothing else maps a name to a row. The v3 adapter (R18) resolves `type`, `memory_horizon`, `concepts`, `legacy_type`, `project` and each concept term by name before every write, so it cannot work on a workspace seeded by anyone else without these reads.
+
+**Change.** Two read methods on every taxonomy reader facade (and so on every writer facade, which spreads the reads in), registered in `knowledge/registry.ts` under `content:read`, `scopePath: []`, reachable as `POST /api/knowledge/:bank/<method>` and MCP `kb_<method>`:
+
+- `lookupVocabularyByName {workspace_name, name}`
+- `lookupTermByName {workspace_name, vocabulary_id, name}`
+
+Grammar: closed objects, every key required. `workspace_name` uses the existing workspace grammar. `name` uses the create grammar exactly (nonempty valid Unicode, at most 256 UTF-8 bytes, no trim, no case fold, no NFC), so every name a writer can store can be looked up and a name that could never be stored is a governed `arra-error/v1` refusal (`missing_field`, `unexpected_field`, `invalid_type`, `invalid_value`, `limit_exceeded`), never a miss. `vocabulary_id` is a nanoid21. Term names are unique per vocabulary, not per workspace, so the term lookup needs the vocabulary id.
+
+Result: the complete wire row, encoded exactly as `getVocabulary`/`getTerm` encode it, or `null`. The same rules as those reads apply: refresh the table, scope by workspace (another workspace's row is `null`, never an error), duplicates at a scoped name are `integrity_failure`, reads do not mutate or join the write queue. A retired term is returned with `is_active: false`, as `getTerm` would return it; whether it is usable is the caller's decision, and hiding it would make an occupied name look free. The lookup is the same scoped query create and seed already run, so a lookup and a create can never disagree about which row a name names.
+
+**Peer binding.** Both methods assert no acting peer; `knowledge/registry.peerFields.ts` classifies them `[]`. The same edit classifies the 13 methods expose-13 registered after that table was written (`createTrace.peer_name`, `createSessionLink.created_by_peer_name`, `retireNode.peer_name`, `supersedeNode.peer_name`; the other nine assert none). Without it a grant carrying a `peers` binding was refused all 13 wholesale, and `transport-peer-fields.test.ts` failed on the integration branch.
+
+**Tests.** `app/server/test/taxonomy-lookup-service.test.ts`: by-name hit equal to the by-id read, miss is `null`, exact names (no trim or case fold), workspace isolation, closed keys and the name grammar, and the same answer over HTTP and MCP for a `content:read`-only credential. Written before the methods existed and seen red (0 pass, 8 fail).

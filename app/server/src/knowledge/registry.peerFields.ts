@@ -52,6 +52,8 @@ export const PEER_FIELDS: Readonly<Record<string, readonly PeerFieldPath[]>> = O
   listNodes: [],
   getVocabulary: [],
   getTerm: [],
+  lookupVocabularyByName: [],
+  lookupTermByName: [],
   createVocabulary: [],
   createTerm: [],
   renameTerm: [],
@@ -69,4 +71,22 @@ export const PEER_FIELDS: Readonly<Record<string, readonly PeerFieldPath[]>> = O
   getRevisionAssociations: [],
   scanDependents: [],
   reconcileRevisionAssociations: [],
+  // The 13 methods expose-13 (R7/R8) registered, classified here so a bound
+  // grant is no longer refused them wholesale (each parser read for its
+  // acting-peer fields: trace.parseCreateTrace.ts, session-link.ts,
+  // lifecycle.ts, search-chunk.parse*.ts). R7 #28: caller-asserted
+  // attribution is checked against the binding when one is configured.
+  createTrace: [["peer_name"]],
+  createSessionLink: [["created_by_peer_name"]],
+  retireNode: [["peer_name"]],
+  supersedeNode: [["peer_name"]],
+  getTrace: [],
+  listTraceHits: [],
+  listSessionLinks: [],
+  getRecallEligibility: [],
+  listLifecycleHistory: [],
+  listSearchChunks: [],
+  indexRevisionChunks: [],
+  writeChunkEmbedding: [],
+  reconcileSearchChunks: [],
 });
