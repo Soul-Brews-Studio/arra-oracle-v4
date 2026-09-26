@@ -6,7 +6,8 @@ legacy tables that map one-to-one. The knowledge tables (``nodes``,
 ``node_revisions``, ``node_revision_terms``, ``revision_links``,
 ``supersede_log``, ``search_chunks_v1``) and the reserved/R11 taxonomy rows are
 written by the TypeScript kernel afterwards -- Python never builds revision
-bytes (revision_v1.py: Bun is the one canonicalizer).
+bytes: Bun is the one canonicalizer, and the copy path never loads the
+Python-side revision adapter.
 
 Rows are sorted by legacy key before they are handed to a table function, so
 the candidate's content does not depend on the source's fragment order and a
