@@ -273,7 +273,7 @@ The service owns the map. It is derived from `mcp/legacy-v3/catalogue.ts` exactl
 | `unsupported_dataset` | "knowledge dataset not configured" |
 | `limit_exceeded` | "input too large at <path>" |
 | `integrity_failure`, `worker_failure` | "internal integrity failure" (envelope kept) |
-| `model_unavailable` (R9) | not an error: `oracle_ask` falls back to extractive, as v3 did |
+| `model_unavailable` (R9; R21 for the query embedder) | not an error where v3 degraded: `oracle_ask` falls back to extractive and `oracle_search` `mode:"vector"` falls back to keyword, each with a warning, as v3 did. `oracle_search_chain` is semantic only, so it refuses as `kernel_error` "Vector search unavailable: the query embedder did not answer", envelope kept. Anywhere else: "the model this call needs did not answer; retry" (envelope kept) |
 
 ---
 

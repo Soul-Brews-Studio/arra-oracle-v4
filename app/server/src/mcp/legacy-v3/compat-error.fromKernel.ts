@@ -13,6 +13,11 @@ const TEXT: Readonly<Record<string, string>> = Object.freeze({
   integrity_failure: "internal integrity failure",
   worker_failure: "internal integrity failure",
   forbidden: "this credential may not act as that peer",
+  // R9 / R21: a model this call depends on (chat, or the query embedder) did
+  // not answer. The recall tools degrade on it before it gets here (keyword
+  // fallback, extractive answer, the chain's own refusal); anywhere else it
+  // is a retryable outage, never an input fault.
+  model_unavailable: "the model this call needs did not answer; retry",
 });
 
 /**

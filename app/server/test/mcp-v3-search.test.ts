@@ -6,9 +6,12 @@
 //
 // Real gate, real dataset, real wire: `fixtures/v3-compat-v1/core/search-child.ts`
 // boots the production app inside `exec_with_gate` with a deterministic stub
-// query embedder (never Ollama) and replays MCP calls. Keyword scores are
-// consumed as ORDER only: the kernel's raw score is being re-defined
-// concurrently (R21), so nothing here pins a raw kernel score value.
+// query embedder (never Ollama) and replays MCP calls. Keyword results are
+// consumed as ORDER only: under R21 the kernel answers an integer `rank` and
+// no raw BM25 score (the shared FTS index's score leaks other workspaces'
+// corpus statistics), so v3's wire `score` is 1/(1+position) and nothing here
+// pins, or may see, a kernel score value. A down query embedder is the
+// kernel's `model_unavailable` (R21), which the adapter degrades on.
 //
 // Fix round, written red first after an independent review: a content:write-
 // only principal ran oracle_search_chain and got entry content back (200, not
@@ -181,6 +184,13 @@ describe("oracle_search: keyword (fts, and hybrid answered honestly as keyword)"
     const scores = value.results.map((r: { score: number }) => r.score);
     expect(scores).toEqual([...scores].sort((a, b) => b - a));
     expect(new Set(scores).size).toBe(scores.length);
+    // R21: ORDER only, derived from the answer's own positions; no raw BM25
+    // number rides along anywhere in a result, not even under `v4`.
+    expect(scores).toEqual(value.results.map((_: unknown, i: number) => 1 / (1 + i)));
+    for (const r of value.results) {
+      expect(r.v4).not.toHaveProperty("score");
+      expect(r.v4).not.toHaveProperty("_score");
+    }
     expect(value.metadata.score_kind).toBe("reciprocal_rank");
     expect(warned(value, "semantic_change", "score")).toBe(true);
     expect(warned(value, "field_unavailable", "source_file")).toBe(true);
@@ -248,6 +258,7 @@ describe("oracle_search: D3 recall, filters, paging and refusals", () => {
   });
   test("offset pages over the same order; v3's default limit is 5; metadata.total counts every match", () => {
     expect(ids("s_offset")).toEqual([ids("s_apfs")[1]]);
+    expect(ok("s_offset").results[0].score).toBe(ok("s_apfs").results[1].score);
     expect(ok("s_offset").metadata.total).toBe(ok("s_apfs").metadata.total);
     expect(ok("s_default_limit").results).toHaveLength(5);
     expect(ok("s_default_limit").metadata.limit).toBe(5);
@@ -346,6 +357,8 @@ describe("oracle_search_chain (content:write; one immutable trace per hop)", () 
     const down = refused("chain_down");
     expect(down.compat).toMatchObject({ code: "kernel_error", tool: "oracle_search_chain" });
     expect(down.error).toContain("Vector search unavailable");
+    // R21: the kernel's closed code for a down embedder, carried unchanged.
+    expect(down.v4_error).toMatchObject({ version: "arra-publication-error/v1", code: "model_unavailable", path: "" });
   });
 });
 

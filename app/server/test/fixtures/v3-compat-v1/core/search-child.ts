@@ -7,7 +7,7 @@
 // knowledge access is built by `createKnowledgeAccess` with a deterministic
 // STUB query embedder instead of `composition.ts`'s Ollama client, so no test
 // ever reaches a running model. A step may flip the stub to "down" (it then
-// throws, which the kernel reports as `writer_unavailable`).
+// throws, which the kernel reports as `model_unavailable`, overnight R21).
 //
 // Steps are MCP calls through `app.handle()` with `{$ref}` captures, plus one
 // helper step kind, `embed`, that writes the stub's vector for every chunk

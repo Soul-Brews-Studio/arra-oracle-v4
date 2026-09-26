@@ -40,7 +40,7 @@ export type Retrieved = {
  *
  * - `fts`: one `searchKnowledgeKeyword` call per v3 word, merged as v3's OR.
  * - `vector`: one `searchKnowledgeSemantic` call over the whole query. When
- *   the query embedder does not answer (the kernel's `writer_unavailable`),
+ *   the query embedder does not answer (the kernel's `model_unavailable`, R21),
  *   it falls back to keyword and says so -- v3's own fallback to FTS
  *   (arra-oracle-v3 src/tools/search/handler.ts:75-88) -- rather than failing.
  *   No result is a warning, not an error: entries are embedded after they

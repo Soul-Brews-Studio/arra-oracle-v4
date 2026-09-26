@@ -207,13 +207,26 @@ describe("oracle_search_chain: what it wrote stays visible", () => {
 });
 
 describe("the embedder-down test is narrow", () => {
-  test("only the reader's writer_unavailable with no path (the query embedder) counts", async () => {
+  test("only the kernel's model_unavailable with no path (the query embedder, R21) counts", async () => {
     const { isEmbedderDown } = await import("../src/mcp/legacy-v3/search.isEmbedderDown");
     const envelope = (code: string, path: string) => ({ code, path, toJSON: () => ({}) });
-    expect(isEmbedderDown(envelope("writer_unavailable", ""))).toBe(true);
-    expect(isEmbedderDown(envelope("writer_unavailable", "/query"))).toBe(false);
+    expect(isEmbedderDown(envelope("model_unavailable", ""))).toBe(true);
+    expect(isEmbedderDown(envelope("model_unavailable", "/query"))).toBe(false);
+    // Pre-R21 the kernel said writer_unavailable for a down embedder. It no
+    // longer does, so that code on a reader search is a real fault, not a
+    // reason to fall back.
+    expect(isEmbedderDown(envelope("writer_unavailable", ""))).toBe(false);
     expect(isEmbedderDown(envelope("invalid_value", ""))).toBe(false);
-    expect(isEmbedderDown(new Error("writer_unavailable"))).toBe(false);
+    expect(isEmbedderDown(new Error("model_unavailable"))).toBe(false);
     expect(isEmbedderDown(null)).toBe(false);
+  });
+  test("a model_unavailable that escapes a tool reads as a retryable outage, never as an input fault", async () => {
+    const { fromKernel } = await import("../src/mcp/legacy-v3/compat-error.fromKernel");
+    const v4 = { version: "arra-publication-error/v1", code: "model_unavailable", path: "", message: "chat model unavailable" };
+    const wrapped = fromKernel("oracle_search", { code: "model_unavailable", path: "", toJSON: () => v4 }).toJSON();
+    expect(wrapped.error).toBe("the model this call needs did not answer; retry");
+    expect(wrapped.error).not.toContain("Invalid input");
+    expect(wrapped.compat).toMatchObject({ code: "kernel_error", tool: "oracle_search", detail: "v4 answered model_unavailable" });
+    expect(wrapped.v4_error).toEqual(v4);
   });
 });
