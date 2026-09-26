@@ -3,41 +3,73 @@
 ``HttpHonchoTarget`` speaks the REAL routes and schema field names of stock
 Honcho v3.2.0 (``pin.HONCHO_V3_2_0``), read directly from
 ``src/routers/{workspaces,peers,sessions,messages}.py`` and
-``src/schemas/api.py`` at that git ref on 2026-09-21 -- every path, verb, and
-field name below is transcribed from that source, not guessed. It is the
-"live leg": it does nothing until pointed at a real, running instance.
+``src/schemas/api.py`` at that git ref -- every path, verb, and field name
+below is transcribed from that source, not guessed. It is the "live leg": it
+does nothing until pointed at a real, running instance.
+
+Known, undone gap in this class specifically (not carried by the Fake, which
+does not paginate at all): every ``.../list`` and ``GET .../peers`` route
+returns a ``fastapi_pagination`` ``Page``, and this client reads only
+``page["items"]`` -- a workspace with more members/messages than one page
+returns an incomplete list (measured, issue #8 repro G: a 120-item page of
+size 50 came back as 50). Fixing this needs the exact ``page``/``size`` query
+contract confirmed against a live instance, which this session does not have;
+guessing it would violate this class's own no-guessing rule above. Left as a
+documented gap, not a silent one -- see the round-trip test module's live-leg
+skip message.
 
 ``FakeHonchoTarget`` is NOT a mock of convenience -- it encodes the specific,
-verified behaviours of that same schema that make the round trip lossy:
+verified behaviours of that same schema that make the round trip lossy, ALL
+confirmed 2026-09-26 by reading ``src/schemas/api.py`` and
+``src/schemas/configuration.py`` at the pinned commit:
 
   * ``WorkspaceCreate``/``PeerCreate``/``SessionCreate`` have no
     ``internal_metadata`` field at all (only ``metadata``/``h_metadata``
-    round-trips). Confirmed by reading every ``*Base``/``*Create``/response
-    class in ``schemas/api.py`` -- none declares it.
-  * Honcho's resource identity for workspaces/peers/sessions IS the `name`
-    (serialized as ``id`` over the API). There is no second, independent
-    opaque id alongside it the way v4 carries ``id`` + ``name`` as separate
-    columns. v4's own ``id`` for these three tables has nowhere to go.
+    round-trips), and none of the three accepts a client-settable
+    ``created_at`` either -- Honcho stamps its own row-creation time.
+  * Every one of the three narrows its id to
+    ``Field(alias="id", min_length=1, max_length=512, pattern=RESOURCE_NAME_PATTERN)``,
+    ``RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"``. Honcho's resource
+    identity for workspaces/peers/sessions IS that `name` (serialized as
+    ``id`` over the API) -- there is no second, independent opaque id
+    alongside it the way v4 carries ``id`` + ``name`` as separate columns.
+  * ``WorkspaceConfiguration``/``SessionConfiguration`` allow arbitrary extra
+    top-level keys (``model_config = ConfigDict(extra="allow")``), but their
+    four RESERVED sub-schema names (``reasoning``/``peer_card``/``summary``/
+    ``dream``) are typed nested models that silently drop any sub-key they do
+    not declare -- see ``_apply_workspace_configuration_shape``.
+  * ``PeerSpec.configuration`` is a plain ``dict[str, Any] | None`` with NO
+    typed sub-schema at all -- unlike workspace/session configuration, an
+    arbitrary peer configuration value round-trips completely.
   * ``SessionPeerConfig`` (the body of `POST .../sessions/{id}/peers`) has
     exactly two fields, ``observe_me``/``observe_others`` -- no
-    ``joined_at``/``left_at``/``configuration``/``internal_metadata``. Those
-    four v4 ``session_peers`` columns are unrepresentable over this API in
-    either direction, not just unpreserved.
+    ``joined_at``/``left_at``/``configuration``/``internal_metadata``.
   * ``MessageCreate`` computes ``token_count`` server-side
     (``validate_and_set_token_count``, via ``tiktoken``) and has no
-    client-settable ``token_count`` field. v4's stored ``token_count`` is
-    therefore never sent and never comes back as the same value by
-    definition, not as a migration bug.
-  * ``Message`` exposes only ``public_id`` (aliased ``id``) over the API --
-    v4's internal autoincrement ``messages.id`` has no Honcho-side twin.
+    client-settable ``token_count`` field; ``Message`` exposes only
+    ``public_id`` (aliased ``id``) -- v4's internal id AND public_id both
+    have no Honcho-side twin. ``content`` is capped at
+    ``settings.MAX_MESSAGE_SIZE`` (25,000 chars) and a batch at
+    ``MessageBatchCreate.messages`` (100 messages).
+  * Every metadata dict (``_SanitizedMetadata``) is capped at 100 top-level
+    keys and a nesting depth of 5, checked by walking only ``dict`` values
+    (a list of dicts is NOT walked) -- ``limits.check_metadata_limits`` is a
+    direct port of that algorithm, and this class re-enforces it independently
+    rather than trusting the exporter's own pre-check.
   * v4's four +v4 nullable ``messages`` columns (``role``, ``in_reply_to``,
-    ``read``, ``read_at``) have no Honcho schema field at all. This harness's
-    export step (`bundle.py`) makes an explicit, visible choice to fold them
-    into the ``metadata`` dict under a namespaced key rather than silently
-    dropping them -- ``FakeHonchoTarget`` proves that choice actually
-    survives a round trip (arbitrary ``metadata`` keys DO pass through
-    unchanged), which is different from proving Honcho "supports" those
-    columns.
+    ``read``, ``read_at``) have no Honcho schema field at all. `bundle.py`'s
+    export step makes an explicit, visible choice to fold them into the
+    ``metadata`` dict under a namespaced key rather than silently dropping
+    them -- this class proves that choice actually survives a round trip
+    (arbitrary ``metadata`` keys DO pass through unchanged).
+
+Every mutating method here also forces the payload through a real
+``json.dumps``/``json.loads`` round trip before touching anything (see
+``_wire_roundtrip``) -- the SAME boundary a real HTTP call crosses. A raw
+``datetime`` reaching this class raises the identical ``TypeError`` the real
+``requests`` json encoder raises (issue #8 repro A), so a caller that forgot
+``wire.to_wire_timestamp`` fails here, in-process, not only against a real
+container.
 
 ``FakeHonchoTarget``'s token-count formula is a labelled stand-in
 (``len(content.split())``), NOT ``tiktoken``'s ``o200k_base`` encoding --
@@ -48,10 +80,14 @@ value the client did NOT send comes back in its place.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Protocol, runtime_checkable
 
 import requests
+
+from . import limits, names
 
 
 @runtime_checkable
@@ -60,9 +96,13 @@ class HonchoTarget(Protocol):
 
     def create_workspace(self, workspace_id: str, metadata: dict[str, Any], configuration: dict[str, Any]) -> dict[str, Any]: ...
 
+    def get_workspace(self, workspace_id: str) -> dict[str, Any]: ...
+
     def create_peer(self, workspace_id: str, peer_id: str, metadata: dict[str, Any], configuration: dict[str, Any]) -> dict[str, Any]: ...
 
-    def create_session(self, workspace_id: str, session_id: str, metadata: dict[str, Any]) -> dict[str, Any]: ...
+    def create_session(self, workspace_id: str, session_id: str, metadata: dict[str, Any], configuration: dict[str, Any]) -> dict[str, Any]: ...
+
+    def list_sessions(self, workspace_id: str) -> list[dict[str, Any]]: ...
 
     def add_session_peers(self, workspace_id: str, session_id: str, peers: dict[str, dict[str, Any]]) -> dict[str, Any]: ...
 
@@ -98,13 +138,26 @@ class HttpHonchoTarget:
     def create_workspace(self, workspace_id: str, metadata: dict[str, Any], configuration: dict[str, Any]) -> dict[str, Any]:
         return self._post("/workspaces", {"id": workspace_id, "metadata": metadata, "configuration": configuration})
 
+    # Same route: `get_or_create_workspace` returns the EXISTING row, untouched,
+    # when `workspace_id` already exists (crud.get_or_create_workspace, checked
+    # against a cache/DB hit before any write) -- there is no separate
+    # single-resource GET for a workspace, so re-calling create IS the read.
+    def get_workspace(self, workspace_id: str) -> dict[str, Any]:
+        return self._post("/workspaces", {"id": workspace_id, "metadata": {}, "configuration": {}})
+
     # routers/peers.py: prefix /workspaces/{workspace_id}/peers, POST "" = PeerCreate{id,metadata,configuration}
     def create_peer(self, workspace_id: str, peer_id: str, metadata: dict[str, Any], configuration: dict[str, Any]) -> dict[str, Any]:
         return self._post(f"/workspaces/{workspace_id}/peers", {"id": peer_id, "metadata": metadata, "configuration": configuration})
 
-    # routers/sessions.py: prefix /workspaces/{workspace_id}/sessions, POST "" = SessionCreate{id,metadata}
-    def create_session(self, workspace_id: str, session_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
-        return self._post(f"/workspaces/{workspace_id}/sessions", {"id": session_id, "metadata": metadata})
+    # routers/sessions.py: prefix /workspaces/{workspace_id}/sessions, POST "" = SessionCreate{id,metadata,configuration}
+    def create_session(self, workspace_id: str, session_id: str, metadata: dict[str, Any], configuration: dict[str, Any]) -> dict[str, Any]:
+        return self._post(f"/workspaces/{workspace_id}/sessions", {"id": session_id, "metadata": metadata, "configuration": configuration})
+
+    # POST .../sessions/list -> Page[Session]. See the class docstring: first
+    # page only.
+    def list_sessions(self, workspace_id: str) -> list[dict[str, Any]]:
+        page = self._post(f"/workspaces/{workspace_id}/sessions/list", None)
+        return page["items"]
 
     # POST /workspaces/{workspace_id}/sessions/{session_id}/peers, body=dict[peer_id, SessionPeerConfig]
     def add_session_peers(self, workspace_id: str, session_id: str, peers: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -128,6 +181,47 @@ class HttpHonchoTarget:
     def list_messages(self, workspace_id: str, session_id: str) -> list[dict[str, Any]]:
         page = self._post(f"/workspaces/{workspace_id}/sessions/{session_id}/messages/list", None)
         return page["items"]
+
+
+def _wire_roundtrip(payload: Any) -> Any:
+    """Force the exact JSON marshal/unmarshal boundary a real HTTP call
+    crosses, in-process. A non-serializable value (a bare ``datetime``, most
+    importantly -- issue #8 repro A) raises here exactly as it would inside
+    ``requests``' ``json=`` encoder, so the Fake catches a caller who forgot
+    to wire-encode a timestamp, without needing a socket."""
+
+    return json.loads(json.dumps(payload))
+
+
+def _check_resource_name(name: str, *, where: str) -> None:
+    if not name or len(name) > names.RESOURCE_NAME_MAX_LENGTH or not names.RESOURCE_NAME_PATTERN.fullmatch(name):
+        raise ValueError(
+            f"{where}: {name!r} does not satisfy Honcho's RESOURCE_NAME_PATTERN "
+            f"{names.RESOURCE_NAME_PATTERN.pattern!r} within {names.RESOURCE_NAME_MAX_LENGTH} chars"
+        )
+
+
+_CONFIG_RESERVED_FIELDS: dict[str, frozenset[str]] = {
+    "reasoning": frozenset({"enabled", "custom_instructions"}),
+    "peer_card": frozenset({"use", "create"}),
+    "summary": frozenset({"enabled", "messages_per_short_summary", "messages_per_long_summary"}),
+    "dream": frozenset({"enabled"}),
+}
+
+
+def _apply_workspace_configuration_shape(configuration: dict[str, Any]) -> dict[str, Any]:
+    """``WorkspaceConfiguration``/``SessionConfiguration`` allow arbitrary
+    extra top-level keys, but a value placed under one of the four RESERVED
+    names is parsed into that nested typed model, which drops any sub-key it
+    does not itself declare (pydantic's default for a nested ``BaseModel`` is
+    to ignore, not preserve, unknown fields). Not applied to peer
+    configuration, which has no typed sub-schema at all."""
+
+    out = dict(configuration)
+    for key, allowed in _CONFIG_RESERVED_FIELDS.items():
+        if isinstance(out.get(key), dict):
+            out[key] = {k: v for k, v in out[key].items() if k in allowed}
+    return out
 
 
 @dataclass
@@ -160,24 +254,63 @@ class FakeHonchoTarget:
         self._next_public_id = 1
 
     def create_workspace(self, workspace_id: str, metadata: dict[str, Any], configuration: dict[str, Any]) -> dict[str, Any]:
-        # No internal_metadata parameter exists on this call at all -- there is
-        # nowhere for a caller to even try passing it, matching WorkspaceCreate.
-        row = {"id": workspace_id, "metadata": dict(metadata), "configuration": dict(configuration)}
+        _check_resource_name(workspace_id, where="workspaces.id")
+        metadata, configuration = _wire_roundtrip(metadata), _wire_roundtrip(configuration)
+        limits.check_metadata_limits(metadata, where=f"workspaces[{workspace_id}].metadata")
+        limits.check_metadata_limits(configuration, where=f"workspaces[{workspace_id}].configuration")
+        existing = self._workspaces.get(workspace_id)
+        if existing is not None:
+            # get_or_create semantics: an existing row is returned UNCHANGED.
+            return dict(existing)
+        row = {
+            "id": workspace_id,
+            "metadata": dict(metadata),
+            "configuration": _apply_workspace_configuration_shape(configuration),
+            "created_at": _now(),
+        }
         self._workspaces[workspace_id] = row
-        return row
+        return dict(row)
+
+    def get_workspace(self, workspace_id: str) -> dict[str, Any]:
+        row = self._workspaces.get(workspace_id)
+        if row is None:
+            raise ValueError(f"workspace {workspace_id!r} does not exist")
+        return dict(row)
 
     def create_peer(self, workspace_id: str, peer_id: str, metadata: dict[str, Any], configuration: dict[str, Any]) -> dict[str, Any]:
-        row = {"id": peer_id, "workspace_id": workspace_id, "metadata": dict(metadata), "configuration": dict(configuration)}
+        _check_resource_name(peer_id, where="peers.id")
+        metadata, configuration = _wire_roundtrip(metadata), _wire_roundtrip(configuration)
+        limits.check_metadata_limits(metadata, where=f"peers[{peer_id}].metadata")
+        # No internal_metadata parameter exists on this call at all -- there is
+        # nowhere for a caller to even try passing it, matching PeerCreate.
+        # configuration has NO typed sub-schema (unlike workspace/session) --
+        # an arbitrary dict round-trips as-is.
+        row = {"id": peer_id, "workspace_id": workspace_id, "metadata": dict(metadata), "configuration": dict(configuration), "created_at": _now()}
         self._peers[(workspace_id, peer_id)] = row
-        return row
+        return dict(row)
 
-    def create_session(self, workspace_id: str, session_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
-        row = {"id": session_id, "workspace_id": workspace_id, "metadata": dict(metadata)}
+    def create_session(self, workspace_id: str, session_id: str, metadata: dict[str, Any], configuration: dict[str, Any]) -> dict[str, Any]:
+        _check_resource_name(session_id, where="sessions.id")
+        metadata, configuration = _wire_roundtrip(metadata), _wire_roundtrip(configuration)
+        limits.check_metadata_limits(metadata, where=f"sessions[{session_id}].metadata")
+        limits.check_metadata_limits(configuration, where=f"sessions[{session_id}].configuration")
+        existing = self._sessions.get((workspace_id, session_id))
+        if existing is not None:
+            return dict(existing)
+        row = {
+            "id": session_id, "workspace_id": workspace_id, "is_active": True,
+            "metadata": dict(metadata), "configuration": _apply_workspace_configuration_shape(configuration),
+            "created_at": _now(),
+        }
         self._sessions[(workspace_id, session_id)] = row
         self._session_peers.setdefault((workspace_id, session_id), {})
-        return row
+        return dict(row)
+
+    def list_sessions(self, workspace_id: str) -> list[dict[str, Any]]:
+        return [dict(s) for (ws, _sid), s in self._sessions.items() if ws == workspace_id]
 
     def add_session_peers(self, workspace_id: str, session_id: str, peers: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        peers = _wire_roundtrip(peers)
         # SessionPeerConfig ONLY has observe_me/observe_others -- reject
         # anything else the same way a real Pydantic model would (extra keys
         # in a strict schema are the analogue; here we just refuse to store
@@ -186,6 +319,7 @@ class FakeHonchoTarget:
         allowed = {"observe_me", "observe_others"}
         bucket = self._session_peers.setdefault((workspace_id, session_id), {})
         for peer_id, cfg in peers.items():
+            _check_resource_name(peer_id, where="session_peers peer id")
             unknown = set(cfg) - allowed
             if unknown:
                 raise ValueError(f"SessionPeerConfig has no field(s) {unknown} -- v3.2.0 schema only allows {allowed}")
@@ -193,13 +327,18 @@ class FakeHonchoTarget:
         return {"id": session_id, "workspace_id": workspace_id}
 
     def create_messages(self, workspace_id: str, session_id: str, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        messages = _wire_roundtrip(messages)
+        if not (1 <= len(messages) <= limits.MESSAGE_BATCH_MAX):
+            raise ValueError(f"MessageBatchCreate.messages: {len(messages)} messages, Honcho v3.2.0 accepts 1..{limits.MESSAGE_BATCH_MAX} per call")
         out = []
         bucket = self._messages.setdefault((workspace_id, session_id), [])
         for m in messages:
             if "token_count" in m:
                 raise ValueError("MessageCreate has no client-settable token_count field in v3.2.0")
-            if "id" in m:
-                raise ValueError("MessageCreate has no client-settable internal id field in v3.2.0 -- only content/peer_id/metadata/configuration/created_at")
+            if "id" in m or "public_id" in m:
+                raise ValueError("MessageCreate has no client-settable id/public_id field in v3.2.0 -- only content/peer_id/metadata/configuration/created_at")
+            limits.check_content_limit(m["content"], where=f"messages[{session_id}].content")
+            limits.check_metadata_limits(m.get("metadata") or {}, where=f"messages[{session_id}].metadata")
             public_id = f"msg-{self._next_public_id:04d}"
             self._next_public_id += 1
             fake = _FakeMessage(
@@ -209,7 +348,7 @@ class FakeHonchoTarget:
                 session_name=session_id,
                 workspace_name=workspace_id,
                 metadata=dict(m.get("metadata") or {}),
-                created_at=m.get("created_at"),
+                created_at=m.get("created_at") or _now(),
                 token_count=len(m["content"].split()),  # stand-in only -- see module docstring
             )
             bucket.append(fake)
@@ -238,3 +377,12 @@ class FakeHonchoTarget:
 
     def list_messages(self, workspace_id: str, session_id: str) -> list[dict[str, Any]]:
         return [self._serialize_message(m) for m in self._messages.get((workspace_id, session_id), [])]
+
+
+def _now() -> str:
+    """A stand-in for Honcho's own server-assigned row timestamp -- ISO 8601,
+    same shape `wire.from_wire_timestamp` parses. Not equal to any v4 input
+    value by construction (see bundle.LOSSY_FIELDS: workspaces/peers/sessions
+    .created_at)."""
+
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
