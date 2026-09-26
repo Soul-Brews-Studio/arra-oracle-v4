@@ -241,8 +241,11 @@ exactly as §3 already says of "all current optional metadata". `appendMessages`
 closeSession {workspace_name:W, session_name:S, reason:R, peer_name:S|null, operation_id:O}
 ```
 
-`R` is nonempty, at most 4096 UTF-8 bytes (the lifecycle reason cap); `O` is a nonempty string,
-deliberately not nanoid-shaped, like lifecycle operation ids. All keys required, closed.
+`R` is nonempty and not only whitespace (the record exists to say why; a reason with text is stored
+exactly as sent, untrimmed), at most 4096 UTF-8 bytes (the lifecycle reason cap). `O` is a nonempty
+string, deliberately not nanoid-shaped like lifecycle operation ids, but at most 256 UTF-8 bytes (the
+name cap), because it is stored inside the session row rather than in a journal. All keys required,
+closed.
 
 - Effect: `is_active` true -> false, ONE WAY, and `internal_metadata` becomes the canonical JSON of
   every key already stored there plus `closed: {at, by_peer, operation_id, reason}`. `at` is the
@@ -251,16 +254,19 @@ deliberately not nanoid-shaped, like lifecycle operation ids. All keys required,
 - Result: `{outcome:"closed"|"idempotent", row}` or `{outcome:"conflict",
   reason:"operation_digest"|"already_closed", row}`, where `row` is the stored session row. No
   new error code; conflicts are values, as §5 already does for registration.
-- Precedence: grammar (before the queue), workspace (`invalid_reference /workspace_name`),
+- Authority (R3 terms, before the queue, after grammar): the method takes the transport-built
+  authority, as `listMessages` does. A non-null `peer_name` must sit inside the grant's `peers`
+  binding when one exists (the transport checks it; the kernel re-checks it), else `forbidden
+  /peer_name`. A `null` `peer_name` is the OPERATOR path: it needs `audit:read` on the workspace,
+  else `forbidden /peer_name`. A missing authority is a wiring fault and fails closed.
+- Precedence: grammar and authority (before the queue), workspace (`invalid_reference /workspace_name`),
   session (`invalid_reference /session_name`), stored integrity, replay, state, reference, clock,
   write. Replay: a stored close record with the same `operation_id` is `idempotent` when reason
   and peer match and `operation_digest` otherwise; no clock is sampled and no boundary fires.
   State: any other close of an inactive session is `already_closed`, nothing written. Reference:
   a non-null `peer_name` must exist and hold CURRENT membership of the session
-  (`requireCurrentMembership`), else `invalid_reference /peer_name`. `null` is the
-  unattributed path, recorded as `by_peer: null` and open to any `content:write` holder of the
-  workspace, exactly as `retireNode`'s null `peer_name` is: the R3 binding judges asserted
-  peer names, and a null asserts none.
+  (`requireCurrentMembership`), else `invalid_reference /peer_name`. `null` (the operator path
+  above) is recorded as `by_peer: null`.
 - Stored integrity: `internal_metadata` that is not a JSON object, a `closed` value that is not
   exactly `{at, by_peer, operation_id, reason}` with an exact-millisecond `at`, or an ACTIVE
   session carrying a close record, is `integrity_failure` at the root, never repaired.
@@ -278,7 +284,8 @@ deliberately not nanoid-shaped, like lifecycle operation ids. All keys required,
 ```text
 listSessions       {workspace_name:W, after_name:S|null, limit:number, include_total:boolean
                     [, is_active:boolean|null] [, member_peer_name:S|null]}
-listSessionMembers {workspace_name:W, session_name:S, after_name:S|null, limit:number}
+listSessionMembers {workspace_name:W, session_name:S, after_name:S|null, limit:number
+                    [, requester_peer_name:S|null]}
 ```
 
 - `is_active` filters inside the page query and the count, so pages are full and `total` counts
@@ -292,11 +299,15 @@ listSessionMembers {workspace_name:W, session_name:S, after_name:S|null, limit:n
   unknown peer is an empty list, not an error: it is a filter, not a reference.
 - `listSessionMembers` answers `{rows:[SessionPeerRow], next_after_name}` ordered by peer name,
   departed members included with `left_at` set. Missing session is `invalid_reference
-  /session_name`. Membership is not message content, so this read is `content:read` like
-  `listSessions`/`listPeers`; the R3 boundary stays on the messages.
-- Peer binding (authorization-v1.md, R3): `listSessions.member_peer_name` and
-  `closeSession.peer_name` are caller-asserted peers (`knowledge/registry.peerFields.ts`), so a
-  credential bound to `peers:[...]` may ask only about, and close only as, a bound peer.
+  /session_name`. It is `content:read`, behind the SAME R3 boundary as `listMessages`, on the
+  same terms: the OPTIONAL `requester_peer_name` must sit inside the binding and hold CURRENT
+  membership (else `forbidden` / `invalid_reference /requester_peer_name`, checked after the
+  session exists); omitted or `null` is the `audit:read` operator view, else `forbidden
+  /requester_peer_name`. Who belongs to a session is who talks to whom.
+- Peer binding (authorization-v1.md, R3): `listSessions.member_peer_name`,
+  `listSessionMembers.requester_peer_name` and `closeSession.peer_name` are caller-asserted peers
+  (`knowledge/registry.peerFields.ts`), so a credential bound to `peers:[...]` may ask only about,
+  list the members of a session only as, and close only as, a bound peer.
 
 **K11, `listMessages` tail (§6).** Two more OPTIONAL keys:
 
@@ -315,6 +326,16 @@ directions (one shared `selectMessagePage`).
 `listSessionMembers`. The registry (`knowledge/registry.ts`) exposes both over HTTP, MCP (`kb_*`)
 and the CLI (`kb <method>`); `closeSession` is `content:write`.
 
+**Fix round (same amendment, before merge).** An independent verification of this slice showed
+two holes these rules now close. (1) `closeSession` with `peer_name:null` let a credential bound to
+one peer close, one way, a session none of its peers belonged to: `null` asserted no peer, so the
+binding judged nothing. It now needs `audit:read`, the same rule R3 gives a message read that
+names no requester. This is stricter than `retireNode`'s null `peer_name` (unchanged, outside this
+amendment); a close is permanent and hides a whole conversation from new posts. (2) The binding on
+`listSessions.member_peer_name` had no effect while `listSessionMembers` listed any session's
+members to any `content:read` holder; the member list is now behind the R3 boundary above.
+`closeSession` also gained the nonblank-reason and 256-byte `operation_id` bounds stated above.
+
 **Not in this amendment.** `listSessions` ordering by creation or activity (`order:
 "created_desc"`, V3-PARITY §5 K10) is not built: `created_at` is not unique, and a safe keyset
 over it needs a composite cursor the ordered projection does not provide. Per-message `model`
@@ -329,3 +350,7 @@ over it needs a composite cursor the ordered projection does not provide. Per-me
   the R3 boundary on the tail.
 - `app/server/test/mcp-v3-forum.test.ts`: the four v3 forum tools over the real wire, inside the
   writer gate.
+- Fix round, each red first: the null-peer close refused without `audit:read` (kernel and
+  `kb_closeSession`), the kernel's own re-check of the binding, the grammar bounds, and
+  `listSessionMembers` refusing a stranger, a departed member, an unbound requester and a
+  peerless non-operator (kernel and `kb_listSessionMembers`).
