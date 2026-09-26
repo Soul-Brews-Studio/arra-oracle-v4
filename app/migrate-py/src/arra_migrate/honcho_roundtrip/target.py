@@ -71,6 +71,15 @@ confirmed 2026-09-26 by reading ``src/schemas/api.py`` and
     ``metadata`` dict under a namespaced key rather than silently dropping
     them -- this class proves that choice actually survives a round trip
     (arbitrary ``metadata`` keys DO pass through unchanged).
+  * A message's author (``peer_id``) is validated against
+    ``RESOURCE_NAME_PATTERN`` too -- ``crud/message.py:419-422`` get_or_creates
+    the author peer via ``crud/peer.py:85-105 _validate_new_peer_names``,
+    which raises on a name outside the pattern. 2026-09-26 fix-round finding:
+    this method did not enforce that until this fix -- unlike every OTHER
+    ``create_*`` method here, it accepted any ``peer_id`` unchecked, so a
+    caller that forgot to encode the author name (``bundle._message_payload``
+    always does) sailed through silently instead of hitting the same wall a
+    real Honcho 422 would.
 
 Every mutating method here also forces the payload through a real
 ``json.dumps``/``json.loads`` round trip before touching anything (see
@@ -362,6 +371,13 @@ class FakeHonchoTarget:
                 raise ValueError("MessageCreate has no client-settable token_count field in v3.2.0")
             if "id" in m or "public_id" in m:
                 raise ValueError("MessageCreate has no client-settable id/public_id field in v3.2.0 -- only content/peer_id/metadata/configuration/created_at")
+            # crud/message.py:419-422 get_or_creates the author peer via
+            # crud/peer.py:85-105 `_validate_new_peer_names`, which raises on a
+            # name outside RESOURCE_NAME_PATTERN -- 2026-09-26 fix-round
+            # finding: this method used to accept ANY peer_id unchecked, the
+            # only create_* call on this class that didn't, so a caller that
+            # forgot to encode the author name sailed through silently.
+            _check_resource_name(m["peer_id"], where=f"messages[{session_id}].peer_id")
             limits.check_content_limit(m["content"], where=f"messages[{session_id}].content")
             limits.check_metadata_limits(m.get("metadata") or {}, where=f"messages[{session_id}].metadata")
             public_id = f"msg-{self._next_public_id:04d}"
