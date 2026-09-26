@@ -133,24 +133,27 @@ export async function foldConnection(event: ConnectionEvent): Promise<void> {
     // table would show duplicate-looking rows nobody could tell apart.
     const label = truncateRequired(event.label);
     const id = foldId(event.workspace_name, event.method, event.principal, label);
-    // MILLISECONDS, as a plain JS number. This is the ONLY shape that survives
-    // a round trip through a `timestamp[us]` column on this client. Measured,
-    // all four candidates, write-then-read against a real table copy:
+    // MILLISECONDS, as a plain JS number. The physical column IS microseconds
+    // (`timestamp[us]`, storage.ts's `TARGET_SCHEMA`); apache-arrow's writer
+    // multiplies a plain-object numeric/Date cell by 1000 on the way in
+    // (`node_modules/apache-arrow/visitor/set.mjs`), so passing millis here is
+    // what lands the exact microsecond value on disk. Measured, all four
+    // candidates, write-then-read against a real table copy (LANCEDB-FACTS.md
+    // §1-2, via `toArray()`, the client's lossy row accessor):
     //
     //   BigInt micros  -> WRITE FAILS: "Invalid mix of BigInt and other type"
-    //   number micros  -> reads back 1790023408801999.8, a float
+    //   number micros  -> reads back 1790023408801999.8, a float (1000x wrong)
     //   new Date(ms)   -> reads back 1790023408802, exact
     //   number millis  -> reads back 1790023408802, exact
     //
-    // The column is declared `timestamp[us]` but the client stores and returns
-    // MILLIS; writing true microseconds makes it divide by 1000 and lose the
-    // remainder to float. So the declared unit and the actual unit differ, and
-    // `context.storedTimestamp.ts` currently believes the declared one -- which
-    // is why these rows still will not READ. That is #105, it predates this
-    // writer, and it fails on the existing `peers` rows too.
-    //
-    // Writing the exact shape here means #105's fix needs no change in this
-    // file if it rules that a `timestamp[us]` cell is millis (option a).
+    // #105 is misdiagnosed for this table: the kernel never reads through
+    // `toArray()`. `context.listConnections` reads raw microseconds via
+    // `decodeArrowRows`/`rawRows` (storage.ts), which returns the exact BigInt
+    // this write produced -- these rows DO read (measured: see
+    // docs/overnight/DECISIONS.md R1, `.tmp/understand/issue-105`). The real
+    // #75 defect was a different table's producer (the dev-seed script's
+    // sub-millisecond `workspaces.created_at`), fixed at its source in
+    // app/just/scripts/create_target19_dataset.py, not here.
     const now = Date.now();
 
     const existing = (await tbl

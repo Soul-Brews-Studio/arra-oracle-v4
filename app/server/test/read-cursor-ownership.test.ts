@@ -3,7 +3,9 @@
 // queue/poison/close, and fully structured errors. Refs #72, Parent #28.
 //
 // Authority is `app/docs/contracts/read-cursor-v1.md`
-// (SHA256 164d3e91211552e5146b36d8d8e0cb22a628e4aa7f22d1fe2b70ae9a9f6a9508), §8 OWNERSHIP.
+// (SHA256 04f553dd20f572d6bc9c83b1c8752e69018ff5556ad2b2b1b1308162ca82f24f), §8 OWNERSHIP.
+// (The digest 164d3e91... previously cited here does not exist in git; see
+// the contract's "Amendment 2026-09-26 (overnight R1 + R2)" section.)
 // Ordering, clock and physical-wire edges belong to `read-cursor-precision.test.ts`;
 // crash, real SDK failure and fresh-owner recovery to `read-cursor-recovery.test.ts`;
 // method semantics and grammar to `read-cursor-service.test.ts`. None is duplicated here.
