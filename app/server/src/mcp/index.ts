@@ -164,7 +164,15 @@ export async function dispatchTool(
       const limit = bounded(args.limit, 10, "limit");
       const mode = args.mode === undefined ? "text" : args.mode;
       if (mode !== "text" && mode !== "vector") throw new Error("mode must be 'text' or 'vector'");
-      return mode === "vector" ? ops.searchVector(q, limit) : ops.searchText(q, limit);
+      // The same answer shape as GET /api/search, so a caller can see HOW a text
+      // answer was produced (R14): `match` is "ngram" or, under 3 code points,
+      // "substring_scan". Vector mode has no lexical match mode.
+      if (mode === "vector") {
+        const rows = await ops.searchVector(q, limit);
+        return { mode, count: rows.length, rows };
+      }
+      const { match, rows } = await ops.searchText(q, limit);
+      return { mode, match, count: rows.length, rows };
     }
     case "get_memory": {
       const hit = await ops.getById(requiredString(args, "id"));

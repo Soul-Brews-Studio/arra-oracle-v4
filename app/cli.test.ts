@@ -45,6 +45,20 @@ describe("CLI transport contract", () => {
   test("help never requests backend", async () => { const r = await run("help"); expect(r.code).toBe(0); expect(r.out).toContain("remember"); expect(requests).toHaveLength(0); });
   test("unknown command is nonzero", async () => { expect((await run("wat")).code).toBe(1); expect(requests).toHaveLength(0); });
   test("valid MCP request retains envelope and bank", async () => { const r = await run("recall", "--query", "schema", "--limit", "3"); expect(r.code).toBe(0); expect(JSON.parse(r.out)).toEqual(response); expect(requests[0]).toMatchObject({ path: "/mcp/test-bank", search: "", method: "POST", body: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "recall", arguments: { query: "schema", mode: "text", limit: 3 } } } }); });
+  test("recall and search print the server's match mode, and help says what it means (R14)", async () => {
+    const answer = { mode: "text", match: "substring_scan", count: 0, rows: [] };
+    response = { jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: JSON.stringify(answer) }] } };
+    const recalled = await run("recall", "--query", "ไป");
+    expect(recalled.code).toBe(0);
+    expect(JSON.parse(JSON.parse(recalled.out).result.content[0].text)).toEqual(answer);
+    response = { ...answer, match: "ngram" };
+    const searched = await run("search", "--query", "ลืม");
+    expect(searched.code).toBe(0);
+    expect(JSON.parse(searched.out)).toEqual({ ...answer, match: "ngram" });
+    const help = await run("help");
+    expect(help.out).toContain("match");
+    expect(help.out).toContain("substring_scan");
+  });
   test("subject survives remember request", async () => { expect((await run("remember", "--content", "fact", "--subject", "nat")).code).toBe(0); expect(requests[0]?.body.params.arguments.subject_peer_name).toBe("nat"); });
   test("status carries active versus proposed contract state unchanged", async () => {
     response = { jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: JSON.stringify({ contract: { status: "proposed-not-active", active_tables: 15, target_tables: 19 } }) }] } };

@@ -43,7 +43,9 @@ app/migrate-py/.venv/bin/python -m arra_migrate --check
 bun run --cwd app/server start
 ```
 
-Startup creates the ICU content index only when missing; an existing index is retained. Explicit reindex remains a global maintenance operation.
+Startup leaves exactly one full-text index on `memories.content`: character trigrams, `ngram(3,3)` with stemming and stop-word removal off (R14; one shared constant in `server/src/fts/fts.constants.ts`). An existing index whose live `indexDetails` already match is kept untouched. One that differs, such as the `icu` index earlier builds created, is rebuilt once under the same name at the next startup; any second FTS index on the column is dropped. Explicit reindex remains a global maintenance operation and always rebuilds.
+
+Keyword search (`recall` text mode, `GET /api/search?mode=text`) is a substring contract: every row returned contains the query, case-insensitively, and the answer says how it was found. `match: "ngram"` is the trigram index, with each candidate re-checked so trigram over-matches (`หลงทาง` against a stored `หลงลืม`) are dropped. `match: "substring_scan"` is a bounded, escaped scan for queries under 3 characters, which a trigram index cannot look up. `icu` was replaced because it cannot find Thai inside a word: `ลืม` against a stored `หลงลืม` returned nothing (#10).
 
 The same absolute `ARRA_DATA_DIR` must reach migration and server. Default relative `../data` depends on cwd and is unsuitable for ambiguous scripted runs. Never use `ARRA_RESET=1` on existing data casually. Optional S3/R2 configuration exists but is not proof of production concurrency or auth.
 

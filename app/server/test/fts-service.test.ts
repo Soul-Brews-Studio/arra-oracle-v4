@@ -260,9 +260,12 @@ describe("the match mode reaches every transport", () => {
     expect(http3.status).toBe(200);
     expect(http3.body).toMatchObject({ mode: "text", match: "ngram", count: 1 });
     expect(http3.body.rows.map((row: any) => row.id)).toEqual([forgot]);
+    // A trigram hit is BM25-ranked; a scan row has no score to report, and none is invented.
+    expect(typeof http3.body.rows[0].score).toBe("number");
     const http4 = value(parsed.op4, "http ไป");
     expect(http4.body).toMatchObject({ mode: "text", match: "substring_scan", count: 1 });
     expect(http4.body.rows.map((row: any) => row.id)).toEqual([trip]);
+    expect("score" in http4.body.rows[0]).toBe(false);
 
     const mcp5 = value(parsed.op5, "mcp ลืม");
     expect(mcp5.isError).toBe(false);

@@ -90,3 +90,31 @@ On the same installed Bun/Elysia versions, a route configured with `parse: "none
 An 8-byte scratch limit accepted exactly 8 and rejected 9 for chunked requests without Content-Length. A separate partial-wire request sent one 9-byte chunk without a terminating chunk: the reader yielded it, cancellation succeeded and 413 returned without waiting for the whole message. These small probes prove ordering and incremental-read viability, not the application's required 262144/262145 boundary tests. Keep accumulated accepted chunks bounded by the route cap and cancel on overflow. One runtime-delivered chunk may transiently exceed that cap; do not claim a hard process-memory sandbox.
 
 Bun's global maxRequestBodySize can reject declared-length overflow before the handler and can override a handler response when a chunked read exceeds its limit. Do not rely on that backstop as proof of the route's fixed error behavior. Set the global backstop explicitly to 1 MiB, above the route cap; raw application reads must still stop/cancel at the 256-KiB route cap. Tests must use that configured backstop rather than assume a runtime default. Traffic exceeding the global backstop may receive a framework-generated rejection rather than the application's small JSON envelope; this is a resource ceiling, not an admission path. Tests distinguish those cases. [Bun Serve options](https://bun.sh/reference/bun/Serve).
+
+## Amendment 2026-09-26 (overnight R14 (+ R7 tokenizer))
+
+This section amends §1's `GET /api/search` and `MCP recall` rows and §2's "trusted index work". The text above is left as written. Authority: `docs/overnight/DECISIONS.md` R14, and R7 as amended at 21:40 (one shared ngram configuration for every lexical index). Issue #10.
+
+**What changed.**
+
+- Lexical search (`GET /api/search` with `mode=text`, and MCP `recall` in text mode) is a substring contract. Every row returned contains the query, compared case-insensitively.
+  - For a query of 3 or more code points, the index is character trigrams, `ngram(3,3)` with `prefixOnly:false, stem:false, removeStopWords:false` (`app/server/src/fts/fts.constants.ts`). Candidates are overfetched and each is re-checked as a literal substring before it is returned. The overfetch doubles while too few verify, up to a fixed ceiling of 4096 candidates.
+  - For a query under 3 code points, which a trigram index cannot look up, the server runs a bounded scan inside the same scope predicate: `content ILIKE '%q%' ESCAPE '\'`, with `%`, `_` and `\` escaped and `'` doubled.
+  - The query reaches LanceDB as a `MatchQuery`, never as a bare string. A double-quoted bare string was parsed as a phrase query and threw on the position-less index (measured on the pre-amendment code).
+- Both transports now answer text search with the same object: `{mode, match, count, rows}`. `match` is `"ngram"` or `"substring_scan"`. Vector mode answers `{mode, count, rows}` and has no `match`.
+  - **Breaking for MCP clients:** `recall` previously returned a bare array of rows; it now returns the object above in both modes.
+  - A `substring_scan` row has no `score`; none is invented.
+- Trusted startup index work previously created the content index only when none existed. It now reads the live `indexDetails` of every FTS index on `memories.content`.
+  - An index whose `base_tokenizer`, `min_ngram_length`, `max_ngram_length`, `prefix_only`, `stem` and `remove_stop_words` already match is kept: no write, no new table version.
+  - A mismatching one, such as the `icu` index earlier builds created, is rebuilt once with `replace:true` under its own name.
+  - Any second FTS index on the column is dropped.
+  - This still runs before listen, as operator work, never on a request path. `POST /api/reindex` (`maintenance:reindex`) still rebuilds unconditionally.
+
+**Unchanged.** Admission, action (`content:read`), scope carrier, error bodies and ordering. Both the scan and the index lookup run inside the same `workspace_name` predicate.
+
+**Why.** `icu` segments whole Thai words and cannot find a sub-word query: `ลืม` against a stored `หลงลืม` returned nothing (0/2 inside-word probes, #10). `ngram(3,3)` is the only tokenizer LanceDB 0.38 builds that can; `trigram` and `unicode61` are refused by the SDK. Its two measured costs are handled explicitly rather than left silent:
+
+- queries under 3 characters return nothing, so they are scanned and labelled;
+- it over-matches (`หลงทาง` returned the `หลงลืม` row), so candidates are verified.
+
+**Evidence.** `app/server/test/fts-service.test.ts` drives the product path (db, startup index work, HTTP, MCP) in a child process on a fresh mktemp dataset. `app/server/test/fts-precision.test.ts` pins the shared module. Both were red on `aff9c65` before the change.

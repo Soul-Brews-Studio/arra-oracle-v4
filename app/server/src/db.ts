@@ -1,8 +1,9 @@
 // Opens the schema created by the active Python migration. This file never defines the schema -- if the table
 // is missing, that is a migration that did not run, not something to paper over.
 
-import { connect, Index, type Connection, type Table } from "@lancedb/lancedb";
+import { connect, type Connection, type Table } from "@lancedb/lancedb";
 import { embed, embedOne, DIMS } from "./embed";
+import { ensureFtsIndexOn, substringSearch, type FtsResult } from "./fts/fts";
 import { DATA_DIR, storageOptions, storageInfo } from "./storage";
 
 const TABLE = "memories";
@@ -102,17 +103,12 @@ export async function insert(m: NewMemory): Promise<{ id: string; embedded: bool
   return { id, embedded: false };
 }
 
+// The content index is the shared character trigram (R14, `fts/fts.constants.ts`),
+// not `icu`: icu segments whole Thai words and cannot find ลืม inside หลงลืม (#10).
+// `replace: false` keeps an index whose live details already match and rebuilds
+// one that does not (an older deployment's icu) once, under the same name.
 export async function ensureFtsIndex(replace = true): Promise<string[]> {
-  const tbl = await db();
-  const existing = await tbl.listIndices();
-  if (!replace && existing.some((index) => ["FTS", "INVERTED"].includes(index.indexType.toUpperCase()) && index.columns.includes("content"))) {
-    return existing.map((index) => `${index.name}:${index.indexType}`);
-  }
-  await tbl.createIndex("content", {
-    config: Index.fts({ baseTokenizer: "icu" }), // icu segments Thai; `simple` cannot
-    replace,
-  });
-  return (await tbl.listIndices()).map((i) => `${i.name}:${i.indexType}`);
+  return ensureFtsIndexOn(await db(), "content", replace);
 }
 
 const wireInteger = (value: bigint | number) => {
@@ -156,15 +152,14 @@ const clean = (rows: any[]) =>
     distance: r._distance ?? undefined,
   }));
 
-export async function searchText(q: string, bank: string, limit = 10) {
+// Keyword search is a substring contract: every row returned contains `q`
+// (case-folded), and `match` says whether the trigram index or, for a query
+// under 3 code points, the bounded substring scan produced it.
+export async function searchText(q: string, bank: string, limit = 10): Promise<FtsResult<ReturnType<typeof clean>[number]>> {
   const scopedBank = requiredBank(bank);
   const tbl = await db();
-  const rows = await tbl
-    .search(q, "fts")
-    .where(`workspace_name = ${quote(scopedBank)}`)
-    .limit(limit)
-    .toArray();
-  return clean(rows);
+  const { match, rows } = await substringSearch(tbl, "content", q, `workspace_name = ${quote(scopedBank)}`, limit);
+  return { match, rows: clean(rows) };
 }
 
 export async function searchVector(q: string, bank: string, limit = 10) {

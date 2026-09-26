@@ -18,6 +18,11 @@ HTTP commands:
   backfill [--batch N] | reindex
   NOTE: backfill/reindex are GLOBAL maintenance operations, not bank-scoped.
 
+recall and search answer {mode, match, count, rows}. Text mode is a substring
+match: match is "ngram" (character-trigram index, each hit re-checked to contain
+the query, case-insensitive) or "substring_scan" (a query under 3 characters,
+scanned instead). Vector mode has no match field.
+
 Global options: --url URL (ARRA_URL; default http://127.0.0.1:3939)
                 --bank NAME (ARRA_BANK; default default), --pretty
 Credentials: ARRA_TOKEN only - 64 lowercase hex characters. There is no token

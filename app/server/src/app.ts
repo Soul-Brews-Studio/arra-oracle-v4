@@ -276,7 +276,7 @@ export function createApp(
       const mode = url.searchParams.get("mode") ?? "text";
       const limit = positiveInt(url.searchParams.get("limit") ?? undefined, 10);
       return guarded(async () => {
-        const rows = await service.searchMemories(
+        const result = await service.searchMemories(
           readAuthorization(request),
           bank,
           typeof q === "string" ? q : "",
@@ -289,7 +289,11 @@ export function createApp(
             return null;
           },
         );
-        return { mode, count: rows.length, rows };
+        // Text mode says how it matched (R14): "ngram", or "substring_scan" for
+        // a query under 3 code points. Vector mode has no match mode to report.
+        return result.match === undefined
+          ? { mode, count: result.rows.length, rows: result.rows }
+          : { mode, match: result.match, count: result.rows.length, rows: result.rows };
       });
     })
 
