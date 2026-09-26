@@ -260,6 +260,19 @@ outside both discovery roots above. Run them with the same venv:
 suites above, the `app/benchmarks` tests, and the `app/ui/v2` build) on every push and
 pull request.
 
+Writing tests that also pass on the 2-core GitHub runner (R13, `docs/overnight/DECISIONS.md`):
+
+- An explicit test or hook timeout is `testTimeout(ms)` (`test/helpers/timing.testTimeout.ts`);
+  a window a test waits out (a child deadline, an injected timeout, a "never a hang" bound) is
+  `scaledMs(ms)`. Both return `ms` unchanged locally; CI sets `TEST_TIME_SCALE=5` (the runner
+  measured about 4.6x slower per file) and `TEST_TIMEOUT_MS=60000`.
+- Prove "X happened before Y" with a handshake (an observed signal or settle order), never
+  with an elapsed-time bound.
+- Linux refuses any single argv or env string over 131071 bytes with E2BIG; macOS does not.
+  `runGated`/`spawnGatedChild` spill larger arguments to a file, and a child reads its payload
+  with `readArgPayload` (`test/helpers/argv.readArgPayload.ts`). `runOwnedChild` refuses an
+  oversized string on every platform.
+
 `bun run typecheck` shells out to a bare `tsc` on PATH; `package.json` intentionally
 carries no `typescript` devDependency (measured: `tsc --version` only resolves because a
 global compiler happens to be installed). CI installs one explicitly as a toolchain step.
