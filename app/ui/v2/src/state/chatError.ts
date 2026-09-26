@@ -39,18 +39,24 @@ const MODEL_UNAVAILABLE_DETAIL =
   "No chat model is configured, or it did not answer (unreachable, timed out, or failed). " +
   "Nothing was read wrongly and nothing broke: getContext above has no model dependency and should still work.";
 
-/** A governed error code (`forbidden`, `model_unavailable`, ...) or the
- *  `HTTP ${status}` fallback -- both mean the request reached the server.
- *  Anything else is `describe()`'s third shape: a raw transport-exception
- *  message, which by construction never matches either pattern (it is
- *  free-form prose, not a snake_case identifier or a bare status line). */
+/** A governed error code, optionally with the pointer `describe()` appends
+ *  (`invalid_value at /max_items`). Fix-round 2 finding: the pointer form has
+ *  a space, and the previous bare-snake_case test read it as a transport
+ *  failure ("check your connection") although the server answered it. */
+const GOVERNED = /^([a-z][a-z0-9_]*)(?: at \/\S*)?$/;
+
+/** A governed code (with or without a pointer) or the `HTTP ${status}`
+ *  fallback -- both mean the request reached the server. Anything else is
+ *  `describe()`'s transport shape: a raw exception message, which never
+ *  matches either pattern (it is free-form prose, not a snake_case
+ *  identifier, an identifier plus a `/`-pointer, or a bare status line). */
 function reachedServer(code: string): boolean {
-  return /^[a-z][a-z0-9_]*$/.test(code) || /^HTTP \d+$/.test(code);
+  return GOVERNED.test(code) || /^HTTP \d+$/.test(code);
 }
 
 export function chatError(code: string | null): ChatErrorView | null {
   if (code === null) return null;
-  if (code === "model_unavailable") {
+  if (GOVERNED.exec(code)?.[1] === "model_unavailable") {
     return { kind: "model_unavailable", title: "Model unavailable", detail: MODEL_UNAVAILABLE_DETAIL };
   }
   if (!reachedServer(code)) {

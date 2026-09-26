@@ -1,5 +1,5 @@
 import { type ReactNode, useMemo } from "react";
-import type { RevisionRow } from "../api/knowledge";
+import type { RevisionRow, TermSnapshot } from "../api/knowledge";
 import { pairDiffLines } from "../state/pairDiffLines";
 import { type FieldChange, revisionDiff } from "../state/revisionDiff";
 
@@ -21,6 +21,12 @@ const FIELD_LABEL: Record<FieldChange["field"], string> = {
   change_reason: "change_reason",
   fields: "fields",
 };
+
+/** `vocabulary:term`, plus the label snapshot when the revision recorded one. */
+function termText(t: TermSnapshot): string {
+  const base = `${t.vocabulary_name_snapshot}:${t.term_name_snapshot}`;
+  return t.label_snapshot === null ? base : `${base} (${t.label_snapshot})`;
+}
 
 /** `—` for `null`, otherwise the value verbatim -- the same "explicit null,
  *  not empty string" distinction `RevisionRow` itself carries. */
@@ -137,11 +143,19 @@ export function RevisionDiff({ from, to }: { from: RevisionRow; to: RevisionRow 
             <p className="text-muted">no term changes</p>
           ) : (
             <ul className="mt-1 flex flex-col gap-0.5">
-              {diff.termChanges.map((c, i) => (
-                <li key={i} className={c.change === "added" ? "text-accent" : "text-rose-300"}>
-                  {c.change === "added" ? "+" : "−"} {c.term.vocabulary_name_snapshot}:{c.term.term_name_snapshot}
-                </li>
-              ))}
+              {diff.termChanges.map((c, i) =>
+                c.change === "relabelled" ? (
+                  // Same term_id, different snapshot: each revision keeps the
+                  // label it was published with, so both are shown.
+                  <li key={i} className="break-words text-[#f0a35e]">
+                    ~ {termText(c.from)} → {termText(c.term)}
+                  </li>
+                ) : (
+                  <li key={i} className={c.change === "added" ? "text-accent" : "text-rose-300"}>
+                    {c.change === "added" ? "+" : "−"} {termText(c.term)}
+                  </li>
+                ),
+              )}
             </ul>
           )}
         </div>

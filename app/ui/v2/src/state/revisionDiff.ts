@@ -24,8 +24,9 @@
  *     revision-2 example needs ("distinct author/observer/subject") and
  *     the one thing a lifecycle-review reader most needs to see.
  *   - `term_snapshot_json` -- a small SET of terms, keyed by `term_id`
- *     (the stable identity a term snapshot carries); a term is either
- *     present or not, so this is a set difference, not a line diff.
+ *     (the stable identity a term snapshot carries): a set difference, not
+ *     a line diff, plus `relabelled` for a kept term whose name/label
+ *     snapshot changed.
  *   - `link_snapshot_json` -- likewise a set, keyed by the whole canonical
  *     JSON text of one entry (the evidence codec already canonicalizes it,
  *     so byte-equal text IS the identity check here -- see
@@ -37,7 +38,11 @@ import { parseTerms } from "../api/knowledge";
 
 export type LineDiffOp = { op: "equal" | "added" | "removed"; text: string };
 
-export type TermChange = { change: "added" | "removed"; term: TermSnapshot };
+/** `relabelled` is the SAME `term_id` whose name or label snapshot differs
+ *  between the two revisions: `from` is the older snapshot, `term` the newer. */
+export type TermChange =
+  | { change: "added" | "removed"; term: TermSnapshot }
+  | { change: "relabelled"; from: TermSnapshot; term: TermSnapshot };
 
 export type LinkChange = { change: "added" | "removed"; entry: unknown };
 
@@ -145,32 +150,64 @@ function diffLines(a: string[], b: string[]): LineDiffOp[] {
   return ops;
 }
 
-/** The size-guarded entry point for the body diff: split into lines, check
- *  `n*m` against `MAX_DIFF_CELLS` BEFORE allocating anything proportional to
- *  it, and only then hand off to the unguarded `diffLines`. A body over the
- *  bound reports its line counts so the caller can still say something
- *  concrete ("149 KB, 10,000 lines -- too large to diff") instead of a bare
- *  refusal. */
-function diffBody(from: string, to: string): BodyDiffResult {
-  const a = from.split("\n");
-  const b = to.split("\n");
-  if (a.length * b.length > MAX_DIFF_CELLS) {
-    return { tooLarge: true, fromLineCount: a.length, toLineCount: b.length };
-  }
-  return { tooLarge: false, lines: diffLines(a, b) };
+/** An empty body has NO lines. `"".split("\n")` is `[""]`, which made
+ *  empty -> text diff as one removed empty line (fix-round 2 finding). */
+function splitLines(body: string): string[] {
+  return body === "" ? [] : body.split("\n");
 }
 
-/** Terms are a SET, identified by `term_id` -- a snapshot's own position or
- *  label can differ without the term itself having changed, and this diff
- *  only reports presence, matching what a reader actually wants to know:
- *  "which tags did this edit add or drop". */
+/** The size-guarded entry point for the body diff. Lines shared at the START
+ *  and END of both bodies are equal by construction, so they are emitted
+ *  directly and only the differing middle goes into the LCS table -- an
+ *  unchanged body, or a long body with one edited line, never builds a table
+ *  at all (fix-round 2 finding: the guard used to run first, so an unchanged
+ *  2,001-line body read "too large to diff" instead of "unchanged"). The
+ *  middle's `n*m` is checked against `MAX_DIFF_CELLS` BEFORE allocating
+ *  anything proportional to it; a body over the bound reports its WHOLE line
+ *  counts so the caller can still say something concrete instead of a bare
+ *  refusal. */
+function diffBody(from: string, to: string): BodyDiffResult {
+  const a = splitLines(from);
+  const b = splitLines(to);
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  let tail = 0;
+  while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+  const midA = a.slice(head, a.length - tail);
+  const midB = b.slice(head, b.length - tail);
+  if (midA.length * midB.length > MAX_DIFF_CELLS) {
+    return { tooLarge: true, fromLineCount: a.length, toLineCount: b.length };
+  }
+  const equal = (text: string): LineDiffOp => ({ op: "equal", text });
+  return {
+    tooLarge: false,
+    lines: [...a.slice(0, head).map(equal), ...diffLines(midA, midB), ...a.slice(a.length - tail).map(equal)],
+  };
+}
+
+/** The snapshot text a reader sees for a term. Position is deliberately NOT
+ *  part of it: reordering tags is not a change to any tag. */
+function termLabelText(t: TermSnapshot): string {
+  return JSON.stringify([t.vocabulary_name_snapshot, t.term_name_snapshot, t.label_snapshot]);
+}
+
+/** Terms are a SET, identified by `term_id`: "which tags did this edit add or
+ *  drop". A term present on both sides whose name or label SNAPSHOT differs
+ *  is reported as `relabelled` -- fix-round 2 finding: matching by id alone
+ *  hid a rename (`storage` -> `storage_renamed`) entirely, and #33 asks the
+ *  UI to render taxonomy label snapshots, i.e. exactly what each revision
+ *  recorded at the time. */
 function diffTerms(from: RevisionRow, to: RevisionRow): TermChange[] {
   const fromTerms = parseTerms(from);
   const toTerms = parseTerms(to);
-  const fromIds = new Set(fromTerms.map((t) => t.term_id));
+  const fromById = new Map(fromTerms.map((t) => [t.term_id, t]));
   const toIds = new Set(toTerms.map((t) => t.term_id));
   const changes: TermChange[] = [];
-  for (const term of toTerms) if (!fromIds.has(term.term_id)) changes.push({ change: "added", term });
+  for (const term of toTerms) {
+    const before = fromById.get(term.term_id);
+    if (before === undefined) changes.push({ change: "added", term });
+    else if (termLabelText(before) !== termLabelText(term)) changes.push({ change: "relabelled", from: before, term });
+  }
   for (const term of fromTerms) if (!toIds.has(term.term_id)) changes.push({ change: "removed", term });
   return changes;
 }
