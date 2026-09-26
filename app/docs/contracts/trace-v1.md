@@ -213,3 +213,30 @@ empty/short page (`listTraceHits`), never `not_found`. `{outcome: "conflict", re
 - `trace_hits` having no `id` column at all — its key is purely positional — means a hit
   cannot be addressed independently of its trace and position; there is no way to reference
   "this hit" from outside the `(workspace_name, trace_id, position)` triple.
+
+## 10. Amendment 2026-09-26 (overnight R7 (exposure part) + R8 (HTTP/MCP part))
+
+`createTrace`, `getTrace` and `listTraceHits` had no transport route: `knowledge/registry.ts`
+deliberately excluded the trace kernel, so all three answered HTTP 404 and no `kb_createTrace`
+/`kb_getTrace`/`kb_listTraceHits` tool existed on `tools/list`. This was measured directly:
+`.tmp/understand/issue-28/`'s repro showed a conclusion citing two traces could not even be
+published over any transport, because no transport could create the traces it cited first.
+`docs/overnight/DECISIONS.md` R7 rules that kernel code no client can call is not #28-done, and
+R8 keeps the full HTTP+MCP+CLI contract for #31.
+
+All three are now registry entries at `scopePath: []` (every parser above carries
+`workspace_name` at the request root) — `getTrace` and `listTraceHits` at `content:read`,
+`createTrace` at `content:write`. Caller-asserted attribution (`peer_name`,
+`session_id`/`session_from_ts`/`session_to_ts`, `h_metadata`, `internal_metadata`) remains
+exactly as unverified as section 5/6 above already document; exposing the transport route
+changes reachability only, not what this kernel validates or trusts. The mixed
+`continues`/`forked_from` session-link cycle question `docs/overnight/DECISIONS.md` R7 raises
+for `#28` is a separate, session-link-side decision and is out of scope for this amendment.
+
+Proof: `app/server/test/knowledge-expose13-registry.test.ts` (registry shape),
+`app/server/test/knowledge-expose13-transport.test.ts` (HTTP 404→200, `kb_createTrace`/
+`kb_getTrace`/`kb_listTraceHits` on `tools/list`, workspace-scope and read/write authorization
+refusals, against a fake bundle calling this file's own real parsers), and
+`app/server/test/knowledge-expose13-live.test.ts` (`createTrace` → `getTrace` →
+`listTraceHits` round-tripped over both HTTP and MCP against a real writer-gated target-19
+dataset, including a same-payload MCP replay of `createTrace` landing `already_satisfied`).
