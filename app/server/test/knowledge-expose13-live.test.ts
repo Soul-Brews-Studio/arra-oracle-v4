@@ -38,6 +38,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFixture, PYTHON, revisionEnvelope, runGated, type Fixture } from "./helpers/publication-fixture";
+import { activeEmbeddingProfileId } from "../src/publication/search-chunk";
 
 const TEST_DIR = import.meta.dir;
 const CHILD = join(TEST_DIR, "fixtures", "transport-v1", "expose13", "child.ts");
@@ -73,7 +74,9 @@ const SESSION_1_NAME = "expose13-session-a";
 const SESSION_2_NAME = "expose13-session-b";
 
 const CHUNKER_VERSION = "chunker/v1";
-const EMBEDDING_PROFILE_NAME = "all-minilm";
+// #30 R7: `indexRevisionChunks`/`listSearchChunks` now refuse any
+// `embedding_profile` name outside the closed registry.
+const EMBEDDING_PROFILE_NAME = activeEmbeddingProfileId();
 
 type Step = {
   label: string;
@@ -481,14 +484,16 @@ runIt(
     // A (superseded by B, above) and C (retired, above) are both terminal by
     // this point in the run: #29 slice B reports a terminal node's absent
     // chunks as `ineligible`, never `missing` -- its content is superseded
-    // or retired, not a backfill gap (DESIGN.md:1119). B, A's un-indexed
-    // successor, is still live and DOES show up as missing -- proving this
-    // reconcile call genuinely visited and distinguished real rows, it did
-    // not just echo an empty report.
+    // or retired, not a backfill gap (DESIGN.md:1119). #30 R7's reconcile
+    // (search-embed) applies the same `supersede_log` rule and excludes a
+    // terminal node from missing/incomplete accounting entirely. B, A's
+    // un-indexed successor, is still live and DOES show up as missing --
+    // proving this reconcile call genuinely visited and distinguished real
+    // rows, it did not just echo an empty report.
     expect(missingHttp.some((m) => m.revision_id === revA)).toBe(false);
     expect(missingHttp.some((m) => m.revision_id === revC)).toBe(false);
     expect(missingHttp.some((m) => m.revision_id === revB)).toBe(true);
-    expect(out.reconcile_http.body.ineligible).toBeGreaterThanOrEqual(2);
+    expect(out.reconcile_http.body.ineligible as number).toBeGreaterThanOrEqual(2);
 
     expect(out.reconcile_mcp.ok, JSON.stringify(out.reconcile_mcp)).toBe(true);
     expect(typeof out.reconcile_mcp.value.visited).toBe("number");

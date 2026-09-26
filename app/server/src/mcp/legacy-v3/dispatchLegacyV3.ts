@@ -60,7 +60,7 @@ export async function dispatchLegacyV3(
       kb,
       assertedPeer: ops.assertedPeer,
       authority: ops.authority,
-      indexProfile: access?.indexProfile ?? indexProfile({}),
+      indexProfile: access?.indexProfile ?? indexProfile(),
     });
   } catch (error) {
     if (error instanceof CompatError) throw error;

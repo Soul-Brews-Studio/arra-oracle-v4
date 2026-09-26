@@ -1,4 +1,5 @@
 import { type ContextResult } from "./chat";
+import { type DigestProbeFn, type EmbedFn } from "./search-chunk.types";
 import { type BoundaryHook, type ContextBoundary, type ContextBoundaryHook, type EvidenceBoundary, type EvidenceBoundaryHook, type PublicationBoundary, type TaxonomyBoundary, type TaxonomyBoundaryHook } from "./service.boundaries";
 import { type createChatService } from "./service.createChatService";
 import { type createContextReadMethods } from "./service.createContextReadMethods";
@@ -125,6 +126,17 @@ export type DatasetAdapter = {
    * Null embeddings are never candidates.
    */
   vectorSearchChunks(vector: number[], predicate: string, limit: number): Promise<Record<string, unknown>[]>;
+  /**
+   * Row counts behind the one lexical (FTS/INVERTED) index on `column`, or
+   * `null` when no such index exists yet -- distinct from a real zero, which
+   * means the index exists and every row is indexed (#30's `getSearchFreshness`:
+   * "unknown, not zero"). Scans `listIndices()` for an FTS/INVERTED index
+   * naming `column` (the same filter `fts.ensureFtsIndexOn.ts` uses) and reads
+   * its `indexStats`, never assuming a fixed index name: the index itself is
+   * built by `ensureSearchChunkTextIndex` (above), under whatever name
+   * LanceDB defaults it to. Read-only, like `searchChunkTextIndexStatus`.
+   */
+  textIndexStats(table: string, column: string): Promise<{ indexedRows: number; unindexedRows: number } | null>;
   release(): void;
 };
 
@@ -334,6 +346,19 @@ export type ContextOptions = KnowledgeOptions & {
    *  an authorization credential. */
   sourceNamespace: string | null;
   onContextBoundary?: ContextBoundaryHook;
+  /** #30 R8's embed worker DOCUMENT embedder (`embedPendingChunks`),
+   *  injected exactly like `clock`. A WRITER option because that method
+   *  writes vectors -- named apart from the READER-only query embedder
+   *  (`QueryEmbedder`, `openEvidenceReader(root, {embedder})`) semantic
+   *  search uses. No chat model travels here (#32 / R9). Absent means
+   *  `embedPendingChunks` transitions every chunk it cannot satisfy by
+   *  content-hash reuse straight to `failed`/`embedder_unavailable` rather
+   *  than attempting a network call this module makes on its own. */
+  documentEmbedder?: EmbedFn;
+  /** R20's model-digest probe, injected the same way. Absent means every
+   *  `embedPendingChunks` run is `blocked: "digest_unmeasured"`: no vector
+   *  is ever written without a measured digest. */
+  digestProbe?: DigestProbeFn;
 };
 
 /** What the chat facade needs from a reader: context assembly, nothing else

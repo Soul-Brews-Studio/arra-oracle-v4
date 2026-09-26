@@ -21,13 +21,14 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { createFixture, revisionEnvelope, runGated, type Fixture } from "./helpers/publication-fixture";
 import { KNOWLEDGE_METHODS, type KnowledgeReaderBundle, type RequestAuthority } from "../src/knowledge/registry";
-import { CHUNKER_VERSION, deriveChunkId } from "../src/publication/search-chunk";
+import { CHUNKER_VERSION, activeEmbeddingProfileId, deriveChunkId } from "../src/publication/search-chunk";
 import { openEvidenceReader } from "../src/publication/service";
 
 const CHILD = join(import.meta.dir, "fixtures", "search-chunk-v1", "core", "gated-retrieval.ts");
 const TIMEOUT_MS = 180_000;
 const ALPHA = "alpha-workspace";
-const PROFILE = "all-minilm";
+// #30 R7 (search-embed): the closed registry accepts only its active id.
+const PROFILE = activeEmbeddingProfileId();
 const DIMS = 384;
 
 const pad = (seed: string) => `${seed}${"0".repeat(Math.max(0, 21 - seed.length))}`.slice(0, 21);

@@ -55,6 +55,7 @@ import {
 import { ContractError } from "../contracts/errors";
 import { parseStrictBytes, type JcsObject, type JcsValue } from "../contracts/jcs";
 import type { ChatModelFn, ChatSettings } from "../publication/chat";
+import { type DigestProbeFn, type EmbedFn } from "../publication/search-chunk.types";
 import { openEvidenceReader, openEvidenceWriter, type QueryEmbedder } from "../publication/service";
 import { createChatService } from "../publication/service.createChatService";
 import { KNOWLEDGE_METHODS, type KnowledgeAction, type KnowledgeBundle, type KnowledgeReaderBundle, type RequestAuthority } from "./registry";
@@ -168,6 +169,9 @@ const STATUS_FOR_CODE: Readonly<Record<string, number>> = Object.freeze({
   forbidden: 403,
   // #32 / R9: no chat model configured, or it could not answer. Never 500.
   model_unavailable: 503,
+  // #30 / R20: the dataset's pinned embedding model is not the one serving
+  // now. A state conflict an operator resolves by re-indexing, not a retry.
+  embedding_profile_mismatch: 409,
 });
 
 /**
@@ -259,6 +263,23 @@ export type KnowledgeDatasetConfig = {
    * `writer_unavailable`.
    */
   readonly embedder?: QueryEmbedder;
+  /**
+   * #30 R8's embed worker DOCUMENT embedder (`embedPendingChunks`), wired by
+   * `composition.ts`'s `composeKnowledgeAccess` from `embed.ts`'s Ollama
+   * `embed()`. Unlike the query `embedder` above it is a WRITER option:
+   * `embedPendingChunks` is a real, durable write of `search_chunks_v1`
+   * vectors, so it runs on the one cached writer. Absent (e.g. every existing
+   * test's fake config) means `embedPendingChunks` still runs -- content-hash
+   * reuse needs no embedder at all -- but any chunk it cannot satisfy that
+   * way fails closed with `embedder_unavailable` rather than making a
+   * network call this transport was never told about.
+   */
+  readonly documentEmbedder?: EmbedFn;
+  /** #30 R20's model-digest probe, wired by `composeKnowledgeAccess`, a
+   *  WRITER option beside `documentEmbedder`. Absent means every
+   *  `embedPendingChunks` run is `blocked: "digest_unmeasured"` and writes
+   *  nothing -- never a vector without a measured digest. */
+  readonly digestProbe?: DigestProbeFn;
 };
 
 /**
@@ -296,7 +317,9 @@ export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
 
   /** Trusted operator configuration for the one cached writer -- never
    *  request data. No model travels here any more (#32 / R9), and no query
-   *  embedder either (#30): both are READER composition. */
+   *  embedder either (#30): both are READER composition. What does travel
+   *  here is the embed worker's document embedder and R20's digest probe:
+   *  `embedPendingChunks` writes vectors, so it is writer composition. */
   const writerOptions = () => ({
     newRevisionId: randomNanoid21,
     clock: Date.now,
@@ -305,13 +328,15 @@ export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
     // exposes local intake only. A namespaced source feed is a future
     // deployment decision, not something a caller's bytes can select.
     sourceNamespace: null,
+    documentEmbedder: config.documentEmbedder,
+    digestProbe: config.digestProbe,
   });
 
   return {
     /** Advertising only (#31): false hides kb_* and the v3 family from tools/list. */
     datasetConfigured: config.datasetRoot !== undefined,
     /** Server-chosen chunk-index settings for adapter writes (R18 V1). */
-    indexProfile: indexProfile(config.env ?? process.env),
+    indexProfile: indexProfile(),
 
     async getBundle(action: KnowledgeAction): Promise<KnowledgeBundle> {
       // Every action except `content:write` is a READ (#94 widened

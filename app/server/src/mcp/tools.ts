@@ -157,7 +157,8 @@ const SEARCH_NOTES: Readonly<Record<string, string>> = Object.freeze({
     " Never fused with semantic results.",
   searchKnowledgeSemantic:
     " Semantic recall: payload {workspace_name, query, limit?, embedding_profile?} (profile defaults to the" +
-    " server's query embedder's own: EMBEDDING_MODEL, else all-minilm; any other profile is refused)." +
+    " server's query embedder's own, the active embedding profile id ollama/<EMBEDDING_MODEL, else" +
+    " all-minilm>/384/none; any other profile is refused)." +
     " Answers NODES at their current head revision, nearest READY chunk vector first by squared" +
     " L2 distance; retired and superseded nodes are excluded. Never fused with keyword results.",
 });

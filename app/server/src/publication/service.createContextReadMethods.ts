@@ -3,6 +3,7 @@ import { getMessage } from "./service.getMessage";
 import { getPeer } from "./service.getPeer";
 import { getReadCursor } from "./service.getReadCursor";
 import { getRecallEligibility } from "./service.getRecallEligibility";
+import { getSearchFreshness } from "./service.getSearchFreshness";
 import { getSession } from "./service.getSession";
 import { getTrace } from "./service.getTrace";
 import { listConnections } from "./service.listConnections";
@@ -17,7 +18,9 @@ import { listTraceHits } from "./service.listTraceHits";
 import { type RequestAuthority } from "./context";
 import { type DatasetAdapter } from "./service.types";
 
-export function createContextReadMethods(reader: DatasetAdapter) {
+/** `datasetRoot` is the canonical root the reader was opened on: only
+ *  `getSearchFreshness` uses it, to read R20's pin file beside the tables. */
+export function createContextReadMethods(reader: DatasetAdapter, datasetRoot: string) {
   return {
     getPeer: (requestBytes: Uint8Array) => getPeer(reader, requestBytes),
     getSession: (requestBytes: Uint8Array) => getSession(reader, requestBytes),
@@ -37,6 +40,7 @@ export function createContextReadMethods(reader: DatasetAdapter) {
     getTrace: (requestBytes: Uint8Array) => getTrace(reader, requestBytes),
     listTraceHits: (requestBytes: Uint8Array) => listTraceHits(reader, requestBytes),
     listSearchChunks: (requestBytes: Uint8Array) => listSearchChunks(reader, requestBytes),
+    getSearchFreshness: (requestBytes: Uint8Array) => getSearchFreshness(reader, datasetRoot, requestBytes),
     getContext: (requestBytes: Uint8Array) => getContext(reader, requestBytes),
     listMcpCalls: (requestBytes: Uint8Array) => listMcpCalls(reader, requestBytes),
     listConnections: (requestBytes: Uint8Array) => listConnections(reader, requestBytes),

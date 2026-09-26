@@ -1,4 +1,6 @@
+import { activeEmbeddingProfileId } from "../publication/search-chunk.activeEmbeddingProfileId";
 import { CHUNKER_VERSION } from "../publication/search-chunk.chunkerVersion";
+import { EMBEDDING_DIMENSION } from "../publication/search-chunk.profiles";
 import { type EvidenceWriterBundle } from "../publication/service.types";
 import { errorOutcome } from "./errorOutcome";
 import { type Emit, type PlannedMemory, type WorkerControls } from "./plan.types";
@@ -7,9 +9,10 @@ import { requestBytes } from "./requestBytes";
 /**
  * The legacy vector's embedding profile is unknown (memories carry no
  * per-row profile), so no vector is reused: chunks are indexed PENDING under
- * the spike's configured profile and a backfill re-embeds them.
+ * the #30 registry's active profile -- the only name `indexRevisionChunks`
+ * accepts -- and a backfill (`embedPendingChunks`) re-embeds them.
  */
-const REBUILD_PROFILE = { name: "all-minilm", dims: 384 } as const;
+const REBUILD_PROFILE = { name: activeEmbeddingProfileId(), dims: EMBEDDING_DIMENSION } as const;
 
 /**
  * Materialize what a published revision implies, through the kernel only:

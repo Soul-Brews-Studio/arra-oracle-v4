@@ -536,8 +536,8 @@ describe("real persistence: registration, shapes and reads", () => {
       // (`{ ...reads, ...writeOnly }`), so this is that union, not just the
       // eleven write-only methods.
       expect(parsed.contextMethods).toEqual([
-        "advanceReadCursor", "appendMessages", "createSessionLink", "createTrace", "getContext",
-        "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
+        "advanceReadCursor", "appendMessages", "createSessionLink", "createTrace", "embedPendingChunks", "getContext",
+        "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSearchFreshness", "getSession", "getTrace",
         "indexRevisionChunks", "joinSession", "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks",
         "listSessionLinks", "listSessions", "listTraceHits", "reconcileSearchChunks", "registerPeer", "registerSession",
         "retireNode", "supersedeNode", "writeChunkEmbedding",
@@ -1088,7 +1088,7 @@ describe("core: the sourced path and the reader bundle", () => {
     }
   }, 300_000);
 
-  test("the READER bundle has exactly three facades and fourteen context methods", async () => {
+  test("the READER bundle has exactly three facades and nineteen context methods", async () => {
     const fixture = await createContextFixture([ALPHA]);
     try {
       const parsed = await drive(
@@ -1097,9 +1097,11 @@ describe("core: the sourced path and the reader bundle", () => {
         { freshReader: true },
       );
       expect(parsed.readerKeys).toEqual(["context", "publication", "taxonomy"]);
-      // Exactly the fourteen READ methods; no mutator reachable from a reader.
+      // Exactly the nineteen READ methods (#30's two searches and, from
+      // search-embed R7/R8, getSearchFreshness included); no mutator --
+      // embedPendingChunks included -- reachable from a reader.
       expect(parsed.readerContextMethods).toEqual([
-        "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
+        "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSearchFreshness", "getSession", "getTrace",
         "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks", "listSessionLinks", "listSessions",
         "listTraceHits", "searchKnowledgeKeyword", "searchKnowledgeSemantic",
       ]);

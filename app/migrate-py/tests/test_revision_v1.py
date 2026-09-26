@@ -718,7 +718,11 @@ class IsolationTests(unittest.TestCase):
         TS_ROOT / "knowledge" / "transport.requireBoundPeers.ts",
         #   - knowledge/transport.indexProfile: reads CHUNKER_VERSION and
         #     EMBEDDING_DIMENSION, constants, to name the profile a server-side
-        #     index request uses (R8 backfill); no kernel call.
+        #     index request uses (R8 backfill); no kernel call. Since the
+        #     search-embed merge it also reads activeEmbeddingProfileId(), the
+        #     #30 registry's configured profile id (a pure read of
+        #     EMBEDDING_MODEL fixed at import), because the registry refuses any
+        #     other name; still no kernel call and no writer.
         TS_ROOT / "knowledge" / "transport.indexProfile.ts",
     )
 

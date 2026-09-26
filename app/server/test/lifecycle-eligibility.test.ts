@@ -29,6 +29,7 @@ import {
   runGated,
   type Fixture,
 } from "./helpers/publication-fixture";
+import { activeEmbeddingProfileId } from "../src/publication/search-chunk";
 import { openContextReader } from "../src/publication/service";
 
 const CHILD = new URL("./fixtures/lifecycle-v1/core/gated-lifecycle.ts", import.meta.url).pathname;
@@ -511,7 +512,9 @@ describe("#29 slice B: search-chunk read paths never treat a terminal node as or
             node_id: NODE_DEAD,
             revision_id: REV_DEAD,
             chunker_version: "chunker/v1",
-            embedding_profile: { name: "elig-profile", dims: 384 },
+            // #30 R7 (search-embed): the closed registry refuses any other
+            // name before the lifecycle check is ever reached.
+            embedding_profile: { name: activeEmbeddingProfileId(), dims: 384 },
           }),
         ],
         [REV_LIVE, REV_DEAD],

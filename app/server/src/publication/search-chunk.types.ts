@@ -9,3 +9,22 @@
  * either.
  */
 export type EmbeddingProfileRequest = { name: string; dims: number };
+
+/**
+ * The injected embedder `embedPendingChunks` calls OUTSIDE `core.serial`
+ * (service.embedPendingChunks.ts's own header explains why). Same shape as
+ * `embed.ts`'s `embed()`, plus an optional `AbortSignal` a real fetch-based
+ * implementation can wire to its own request -- the timeout itself is
+ * enforced by the caller via `Promise.race`, never by trusting an
+ * implementation to honor the signal, so a test stub that ignores it entirely
+ * still times out correctly.
+ */
+export type EmbedFn = (texts: string[], signal?: AbortSignal) => Promise<number[][]>;
+
+/**
+ * R20's model-digest probe, injected like `EmbedFn`: `composition.ts` wires
+ * `search-chunk.fetchOllamaModelDigest.ts`, tests wire a stub. `null` means
+ * unmeasured. `embedPendingChunks` bounds it with its own timer, so an
+ * implementation that ignores `signal` still cannot hold a run.
+ */
+export type DigestProbeFn = (signal: AbortSignal) => Promise<string | null>;

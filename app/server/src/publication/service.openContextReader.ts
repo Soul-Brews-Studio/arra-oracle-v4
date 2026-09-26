@@ -21,7 +21,7 @@ export async function openContextReader(
     publication: Object.freeze(makeReadMethods(adapter)),
     taxonomy: Object.freeze(createTaxonomyReadMethods(adapter)),
     context: Object.freeze({
-      ...createContextReadMethods(adapter),
+      ...createContextReadMethods(adapter, canonical),
       ...createSearchService(adapter, { embedder: options.embedder }),
     }),
   });

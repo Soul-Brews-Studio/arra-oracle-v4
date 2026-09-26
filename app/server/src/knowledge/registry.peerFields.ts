@@ -92,4 +92,9 @@ export const PEER_FIELDS: Readonly<Record<string, readonly PeerFieldPath[]>> = O
   // #30 retrieval: a query names no acting peer.
   searchKnowledgeKeyword: [],
   searchKnowledgeSemantic: [],
+  // #30 R7/R8 (search-embed): freshness and the embed worker take
+  // workspace_name plus limit fields only -- no peer-shaped field. The other
+  // four search-chunk methods are classified above.
+  getSearchFreshness: [],
+  embedPendingChunks: [],
 });

@@ -330,11 +330,30 @@ describe("V0 #11: ____IMPORTANT is the v4 guide", () => {
 });
 
 describe("the index profile uses embed.ts's own EMBEDDING_MODEL rule", () => {
+  // Integration merge (search-embed): the name is the #30 registry's active
+  // profile id, `ollama/<model>/384/none`, which the registry reads from
+  // `process.env` once at import -- so each value runs in its own process.
+  // The model rule itself is unchanged: unset is all-minilm, a set value is
+  // used as-is (embed.ts and migrate-py use a plain default).
   test("unset is all-minilm; any set value, even blank or padded, is used as-is (embed.ts and migrate-py use a plain default)", async () => {
-    const { indexProfile } = await import("../src/knowledge/transport.indexProfile");
+    const probe =
+      `const { indexProfile } = await import(${JSON.stringify(join(import.meta.dir, "../src/knowledge/transport.indexProfile.ts"))});` +
+      `const { activeEmbeddingProfileId } = await import(${JSON.stringify(join(import.meta.dir, "../src/publication/search-chunk.ts"))});` +
+      `console.log(JSON.stringify({ profile: indexProfile(), active: activeEmbeddingProfileId() }));`;
     for (const value of [undefined, "", " all-minilm ", "nomic-embed-text"]) {
-      const env = value === undefined ? {} : { EMBEDDING_MODEL: value };
-      expect(indexProfile(env).embedding_profile.name).toBe(value ?? "all-minilm");
+      const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+      delete env.EMBEDDING_MODEL;
+      if (value !== undefined) env.EMBEDDING_MODEL = value;
+      const child = Bun.spawnSync([process.execPath, "-e", probe], { env, stdout: "pipe", stderr: "pipe" });
+      expect(child.exitCode, child.stderr.toString()).toBe(0);
+      const out = JSON.parse(child.stdout.toString()) as {
+        profile: { chunker_version: string; embedding_profile: { name: string; dims: number } };
+        active: string;
+      };
+      expect(out.profile.embedding_profile).toEqual({ name: `ollama/${value ?? "all-minilm"}/384/none`, dims: 384 });
+      // The one name `indexRevisionChunks` accepts in that process.
+      expect(out.profile.embedding_profile.name).toBe(out.active);
+      expect(out.profile.chunker_version).toBe("chunker/v1");
     }
   });
 });

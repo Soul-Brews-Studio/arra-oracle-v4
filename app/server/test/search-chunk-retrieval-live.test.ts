@@ -24,12 +24,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFixture, PYTHON, revisionEnvelope, runGated } from "./helpers/publication-fixture";
+import { activeEmbeddingProfileId } from "../src/publication/search-chunk";
 
 const CHILD = join(import.meta.dir, "fixtures", "transport-v1", "search", "child.ts");
 const TIMEOUT_MS = 150_000;
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
-const PROFILE = "all-minilm";
+// #30 R7 (search-embed): the closed registry accepts only its active id.
+const PROFILE = activeEmbeddingProfileId();
 const THAI = "ฉันหลงลืมกุญแจไว้ที่บ้าน";
 
 const MISSING: string[] = [];

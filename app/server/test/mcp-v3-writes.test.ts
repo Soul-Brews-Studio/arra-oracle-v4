@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFixture, runGated, type Fixture } from "./helpers/publication-fixture";
 import { createTaxonomyFixture, type TaxonomyFixture } from "./helpers/taxonomy-fixture";
+import { activeEmbeddingProfileId } from "../src/publication/search-chunk";
 
 const CHILD = join(import.meta.dir, "fixtures", "v3-compat-v1", "core", "writes-child.ts");
 const FRESH = "ws-fresh";
@@ -69,7 +70,7 @@ beforeAll(async () => {
     HEAD("head_learn"),
     // The revision id is writer-assigned, so it is captured from the head.
     { label: "learn_rev_probe", bank: FRESH, tool: "kb_getAcceptedHead", args: { payload: { workspace_name: FRESH, node_id: { $ref: "learn" } } }, capture: { name: "learn_rev", path: ["revision", "id"] } },
-    { label: "chunks", bank: FRESH, tool: "kb_listSearchChunks", args: { payload: { workspace_name: FRESH, revision_id: { $ref: "learn_rev" }, chunker_version: "chunker/v1", embedding_profile: "all-minilm" } } },
+    { label: "chunks", bank: FRESH, tool: "kb_listSearchChunks", args: { payload: { workspace_name: FRESH, revision_id: { $ref: "learn_rev" }, chunker_version: "chunker/v1", embedding_profile: activeEmbeddingProfileId() } } },
     { label: "learn_again", bank: FRESH, tool: "oracle_learn", args: { pattern: "second, no project" }, capture: { name: "learn_again", path: ["id"] } },
     HEAD("head_learn_again"),
     { label: "retry_1", bank: FRESH, tool: "oracle_learn", args: { pattern: "retried", idempotency_key: "k-1" } },

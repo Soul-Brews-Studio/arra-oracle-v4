@@ -14,7 +14,6 @@
 import { createRequire } from "node:module";
 import { createOperationService, type OperationService, type StoreDependencies } from "./auth/service";
 import { createKnowledgeAccess, type KnowledgeAccess } from "./knowledge/transport";
-import { DEFAULT_EMBEDDING_PROFILE } from "./publication/search-chunk.defaultEmbeddingProfile";
 
 export type RuntimeConfig = {
   readonly policyPath: string;
@@ -218,12 +217,25 @@ export function composeV3Compat(env: NodeJS.ProcessEnv = process.env): boolean {
  * `ARRA_CHAT_PROVIDER` unset leaves chat unconfigured (`model_unavailable`);
  * a malformed `ARRA_CHAT_*` throws, and `startup` checks that first. The #30
  * query embedder is composed here the same way, for the same reader.
+ *
+ * #30 R8 / R20: the embed worker's DOCUMENT embedder and the model-digest
+ * probe are composed here too, but for the WRITER: `embedPendingChunks`
+ * writes vectors, so it runs on the one cached writer, never the reader.
+ * Query and document embedder share one model, the #30 registry's active
+ * profile (`search-chunk.profiles.ts`), so a query vector and the chunk
+ * vectors it is compared with always come from the same model, stored under
+ * the same profile id. Neither embedder nor the probe is called here: boot
+ * never probes the model and never pins a digest (R20).
  */
 export async function composeKnowledgeAccess(env: NodeJS.ProcessEnv = process.env): Promise<KnowledgeAccess> {
   const datasetRoot = env.ARRA_KNOWLEDGE_DATASET_ROOT;
   const { createChatModel } = await import("./chat-model");
   const chat = createChatModel(env);
-  const embeddingProfile = env.EMBEDDING_MODEL?.trim() ? env.EMBEDDING_MODEL.trim() : DEFAULT_EMBEDDING_PROFILE;
+  // The registry reads EMBEDDING_MODEL from `process.env` once, at import
+  // (like `embed.ts`), so the profile every chunk row is indexed under is
+  // fixed for the process; imported lazily here, per this module's header.
+  const { ACTIVE_EMBEDDING_PROFILE } = await import("./publication/search-chunk.profiles");
+  const embeddingModel = ACTIVE_EMBEDDING_PROFILE.model;
   return createKnowledgeAccess({
     datasetRoot: typeof datasetRoot === "string" && datasetRoot.trim() ? datasetRoot : undefined,
     env,
@@ -231,18 +243,28 @@ export async function composeKnowledgeAccess(env: NodeJS.ProcessEnv = process.en
     // #30 semantic search: the query embedder is `embed.ts`'s local Ollama
     // client, imported lazily on first use like `composeService`'s raw
     // modules, and handed to the READER only (like the chat model above,
-    // never a writer option). Its profile is the model's name -- the name an
-    // embed worker stores via `indexRevisionChunks` -- from THIS `env`, blank
-    // meaning `DEFAULT_EMBEDDING_PROFILE`; and that same name is the model it
-    // calls, so the profile a search reports can never differ from the model
-    // that embedded its query. Only the model name comes from THIS `env`:
-    // `embed.ts` reads OLLAMA_URL and EMBEDDING_DIMENSIONS from `process.env`
-    // when it loads. SEAM: the concurrent profile registry replaces this
-    // pairing with a registry entry.
+    // never a writer option). Its profile is the #30 registry's active
+    // profile id -- the one name `indexRevisionChunks` accepts and stores --
+    // and it calls that profile's own model, so the profile a search reports
+    // can never differ from the model that embedded its query. (Integration
+    // merge: this replaces the retrieval slice's model-name-as-profile seam.)
     embedder: {
-      profile: embeddingProfile,
-      embed: async (text: string) => (await import("./embed")).embedOne(text, embeddingProfile),
+      profile: ACTIVE_EMBEDDING_PROFILE.profile_id,
+      embed: async (text: string) => (await import("./embed")).embedOne(text, embeddingModel),
     },
+    // #30 R8: the embed worker's DOCUMENT embedder, a WRITER option (see
+    // above) and named apart from the reader's query `embedder`. The same
+    // Ollama call and the same model, lazily imported so merely composing
+    // knowledge access cannot trigger `embed.ts`'s own import-time
+    // environment reads (this module's own header rule).
+    documentEmbedder: (texts, signal) => import("./embed").then((mod) => mod.embed(texts, embeddingModel, signal)),
+    // #30 R20: the model-digest probe every `embedPendingChunks` run makes
+    // before embedding anything -- `GET /api/tags` on the same OLLAMA_URL and
+    // EMBEDDING_MODEL `embed.ts` uses. Called per run, never at boot.
+    digestProbe: (signal) =>
+      import("./publication/search-chunk.fetchOllamaModelDigest").then((mod) =>
+        mod.fetchOllamaModelDigest({ signal }),
+      ),
   });
 }
 
@@ -262,6 +284,11 @@ export async function checkChatConfig(env: NodeJS.ProcessEnv = process.env): Pro
  *
  * Lives here, not in the HTTP entrypoint: §3 keeps index/app free of raw store
  * imports, and startup maintenance is an operator path, not a request path.
+ *
+ * #30 R20: boot never probes the embedding model, never pins its digest and
+ * never changes an embedding profile id. The digest is measured by every
+ * `embedPendingChunks` run instead (`search-chunk-digest-boot.test.ts` runs
+ * this function against a live stub Ollama and asserts zero requests).
  */
 export async function runStartupIndexWork(): Promise<void> {
   const store = await import("./db");

@@ -1,6 +1,6 @@
 import { fail } from "../contracts/errors";
 import { overfetch } from "../fts/fts";
-import { CHUNKER_VERSION, DEFAULT_EMBEDDING_PROFILE, groupKnowledgeHits, parseSearchKnowledgeSemantic, rankedChunk } from "./search-chunk";
+import { CHUNKER_VERSION, activeEmbeddingProfileId, groupKnowledgeHits, parseSearchKnowledgeSemantic, rankedChunk } from "./search-chunk";
 import { quote } from "./storage";
 import { SEARCH_CHUNKS } from "./service.constants";
 import { contextScope } from "./service.contextScope";
@@ -16,8 +16,9 @@ import { type DatasetAdapter, type QueryEmbedder } from "./service.types";
  *
  * - The query is embedded by the injected `embedder` (composition: `embed.ts`
  *   over local Ollama; tests: a stub). A request naming no profile reads the
- *   embedder's own (`DEFAULT_EMBEDDING_PROFILE` only when none is composed,
- *   which then answers `writer_unavailable` anyway). A profile the embedder
+ *   embedder's own (the #30 registry's active profile id,
+ *   `activeEmbeddingProfileId()`, only when none is composed, which then
+ *   answers `writer_unavailable` anyway). A profile the embedder
  *   does not serve is refused (`invalid_value` at `/embedding_profile`)
  *   BEFORE any model call: comparing one model's query vector with another
  *   model's stored vectors answers nothing meaningful, so vector spaces are
@@ -39,9 +40,10 @@ export async function searchKnowledgeSemantic(
 ) {
   const request = parseSearchKnowledgeSemantic(requestBytes);
   await requireWorkspace(reader, request.workspace_name);
-  // SEAM (#30 profile registry): "the active profile" is today the composed
-  // embedder's own; a registry's default entry replaces this line.
-  const profile = request.embedding_profile ?? embedder?.profile ?? DEFAULT_EMBEDDING_PROFILE;
+  // The composed embedder's own profile; production composes it with the #30
+  // registry's active id (`composition.ts`), the id every chunk row is
+  // indexed under, so a default search reads exactly the active profile.
+  const profile = request.embedding_profile ?? embedder?.profile ?? activeEmbeddingProfileId();
   if (embedder !== undefined && profile !== embedder.profile) {
     fail("invalid_value", ["embedding_profile"], "no query embedder serves this embedding profile");
   }

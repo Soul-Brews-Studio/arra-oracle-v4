@@ -35,6 +35,12 @@ export const PUBLICATION_ERROR_CODES = [
   // read wrongly and nothing was written; the caller did nothing wrong. HTTP
   // 503. Appended, never reordered.
   "model_unavailable",
+  // #30 / R20: the embedding model digest measured for this embed run is
+  // not the one this dataset's active profile was pinned to -- the same
+  // model name now serves a different build. Nothing was embedded or
+  // written; an operator must re-index under a new profile. HTTP 409.
+  // Appended, never reordered.
+  "embedding_profile_mismatch",
 ] as const;
 
 export type PublicationErrorCode = (typeof PUBLICATION_ERROR_CODES)[number];
@@ -51,6 +57,7 @@ const MESSAGES: Readonly<Record<PublicationErrorCode, string>> = Object.freeze({
   limit_exceeded: "publication limit exceeded",
   forbidden: "request not permitted for this caller",
   model_unavailable: "chat model unavailable",
+  embedding_profile_mismatch: "embedding model digest differs from the dataset's pinned digest",
 });
 
 export type PublicationErrorShape = {

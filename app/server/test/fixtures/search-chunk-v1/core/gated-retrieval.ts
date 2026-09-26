@@ -17,7 +17,8 @@
 //                           `otherProfile` (the profile-default and
 //                           profile-filter cases)
 //   harness              -> test-side dataset inspection/surgery on
-//                           search_chunks_v1's indexes (never product code)
+//                           search_chunks_v1's rows and indexes (never
+//                           product code)
 const [, , datasetRoot, payloadJson] = Bun.argv;
 const payload = JSON.parse(payloadJson ?? "{}") as {
   ops: Array<{ label: string; facade: "publication" | "context" | "reader" | "reader_other" | "harness"; method: string; request?: any }>;
@@ -110,6 +111,20 @@ const harness: Record<string, (request: any) => Promise<unknown>> = {
     await tbl.update({ where, values: { status: "failed" } });
     const rows = await tbl.query().where(where).select(["status", "embedding"]).toArray();
     return rows.map((row) => ({ status: row.status, has_vector: row.embedding !== null && row.embedding !== undefined }));
+  },
+  /** Surgery: move one chunk row onto ANOTHER embedding profile -- its
+   *  `embedding_profile` and the `id` derived from it -- as a row written
+   *  under a since-retired profile id would sit (#30 R7: one table holds
+   *  several profiles, as built). The closed registry refuses every
+   *  `indexRevisionChunks` request under a non-active name, so a second
+   *  profile's row can only be planted this way, never by product code.
+   *  Answers the moved row's id and profile. */
+  async relabelChunkProfile(request: { id: string; newId: string; profile: string }) {
+    const tbl = await chunkTable();
+    const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
+    await tbl.update({ where: `id = ${quote(request.id)}`, values: { id: request.newId, embedding_profile: request.profile } });
+    const rows = await tbl.query().where(`id = ${quote(request.newId)}`).select(["id", "embedding_profile"]).toArray();
+    return rows.map((row) => ({ id: row.id, embedding_profile: row.embedding_profile }));
   },
   /** Surgery: make the NEXT index build fail for real (the index directory is
    *  not writable), while row appends -- data/, _versions/ -- still land. */

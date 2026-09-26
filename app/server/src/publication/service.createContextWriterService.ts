@@ -1,8 +1,10 @@
+import { type DigestProbeFn, type EmbedFn } from "./search-chunk.types";
 import { advanceReadCursor } from "./service.advanceReadCursor";
 import { appendMessages } from "./service.appendMessages";
 import { createContextReadMethods } from "./service.createContextReadMethods";
 import { createSessionLink } from "./service.createSessionLink";
 import { createTrace } from "./service.createTrace";
+import { embedPendingChunks } from "./service.embedPendingChunks";
 import { indexRevisionChunks } from "./service.indexRevisionChunks";
 import { joinSession } from "./service.joinSession";
 import { reconcileSearchChunks } from "./service.reconcileSearchChunks";
@@ -16,9 +18,21 @@ import { type Clock, type DatasetAdapter, type OwnerCore } from "./service.types
 export function createContextWriterService(
   writer: DatasetAdapter,
   core: OwnerCore,
-  options: { clock: Clock; sourceNamespace: string | null },
+  options: {
+    clock: Clock;
+    sourceNamespace: string | null;
+    /** #30 R8: the embed worker's DOCUMENT embedder (`embedPendingChunks`).
+     *  A writer option because that method writes vectors; distinct from the
+     *  reader-only query embedder semantic search uses. No chat model here
+     *  (#32 / R9). */
+    documentEmbedder?: EmbedFn;
+    digestProbe?: DigestProbeFn;
+    /** Canonical dataset root, for R20's pin file (`embedPendingChunks`,
+     *  `getSearchFreshness`). */
+    datasetRoot: string;
+  },
 ) {
-  const reads = createContextReadMethods(writer);
+  const reads = createContextReadMethods(writer, options.datasetRoot);
   return {
     ...reads,
 
@@ -30,6 +44,7 @@ export function createContextWriterService(
     indexRevisionChunks: (requestBytes: Uint8Array) => indexRevisionChunks(writer, core, options, requestBytes),
     writeChunkEmbedding: (requestBytes: Uint8Array) => writeChunkEmbedding(writer, core, options, requestBytes),
     reconcileSearchChunks: (requestBytes: Uint8Array) => reconcileSearchChunks(writer, core, options, requestBytes),
+    embedPendingChunks: (requestBytes: Uint8Array) => embedPendingChunks(writer, core, options, requestBytes),
     registerPeer: (requestBytes: Uint8Array) => registerPeer(writer, core, options, requestBytes),
     registerSession: (requestBytes: Uint8Array) => registerSession(writer, core, options, requestBytes),
     joinSession: (requestBytes: Uint8Array) => joinSession(writer, core, options, requestBytes),

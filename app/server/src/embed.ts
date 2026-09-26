@@ -11,15 +11,19 @@ export const DIMS = Number(process.env.EMBEDDING_DIMENSIONS ?? 384);
 
 export type EmbedHealth = { ok: boolean; model: string; dims: number; detail: string };
 
-// `model` defaults to EMBEDDING_MODEL. The #30 knowledge query embedder
-// (`composition.ts`) passes its own profile name here, so the label a semantic
-// search reports and the model that embedded its query are one value.
-export async function embed(texts: string[], model: string = MODEL): Promise<number[][]> {
+// `model` defaults to EMBEDDING_MODEL. The #30 knowledge embedders
+// (`composition.ts`) pass the registry's active profile model here, so the
+// profile a chunk or a semantic search reports and the model that embedded it
+// are one value. `signal` lets the #30 R8 embed worker abort a call it has
+// already timed out (it enforces the timeout itself; see
+// `service.embedPendingChunks.ts`).
+export async function embed(texts: string[], model: string = MODEL, signal?: AbortSignal): Promise<number[][]> {
   if (texts.length === 0) return [];
   const res = await fetch(`${OLLAMA_URL}/api/embed`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ model, input: texts }),
+    signal,
   });
   if (!res.ok) throw new Error(`embed failed: ${res.status} ${await res.text()}`);
   const json = (await res.json()) as { embeddings?: unknown };

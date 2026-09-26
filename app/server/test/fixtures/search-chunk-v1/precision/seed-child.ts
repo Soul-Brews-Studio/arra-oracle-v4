@@ -193,6 +193,51 @@ const harness: Record<string, (request: any) => Promise<unknown>> = {
       return { admitted: false, refusal: { name: shaped.name ?? null, message: String(shaped.message ?? error) } };
     }
   },
+  /** Delete one `search_chunks_v1` row by id -- used by the #30 R7 reconcile
+   *  tests to reach an INCOMPLETE chunk set (a revision partially indexed),
+   *  a state `indexRevisionChunks` itself can never produce (it either
+   *  writes every expected chunk or none, per its own already_satisfied
+   *  check). */
+  async deleteChunkById(request: { id: string }) {
+    const tbl = await harnessTable("search_chunks_v1");
+    const result = (await tbl.delete(`id = '${request.id}'`)) as unknown as { numDeletedRows?: number };
+    return { numDeletedRows: result?.numDeletedRows ?? null };
+  },
+  /**
+   * Fix-round finding 5 test scaffolding: builds the REAL shared lexical
+   * index (`src/fts/fts.ts`'s `ensureFtsIndexOn`, R14/R7's own
+   * `FTS_INDEX_OPTIONS`) on `search_chunks_v1.text` -- exactly what the
+   * concurrently-developed search-query slice will eventually call at
+   * startup, used here only to prove `getSearchFreshness` never leaks its
+   * table-wide `indexStats()` numbers as one workspace's own freshness.
+   * This harness does not add a product method; it calls the SAME already-
+   * shared, already-tested function search-query is expected to wire in.
+   *
+   * Integration merge: search-query landed, and its writer now builds this
+   * index inside every successful `indexRevisionChunks` call
+   * (`ensureSearchChunkTextIndex`). Calling this after such a call keeps the
+   * governed index as-is, so the tests that use it are unchanged.
+   */
+  async buildTextIndex() {
+    const ftsPath = new URL("../../../../src/fts/fts.ts", import.meta.url).pathname;
+    const { ensureFtsIndexOn } = await import(ftsPath);
+    const tbl = await harnessTable("search_chunks_v1");
+    const indices = await ensureFtsIndexOn(tbl, "text", false);
+    return { indices };
+  },
+  /**
+   * Integration merge surgery: drop every index on `search_chunks_v1`, the
+   * state of a dataset whose chunks predate the writer's index maintenance
+   * (search-chunk-v1.md section 13) -- the one state left in which
+   * `getSearchFreshness.text_index` is genuinely unknown, since every
+   * successful `indexRevisionChunks` call now builds the index. Answers how
+   * many indexes remain (0).
+   */
+  async dropTextIndex() {
+    const tbl = await harnessTable("search_chunks_v1");
+    for (const index of await tbl.listIndices()) await tbl.dropIndex(index.name);
+    return { remaining: (await tbl.listIndices()).length };
+  },
 };
 
 const trace: string[] = [];

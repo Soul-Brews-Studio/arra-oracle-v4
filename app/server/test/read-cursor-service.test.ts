@@ -60,7 +60,7 @@ describe("preflight: the required surface", () => {
       for (const factory of readers) {
         const bundle = await (service as Record<string, any>)[factory](fixture.datasetRoot);
         expect(Object.keys(bundle.context).sort()).toEqual([
-          "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
+          "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSearchFreshness", "getSession", "getTrace",
           "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks", "listSessionLinks", "listSessions",
           "listTraceHits", "searchKnowledgeKeyword", "searchKnowledgeSemantic",
         ]);
@@ -107,17 +107,18 @@ describe("real persistence: cursors inside the real gate", () => {
   ];
   const SEED = 4;
 
-  test("BOTH writer factories expose the twenty-seven context methods, with no nested close", async () => {
+  test("BOTH writer factories expose the thirty context methods, with no nested close", async () => {
     for (const factory of ["context", "evidence"] as const) {
       const fixture = await createReadCursorFixture([ALPHA]);
       try {
         const parsed = await drive(fixture.datasetRoot, [], { factory });
         // The writer's context facade spreads the full read-method set in
         // (`{ ...reads, ...writeOnly }`), so this is that union, not just the
-        // thirteen write-only methods.
+        // write-only methods. #30 R7/R8 added embedPendingChunks (write-only)
+        // and getSearchFreshness (read).
         expect(parsed.contextMethods).toEqual([
-          "advanceReadCursor", "appendMessages", "createSessionLink", "createTrace", "getContext",
-          "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
+          "advanceReadCursor", "appendMessages", "createSessionLink", "createTrace", "embedPendingChunks", "getContext",
+          "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSearchFreshness", "getSession", "getTrace",
           "indexRevisionChunks", "joinSession", "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks",
           "listSessionLinks", "listSessions", "listTraceHits", "reconcileSearchChunks", "registerPeer", "registerSession",
           "retireNode", "supersedeNode", "writeChunkEmbedding",

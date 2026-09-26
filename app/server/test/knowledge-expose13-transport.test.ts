@@ -35,6 +35,9 @@ import {
   parseSupersedeNode,
 } from "../src/publication/lifecycle";
 import {
+  activeEmbeddingProfileId,
+  parseEmbedPendingChunks,
+  parseGetSearchFreshness,
   parseIndexRevision,
   parseListChunks,
   parseReconcileSearch,
@@ -173,14 +176,14 @@ const REQUESTS: Readonly<Record<string, Record<string, unknown>>> = Object.freez
     workspace_name: ALPHA,
     revision_id: pad("rev1"),
     chunker_version: "chunker/v1",
-    embedding_profile: "all-minilm",
+    embedding_profile: activeEmbeddingProfileId(),
   },
   indexRevisionChunks: {
     workspace_name: ALPHA,
     node_id: pad("node1"),
     revision_id: pad("rev1"),
     chunker_version: "chunker/v1",
-    embedding_profile: { name: "all-minilm", dims: 384 },
+    embedding_profile: { name: activeEmbeddingProfileId(), dims: 384 },
   },
   writeChunkEmbedding: {
     workspace_name: ALPHA,
@@ -188,6 +191,11 @@ const REQUESTS: Readonly<Record<string, Record<string, unknown>>> = Object.freez
     embedding: Array.from({ length: 384 }, () => 0),
   },
   reconcileSearchChunks: { workspace_name: ALPHA, limit: 10 },
+  // Fix round nonblocking finding: the transport admission suite was not
+  // extended to this slice's two newest registry entries. Verified by hand
+  // in scratch (10 pass / 0 fail) but never pinned by a committed test.
+  getSearchFreshness: { workspace_name: ALPHA },
+  embedPendingChunks: { workspace_name: ALPHA, limit: 10 },
 });
 
 const READ_METHODS = [
@@ -197,6 +205,7 @@ const READ_METHODS = [
   "getRecallEligibility",
   "listLifecycleHistory",
   "listSearchChunks",
+  "getSearchFreshness",
 ] as const;
 const WRITE_METHODS = [
   "createSessionLink",
@@ -206,6 +215,7 @@ const WRITE_METHODS = [
   "indexRevisionChunks",
   "writeChunkEmbedding",
   "reconcileSearchChunks",
+  "embedPendingChunks",
 ] as const;
 const ALL_METHODS = [...READ_METHODS, ...WRITE_METHODS];
 
@@ -267,6 +277,25 @@ const fakeBundle: KnowledgeBundle = {
     async reconcileSearchChunks(bytes: Uint8Array) {
       parseReconcileSearch(bytes);
       return { visited: 0, missing: 0, missing_revisions: [], stale: 0, exhausted: true };
+    },
+    async getSearchFreshness(bytes: Uint8Array) {
+      parseGetSearchFreshness(bytes);
+      return {
+        content: { nodes: 0, revisions: 0 },
+        text_index: { indexed_rows: null, unindexed_rows: null },
+        vectors: {
+          profile_id: activeEmbeddingProfileId(),
+          pending: 0,
+          ready: 0,
+          failed: 0,
+          last_attempt_at: null,
+          model_digest: { pinned: null, last_measured: null },
+        },
+      };
+    },
+    async embedPendingChunks(bytes: Uint8Array) {
+      parseEmbedPendingChunks(bytes);
+      return { attempted: 0, embedded: 0, reused: 0, failed: 0, remaining: 0, skipped: 0, blocked: null };
     },
   } as never,
   evidence: {} as never,

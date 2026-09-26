@@ -43,7 +43,7 @@ import { createSessionLinkRequest, listSessionLinksRequest } from "./helpers/ses
 import { createTraceRequest, hitInput } from "./helpers/trace-fixture";
 import { getReadCursorRequest, advanceReadCursorRequest, expectedPointer } from "./helpers/read-cursor-fixture";
 import { getAssociationsRequest, reconcileRequest } from "./helpers/association-fixture";
-import { CHUNKER_VERSION } from "../src/publication/search-chunk";
+import { CHUNKER_VERSION, activeEmbeddingProfileId } from "../src/publication/search-chunk";
 import { OPERATOR } from "./helpers/read-boundary-fixture";
 
 const CHILD = new URL("./fixtures/isolation-v1/core/gated-isolation.ts", import.meta.url).pathname;
@@ -850,7 +850,9 @@ describe("search chunks: colliding revision_id across workspaces (regression pre
       const beta = fixture.workspaces[BETA]!;
       const nodeId = contextId("shared-chunk-node");
       const revId = contextId("shared-chunk-rev");
-      const profile = { name: "isolation-profile", dims: 384 };
+      // #30 R7: `indexRevisionChunks` refuses any `embedding_profile` name
+      // outside the closed registry.
+      const profile = { name: activeEmbeddingProfileId(), dims: 384 };
       const parsed = await drive(
         fixture,
         [

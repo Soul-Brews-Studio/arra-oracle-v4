@@ -324,7 +324,8 @@ carries either search. The writer keeps only the keyword index MAINTENANCE, in
 `indexRevisionChunks` (below). The branch as first written spread both methods onto every writer
 facade and threaded the embedder through writer options; the merge removed that. Pinned by
 the ownership tests' facade lists (`session-link-ownership.test.ts`: writer 28 methods, reader
-18) and by `search-chunk-retrieval.test.ts`'s `writerContextMethods`.)*
+18; 30 and 19 once section 14 added `embedPendingChunks` and `getSearchFreshness`) and by
+`search-chunk-retrieval.test.ts`'s `writerContextMethods`.)*
 
 Grammar (strict parser, closed keys; an optional key is admitted only when present, the
 `requester_peer_name` idiom): `query` is kept verbatim (no trim, fold or NFC), must hold a
@@ -415,8 +416,11 @@ embedded by a trusted, injected `QueryEmbedder {profile, embed}` (composition: `
 local Ollama; tests: a stub). The composition names the profile from `EMBEDDING_MODEL`, blank
 or unset meaning `DEFAULT_EMBEDDING_PROFILE = "all-minilm"`, and calls Ollama with that SAME
 name as the model, so the profile a search reports cannot differ from the model that embedded
-its query. A request naming no profile reads the embedder's own; a request for a profile the
-embedder does not serve is `invalid_value` at `/embedding_profile`, before any model call —
+its query. *(Integration merge, 2026-09-27: section 14 A's registry replaced this pairing. The
+profile is the active profile id, `ollama/<model>/384/none`, and the model is that profile's
+`model`; `DEFAULT_EMBEDDING_PROFILE` no longer exists. See section 14's merge note.)* A
+request naming no profile reads the embedder's own; a request for a profile the embedder does
+not serve is `invalid_value` at `/embedding_profile`, before any model call —
 vector spaces are never mixed. No embedder, a throw, no answer within 30 s, or a vector that
 is not 384 finite float32 values is `writer_unavailable` (503). That was `chat.ts`'s
 `mapModelFailure` choice when this slice was built; since then #32 / R9 has moved chat to its own
@@ -443,7 +447,8 @@ keyword|semantic`.
 
 **Still NOT claimed.**
 
-- No freshness report (unindexed-row count, pending/failed per profile).
+- No freshness report (unindexed-row count, pending/failed per profile). *(Integration merge,
+  2026-09-27: section 14 B's `getSearchFreshness` is that report.)*
 - A first build over a large pre-existing chunk table, and each refresh rebuild, runs in the
   owner's serialized queue: publications queued behind it wait for it.
 - The seam scan is a workspace-scoped scan (`chunk_index > 0` plus one escaped prefix clause per
@@ -461,7 +466,8 @@ keyword|semantic`.
   the refresh. Answers are unchanged, because LanceDB still searches unindexed rows; only speed
   is affected.
 - No embedding-profile registry: `DEFAULT_EMBEDDING_PROFILE` and the composition's
-  profile/model pairing are the seam a registry replaces.
+  profile/model pairing are the seam a registry replaces. *(Integration merge, 2026-09-27:
+  replaced by section 14 A's registry.)*
 - Eligibility is `getRecallEligibility`'s rule, reached through one seam,
   `service.recallEligibleNodeIds.ts`. *(Integration merge, 2026-09-27: after #29 slice B
   (section 12, lifecycle-v1.md's amendment) that rule is DESIGN.md §9's predicates: no terminal
@@ -498,3 +504,257 @@ refresh keeps unindexed rows below indexed ones),
 occurrence found on both, cross-workspace credential refused, beta's identical text never in
 alpha's answer), and `app/server/test/cli-search.test.ts` (bare `search` stays legacy;
 `--mode keyword|semantic` reaches the registry route).
+
+## 14. Amendment 2026-09-26 (overnight R7 (#30 part) + R8 + R20 (embedding digest pin, below))
+
+*(Integration merge, 2026-09-27: this amendment was written on a branch cut before sections
+12 and 13 landed; it keeps its own content and takes the next number. Where the two meet, the
+merge decided as follows. (1) Section A's registry replaces section 13's
+`DEFAULT_EMBEDDING_PROFILE` seam: that constant is gone, the composed query embedder's profile
+is `activeEmbeddingProfileId()` and it embeds with the active profile's own `model`, and a
+semantic search naming no profile reads the active id. Section 13's refusal of a profile the
+embedder does not serve is unchanged; its parser still takes any well-formed name. (2) Every
+server-side index request names the active id too: the v3 adapter's `indexProfile()`
+(`knowledge/transport.indexProfile.ts`) and the migration's `deriveProjections` used the bare
+model name, which section A refuses. (3) The embed worker's embedder is a WRITER option, named
+`documentEmbedder` (`ContextOptions`, `KnowledgeDatasetConfig`) apart from section 13's
+READER-only query `embedder`: `embedPendingChunks` writes vectors, so it runs on the writer,
+while no search and no chat call ever opens one (R9). `composition.ts` composes the chat
+model, the query embedder, the document embedder and R20's digest probe. (4)
+`getSearchFreshness` is a read: it is in `createContextReadMethods`, so it is on every reader
+facade and, like every read, spread onto every writer facade; the registry routes it to the
+reader. `embedPendingChunks`, `indexRevisionChunks`, `writeChunkEmbedding` and
+`reconcileSearchChunks` are writer-only. The ownership tests pin 30 context methods on a
+writer facade and 19 on a reader facade. (5) Section B's `ineligible` is section 12's field:
+the merged `reconcileSearchChunks` keeps section B's accounting and reads the page's terminal
+events in section 12's single `terminalEventsFor` query. (6) Section 13's writer builds the
+text index inside every successful `indexRevisionChunks` call, so section B's
+`text_index` is real numbers from the first indexed chunk on, and `null` only for a table with
+no lexical index, such as a dataset whose chunks predate section 13.)*
+
+Slices A (embedding-profile registry), B (`reconcileSearchChunks` correctness and
+`getSearchFreshness`), C (`embedPendingChunks`, the embed worker) and R20 (the embedding model
+digest pin), per `docs/overnight/DECISIONS.md` R7, R8 and R20. This corrects §1's and §9's
+"not-yet-implemented" language about the embed step and supersedes §6's description of
+`reconcileSearchChunks`; the sections above are left unedited as the historical record. It
+replaces two earlier drafts of this amendment on the same unmerged branch, whose boot-time
+digest pin R20 rejected (see "Review history" at the end).
+
+### A. The closed embedding-profile registry
+
+`search-chunk.profiles.ts` declares ONE active profile, `ACTIVE_EMBEDDING_PROFILE`:
+`{profile_id, provider: "ollama", model, dims: 384, normalization: "none", document_prefix: "",
+query_prefix: "", input_rule: "chunker/v1:title\n\nbody"}`, where `model` is
+`EMBEDDING_MODEL ?? "all-minilm"` — the same variable and default `embed.ts` embeds with.
+
+`profile_id`, the string stored in every row's `embedding_profile`, is
+`ollama/<model>/384/none` (default `ollama/all-minilm/384/none`). It is configuration only: it
+contains no measured value, so nothing a running server observes can change it (R20, below).
+
+An `embedding_profile` other than the active id is `invalid_value`: at `/embedding_profile/name`
+for `indexRevisionChunks` (before the frozen-384 `dims` check) and at `/embedding_profile` for
+`listSearchChunks`. R7's "one table holds several embedding profiles, as built" is about the
+physical schema: a row written under a retired or pre-registry profile id is never deleted and
+stays physically present; only a REQUEST naming a non-active profile is refused.
+
+### R20. The model digest is part of the profile identity
+
+The profile's identity is the pair (`profile_id`, the model digest pinned for it in this
+dataset). `profile_id` never carries the digest, because rows are indexed before anything is
+embedded, and an id that followed the digest would change the moment the first measurement
+arrived. The digest half is pinned per dataset and enforced on every embed run.
+
+1. **Pin record.** `<dataset root>/.embedding-profile-pins.json`:
+   `{"version": "arra-embedding-pins/v1", "pins": {"<profile_id>": {"digest": "<64 hex>",
+   "pinned_at": "<ISO-8601 UTC>"}}}`. It is a sidecar file, not a LanceDB table (Python owns the
+   schema). It is keyed by `profile_id`, so a changed `EMBEDDING_MODEL` starts its own pin. It is
+   written atomically (temp file, then `rename`), never overwritten and never created by boot,
+   and the writer creates no directories. A file that exists but cannot be read, carries another
+   `version`, or holds a digest outside `^[0-9a-f]{64}$` is `integrity_failure` for both
+   `embedPendingChunks` and `getSearchFreshness`. A damaged pin is never read as "not pinned".
+2. **Measurement.** `GET {OLLAMA_URL}/api/tags`, the `models[]` entry whose `name` or `model`
+   is `EMBEDDING_MODEL` or `EMBEDDING_MODEL:latest`, and its `digest`. Only a 64-lowercase-hex
+   value counts. Each probe is bounded by `ARRA_EMBED_DIGEST_TIMEOUT_MS` (default 2000 ms; a
+   value that is not a finite positive number falls back to it), enforced by the caller's own
+   timer. Unreachable, timed out, non-2xx, no matching model, or an unrecognisable digest all
+   read as **unmeasured**. **Measured correction to R20's wording**: R20 and the brief name
+   `/api/show`. Measured 2026-09-26 on m5 against a real Ollama serving `all-minilm`, that
+   response has no `digest` field (top-level keys: `license`, `modelfile`, `parameters`,
+   `template`, `details`, `model_info`, `capabilities`, `modified_at`). `/api/tags` carries it
+   (`all-minilm` was `1b226e2802dbb772b5fc32a58f103ca1804ef7501331012de126ab22f67475ef` there
+   that day), so the probe reads `/api/tags`.
+3. **Every `embedPendingChunks` run** follows these steps after the grammar and workspace
+   checks and before it reads any candidate row:
+   - **Probe.** If the digest is unmeasured, the call returns
+     `{attempted: 0, embedded: 0, reused: 0, failed: 0, remaining: <eligible rows>, skipped: 0,
+     blocked: "digest_unmeasured"}`. There is no embedder call and no row change: no row is
+     marked `failed` and `attempts` is untouched. No pin is written.
+   - **Measured but different from the pin.** The call throws `embedding_profile_mismatch`
+     naming both digests. Nothing is embedded or written.
+   - **Measured and equal to the pin, or nothing pinned yet.** The run proceeds.
+   - **Probe again after the embedder returns vectors,** before the write turn. Anything other
+     than the same digest (a build swapped during the call, or no answer) returns
+     `blocked: "digest_unmeasured"` and writes nothing. No single digest covers those vectors.
+   - **Inside the write turn, before any write,** the pin is re-read (a concurrent run may
+     have pinned in the meantime); a different pin is `embedding_profile_mismatch`. If nothing
+     is pinned and this turn will write at least one vector (a fresh embedding or a
+     content-hash reuse), the run's own measured digest is pinned immediately before the first
+     vector write. A run whose rows all fail or are all skipped pins nothing. A pin that cannot
+     be written is `writer_unavailable`, and no vector is written.
+   - With no digest probe configured (`ContextOptions.digestProbe` /
+     `KnowledgeDatasetConfig.digestProbe` absent), every run is `blocked: "digest_unmeasured"`.
+     `composition.ts` wires the `/api/tags` probe; tests wire a stub.
+4. **`embedding_profile_mismatch`** is a new closed code in `arra-publication-error/v1`,
+   appended to `PUBLICATION_ERROR_CODES`. It maps to HTTP 409; MCP returns `isError` with the
+   same envelope, and CLI `kb` prints it. The envelope is
+   `{version: "arra-publication-error/v1", code: "embedding_profile_mismatch", path: "",
+   message: "embedding model digest differs from the dataset's pinned digest", pinned_digest,
+   measured_digest}`. The two digest fields exist on this code only. They are the one exception
+   to `revision-publication-v1.md` §8's four-field envelope. The message stays a fixed literal,
+   and both digests passed `^[0-9a-f]{64}$` before use, so the reason for fixed messages (no
+   caller text, paths or SDK internals) still holds. Resolution is an operator's deliberate
+   re-index (item 8), never a retry.
+5. **Boot** (`runStartupIndexWork`, `composeKnowledgeAccess`, `buildApp`) never probes the
+   model, never pins, and never changes a profile id.
+6. **No flip, ever.** `profile_id` never changes, and no row's `embedding_profile` is ever
+   rewritten. Rows indexed while the digest was unmeasured are exactly the rows a later
+   measured run embeds.
+7. **`getSearchFreshness.vectors.model_digest`** is `{pinned, last_measured}`. `pinned` comes
+   from the pin file and is `null` until the first vector is written. `last_measured` is what
+   the most recent `embedPendingChunks` probe in THIS server process measured for this dataset.
+   It is `null` before any run in this process, or when that probe could not measure. Both are
+   dataset-wide, because one pin covers the whole profile. `pinned != last_measured` (both
+   non-null) is exactly the state in which embed runs refuse.
+8. **Re-indexing is an operator act.** No API changes a pin. To adopt a new model build, an
+   operator re-indexes under a new profile deliberately. One way is to set `EMBEDDING_MODEL` to
+   a distinct name or tag: that is a new `profile_id`, pinned separately by its own first embed
+   run, after which `indexRevisionChunks` and `embedPendingChunks` are re-run. The other way is
+   to start a fresh dataset root. The old profile's rows stay physically present (R7) and are
+   never listed under the new id. This slice ships no in-place re-pin tool.
+9. **Outside R20's measurement.** `writeChunkEmbedding` (R8's external-worker path) stores a
+   caller-supplied vector for an existing row. The server cannot measure what model produced
+   that vector, so a `content:write` caller that uses it with another model can still mix
+   vectors. This is a trust boundary of that method, stated rather than enforced.
+
+### B. `reconcileSearchChunks` correctness
+
+Presence is recomputed from the head revision's own title and body
+(`chunkText`/`deriveChunkId`/`deriveContentHash`, the same derivation `indexRevisionChunks`
+uses), not trusted from a row count. It is scoped to `(revision_id, CHUNKER_VERSION, active
+profile)`, so a revision indexed only under a non-active profile counts as missing for the
+active one. The response gains these fields:
+
+- `incomplete`: a partial expected set; the revision still lands in `missing_revisions`.
+- `hash_mismatch`: a present row whose `content_hash` no longer matches the recomputed one.
+- `ineligible`: a retired or superseded node (`getRecallEligibility`'s own `supersede_log`
+  check). It is excluded from missing, incomplete, hash_mismatch and stale accounting.
+- `missing_source`: a chunk row belonging to no visited node, or whose `revision_id` is not any
+  visited node's accepted head. It is global and bounded by the node sweep.
+- `pending`/`ready`/`failed`: global counts for the active profile.
+
+The `stale` probe now runs for every visited eligible node, including one whose head is itself
+unindexed. The earlier `continue` skipped exactly that case. `missing`/`missing_revisions`/
+`stale`/`visited`/`exhausted` keep their meaning and shape.
+
+### B. `getSearchFreshness` (new, `content:read`)
+
+It answers three stages, each from its own measurement, and keeps unknown distinct from zero:
+
+- `content.nodes`/`content.revisions`: plain counts, always knowable.
+- `text_index.indexed_rows`/`unindexed_rows`: from `DatasetAdapter.textIndexStats`. They are
+  `null` when no lexical index exists yet on `search_chunks_v1.text`. LanceDB's `indexStats()`
+  answers for the one shared table, with no per-predicate variant. So the figures are reported
+  only when the requesting workspace holds every row currently in the table; otherwise both are
+  `null`, never another workspace's numbers.
+- `vectors.pending`/`ready`/`failed`: counts for the active profile. `vectors.last_attempt_at`
+  is `null` when no row has been attempted. `vectors.model_digest` is R20 item 7.
+
+### C. `embedPendingChunks` (new, `content:write`, per R8 on HTTP, MCP and CLI `kb`)
+
+After R20's step 0 the run does four things:
+
+1. It reads `pending` rows, and `failed` rows under `MAX_EMBED_ATTEMPTS` (5), for the active
+   profile.
+2. It tries content-hash reuse first: it copies an existing `ready` vector for the same
+   workspace, chunker, active profile and `content_hash`, with no embedder call.
+3. It calls the injected embedder for the rest, OUTSIDE `core.serial`, bounded by
+   `ARRA_EMBED_TIMEOUT_MS` (default 30 s) with a timer. The response is validated before any
+   write: the count, each vector's length against the frozen 384, and finiteness. An
+   out-of-contract batch is `embedder_bad_response` for the whole batch.
+4. It writes every outcome in ONE `core.serial` turn with `writeChunkEmbedding`'s
+   update-then-verify-readback shape. Each row's `(status, attempts)` is re-read first, and a
+   row another writer moved in the meantime is skipped, never overwritten.
+
+The result is `{attempted, embedded, reused, failed, remaining, skipped, blocked}`. A failure is
+a closed `error_code`: `embedder_unavailable` (no embedder configured), `embedder_timeout`, or
+`embedder_bad_response`; `attempts` is incremented and `status` becomes `"failed"`.
+`indexRevisionChunks` itself still never embeds, so §1's "embedding is off the authoritative
+write path" holds. `composition.ts` wires `embed.ts`'s `embed()`, which now takes an optional
+`AbortSignal` (after the `model` argument section 13 added: `embed(texts, model, signal)`), as
+the writer's `documentEmbedder`.
+
+### Proof
+
+- `app/server/test/search-chunk-digest-pin.test.ts` covers R20 items 1, 3, 6 and 7, in gated
+  children with a stub embedder and a scripted stub probe; each restart is a new process. It
+  proves:
+  - the first run pins, and an all-failed run pins nothing;
+  - the same digest after a restart proceeds;
+  - a changed digest is refused with the exact envelope: zero embedder calls, the row still
+    `pending`/`attempts: 0`/`embedding: null`, pin and `profile_id` unchanged;
+  - an unmeasured, hung or unconfigured probe blocks with zero vectors;
+  - a digest that changes during the embedder call writes nothing;
+  - a damaged pin file is `integrity_failure` for both `embedPendingChunks` and
+    `getSearchFreshness`, with no embedder call and no re-pin;
+  - unmeasured-then-measured across a restart embeds the same rows under the same
+    `profile_id`.
+- `app/server/test/search-chunk-digest-boot.test.ts` covers items 2, 4 and 5 through the
+  production wiring (`runStartupIndexWork` and `composeKnowledgeAccess`, nothing injected)
+  against a stub Ollama HTTP server. It proves:
+  - boot makes zero requests and writes no pin file;
+  - embed pins A;
+  - a reboot against a healthy Ollama now serving B changes nothing, and the next embed
+    refuses naming A and B;
+  - boot 1 before Ollama can answer and boot 2 after keep one `profile_id`;
+  - `fetchOllamaModelDigest` is bounded and ignores a non-hex digest.
+- `search-chunk-reconcile.test.ts` and `search-chunk-reconcile-fixround.test.ts` cover section
+  B. The `text_index` isolation case includes two workspaces that each own chunks.
+- `search-chunk-embed-worker.test.ts` covers section C: a publish is never blocked (proved by
+  a handshake), plus the write race, bad responses, retry, reuse, no embedder, the retry cap,
+  and the full loop.
+- `knowledge-expose13-transport.test.ts` covers admission for `getSearchFreshness` and
+  `embedPendingChunks`.
+
+Every search-chunk test that indexed under a free-text profile name now uses
+`activeEmbeddingProfileId()`. *(Integration merge: so do section 13's retrieval tests, the
+lifecycle and v3-adapter tests that index or list chunks, and the `indexProfile()` test. A
+retrieval test that needs rows under a second profile plants them by harness surgery, the way
+section B's tests plant a non-active profile row.)*
+
+### Review history and known limits
+
+An independent verifier refuted two earlier drafts on this branch.
+
+- **Round 1** found five defects:
+  - an unbounded boot digest probe;
+  - an unpinned identity;
+  - unvalidated embedder output that poisoned the writer;
+  - a lost write race;
+  - the `text_index` cross-workspace leak.
+
+  It also found weak tests. The fixes for the last three stand as described in sections B and
+  C.
+- **Round 2** showed the boot-time pin failing both ways R20 names. A pinned dataset never
+  re-probed, so a new build under the same name mixed vectors into the old profile. And
+  unmeasured-then-measured boots still flipped `profile_id`. R20 replaces that design with the
+  one above.
+
+Known limits, disclosed rather than fixed:
+
+- `missing_source` over-counts when `exhausted` is false and overlaps `stale`.
+- `embedPendingChunks` also embeds rows of superseded revisions.
+- `classifyEmbedError` maps a refused connection or a 503 to `embedder_bad_response`. An
+  Ollama outage now blocks at the probe before any row is touched, so only an outage that
+  starts between the probe and the embed call still consumes attempts.
+- `text_index` is non-null exactly when the caller's workspace owns every chunk row, which
+  tells a `content:read` caller whether any other workspace has indexed chunks (one bit).

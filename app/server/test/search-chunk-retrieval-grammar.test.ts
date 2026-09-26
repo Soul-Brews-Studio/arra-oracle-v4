@@ -9,11 +9,11 @@
 import { describe, expect, test } from "bun:test";
 import { ContractError } from "../src/contracts/errors";
 import {
+  activeEmbeddingProfileId,
   CHUNK_SIZE_CHARS,
   chunkMayHoldQuery,
   chunkSourceText,
   chunkText,
-  DEFAULT_EMBEDDING_PROFILE,
   DEFAULT_SEARCH_LIMIT,
   groupKnowledgeHits,
   keywordScanPredicate,
@@ -80,7 +80,11 @@ describe("searchKnowledgeSemantic grammar", () => {
   const parse = (request: Record<string, unknown>) => parseSearchKnowledgeSemantic(bytes(request));
 
   test("the profile is optional; absent means the query embedder's own profile, resolved by the service", () => {
-    expect(DEFAULT_EMBEDDING_PROFILE).toBe("all-minilm");
+    // Integration merge: the #30 registry's active profile id replaced the
+    // `DEFAULT_EMBEDDING_PROFILE = "all-minilm"` seam -- the id the service
+    // falls back to with no embedder composed, and the one production
+    // composes the query embedder with (embed.ts's own `??` model rule).
+    expect(activeEmbeddingProfileId()).toBe(`ollama/${process.env.EMBEDDING_MODEL ?? "all-minilm"}/384/none`);
     expect(parse({ workspace_name: "alpha", query: "q" })).toEqual({
       workspace_name: "alpha",
       query: "q",

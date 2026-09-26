@@ -33,14 +33,16 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createFixture, PYTHON, revisionEnvelope, runGated, type Fixture } from "./helpers/publication-fixture";
-import { CHUNKER_VERSION, deriveChunkId } from "../src/publication/search-chunk";
+import { CHUNKER_VERSION, activeEmbeddingProfileId, deriveChunkId } from "../src/publication/search-chunk";
 
 const CHILD = join(import.meta.dir, "fixtures", "search-chunk-v1", "core", "gated-retrieval.ts");
 const TIMEOUT_MS = 180_000;
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
-const PROFILE = "all-minilm";
-const OTHER_PROFILE = "other-profile";
+// #30 R7 (search-embed): the closed registry accepts only its active id.
+const PROFILE = activeEmbeddingProfileId();
+// A non-active profile id, as a since-retired profile's rows would carry.
+const OTHER_PROFILE = "ollama/other-model/384/none";
 const DIMS = 384;
 
 const MISSING: string[] = [];
@@ -161,7 +163,16 @@ function buildOps(fixture: Fixture): Op[] {
     ["idx_failed", ALPHA, N.failed, R.failed],
   ] as const) index(label, workspace, node, revision);
   // Indexed and embedded ONLY under another profile, AT the query vector.
-  index("idx_other", ALPHA, N.other, R.other, OTHER_PROFILE);
+  // The closed registry (#30 R7) indexes only under the active profile, so
+  // the row is indexed there and then moved onto OTHER_PROFILE by surgery --
+  // the state a row written under a since-retired profile id is in.
+  index("idx_other", ALPHA, N.other, R.other);
+  ops.push({
+    label: "idx_other_relabel",
+    facade: "harness",
+    method: "relabelChunkProfile",
+    request: { id: chunk(R.other), newId: chunk(R.other, OTHER_PROFILE), profile: OTHER_PROFILE },
+  });
   harness("indices_after_writer", "listIndices");
 
   embed("emb_thai", ALPHA, R.thai, E0);
@@ -243,7 +254,7 @@ function buildOps(fixture: Fixture): Op[] {
   semantic("sem_nearest", "q-e0");
   semantic("sem_limit_two", "q-e0", { limit: 2 });
   semantic("sem_explicit_profile", "q-e0", { embedding_profile: PROFILE });
-  semantic("sem_profile_mismatch", "q-e0", { embedding_profile: "other-profile" });
+  semantic("sem_profile_mismatch", "q-e0", { embedding_profile: OTHER_PROFILE });
   semantic("sem_embedder_down", "q-unknown");
   semantic("sem_beta", "q-e0", {}, BETA);
   ops.push({ label: "sem_other_default", facade: "reader_other", method: "searchKnowledgeSemantic", request: { workspace_name: ALPHA, query: "q-e0" } });
@@ -307,6 +318,8 @@ describe("#30 knowledge retrieval on a real gated dataset", () => {
       expect(ok("retire").outcome).toBe("accepted");
       expect(ok("supersede").outcome).toBe("accepted");
       expect(ok("pub_stale2").revision_id).toBe(R.stale2);
+      // The planted second-profile row: exactly one, under OTHER_PROFILE only.
+      expect(ok("idx_other_relabel")).toEqual([{ id: chunk(R.other, OTHER_PROFILE), embedding_profile: OTHER_PROFILE }]);
       expect(out.readerContextMethods).toEqual(expect.arrayContaining(["searchKnowledgeKeyword", "searchKnowledgeSemantic"]));
       // Reader-only (#30 merged under #32 / R9's rule): no writer facade searches.
       expect(out.writerContextMethods).not.toContain("searchKnowledgeKeyword");

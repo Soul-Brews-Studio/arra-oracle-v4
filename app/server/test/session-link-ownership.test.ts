@@ -71,15 +71,19 @@ const RUNTIME_EXPORTS = [
 ].join(",");
 /** Twenty-two on every context WRITER facade (its own eleven plus the eleven
  *  reader methods it spreads in), eleven on every context READER facade. */
+// #30 overnight R7/R8: `getSearchFreshness` (read) and `embedPendingChunks`
+// (write-only) join the context facade -- both lists below grew accordingly.
 const CONTEXT_WRITE_METHODS =
-  "advanceReadCursor,appendMessages,createSessionLink,createTrace,getContext," +
-  "getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
+  "advanceReadCursor,appendMessages,createSessionLink,createTrace,embedPendingChunks," +
+  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
+  "getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
   "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessions,listTraceHits," +
   "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
   "writeChunkEmbedding";
 const CONTEXT_READ_METHODS =
-  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
+  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
+  "getSession,getTrace," +
   "listConnections,listLifecycleHistory,listMcpCalls,listMessages,listPeers," +
   "listSearchChunks,listSessionLinks,listSessions,listTraceHits,searchKnowledgeKeyword," +
   "searchKnowledgeSemantic";
@@ -354,15 +358,22 @@ describe("context facades across all four factories", () => {
       expect(writerMethods).toContain("listSessionLinks");
       expect(readerMethods).toContain("listSessionLinks");
       expect(readerMethods).not.toContain("createSessionLink");
-      // 28: #32 / R9 moved `answerChat` off the writer onto the reader-side chat facade.
-      // 18: #30's two searches are READER-only (service.createSearchService.ts):
+      // 30: #32 / R9 moved `answerChat` off the writer onto the reader-side chat facade.
+      // 19: #30's two searches are READER-only (service.createSearchService.ts):
       // their query embedder is composed onto the reader like chat's model, so
       // the writer gains neither -- only `indexRevisionChunks` maintains the index.
-      expect({ writer: writerMethods.length, reader: readerMethods.length }).toEqual({ writer: 28, reader: 18 });
+      // #30 R7/R8 (search-embed) added `embedPendingChunks` (write-only: it
+      // writes vectors, so its document embedder is a WRITER option) and
+      // `getSearchFreshness` (a read, on the reader and, like every read,
+      // spread onto the writer): 28 -> 30 and 18 -> 19.
+      expect({ writer: writerMethods.length, reader: readerMethods.length }).toEqual({ writer: 30, reader: 19 });
       for (const search of ["searchKnowledgeKeyword", "searchKnowledgeSemantic"]) {
         expect(readerMethods).toContain(search);
         expect(writerMethods).not.toContain(search);
       }
+      expect(readerMethods).toContain("getSearchFreshness");
+      expect(writerMethods).toContain("embedPendingChunks");
+      expect(readerMethods).not.toContain("embedPendingChunks");
       expect(writerMethods).not.toContain("close");
       expect(readerMethods).not.toContain("close");
     },
