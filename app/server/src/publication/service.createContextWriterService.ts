@@ -37,5 +37,9 @@ export function createContextWriterService(
     // No `answerChat` here any more (#32 slice A, R9): it persists nothing, so
     // it is composed over the READER (service.createChatService.ts) and never
     // needs, holds or releases this writer.
+    // No `searchKnowledgeKeyword`/`searchKnowledgeSemantic` either (#30), for
+    // the same reason: they are READER-only (service.createSearchService.ts),
+    // and the query embedder is never a writer option. What the writer keeps
+    // is the keyword index MAINTENANCE, inside `indexRevisionChunks`.
   };
 }

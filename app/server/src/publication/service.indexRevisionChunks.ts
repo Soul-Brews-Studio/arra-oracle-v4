@@ -1,5 +1,5 @@
 import { failPublication } from "./errors";
-import { CHUNK_STATUSES, SEARCH_CHUNK_FIELDS, chunkText, deriveChunkId, deriveContentHash, encodeSearchChunkRow, parseIndexRevision } from "./search-chunk";
+import { CHUNK_STATUSES, SEARCH_CHUNK_FIELDS, chunkSourceText, chunkText, deriveChunkId, deriveContentHash, encodeSearchChunkRow, parseIndexRevision } from "./search-chunk";
 import { quote } from "./storage";
 import { RESERVED_TYPE_VOCABULARY, SEARCH_CHUNKS } from "./service.constants";
 import { contextOne } from "./service.contextOne";
@@ -13,7 +13,55 @@ import { sameEncodedValue } from "./service.sameEncodedValue";
 import { selectAcceptedRevision } from "./service.selectAcceptedRevision";
 import { type Clock, type DatasetAdapter, type OwnerCore } from "./service.types";
 
-export function indexRevisionChunks(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null }, requestBytes: Uint8Array) {
+/**
+ * #30 retrieval (overnight R7 #30 part + R14): the writer that adds chunks
+ * also maintains their text index. Every successful call -- `indexed` or an
+ * `already_satisfied` replay -- ends by leaving exactly one FTS index on
+ * `search_chunks_v1.text` built from the shared `FTS_INDEX_OPTIONS`: kept
+ * as-is when its live details already match (no rebuild, no new version),
+ * rebuilt under its own name when they differ, and rebuilt over every row
+ * once the rows appended since its build outnumber the ones it covers
+ * (LanceDB still finds those, unindexed and slower -- measured). A reader
+ * never builds it; until a writer has, keyword search scans and says so.
+ *
+ * It is its OWN serialized turn, queued right after the write turn, so it
+ * runs with no write attempted in that turn: the chunk rows are already
+ * verified durable, and a failed build is `writer_unavailable` (retry; the
+ * replay repeats only this step) -- never a poisoned owner, which is what any
+ * failure after `markAttemptedWrite` would be (`createOwnerCore`'s `serial`).
+ * If the owner stopped serving between the two turns (closed, or poisoned by
+ * another request), the queue refuses the index turn; the rows this call
+ * verified still stand, so the call still answers them, and the next owner's
+ * index call builds the index.
+ */
+async function ensureChunkTextIndex(writer: DatasetAdapter, core: OwnerCore): Promise<void> {
+  let built: boolean;
+  try {
+    built = await core.serial(async () => {
+      try {
+        await writer.ensureSearchChunkTextIndex();
+        return true;
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return; // refused by the queue itself: see above.
+  }
+  if (!built) failPublication("writer_unavailable", "");
+}
+
+export async function indexRevisionChunks(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null }, requestBytes: Uint8Array) {
+  const result = await indexChunkRows(writer, core, requestBytes);
+  // #29 (R7) refuses a retired or superseded node with a returned
+  // `ineligible` outcome before anything is written or verified. That
+  // refusal has no index step: it added no rows for an index to cover, and a
+  // failed build must not turn the refusal into `writer_unavailable`.
+  if (result.outcome !== "ineligible") await ensureChunkTextIndex(writer, core);
+  return result;
+}
+
+function indexChunkRows(writer: DatasetAdapter, core: OwnerCore, requestBytes: Uint8Array) {
 const request = parseIndexRevision(requestBytes);
       return mutateContextWrite(core, async () => {
         await requireContextWorkspaceRow(writer, request.workspace_name);
@@ -73,7 +121,8 @@ const request = parseIndexRevision(requestBytes);
         const title = selected.title;
         const body = selected.body;
         if (typeof title !== "string" || typeof body !== "string") failPublication("integrity_failure", "");
-        const derivedText = `${title}\n\n${body}`;
+        // The same string keyword search re-checks a hit against.
+        const derivedText = chunkSourceText(title, body);
         const embeddingProfileName = request.embedding_profile.name;
         const pieces = chunkText(derivedText);
 
@@ -125,10 +174,8 @@ const request = parseIndexRevision(requestBytes);
         const existingById = new Map(existing.map((row) => [row.id as string, row]));
 
         if (targets.length > 0 && targets.every((target) => existingById.has(target.id))) {
-          return {
-            outcome: "already_satisfied" as const,
-            rows: targets.map((target) => encodeSearchChunkRow(existingById.get(target.id)!)),
-          };
+          const rows = targets.map((target) => encodeSearchChunkRow(existingById.get(target.id)!));
+          return { outcome: "already_satisfied" as const, rows };
         }
 
         const toWrite = targets.filter((target) => !existingById.has(target.id));

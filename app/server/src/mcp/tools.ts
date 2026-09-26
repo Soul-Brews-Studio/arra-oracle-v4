@@ -143,10 +143,30 @@ const BINDING_NOTE =
   " If this credential's grant carries an arra-auth/v1 peers binding, every acting-peer field must name a bound" +
   " peer, else forbidden.";
 
+/**
+ * #30 (overnight R7 #30 part + R14): the two recall tools say what an answer
+ * is, since "search" alone would suggest chunks, fusion or history.
+ */
+const SEARCH_NOTES: Readonly<Record<string, string>> = Object.freeze({
+  searchKnowledgeKeyword:
+    " Keyword recall: payload {workspace_name, query, limit?} (limit 1..50, default 10). Answers NODES at their" +
+    " current head revision whose text (title and body, across chunk boundaries) contains the query," +
+    ' case-insensitive; retired and superseded nodes are excluded. match is "ngram" (trigram index, every hit' +
+    ' re-checked as a substring) or "substring_scan" (a query under 3 characters, or no index built yet); a' +
+    ' hit with match "substring_scan" and score null in an ngram answer was found at a chunk seam.' +
+    " Never fused with semantic results.",
+  searchKnowledgeSemantic:
+    " Semantic recall: payload {workspace_name, query, limit?, embedding_profile?} (profile defaults to the" +
+    " server's query embedder's own: EMBEDDING_MODEL, else all-minilm; any other profile is refused)." +
+    " Answers NODES at their current head revision, nearest READY chunk vector first by squared" +
+    " L2 distance; retired and superseded nodes are excluded. Never fused with keyword results.",
+});
+
 export const KNOWLEDGE_TOOLS = KNOWLEDGE_METHOD_NAMES.map((method) => ({
   name: `kb_${method}`,
   description:
     `Publication/taxonomy/context/evidence kernel method "${method}", scoped to this connection's bank.` +
+    (SEARCH_NOTES[method] ?? "") +
     (READ_BOUNDARY_METHODS.has(method) ? READ_BOUNDARY_NOTE : "") +
     (Object.hasOwn(PEER_FIELDS, method) ? BINDING_NOTE : ""),
   inputSchema: {

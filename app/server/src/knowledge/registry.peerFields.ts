@@ -89,4 +89,7 @@ export const PEER_FIELDS: Readonly<Record<string, readonly PeerFieldPath[]>> = O
   getRevisionAssociations: [],
   scanDependents: [],
   reconcileRevisionAssociations: [],
+  // #30 retrieval: a query names no acting peer.
+  searchKnowledgeKeyword: [],
+  searchKnowledgeSemantic: [],
 });

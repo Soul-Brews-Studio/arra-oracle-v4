@@ -1,12 +1,8 @@
 import { MatchQuery, type Table } from "@lancedb/lancedb";
-import {
-  FTS_CANDIDATE_CEILING,
-  FTS_CANDIDATE_FACTOR,
-  FTS_MIN_QUERY_CODE_POINTS,
-  type FtsResult,
-} from "./fts.constants";
+import { FTS_MIN_QUERY_CODE_POINTS, type FtsResult } from "./fts.constants";
 import { containsFolded } from "./fts.containsFolded";
 import { likeContainsPredicate } from "./fts.likeContainsPredicate";
+import { overfetch } from "./fts.overfetch";
 
 type Row = Record<string, unknown>;
 
@@ -44,20 +40,16 @@ export async function substringSearch(
     return { match: "substring_scan", rows };
   }
 
-  let fetch = Math.max(limit, Math.min(limit * FTS_CANDIDATE_FACTOR, FTS_CANDIDATE_CEILING));
-  for (;;) {
+  // Done when enough verified, when the index had nothing more to give, or at
+  // the ceiling -- the shared loop in `fts.overfetch.ts`.
+  const rows = await overfetch(limit, async (fetch) => {
     const candidates: Row[] = await table
       .query()
       .fullTextSearch(new MatchQuery(q, column))
       .where(scope)
       .limit(fetch)
       .toArray();
-    const rows = candidates.filter((row) => containsFolded(row[column], q));
-    // Done when enough verified, when the index had nothing more to give, or
-    // at the ceiling.
-    if (rows.length >= limit || candidates.length < fetch || fetch >= FTS_CANDIDATE_CEILING) {
-      return { match: "ngram", rows: rows.slice(0, limit) };
-    }
-    fetch = Math.min(fetch * 2, FTS_CANDIDATE_CEILING);
-  }
+    return { fetched: candidates.length, kept: candidates.filter((row) => containsFolded(row[column], q)) };
+  });
+  return { match: "ngram", rows };
 }

@@ -30,7 +30,7 @@
 
 import type { RequestAuthority } from "../publication/context";
 import type { EvidenceReaderBundle, EvidenceWriterBundle } from "../publication/service";
-import type { ChatService } from "../publication/service.types";
+import type { ChatService, SearchService } from "../publication/service.types";
 
 export type { RequestAuthority };
 
@@ -81,13 +81,17 @@ export type KnowledgeAction = "content:read" | "content:write" | "audit:read";
  * `chat` facade (#32 slice A, overnight ruling R9), built over that same
  * reader's `getContext` with the model composition configured. Optional in the
  * type only so a hand-written test fake need not carry it; the real
- * `createKnowledgeAccess` always attaches one.
+ * `createKnowledgeAccess` always attaches one. The reader's own context facade
+ * also carries the #30 searches, opened with the composed query embedder
+ * (`openEvidenceReader(root, {embedder})`), which no writer carries.
  */
 export type KnowledgeReaderBundle = EvidenceReaderBundle & { readonly chat?: ChatService };
 
-/** Every write bundle also carries the full read surface (`...reads` spread
+/** Every write bundle also carries the shared read surface (`...reads` spread
  *  in each writer factory), so this union covers both without a reader/writer
- *  split at the call site. */
+ *  split at the call site -- except the READER-only methods, which have their
+ *  own backstops below: the `chat` facade (#32 / R9) and the #30 searches on
+ *  the reader's context facade (`searches()`). */
 export type KnowledgeBundle = KnowledgeReaderBundle | Omit<EvidenceWriterBundle, "close">;
 
 export type KnowledgeMethod = {
@@ -128,6 +132,15 @@ function chat(bundle: KnowledgeBundle): ChatService {
   const facade = (bundle as KnowledgeReaderBundle).chat;
   if (facade === undefined) throw new Error("knowledge: this method requires the reader's chat facade");
   return facade;
+}
+
+/** The reader bundle's #30 searches. They live on the READER's context facade
+ *  only -- the query embedder is composed onto the reader, like chat's model,
+ *  and is never a writer option -- so a writer bundle here is a wiring
+ *  mistake, never a request-facing case: the same backstop as `chat()`. */
+function searches(bundle: KnowledgeBundle): SearchService {
+  if (isWriterBundle(bundle)) throw new Error("knowledge: this method requires the reader bundle");
+  return bundle.context;
 }
 
 function writer(bundle: KnowledgeBundle): Omit<EvidenceWriterBundle, "close"> {
@@ -286,8 +299,9 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
   // #29 slice B (overnight R7): "the validity-window as_of is supplied by
   // the transport at request time, so the kernel still takes no clock" --
   // this registry table is that transport, shared by HTTP and MCP alike, and
-  // this explicit `Date.now()` is the one place every LIVE call's real
-  // request time enters. Fix round correction: `service.getRecallEligibility.ts`
+  // this explicit `Date.now()` is where a LIVE call's real request time
+  // enters (the #30 searches below pass theirs to the same eligibility check
+  // the same way). Fix round correction: `service.getRecallEligibility.ts`
   // itself also has a `requestTimeMs ?? Date.now()` fallback, kept there only
   // for pre-existing in-process test harnesses that call it with a single
   // argument -- it is not the case that nothing but this registry line ever
@@ -335,6 +349,27 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
     action: "content:write",
     scopePath: [],
     call: (b, x) => writer(b).context.reconcileSearchChunks(x),
+  },
+
+  // ── knowledge retrieval (#30, overnight R7 #30 part + R14) ───────────────
+  // The recall path over the target-19 tier: keyword (shared ngram(3,3)
+  // index, substring-verified, scan fallback that says so) and semantic
+  // (injected query embedder, squared L2 over READY chunks of one profile).
+  // Two methods, never fused (R7). Both run on the gateless READER, and
+  // only there: they are not on any writer facade, a content:read caller
+  // never opens the writer, and the reader never builds the text index --
+  // `indexRevisionChunks` (writer) does. `Date.now()` is the recall
+  // eligibility `as_of` (#29 validity windows), supplied here exactly as for
+  // `getRecallEligibility` above, so the kernel takes no clock on a live call.
+  searchKnowledgeKeyword: {
+    action: "content:read",
+    scopePath: [],
+    call: (b, x) => searches(b).searchKnowledgeKeyword(x, Date.now()),
+  },
+  searchKnowledgeSemantic: {
+    action: "content:read",
+    scopePath: [],
+    call: (b, x) => searches(b).searchKnowledgeSemantic(x, Date.now()),
   },
 
   // ── evidence ─────────────────────────────────────────────────────────

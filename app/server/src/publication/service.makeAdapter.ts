@@ -1,5 +1,8 @@
+import { MatchQuery } from "@lancedb/lancedb";
+import { ensureFtsIndexOn, ftsIndexStatus, refreshStaleFtsIndexOn } from "../fts/fts";
 import { failPublication } from "./errors";
 import { EMBEDDING_DIMENSION } from "./search-chunk";
+import { SEARCH_CHUNKS, SEARCH_HIT_COLUMNS } from "./service.constants";
 import { type Connection, type Table, TARGET_TABLES, decodeArrowRows, quote, rawRows } from "./storage";
 import { Field as ArrowField, FixedSizeList, Float32, List as ArrowList, Table as ArrowTable, TimestampMicrosecond, Utf8, Vector as ArrowVector, makeData, tableFromArrays, vectorFromArray } from "apache-arrow";
 import { type DatasetAdapter } from "./service.types";
@@ -278,6 +281,51 @@ export function makeAdapter(connection: Connection, onRelease: () => void): Data
       // never created. This can only UPDATE a chunk `append` already wrote.
       await tbl.mergeInsert(["id"]).whenMatchedUpdateAll().execute(new ArrowTable(vecs as never) as never);
       return tbl.version();
+    },
+    // ── #30 retrieval over search_chunks_v1 (R7 #30 part + R14) ───────────
+    // Hardcoded to one table and one column each, like
+    // `updateSearchChunkEmbedding`: no caller names a table or a column here.
+    async ensureSearchChunkTextIndex() {
+      // Writer maintenance: see the type's doc. `checkoutLatest` so the index
+      // decision is made against the latest version, including the rows the
+      // turn before this one wrote.
+      const tbl = await handle(SEARCH_CHUNKS);
+      await tbl.checkoutLatest();
+      const labels = await ensureFtsIndexOn(tbl, "text", false);
+      return (await refreshStaleFtsIndexOn(tbl, "text")) ? (await tbl.listIndices()).map((i) => `${i.name}:${i.indexType}`) : labels;
+    },
+    async searchChunkTextIndexStatus() {
+      const tbl = await handle(SEARCH_CHUNKS);
+      await tbl.checkoutLatest();
+      return ftsIndexStatus(await tbl.listIndices(), "text");
+    },
+    async fullTextSearchChunks(query, predicate, limit) {
+      const tbl = await handle(SEARCH_CHUNKS);
+      await tbl.checkoutLatest();
+      // A `MatchQuery`, never a bare string: LanceDB parses a bare string, and
+      // a quoted one becomes a phrase query this position-less index cannot
+      // serve (the same reason as `fts.substringSearch`).
+      const arrow = await tbl
+        .query()
+        .fullTextSearch(new MatchQuery(query, "text"))
+        .where(predicate)
+        .select([...SEARCH_HIT_COLUMNS, "_score"])
+        .limit(limit)
+        .toArrow();
+      return decodeArrowRows(arrow);
+    },
+    async vectorSearchChunks(vector, predicate, limit) {
+      const tbl = await handle(SEARCH_CHUNKS);
+      await tbl.checkoutLatest();
+      const arrow = await tbl
+        .vectorSearch(vector)
+        .column("embedding")
+        .distanceType("l2")
+        .where(predicate)
+        .select([...SEARCH_HIT_COLUMNS, "_distance"])
+        .limit(limit)
+        .toArrow();
+      return decodeArrowRows(arrow);
     },
     async updateWhere(table, predicate, assignments) {
       const tbl = await handle(table);

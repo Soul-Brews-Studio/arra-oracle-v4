@@ -44,6 +44,10 @@ export const TRACE_HITS = "trace_hits";
 
 export const SEARCH_CHUNKS = "search_chunks_v1";
 
+/** The columns a retrieval candidate is read with (#30): never `embedding`,
+ *  which is 384 floats per row that no hit reports. */
+export const SEARCH_HIT_COLUMNS: readonly string[] = Object.freeze(["id", "node_id", "revision_id", "chunk_index", "text"]);
+
 export const MCP_CALLS = "mcp_calls";
 
 export const CONNECTIONS = "connections";

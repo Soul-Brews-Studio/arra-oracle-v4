@@ -758,6 +758,8 @@ Query embedding profile must match stored vectors.
 
 Profiles pin model/version/digest, dimensions, normalization and query/document prefixes. Model changes rebuild search, not history. Tag-only revisions may reuse compatible text/profile vectors but keep their own search rows.
 
+> **Amendment 2026-09-26 (overnight R7 (#30 part)).** "One embedding profile per physical table" above is superseded by the table as built: one `search_chunks_v1` holds rows of several profiles, told apart by its `embedding_profile` column (part of each chunk's deterministic id), with one frozen dimension (384) for every profile. What the diagram protects still holds, enforced per query instead of per table: `searchKnowledgeSemantic` embeds the query with one composed embedder, reads only `status = 'ready'` chunks whose `embedding_profile` is that embedder's profile, and refuses any other profile before a model call, so vectors of two profiles are never compared. A different dimension would still need its own table. Ruling: `docs/overnight/DECISIONS.md` R7 (#30: "One table holds several embedding profiles, as built. DESIGN gets an amendment"); contract: `app/docs/contracts/search-chunk-v1.md`, amendment "overnight R7 (#30 part) + R14". A profile registry (which name is active, what each pins) is not claimed here.
+
 ```text
 SAVE PATH
   validate + authorize

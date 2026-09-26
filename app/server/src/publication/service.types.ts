@@ -3,6 +3,7 @@ import { type BoundaryHook, type ContextBoundary, type ContextBoundaryHook, type
 import { type createChatService } from "./service.createChatService";
 import { type createContextReadMethods } from "./service.createContextReadMethods";
 import { type createContextWriterService } from "./service.createContextWriterService";
+import { type createSearchService } from "./service.createSearchService";
 import { type createEvidenceReadMethods } from "./service.createEvidenceReadMethods";
 import { type createEvidenceWriterService } from "./service.createEvidenceWriterService";
 import { type createTaxonomyReadMethods } from "./service.createTaxonomyReadMethods";
@@ -95,7 +96,52 @@ export type DatasetAdapter = {
    * mutate authoritative rows this kernel does not intend to expose that way.
    */
   updateSearchChunkEmbedding(row: Record<string, unknown>): Promise<number>;
+  /**
+   * #30 retrieval (overnight R7 #30 part + R14): leave exactly one FTS index
+   * on `search_chunks_v1.text`, built from the shared `FTS_INDEX_OPTIONS`
+   * (`fts/fts.constants.ts`); an index whose live details already match is
+   * kept, one that differs is rebuilt under its own name, and a matching one
+   * is rebuilt over every row once its unindexed rows reach its indexed rows
+   * (`fts.refreshStaleFtsIndexOn`). WRITER-ONLY: the only caller is
+   * `indexRevisionChunks`, in the owner's serialized queue.
+   * A reader never builds or repairs an index -- it asks
+   * `searchChunkTextIndexStatus` and scans when the answer is not `ready`.
+   * Hardcoded to one table and column, like `updateSearchChunkEmbedding`.
+   */
+  ensureSearchChunkTextIndex(): Promise<string[]>;
+  /** Read-only: whether the chunk-text index is the governed one (`fts.ftsIndexStatus`). */
+  searchChunkTextIndexStatus(): Promise<"ready" | "missing" | "mismatched">;
+  /**
+   * Trigram full-text candidates on `search_chunks_v1.text`, BM25 order,
+   * `predicate` applied as a PREFILTER (measured: a limit is filled from the
+   * scoped rows, not cut before the scope). Rows carry `SEARCH_HIT_COLUMNS`
+   * plus `_score`, decoded from raw Arrow like every other read here.
+   */
+  fullTextSearchChunks(query: string, predicate: string, limit: number): Promise<Record<string, unknown>[]>;
+  /**
+   * Nearest `search_chunks_v1.embedding` rows to `vector`, flat L2 search,
+   * `predicate` as a prefilter. `_distance` is LanceDB's `l2`, which is the
+   * SQUARED Euclidean distance (measured: orthogonal unit vectors -> 2).
+   * Null embeddings are never candidates.
+   */
+  vectorSearchChunks(vector: number[], predicate: string, limit: number): Promise<Record<string, unknown>[]>;
   release(): void;
+};
+
+/**
+ * #30 retrieval: the query-side embedder a semantic search is composed with --
+ * never a network call this kernel makes on its own. Trusted composition
+ * (`composition.ts` -> `createKnowledgeAccess` -> `openEvidenceReader`), handed
+ * to the READER only, the way #32 / R9 hands chat's model to the reader-side
+ * chat facade: it is never a writer option, so no search holds a writer.
+ * `profile` is the stored `embedding_profile` name whose vector space `embed`
+ * produces; a search for any other profile is refused, because a query
+ * embedded by one model and compared against another model's vectors answers
+ * nothing meaningful.
+ */
+export type QueryEmbedder = {
+  readonly profile: string;
+  readonly embed: (text: string) => Promise<number[]>;
 };
 
 export type PublishOutcome =
@@ -259,7 +305,13 @@ export type LifecycleReplayClassification =
   | { replay: true; outcome: LifecycleWriteOutcome }
   | { replay: false };
 
-export type ContextReaderService = ReturnType<typeof createContextReadMethods>;
+/** The #30 knowledge searches, composed into the READER bundles' context
+ *  facade only (`service.createSearchService.ts`), never a writer's. */
+export type SearchService = ReturnType<typeof createSearchService>;
+
+/** A reader's context facade: the reads every writer also carries (`...reads`
+ *  in `createContextWriterService`), plus the reader-only #30 searches. */
+export type ContextReaderService = ReturnType<typeof createContextReadMethods> & SearchService;
 
 export type ContextWriterService = ReturnType<typeof createContextWriterService>;
 

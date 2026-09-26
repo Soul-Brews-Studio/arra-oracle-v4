@@ -80,7 +80,8 @@ const CONTEXT_WRITE_METHODS =
 const CONTEXT_READ_METHODS =
   "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
   "listConnections,listLifecycleHistory,listMcpCalls,listMessages,listPeers," +
-  "listSearchChunks,listSessionLinks,listSessions,listTraceHits";
+  "listSearchChunks,listSessionLinks,listSessions,listTraceHits,searchKnowledgeKeyword," +
+  "searchKnowledgeSemantic";
 const LEGACY = {
   publication: { keys: "close,getAcceptedHead,listAcceptedHistory,listNodes,publishRevision", nested: {} },
   knowledge: {

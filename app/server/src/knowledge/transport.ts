@@ -55,7 +55,7 @@ import {
 import { ContractError } from "../contracts/errors";
 import { parseStrictBytes, type JcsObject, type JcsValue } from "../contracts/jcs";
 import type { ChatModelFn, ChatSettings } from "../publication/chat";
-import { openEvidenceReader, openEvidenceWriter } from "../publication/service";
+import { openEvidenceReader, openEvidenceWriter, type QueryEmbedder } from "../publication/service";
 import { createChatService } from "../publication/service.createChatService";
 import { KNOWLEDGE_METHODS, type KnowledgeAction, type KnowledgeBundle, type KnowledgeReaderBundle, type RequestAuthority } from "./registry";
 import { KnowledgeAuthDenied, admitKnowledgeAction, type KnowledgeAuthFailure } from "./transport.admitKnowledgeAction";
@@ -251,6 +251,14 @@ export type KnowledgeDatasetConfig = {
    * `model_unavailable` and `getChatSettings` answers `{model: null}`.
    */
   readonly chat?: { readonly model?: ChatModelFn; readonly settings: ChatSettings | null };
+  /**
+   * #30: the trusted query embedder semantic search is composed with
+   * (`composition.ts`: local Ollama; tests: a stub), handed to the READER only
+   * (`openEvidenceReader(root, {embedder})`), like the chat model above --
+   * never a writer option. Absent means `searchKnowledgeSemantic` answers
+   * `writer_unavailable`.
+   */
+  readonly embedder?: QueryEmbedder;
 };
 
 /**
@@ -259,7 +267,9 @@ export type KnowledgeDatasetConfig = {
  * released by a request path (see file header: writer-ownership decision).
  *
  * The reader bundle carries the `chat` facade, built over that reader's own
- * `getContext` with the configured model, so every chat call is a read.
+ * `getContext` with the configured model, so every chat call is a read; and
+ * its context facade carries the #30 searches, opened with the configured
+ * query embedder, so every search is a read too.
  */
 export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
   let reader: Promise<KnowledgeReaderBundle> | null = null;
@@ -285,7 +295,8 @@ export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
   };
 
   /** Trusted operator configuration for the one cached writer -- never
-   *  request data. No model travels here any more (#32 / R9). */
+   *  request data. No model travels here any more (#32 / R9), and no query
+   *  embedder either (#30): both are READER composition. */
   const writerOptions = () => ({
     newRevisionId: randomNanoid21,
     clock: Date.now,
@@ -309,9 +320,9 @@ export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
       // are added, instead of silently routing a new read action into the
       // writer-gate path below, which would require a writer for a call that
       // never mutates anything and could deadlock a reader-only deployment.
-      // `answerChat` is one of these reads (#32 / R9).
+      // `answerChat` (#32 / R9) and the #30 searches are among these reads.
       if (action !== "content:write") {
-        reader ??= openEvidenceReader(requireRoot()).then((bundle) =>
+        reader ??= openEvidenceReader(requireRoot(), { embedder: config.embedder }).then((bundle) =>
           Object.freeze({ ...bundle, chat: createChatService(bundle.context, chatOptions) }),
         );
         return reader;

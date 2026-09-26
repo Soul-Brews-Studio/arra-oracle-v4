@@ -81,7 +81,8 @@ const CONTEXT_WRITE_METHODS =
 const CONTEXT_READ_METHODS =
   "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
   "listConnections,listLifecycleHistory,listMcpCalls,listMessages,listPeers," +
-  "listSearchChunks,listSessionLinks,listSessions,listTraceHits";
+  "listSearchChunks,listSessionLinks,listSessions,listTraceHits,searchKnowledgeKeyword," +
+  "searchKnowledgeSemantic";
 /** Bundle keys are unchanged by this slice; nested facades never carry close. */
 const CONTEXT_WRITER_KEYS = "close,context,publication,taxonomy";
 const EVIDENCE_WRITER_KEYS = "close,context,evidence,publication,taxonomy";
@@ -354,7 +355,14 @@ describe("context facades across all four factories", () => {
       expect(readerMethods).toContain("listSessionLinks");
       expect(readerMethods).not.toContain("createSessionLink");
       // 28: #32 / R9 moved `answerChat` off the writer onto the reader-side chat facade.
-      expect({ writer: writerMethods.length, reader: readerMethods.length }).toEqual({ writer: 28, reader: 16 });
+      // 18: #30's two searches are READER-only (service.createSearchService.ts):
+      // their query embedder is composed onto the reader like chat's model, so
+      // the writer gains neither -- only `indexRevisionChunks` maintains the index.
+      expect({ writer: writerMethods.length, reader: readerMethods.length }).toEqual({ writer: 28, reader: 18 });
+      for (const search of ["searchKnowledgeKeyword", "searchKnowledgeSemantic"]) {
+        expect(readerMethods).toContain(search);
+        expect(writerMethods).not.toContain(search);
+      }
       expect(writerMethods).not.toContain("close");
       expect(readerMethods).not.toContain("close");
     },

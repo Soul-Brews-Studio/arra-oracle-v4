@@ -14,6 +14,7 @@
 import { createRequire } from "node:module";
 import { createOperationService, type OperationService, type StoreDependencies } from "./auth/service";
 import { createKnowledgeAccess, type KnowledgeAccess } from "./knowledge/transport";
+import { DEFAULT_EMBEDDING_PROFILE } from "./publication/search-chunk.defaultEmbeddingProfile";
 
 export type RuntimeConfig = {
   readonly policyPath: string;
@@ -215,16 +216,33 @@ export function composeV3Compat(env: NodeJS.ProcessEnv = process.env): boolean {
  * access as trusted configuration -- the only place a model is wired. The
  * model module is imported lazily, like `embed.ts` in `composeService`.
  * `ARRA_CHAT_PROVIDER` unset leaves chat unconfigured (`model_unavailable`);
- * a malformed `ARRA_CHAT_*` throws, and `startup` checks that first.
+ * a malformed `ARRA_CHAT_*` throws, and `startup` checks that first. The #30
+ * query embedder is composed here the same way, for the same reader.
  */
 export async function composeKnowledgeAccess(env: NodeJS.ProcessEnv = process.env): Promise<KnowledgeAccess> {
   const datasetRoot = env.ARRA_KNOWLEDGE_DATASET_ROOT;
   const { createChatModel } = await import("./chat-model");
   const chat = createChatModel(env);
+  const embeddingProfile = env.EMBEDDING_MODEL?.trim() ? env.EMBEDDING_MODEL.trim() : DEFAULT_EMBEDDING_PROFILE;
   return createKnowledgeAccess({
     datasetRoot: typeof datasetRoot === "string" && datasetRoot.trim() ? datasetRoot : undefined,
     env,
     chat: { model: chat.model, settings: chat.settings },
+    // #30 semantic search: the query embedder is `embed.ts`'s local Ollama
+    // client, imported lazily on first use like `composeService`'s raw
+    // modules, and handed to the READER only (like the chat model above,
+    // never a writer option). Its profile is the model's name -- the name an
+    // embed worker stores via `indexRevisionChunks` -- from THIS `env`, blank
+    // meaning `DEFAULT_EMBEDDING_PROFILE`; and that same name is the model it
+    // calls, so the profile a search reports can never differ from the model
+    // that embedded its query. Only the model name comes from THIS `env`:
+    // `embed.ts` reads OLLAMA_URL and EMBEDDING_DIMENSIONS from `process.env`
+    // when it loads. SEAM: the concurrent profile registry replaces this
+    // pairing with a registry entry.
+    embedder: {
+      profile: embeddingProfile,
+      embed: async (text: string) => (await import("./embed")).embedOne(text, embeddingProfile),
+    },
   });
 }
 

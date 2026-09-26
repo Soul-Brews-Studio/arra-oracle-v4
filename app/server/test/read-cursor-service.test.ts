@@ -62,7 +62,7 @@ describe("preflight: the required surface", () => {
         expect(Object.keys(bundle.context).sort()).toEqual([
           "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
           "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks", "listSessionLinks", "listSessions",
-          "listTraceHits",
+          "listTraceHits", "searchKnowledgeKeyword", "searchKnowledgeSemantic",
         ]);
         expect("close" in bundle.context).toBe(false);
       }
