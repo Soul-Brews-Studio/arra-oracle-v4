@@ -8,8 +8,8 @@
 
 import type { RequestAuthority } from "../../knowledge/registry";
 import type { IndexProfile } from "../../knowledge/transport.indexProfile";
+import type { Kb } from "./createKb";
 import { guide } from "./guide";
-import type { Kb } from "./kb";
 import { oracle_handoff } from "./tools/oracle_handoff";
 import { oracle_learn } from "./tools/oracle_learn";
 import { oracle_research_note } from "./tools/oracle_research_note";

@@ -229,21 +229,21 @@ describe("V0 #8: kb() is the only capability, and it is bounded", () => {
   });
 
   test("a method outside `uses` is refused before any bundle is touched", async () => {
-    const { createKb } = await import("../src/mcp/legacy-v3/kb");
+    const { createKb } = await import("../src/mcp/legacy-v3/createKb");
     const kb = createKb(ctx("content:read", ["getAcceptedHead"]));
     await expect(kb("listNodes", {})).rejects.toThrow();
     expect(calls).toEqual([]);
   });
 
   test("a read tool may not call a write method even if its `uses` names one", async () => {
-    const { createKb } = await import("../src/mcp/legacy-v3/kb");
+    const { createKb } = await import("../src/mcp/legacy-v3/createKb");
     const kb = createKb(ctx("content:read", ["publishRevision"]));
     await expect(kb("publishRevision", { operation_id: "x", content: {} })).rejects.toThrow();
     expect(calls).toEqual([]);
   });
 
   test("workspace_name is set from the route bank, and a payload naming another workspace is refused", async () => {
-    const { createKb } = await import("../src/mcp/legacy-v3/kb");
+    const { createKb } = await import("../src/mcp/legacy-v3/createKb");
     const kb = createKb(ctx("content:read", ["getAcceptedHead"]));
     await kb("getAcceptedHead", { node_id: "n" });
     expect(calls).toEqual(["publication.getAcceptedHead"]);
@@ -309,7 +309,7 @@ describe("defect 6 and D1", () => {
   });
 
   test("legacy node ids match the Python-computed known answers byte for byte (D1)", async () => {
-    const { legacyNodeId } = await import("../src/mcp/legacy-v3/ids");
+    const { legacyNodeId } = await import("../src/mcp/legacy-v3/ids.legacyNodeId");
     // python3: base64.urlsafe_b64encode(sha256(("arra-legacy-node/v1\n"+ws+"\n"+id).encode())).rstrip("=")[:21]
     expect(legacyNodeId("bank-a", "m_lq3k9x2_abc123")).toBe("kBExBu_pgF8CSTrjSzC_I");
     expect(legacyNodeId("bank-a", "learning_2026-03-04_apfs")).toBe("zKcwQHLUSYW9ljudpIMcF");
@@ -319,7 +319,7 @@ describe("defect 6 and D1", () => {
 
   test("the resolver refuses an id that is both a direct and a derived node, never guessing", async () => {
     const { resolveNodeId } = await import("../src/mcp/legacy-v3/ids.resolveNodeId");
-    const { legacyNodeId } = await import("../src/mcp/legacy-v3/ids");
+    const { legacyNodeId } = await import("../src/mcp/legacy-v3/ids.legacyNodeId");
     const direct = "abcdefghijklmnopqrstu";
     const heads = (present: string[]) => async (_m: string, p: Record<string, unknown>) =>
       present.includes(p.node_id as string) ? { node_id: p.node_id, revision_id: "r".repeat(21) } : null;

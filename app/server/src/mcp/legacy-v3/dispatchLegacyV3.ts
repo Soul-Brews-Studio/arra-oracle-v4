@@ -5,8 +5,8 @@ import { availability } from "./availability";
 import { V3_CATALOGUE } from "./catalogue";
 import { CompatError } from "./compat-error";
 import { fromKernel } from "./compat-error.fromKernel";
+import { createKb } from "./createKb";
 import { V3_HANDLERS } from "./handlers";
-import { createKb } from "./kb";
 
 /** A2: the route bank is the only scope, so these argument keys are refused. */
 const CARRIERS = ["workspace_name", "bank", "workspace", "tenantId", "tenant_id", "tenant", "orgId", "org_id"] as const;

@@ -1,5 +1,5 @@
+import type { Kb } from "./createKb";
 import { derivedId } from "./ids.derivedId";
-import type { Kb } from "./kb";
 
 export type Row = { id: string; name: string; is_active?: boolean } & Record<string, unknown>;
 

@@ -2,7 +2,7 @@ import { CompatError } from "./compat-error";
 import type { V3ToolContext } from "./handlers";
 import { derivedId } from "./ids.derivedId";
 import { randomId } from "./ids.randomId";
-import { termSnapshot, type WantedTerms } from "./taxonomy";
+import { termSnapshot, type WantedTerms } from "./taxonomy.termSnapshot";
 
 export type PublishInput = {
   title: string;

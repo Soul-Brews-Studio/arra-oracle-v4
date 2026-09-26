@@ -8,8 +8,8 @@ import { createHash } from "node:crypto";
  *
  *   base64url(sha256("arra-v3-compat/1\n" + bank + "\n" + parts.join("\n")))[0:21]
  *
- * A different domain from D1's legacy node ids (`ids.ts`), so the two can
- * never collide by construction.
+ * A different domain from D1's legacy node ids (`ids.legacyNodeId.ts`), so
+ * the two can never collide by construction.
  */
 export function derivedId(bank: string, ...parts: string[]): string {
   const digest = createHash("sha256").update(["arra-v3-compat/1", bank, ...parts].join("\n"), "utf8").digest();

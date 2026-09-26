@@ -17,7 +17,7 @@ import { KNOWLEDGE_METHODS } from "../knowledge/registry";
 import type { KnowledgeAccess } from "../knowledge/transport";
 import { callKnowledgeMethod } from "./index.callKnowledgeMethod";
 import { V3_TOOL_NAMES, V3_TOOLS } from "./legacy-v3/catalogue";
-import { dispatchLegacyV3 } from "./legacy-v3/dispatch";
+import { dispatchLegacyV3 } from "./legacy-v3/dispatchLegacyV3";
 import { SERVER_NAME, SERVER_VERSION, err, negotiate, ok, text } from "./protocol";
 import { TOOLS } from "./tools";
 import { isAdvertised } from "./tools.isAdvertised";

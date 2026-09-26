@@ -1,5 +1,5 @@
 import { CompatError } from "./compat-error";
-import { legacyNodeId } from "./ids";
+import { legacyNodeId } from "./ids.legacyNodeId";
 
 const NANOID21 = /^[A-Za-z0-9_-]{21}$/;
 

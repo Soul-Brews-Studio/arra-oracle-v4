@@ -1,10 +1,10 @@
+import { cleanNames } from "../cleanNames";
 import { CompatError } from "../compat-error";
+import { ensureSpeaker } from "../ensureSpeaker";
 import type { V3ToolContext } from "../handlers";
-import { cleanNames } from "../names";
-import { normalizeProject } from "../project";
+import { normalizeProject } from "../normalizeProject";
 import { publish } from "../publish";
-import { renderResearchNote } from "../research-note-render";
-import { ensureSpeaker } from "../speaker";
+import { renderResearchNote } from "../renderResearchNote";
 
 /**
  * `oracle_research_note` (V3-PARITY.md §4.3; v3 src/tools/oracle.ts:40-63,

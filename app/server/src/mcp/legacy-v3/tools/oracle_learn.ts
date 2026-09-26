@@ -1,10 +1,10 @@
+import { cleanNames } from "../cleanNames";
 import { CompatError } from "../compat-error";
+import { ensureSpeaker } from "../ensureSpeaker";
 import type { V3ToolContext } from "../handlers";
-import { cleanNames } from "../names";
-import { normalizeProject } from "../project";
+import { normalizeProject } from "../normalizeProject";
 import { publish } from "../publish";
-import { ensureSpeaker } from "../speaker";
-import { titleOf } from "../title";
+import { titleOf } from "../titleOf";
 
 /**
  * `oracle_learn` (V3-PARITY.md §4.3; v3 src/tools/learn.ts:48-74, output

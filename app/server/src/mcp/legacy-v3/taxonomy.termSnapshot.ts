@@ -1,4 +1,4 @@
-import type { Kb } from "./kb";
+import type { Kb } from "./createKb";
 import { ensureReservedVocabularies, type Row } from "./taxonomy.ensureReservedVocabularies";
 import { ensureTerm } from "./taxonomy.ensureTerm";
 import { ensureVocabulary } from "./taxonomy.ensureVocabulary";

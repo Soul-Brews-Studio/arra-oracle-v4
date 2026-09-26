@@ -1,6 +1,6 @@
 import { CompatError } from "./compat-error";
+import type { Kb } from "./createKb";
 import { derivedId } from "./ids.derivedId";
-import type { Kb } from "./kb";
 import type { Row } from "./taxonomy.ensureReservedVocabularies";
 
 const isEnvelope = (error: unknown): error is { code: string; toJSON(): unknown } =>

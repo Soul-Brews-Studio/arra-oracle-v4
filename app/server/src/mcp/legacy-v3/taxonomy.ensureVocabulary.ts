@@ -1,5 +1,5 @@
+import type { Kb } from "./createKb";
 import { derivedId } from "./ids.derivedId";
-import type { Kb } from "./kb";
 import type { Row } from "./taxonomy.ensureReservedVocabularies";
 
 /**

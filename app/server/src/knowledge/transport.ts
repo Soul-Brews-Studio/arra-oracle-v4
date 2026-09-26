@@ -342,7 +342,7 @@ export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
 export type KnowledgeAccess = {
   /** False only when no dataset root is configured; see `transport.isDatasetConfigured.ts`. */
   readonly datasetConfigured?: boolean;
-  /** Absent on test fakes; `mcp/legacy-v3/dispatch.ts` then uses the defaults. */
+  /** Absent on test fakes; `mcp/legacy-v3/dispatchLegacyV3.ts` then uses the defaults. */
   readonly indexProfile?: IndexProfile;
   getBundle(action: KnowledgeAction): Promise<KnowledgeBundle>;
   getEphemeralWriter?(): Promise<import("../publication/service").EvidenceWriterBundle>;

@@ -1,9 +1,9 @@
 import { CompatError } from "../compat-error";
+import { ensureSpeaker } from "../ensureSpeaker";
 import type { V3ToolContext } from "../handlers";
-import { normalizeProject } from "../project";
+import { normalizeProject } from "../normalizeProject";
 import { publish } from "../publish";
-import { ensureSpeaker } from "../speaker";
-import { titleOf } from "../title";
+import { titleOf } from "../titleOf";
 
 /**
  * `oracle_handoff` (V3-PARITY.md §4.3; v3 src/tools/handoff.ts:21-38,91-139).
