@@ -240,3 +240,63 @@ refusals, against a fake bundle calling this file's own real parsers), and
 `app/server/test/knowledge-expose13-live.test.ts` (`createTrace` → `getTrace` →
 `listTraceHits` round-tripped over both HTTP and MCP against a real writer-gated target-19
 dataset, including a same-payload MCP replay of `createTrace` landing `already_satisfied`).
+
+## Amendment 2026-09-26 (overnight R7 (#28 part), hygiene: K13)
+
+The v3-parity review (`docs/overnight/V3-PARITY.md` K13, defect 4) measured that
+`createTrace` accepted **any** nonnegative `depth`, regardless of the resolved
+`parent_id`'s own stored depth — a request could name `depth:"999"` on a brand-new root
+trace with no `parent_id` at all, or `depth:"0"` under a real parent already at depth 5.
+`depth` is documented (`DESIGN.md` section 10) as "derived/cache, not another edge" over
+the `parent_id` tree, so an unchecked value defeats the one thing that field exists to
+answer: "how deep is this trace in its own parent chain".
+
+**Amended rule**: on a genuinely fresh `createTrace` (no existing row by `id` — section 3
+above is unaffected: replay/conflict classification still runs first and does not
+re-derive this), once `parent_id` is resolved (section 4's existing `invalid_reference`/
+chain-walk checks still run first), `depth` must equal exactly:
+- `0`, when `parent_id` is `null`;
+- the resolved parent's own stored `depth` + 1, when `parent_id` is set.
+
+A mismatch is `invalid_request` at `/depth` — a caller fault, decided before the clock is
+ever sampled, exactly like every other pre-write STATIC-then-owner-read check in this
+kernel. `prev_id` (the readable-sequence pointer) has no bearing on `depth`; only
+`parent_id` does. No schema change, no change to identity/replay/conflict (section 3), the
+chain-walk bound (section 4), or any other field's grammar.
+
+`UNIQUE(name, workspace_name)` — named in `SPEC.md` section 14.2's historical `Trace`
+interface comment ("Honcho's idiom") — is **deliberately NOT enforced** here, and stays
+that way. Reasons, checked against the current authorities before writing this down:
+- `DESIGN.md` section 10's current `traces` block (the shipped-direction schema this
+  contract itself documents) carries no such constraint in its field list, unlike
+  `sessions`/`peers`, which spell `UNIQUE(W, name)` explicitly in the same document.
+  `SPEC.md` is superseded historical rationale on this point (repo `CLAUDE.md`: "`SPEC.md`
+  preserves historical rationale, including superseded architecture"), not the current
+  storage authority.
+- Section 3 above already fixes identity on the caller-supplied `id` (nanoid21),
+  workspace-scoped — the same "caller-stable identity, not content, not name" shape
+  `session-link-v1.md` Decision 1 chose for the same reason. A second uniqueness axis on
+  `name` would need its own conflict/replay classification (a same-name-different-id
+  request is neither a replay of the named row nor unrelated to it), which no accepted
+  contract defines and which K13's own "S"-sized dispatch does not include.
+  `v3-parity`'s `oracle_trace` translation (`V3-PARITY.md` section 4.2) already derives
+  `name` as `slug(query) + "-" + id[0..6]` specifically *because* the id suffix makes
+  incidental collisions harmless — the adapter's own design does not need this enforced
+  to work.
+- Enforcing it now would be a behavior change on a **shipped, tested kernel**
+  (`trace-service.test.ts`, `trace-ownership.test.ts`, `trace-recovery.test.ts`,
+  `trace-precision.test.ts` all create traces with today's semantics), and this dispatch's
+  scope (R7's #28 part) does not call for redesigning trace identity — only for exposing
+  transport reachability, fixing the session-link cycle gap, and closing the two
+  independently-measured hygiene defects (K13 depth, and this documentation).
+
+If a future need requires `name` uniqueness (e.g. a UI listing that must not collide),
+that is a fresh review with its own conflict-classification decision, not a default this
+amendment should reach for.
+
+Proof: `app/server/test/trace-service.test.ts` — "K13 (v3-parity hygiene review): depth
+must be parent.depth + 1, or 0 with no parent" (three cases: root with nonzero depth
+refused, child disagreeing with `parent.depth + 1` refused, depth exactly one more than
+the resolved parent's depth accepted through a two-hop chain). `trace-precision.test.ts`'s
+"all physical columns wire exactly" case was updated to build a real three-deep parent
+chain for its `depth:"3"` wire value, since that value is no longer accepted in isolation.
