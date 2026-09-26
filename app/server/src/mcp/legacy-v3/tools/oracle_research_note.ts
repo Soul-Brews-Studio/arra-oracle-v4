@@ -44,6 +44,11 @@ export async function oracle_research_note(args: Record<string, unknown>, contex
     compat_warnings: [
       { code: "field_unavailable", field: "file", detail: "v4 writes no file; the note is a node in LanceDB" },
       { code: "semantic_change", field: "concepts", detail: "v3's persona tags thor-oracle and stormforge are not added; v4 has no profile registry" },
+      ...note.dropped.map(({ field, reason }) => ({
+        code: "partial",
+        field,
+        detail: `not linked, kept in the body only: v4 refuses this link target (${reason})`,
+      })),
     ],
     v4: { node_id: done.node_id, revision_id: done.revision_id },
   };

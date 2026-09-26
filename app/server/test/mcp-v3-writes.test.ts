@@ -90,6 +90,19 @@ beforeAll(async () => {
       concepts: ["fts"],
     }, capture: { name: "note", path: ["id"] } },
     HEAD("head_note"),
+    // v3 saved a note whatever its evidence urls held. One passes a bare
+    // ^https?:// check but not the kernel's url grammar (a space).
+    { label: "note_bad_url", bank: FRESH, tool: "oracle_research_note", args: {
+      title: "Evidence with one malformed url",
+      externalSources: [
+        { url: "http://x y", title: "broken", summary: "has a space" },
+        { url: "https://example.org/ok", title: "fine", summary: "a valid url" },
+        { url: "https://user:pw@example.org/", summary: "credentials in the url" },
+      ],
+      repo: "a/..",
+      issue: 3,
+    }, capture: { name: "note_bad_url", path: ["id"] } },
+    HEAD("head_note_bad_url"),
     { label: "count_before_fail", bank: FRESH, tool: "kb_listNodes", args: { payload: { workspace_name: FRESH, after_id: null, limit: 1, include_total: true, type_term: null } } },
     { label: "index_fails", bank: FRESH, tool: "oracle_learn", failIndex: true, args: { pattern: "published, never indexed" }, capture: { name: "index_fails_rev", path: ["v4", "revision_id"] } },
     { label: "reconcile", bank: FRESH, tool: "kb_reconcileSearchChunks", args: { payload: { workspace_name: FRESH, limit: 1024 } } },
@@ -217,6 +230,22 @@ describe("oracle_research_note (V1 #6)", () => {
     expect(termsOf(head, "concepts")).toEqual(["dev-research", "fts"]);
     expect(head.revision.body).toContain("app/server/src/db.ts");
     expect(head.revision.body).not.toContain("stormforge");
+  });
+});
+
+describe("oracle_research_note keeps the note when some evidence is not a v4 target", () => {
+  test("a url the kernel would refuse is left in the body, not linked, and named in a partial warning", () => {
+    const res = out.note_bad_url;
+    expect(res.isError).toBe(false);
+    expect(res.value).toMatchObject({ success: true, file: null });
+    const head = out.head_note_bad_url.value;
+    const links = JSON.parse(head.revision.link_snapshot_json);
+    expect(links).toEqual([expect.objectContaining({ relation: "supports", target_kind: "url", target: { url: "https://example.org/ok" } })]);
+    expect(head.revision.body).toContain("http://x y");
+    expect(head.revision.body).toContain("https://user:pw@example.org/");
+    const partial = res.value.compat_warnings.filter((w: any) => w.code === "partial");
+    expect(partial.map((w: any) => w.field)).toEqual(["externalSources/0/url", "externalSources/2/url", "repo"]);
+    for (const warning of partial) expect(typeof warning.detail).toBe("string");
   });
 });
 
