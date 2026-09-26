@@ -62,10 +62,10 @@ are part of done.
 | phase | what | status |
 |---|---|---|
 | P0 | baseline: full suite, typecheck, build on `f919369` | done: 1123/0, 496.65s, typecheck + build clean |
-| P1 | Understand workflow: re-verify all 18 issues, architecture recipe, docs drift, Nat's intent from relic, design gap | running |
-| P2 | wave 1, blockers: #105 → #75, #102; #87; #103; #85; #89 decision | pending P1 |
-| P3 | wave 2, reachability: #28, #29, #31, #27 | pending P1 |
-| P4 | wave 3, features: #30, #32, #33, #34; measurements #7, #8, #10 | pending P1 |
+| P1 | Understand: 18 issues re-verified, 4 maps, rulings R1–R17 | done |
+| P2 | wave 1 + 1.5: 12 slices in parallel worktrees (see log) | running |
+| P3 | wave 2 (on merged wave 1): #29 lifecycle semantics · #30 chunk search (ngram, keyword + semantic, embed backfill) · #32 chat via Ollama · #28 cycles + Relic adapter · #89 close | pending wave 1 merge |
+| P4 | wave 3: #33 UI surfaces · v3 parity (forum, handoff/inbox, trace tools, verify) · style splits over 500 lines · final docs | pending |
 | P5 | proof: live E2E probe across HTTP/MCP/CLI, adversarial review of each slice, `PROOF.md` | continuous |
 | P6 | docs corrected from source; integration PR to `main`; issue comments with evidence | before 07:00 |
 
@@ -125,3 +125,23 @@ are part of done.
   seed-ms (#105 #75, Sonnet) · membership (#87, Opus) · coverage (#85, Opus) · ops-root (#103 #102, Sonnet) ·
   sealed-vocab (#27, Opus) · expose-13 (#28–#31 exposure, Sonnet) · cli-kb (#31 CLI, Sonnet) · ci (R13 + AGENTS.md, Sonnet).
   Each goes implement → Opus refuter (mutation check + live probe) → one fix round → re-verify.
+- 21:30 R14–R17 added; R7 amended so one shared ngram(3,3) config serves both stores (`aff9c65`).
+- 21:30 WAVE 1.5 launched (`wf_ff7abe3a-4b0`), 4 slices branched from `aff9c65`: fts-ngram (#10, Opus) ·
+  migration (#34, Opus) · honcho-rt (#8 phase 1, Sonnet) · bench-harness (#7 phase A, Sonnet).
+- 21:31 v3-parity research launched (`wf_7ce1b352-f92`, read-only): maps every v3 MCP tool (oracle_search/learn/
+  thread/handoff/inbox/trace_*/supersede/verify/…) onto v4 kernels and designs the #31 "legacy adapter", so
+  existing Claude configs work against v4. Nat's bar (09-22 01:43) was "can v4 replace v3".
+- 21:38 ACCEPTOR ISSUE CHECKS READY (`run.sh <checkout> <label> --issues`): **83 checks, written independently
+  before any fix. Baseline: 10 PASS / 69 FAIL / 4 GAP.** This is the overnight scoreboard.
+  ```text
+  issue   PASS  FAIL  GAP        issue   PASS  FAIL  GAP
+  #87       0     4    1         #28       0     4    0
+  #85       4     2    0         #29       0     4    2
+  #103      0     2    0         #30       1     3    0
+  #102      0     1    0         #31       3    44    0
+  #75       1     1    0         #32       0     2    0
+  #27       0     2    0         #33       1     0    1
+  ```
+  New #75 evidence, live: the unchanged dev seed wrote `created_at=…14:36:55.260248`, and both advanceReadCursor
+  and getReadCursor returned 500 `integrity_failure`; the ms-aligned control workspace succeeded. This confirms R1/R2.
+  Remaining GAPs: #87 CLI requester (needs the kb grammar), #29 recall query fixture, #33 browser workflows.
