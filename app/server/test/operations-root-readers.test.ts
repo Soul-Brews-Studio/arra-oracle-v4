@@ -75,9 +75,14 @@ for (const kind of ["calls", "connections"] as const) {
       }
       const page = JSON.parse(result.stdout.trim());
       expect(page).toEqual({ rows: [], next_after_id: null, total: "0" });
-      // The raw SDK text this used to leak names the dataset's absolute
-      // path; if it ever regresses, that path would appear in `stdout`.
-      expect(result.stdout).not.toContain(bareRoot);
+      // The raw SDK text this used to leak names the dataset's path -- and
+      // LanceDB prints it WITHOUT the leading slash ("Dataset at path
+      // var/folders/..." on macOS), so checking the absolute path alone
+      // would miss the very leak it exists to catch (fix-round finding).
+      // The slashless form is a substring of the absolute one, so this one
+      // check covers both spellings.
+      expect(result.stdout).not.toContain(bareRoot.replace(/^\/+/, ""));
+      expect(result.stdout).not.toMatch(/Dataset at path|was not found/);
     } finally {
       await rm(bareRoot, { recursive: true, force: true });
     }

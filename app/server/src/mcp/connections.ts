@@ -12,10 +12,7 @@
 // transport, first seen when, how much of their traffic is tool calls. That is
 // bounded by the number of callers, not by the number of requests.
 
-import { connect } from "@lancedb/lancedb";
-import { DATA_DIR, storageOptions } from "../storage";
-
-const TABLE = "connections";
+import { openConnectionsTable } from "./connections.openConnectionsTable";
 
 /** Mirrors `calls.ts` — the log and the fold share one truncation rule so a
  *  hostile user-agent cannot bloat one table by going through the other. */
@@ -31,6 +28,9 @@ const truncateRequired = (v: string): string =>
   v.length > MAX_FIELD ? `${v.slice(0, MAX_FIELD)}…[${v.length} chars]` : v;
 
 const quote = (value: string) => `'${value.replace(/'/g, "''")}'`;
+
+/** Upper bound on duplicate rows one fold reads back and heals; see the fold. */
+const MAX_HEAL_ROWS = 64;
 
 /**
  * The fold key.
@@ -69,8 +69,6 @@ export interface ConnectionEvent {
   tool?: string | null;
 }
 
-let handle: Awaited<ReturnType<typeof connect>> | null = null;
-
 /** Fixed sanitized counter for fold-write failures; never exception text. */
 let foldFailures = 0;
 
@@ -95,8 +93,10 @@ export function connectionFoldFailureCount(): number {
 }
 
 /**
- * Test seam: clears the latch, the cached connection, the failure count and
- * any pending per-id fold queue.
+ * Test seam: clears the latch, the failure count and any pending per-id fold
+ * queue. The cached connection is no longer cleared here: it moved to
+ * `connections.openConnectionsTable.ts`, whose header records the
+ * measurement showing it holds no state a reset would need to drop.
  *
  * It does NOT re-point the store. `DATA_DIR` is captured from the environment
  * at module load (`storage.ts`), so setting `ARRA_DATA_DIR` after import has
@@ -105,21 +105,9 @@ export function connectionFoldFailureCount(): number {
  * reset the state, changed the env var, and kept writing to the old path.
  */
 export function resetConnectionFoldState(): void {
-  handle = null;
   tableAbsent = false;
   foldFailures = 0;
   foldQueues.clear();
-}
-
-/**
- * Exported so `connections.listConnections.ts` (#102, DECISIONS.md R5) can
- * page the SAME operations-root table this writer fills, through the SAME
- * cached connection -- rather than opening a second handle to the identical
- * store.
- */
-export async function openConnectionsTable() {
-  handle ??= await connect(DATA_DIR, { storageOptions: storageOptions() });
-  return handle.openTable(TABLE);
 }
 
 /**
@@ -133,9 +121,9 @@ export async function openConnectionsTable() {
  * has committed — even when the two requests were sequential and AWAITED on
  * the client side. Measured: `Promise.all` of 5 concurrent folds for one
  * caller produced 5 ROWS SHARING ONE id (every fold read "no prior row" and
- * added), which `listConnections.ts`'s duplicate-id check then correctly
- * refuses as `integrity_failure` for the WHOLE page — a page that used to be
- * empty (nothing read this root before R5) and now fails outright. Queueing
+ * added), which the reader then could not resolve -- before fix round 2 it
+ * refused the WHOLE page as `integrity_failure`; it now withholds and reports
+ * that one id (`operations.listPage.ts`). Queueing
  * per id removes the interleave without awaiting the fold on the request's
  * hot path: the caller of `foldConnection` still gets an immediately-pending
  * promise it can fire-and-forget exactly as before; only the ACTUAL
@@ -163,8 +151,19 @@ export async function foldConnection(event: ConnectionEvent): Promise<void> {
   if (tableAbsent) return;
   // Truncate and compute `id` BEFORE queueing: the queue key IS the fold key,
   // and this mirrors the pre-existing ordering ("truncate before the key").
-  const label = truncateRequired(event.label);
-  const id = foldId(event.workspace_name, event.method, event.principal, label);
+  // Inside its own try, like every other step of the fold (fix-round 2
+  // finding): a throw here used to escape as a REJECTION, which
+  // `composition.ts`'s fire-and-forget `.catch` swallowed uncounted.
+  let label: string;
+  let id: string;
+  try {
+    label = truncateRequired(event.label);
+    id = foldId(event.workspace_name, event.method, event.principal, label);
+  } catch {
+    foldFailures += 1;
+    console.error("[connections] fold_write_failed");
+    return;
+  }
   const previous = foldQueues.get(id) ?? Promise.resolve();
   // `performFold` never rejects (its own try/catch turns every failure into a
   // counter/log line), so `queued` never rejects either — this chain cannot
@@ -208,19 +207,35 @@ async function performFold(event: ConnectionEvent, id: string, label: string): P
     // file if it rules that a `timestamp[us]` cell is millis (option a).
     const now = Date.now();
 
+    // EVERY stored row for this id, not just one (fix-round 2, upgrade-risk
+    // finding). `foldQueues` serializes ONE process; a second writer process
+    // on the same `ARRA_DATA_DIR` can still leave duplicates. Reading one of
+    // them and then deleting all of them (below) would silently drop the
+    // others' counts, so the fold SUMS them instead and the next fold for the
+    // key heals it into one row. Bounded: past `MAX_HEAL_ROWS` duplicates the
+    // excess is under-counted, the safe direction for population statistics.
     const existing = (await tbl
       .query()
       .where(`id = ${quote(id)}`)
-      .limit(1)
+      .limit(MAX_HEAL_ROWS)
       .toArray()) as Record<string, unknown>[];
 
-    const prior = existing[0];
-    const priorRequests = prior === undefined ? 0n : BigInt(prior.requests as number | bigint);
-    const priorToolCalls = prior === undefined ? 0n : BigInt(prior.tool_calls as number | bigint);
+    let priorRequests = 0n;
+    let priorToolCalls = 0n;
+    let latest: Record<string, unknown> | undefined;
+    for (const stored of existing) {
+      priorRequests += BigInt(stored.requests as number | bigint);
+      priorToolCalls += BigInt(stored.tool_calls as number | bigint);
+      if (latest === undefined || (stored.last_seen as number) > (latest.last_seen as number)) latest = stored;
+    }
     // `first_seen` is the one column a repeat visit must NOT move. Reading it
     // back from the stored row rather than recomputing keeps it honest across
-    // restarts; only a genuinely new key gets `now`.
-    const firstSeen = prior === undefined ? now : (prior.first_seen as number);
+    // restarts; only a genuinely new key gets `now`. Across duplicates, the
+    // EARLIEST wins -- the caller was first seen by whichever writer saw it first.
+    const firstSeen =
+      existing.length === 0
+        ? now
+        : existing.map((stored) => stored.first_seen as number).reduce((a, b) => (b < a ? b : a));
 
     const row = {
       id,
@@ -236,10 +251,10 @@ async function performFold(event: ConnectionEvent, id: string, label: string): P
       // A tool call is ALSO a request, so `tool_calls <= requests` always. The
       // two are not disjoint buckets and must not be presented as such.
       tool_calls: event.tool ? priorToolCalls + 1n : priorToolCalls,
-      last_tool: event.tool ?? (prior === undefined ? null : (prior.last_tool as string | null)),
+      last_tool: event.tool ?? (latest === undefined ? null : (latest.last_tool as string | null)),
     };
 
-    if (prior === undefined) {
+    if (existing.length === 0) {
       await tbl.add([row]);
     } else {
       await tbl.delete(`id = ${quote(id)}`);

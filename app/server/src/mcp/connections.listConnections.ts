@@ -8,8 +8,11 @@
  * that nothing folds `connections` into. R5 rules that `mcp_calls` and
  * `connections` stay operations tables in the operations root; this function
  * reads the table the writer actually fills, reusing the target19 wire
- * contract (`parseListConnections` / `encodeConnectionRow`) unchanged. The
- * target19 copy of this table stays declared and stays EMPTY until #34
+ * contract (`parseListConnections` / `encodeConnectionRow`) unchanged, plus
+ * the fix-round 2 `unreadable` report for rows that codec rejects or that
+ * share an id (`operations.listPage.ts`) -- the pre-R5 fold is known to have
+ * left duplicate ids in real stores, and they must not deny the listing for
+ * the whole workspace. The target19 copy of this table stays declared and stays EMPTY until #34
  * migrates it (see the note beside `TARGET_SCHEMA` in `publication/storage.ts`).
  *
  * `requireWorkspace` is deliberately NOT called here, for the same reason as
@@ -19,76 +22,37 @@
  * Every predicate below is scoped by `request.workspace_name`, so no bank can
  * see another bank's rows.
  */
-import { decodeArrowRows, quote, rawRows } from "../publication/storage";
-import { MAX_RESULT_WIRE_BYTES, rowWireBytes } from "../publication/context";
 import { encodeConnectionRow } from "../publication/context.encodeConnectionRow";
 import { parseListConnections } from "../publication/context.parseListConnections";
-import { failPublication } from "../publication/errors";
-import { openConnectionsTable } from "./connections";
+import { quote } from "../publication/storage";
+import { openConnectionsTable } from "./connections.openConnectionsTable";
+import { listPage } from "./operations.listPage";
 
-/** Matches the writer's own latch test in `connections.ts`/`calls.ts`. */
-const TABLE_ABSENT = /was not found|Table '.*' was not found/i;
+/** LanceDB's own message for a missing table, naming THIS table -- see the
+ *  measurement and the fix-round 2 note beside the sibling in
+ *  `calls.listMcpCalls.ts`. Tested against `openTable`'s error only. */
+const TABLE_ABSENT = /Table 'connections' was not found/;
 
-export async function listConnections(
-  requestBytes: Uint8Array,
-): Promise<{ rows: Record<string, unknown>[]; next_after_id: string | null; total: string | null }> {
+export async function listConnections(requestBytes: Uint8Array): ReturnType<typeof listPage> {
   const request = parseListConnections(requestBytes);
   let tbl: Awaited<ReturnType<typeof openConnectionsTable>>;
   try {
     tbl = await openConnectionsTable();
-    await tbl.checkoutLatest();
   } catch (error) {
     // See the sibling comment in `calls.listMcpCalls.ts`: a missing
     // `connections` table reads as empty, never as a raw SDK message (which
-    // would carry the absolute dataset path) reaching an MCP client.
+    // would carry the dataset path) reaching an MCP client.
     if (error instanceof Error && TABLE_ABSENT.test(error.message)) {
       return { rows: [], next_after_id: null, total: request.include_total ? "0" : null };
     }
     throw error;
   }
+  await tbl.checkoutLatest();
 
-  const workspaceScope = `workspace_name = ${quote(request.workspace_name)}`;
-  const scope = request.after_id === null ? workspaceScope : `${workspaceScope} AND id > ${quote(request.after_id)}`;
-
-  // KEYSET, never offset -- same total-order reasoning as the sibling
-  // `calls.listMcpCalls.ts`: `id` is this table's unique primary key, one
-  // row per (workspace, method, principal, label).
-  const arrow = await tbl
-    .query()
-    .where(scope)
-    .select(["id"])
-    .orderBy([{ columnName: "id", ascending: true }])
-    .limit(request.limit + 1)
-    .toArrow();
-  const selected = decodeArrowRows(arrow);
-
-  const ids: string[] = [];
-  for (const row of selected) {
-    const id = row.id;
-    if (typeof id !== "string") failPublication("integrity_failure", "");
-    if (ids.includes(id)) failPublication("integrity_failure", "");
-    ids.push(id);
-  }
-
-  const page = ids.slice(0, request.limit);
-  const rows: Record<string, unknown>[] = [];
-  let budget = 1;
-  for (const id of page) {
-    const found = await rawRows(tbl, `${workspaceScope} AND id = ${quote(id)}`, 2);
-    if (found.length === 0) failPublication("integrity_failure", "");
-    if (found.length > 1) failPublication("integrity_failure", "");
-    const encoded = encodeConnectionRow(found[0]!);
-    budget += rowWireBytes(encoded) + 1;
-    if (budget > MAX_RESULT_WIRE_BYTES) failPublication("limit_exceeded", "");
-    rows.push(encoded);
-  }
-
-  const total = request.include_total ? (await tbl.countRows(workspaceScope)).toString(10) : null;
-
-  const hasMore = ids.length > request.limit;
-  return {
-    rows,
-    next_after_id: hasMore && page.length > 0 ? page[page.length - 1]! : null,
-    total,
-  };
+  // No filters on this method: the SET is the workspace. `id` is the fold
+  // key, one row per (workspace, method, principal, label) -- and the keyset
+  // order.
+  const workspace = `workspace_name = ${quote(request.workspace_name)}`;
+  const page = request.after_id === null ? workspace : `${workspace} AND id > ${quote(request.after_id)}`;
+  return listPage(tbl, { workspace, count: workspace, page }, request.limit, request.include_total, encodeConnectionRow);
 }

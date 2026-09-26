@@ -13,7 +13,10 @@
  * R5 rules that `mcp_calls` and `connections` stay operations tables in the
  * operations root; this function reads the table the writer actually fills,
  * reusing the target19 wire contract (`parseListMcpCalls` / `encodeMcpCallRow`)
- * unchanged so a caller cannot tell which physical root answered. The
+ * unchanged so a caller cannot tell which physical root answered -- with one
+ * addition from fix round 2: a stored row that codec rejects is withheld and
+ * reported in `unreadable` instead of failing the whole workspace's listing
+ * (`operations.listPage.ts`, which also holds the paging itself). The
  * target19 copy of this table stays declared and stays EMPTY until #34
  * migrates it (see the note beside `TARGET_SCHEMA` in `publication/storage.ts`).
  *
@@ -30,32 +33,34 @@
  * bank's rows, because every predicate below is scoped by
  * `request.workspace_name`.
  */
-import { decodeArrowRows, quote, rawRows } from "../publication/storage";
-import { MAX_RESULT_WIRE_BYTES, rowWireBytes } from "../publication/context";
 import { encodeMcpCallRow } from "../publication/context.encodeMcpCallRow";
 import { parseListMcpCalls } from "../publication/context.parseListMcpCalls";
-import { failPublication } from "../publication/errors";
-import { openCallLogTable } from "./calls";
+import { quote } from "../publication/storage";
+import { openCallLogTable } from "./calls.openCallLogTable";
+import { listPage } from "./operations.listPage";
 
-/** Matches the writer's own latch test in `calls.ts`/`connections.ts`. */
-const TABLE_ABSENT = /was not found|Table '.*' was not found/i;
+/**
+ * LanceDB's own message for a missing table, naming THIS table (measured on
+ * 0.38: "Table 'mcp_calls' was not found  Caused by: Dataset at path ...").
+ * Fix-round 2 finding: the earlier bare `/was not found/` could have turned
+ * an unrelated not-found storage error into a silently empty page. It is now
+ * also tested against `openTable`'s error only, never `checkoutLatest`'s.
+ */
+const TABLE_ABSENT = /Table 'mcp_calls' was not found/;
 
-export async function listMcpCalls(
-  requestBytes: Uint8Array,
-): Promise<{ rows: Record<string, unknown>[]; next_after_id: string | null; total: string | null }> {
+export async function listMcpCalls(requestBytes: Uint8Array): ReturnType<typeof listPage> {
   const request = parseListMcpCalls(requestBytes);
   let tbl: Awaited<ReturnType<typeof openCallLogTable>>;
   try {
     tbl = await openCallLogTable();
-    await tbl.checkoutLatest();
   } catch (error) {
     // A store with no `mcp_calls` table (an unmigrated `ARRA_DATA_DIR`, or a
     // fresh deployment nothing has written to yet) is equivalent to an empty
     // table from this reader's point of view -- NOT an error the caller
     // should see. Before this branch existed, the raw LanceDB SDK message
-    // (including the absolute dataset path) reached the client verbatim over
-    // MCP, which `revision-publication-v1.md` / `context-ingestion-v1.md`
-    // both forbid for every OTHER governed method; HTTP already maps unknown
+    // (including the dataset path) reached the client verbatim over MCP,
+    // which `revision-publication-v1.md` / `context-ingestion-v1.md` both
+    // forbid for every OTHER governed method; HTTP already maps unknown
     // errors to a bare `{"error":"internal"}` (`knowledge/transport.ts`), but
     // MCP's `tool_error` path (`auth/service.ts`) carries `error.message`
     // through unchanged, so this had to be stopped here, at the source.
@@ -64,63 +69,19 @@ export async function listMcpCalls(
     }
     throw error;
   }
+  await tbl.checkoutLatest();
 
-  const workspaceScope = `workspace_name = ${quote(request.workspace_name)}`;
+  const workspace = `workspace_name = ${quote(request.workspace_name)}`;
   // Two predicates, deliberately, matching the target19 reader this mirrors:
-  // `countScope` is the SET (workspace plus any tool/status filter); `scope`
-  // narrows it to the current PAGE with the cursor. A total that counted a
-  // different set than the page walks would be worse than no total at all.
-  let countScope = workspaceScope;
-  if (request.tool !== null) countScope += ` AND tool = ${quote(request.tool)}`;
-  if (request.status !== null) countScope += ` AND status = ${quote(request.status)}`;
-  const scope = request.after_id === null ? countScope : `${countScope} AND id > ${quote(request.after_id)}`;
+  // `count` is the SET (workspace plus any tool/status filter); `page`
+  // narrows it with the cursor. A total that counted a different set than
+  // the page walks would be worse than no total at all.
+  let count = workspace;
+  if (request.tool !== null) count += ` AND tool = ${quote(request.tool)}`;
+  if (request.status !== null) count += ` AND status = ${quote(request.status)}`;
+  const page = request.after_id === null ? count : `${count} AND id > ${quote(request.after_id)}`;
 
-  // KEYSET, never offset: limit+1 detects continuation without paging by
-  // position. `id` (`c_<base36ms>_<random6>`, minted by `calls.ts`) is a
-  // total order for this purpose -- the table's unique primary key.
-  const arrow = await tbl
-    .query()
-    .where(scope)
-    .select(["id"])
-    .orderBy([{ columnName: "id", ascending: true }])
-    .limit(request.limit + 1)
-    .toArrow();
-  const selected = decodeArrowRows(arrow);
-
-  const ids: string[] = [];
-  for (const row of selected) {
-    const id = row.id;
-    if (typeof id !== "string") failPublication("integrity_failure", "");
-    // The LOOKAHEAD row is validated too: a duplicate straddling the limit
-    // would otherwise evade the check and split silently across two pages.
-    if (ids.includes(id)) failPublication("integrity_failure", "");
-    ids.push(id);
-  }
-
-  const page = ids.slice(0, request.limit);
-  const rows: Record<string, unknown>[] = [];
-  // Cumulative wire budget: over budget fails, it never truncates, which
-  // would hand back a short page indistinguishable from a real one.
-  let budget = 1;
-  for (const id of page) {
-    // Re-fetched by exact identity (workspace + id only, no tool/status),
-    // matching `service.listMcpCalls.ts`: the id already came from the
-    // filtered scope, so this is an integrity re-check, not a second filter.
-    const found = await rawRows(tbl, `${workspaceScope} AND id = ${quote(id)}`, 2);
-    if (found.length === 0) failPublication("integrity_failure", "");
-    if (found.length > 1) failPublication("integrity_failure", "");
-    const encoded = encodeMcpCallRow(found[0]!);
-    budget += rowWireBytes(encoded) + 1;
-    if (budget > MAX_RESULT_WIRE_BYTES) failPublication("limit_exceeded", "");
-    rows.push(encoded);
-  }
-
-  const total = request.include_total ? (await tbl.countRows(countScope)).toString(10) : null;
-
-  const hasMore = ids.length > request.limit;
-  return {
-    rows,
-    next_after_id: hasMore && page.length > 0 ? page[page.length - 1]! : null,
-    total,
-  };
+  // `id` (`c_<base36ms>_<random6>`, minted by `calls.ts`) is the table's
+  // unique primary key and the keyset order.
+  return listPage(tbl, { workspace, count, page }, request.limit, request.include_total, encodeMcpCallRow);
 }

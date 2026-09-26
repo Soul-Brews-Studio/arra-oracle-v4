@@ -7,10 +7,8 @@
 // later — both of digger-node's refusal-message fixes were found by reading its
 // own call log, not by a test.
 
-import { connect } from "@lancedb/lancedb";
-import { DATA_DIR, storageOptions } from "../storage";
-
-const TABLE = "mcp_calls";
+import { openCallLogTable } from "./calls.openCallLogTable";
+import { recordableName } from "./calls.recordableName";
 
 /** Inputs are truncated AT WRITE TIME, not at read time — otherwise a 100 KB
  *  argument blob lives in the log forever and is only trimmed when someone
@@ -95,8 +93,6 @@ export interface CallRecord {
   auth?: AuditAttribution | null;
 }
 
-let handle: Awaited<ReturnType<typeof connect>> | null = null;
-
 /** Fixed sanitized counter for audit-write failures; never exception text. */
 let auditFailures = 0;
 
@@ -104,43 +100,48 @@ export function auditFailureCount(): number {
   return auditFailures;
 }
 
-/**
- * Exported so `calls.listMcpCalls.ts` (#103, DECISIONS.md R5) can page the
- * SAME operations-root table this writer fills, through the SAME cached
- * connection -- rather than opening a second handle to the identical store.
- */
-export async function openCallLogTable() {
-  handle ??= await connect(DATA_DIR, { storageOptions: storageOptions() });
-  return handle.openTable(TABLE);
-}
-
 export async function logCall(rec: CallRecord): Promise<void> {
   try {
+    // #103 fix round 2: caller-supplied NAME columns are recorded only in the
+    // form the reader's codec accepts -- see `calls.recordableName.ts`. The
+    // other columns need no such step: `workspace_name` is the admitted
+    // policy scope, `tool` is a catalogue name (`auth/service.ts` audits no
+    // unknown tool), and both metadata columns are `JSON.stringify` output,
+    // which is always well-formed text.
+    const session = recordableName(rec.session_name);
+    const peer = recordableName(rec.peer_name);
+    const invalidFields = [
+      ...(session.invalid ? ["session_name"] : []),
+      ...(peer.invalid ? ["peer_name"] : []),
+    ];
     const tbl = await openCallLogTable();
     await tbl.add([
       {
         id: `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
         workspace_name: rec.workspace_name,
-        session_name: rec.session_name ?? null,
-        peer_name: rec.peer_name ?? null,
+        session_name: session.value,
+        peer_name: peer.value,
         tool: rec.tool,
         status: rec.status,
         duration_ms: rec.duration_ms,
         // A FRESH wrapper-owned object every time: caller metadata is never
-        // merged in, so a caller cannot forge or overwrite the auth block.
-        h_metadata: JSON.stringify(
-          rec.auth
+        // merged in, so a caller cannot forge or overwrite the auth block --
+        // or the `invalid_fields` flag, which is present only when a name
+        // column above was recorded as null INSTEAD of what was sent.
+        h_metadata: JSON.stringify({
+          input: truncate(rec.input),
+          result: truncate(rec.result),
+          ...(rec.auth
             ? {
-                input: truncate(rec.input),
-                result: truncate(rec.result),
                 auth: {
                   principal_id: rec.auth.principal_id,
                   credential_id: rec.auth.credential_id,
                   policy_version: rec.auth.policy_version,
                 },
               }
-            : { input: truncate(rec.input), result: truncate(rec.result) },
-        ),
+            : {}),
+          ...(invalidFields.length > 0 ? { invalid_fields: invalidFields } : {}),
+        }),
         internal_metadata: rec.client_label
           ? JSON.stringify({ transport: { user_agent: truncate(rec.client_label) } })
           : null,
