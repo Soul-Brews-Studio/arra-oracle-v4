@@ -155,9 +155,12 @@ grant may also carry `peers: [...]` (R3). Every caller-asserted peer field
 gets 403.
 
 Message reads are behind membership (R3). `listMessages`, `getMessage` and
-`listSessionMembers` need a `requester_peer_name` that is a current member of the session.
-A caller who names no requester must hold `audit:read` on the workspace (the operator view);
-otherwise the answer is 403.
+`listSessionMembers` take a `requester_peer_name`:
+
+- A requester that is not a current member gets `invalid_reference` (HTTP 400, or MCP
+  `isError`), the same answer as a reference that does not exist.
+- A caller who names no requester must hold `audit:read` on the workspace (the operator view);
+  otherwise the answer is 403 `forbidden`.
 
 MCP endpoint: `/mcp/:bank`, with bank = `workspaces.name` (not credentials). `tools/list`
 returns up to **65 tools**, filtered to what the caller's token grants: 8 legacy memory tools

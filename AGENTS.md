@@ -94,7 +94,9 @@ Every number here was measured on `e00b50b` on 2026-09-27: counts come from the 
   GET /                                             foreign Host  400
   ```
 - **Membership boundary (R3).**
-  - `listMessages`, `getMessage` and `listSessionMembers` take an optional `requester_peer_name`. When one is named, that peer's current membership is required. When none is named, the caller needs `audit:read` on the workspace (the operator view); otherwise the answer is 403 (`publication/context.requireMessageReadAuthority.ts`).
+  - `listMessages`, `getMessage` and `listSessionMembers` take an optional `requester_peer_name` (`publication/context.requireMessageReadAuthority.ts`, `service.requireCurrentMembership.ts`):
+    - A named requester must be a current member of the session. A non-member or departed peer gets `invalid_reference` (HTTP 400, MCP `isError`), the same answer as a reference that does not exist.
+    - With no requester named, the caller needs `audit:read` on the workspace (the operator view); otherwise the answer is 403 `forbidden`.
   - An `arra-auth/v1` grant may list `peers: [...]`. When it does, every caller-asserted peer field in `knowledge/registry.peerFields.ts` must be one of them, or the request gets 403 at that field (`knowledge/transport.requireBoundPeers.ts`). The field table is exhaustive over the registry.
   - Live probe: isolation 191 PASS / 0 FAIL across HTTP, MCP and CLI.
 - **Taxonomy (R6, R10).** A sealed vocabulary refuses create, rename, retire and reparent on every transport. `conclusion` is a reserved type term (`publication/taxonomy.constants.ts:44`), not a table (#89).
