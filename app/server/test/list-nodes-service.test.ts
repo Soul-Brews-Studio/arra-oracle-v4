@@ -53,6 +53,7 @@ async function listNodes(request: {
   after_id: string | null;
   limit: number;
   include_total: boolean;
+  include_inactive: boolean;
   type_term: string | null;
 }): Promise<ListNodesPage> {
   const reader = await openPublicationReader(fixture.datasetRoot);
@@ -71,7 +72,7 @@ afterAll(async () => {
 
 describe("listNodes: base cases", () => {
   test("an empty workspace returns an empty page with next_after_id and total both null", async () => {
-    const page = await listNodes({ workspace_name: BETA, after_id: null, limit: 10, include_total: false, type_term: null });
+    const page = await listNodes({ workspace_name: BETA, after_id: null, limit: 10, include_total: false, include_inactive: false, type_term: null });
     expect(page.rows).toEqual([]);
     expect(page.next_after_id).toBeNull();
     expect(page.total).toBeNull();
@@ -92,7 +93,7 @@ describe("listNodes: base cases", () => {
     let row: Record<string, unknown> | undefined;
     let after: string | null = null;
     for (let guard = 0; guard < 1000 && row === undefined; guard += 1) {
-      const page = await listNodes({ workspace_name: ALPHA, after_id: after, limit: 100, include_total: false, type_term: null });
+      const page = await listNodes({ workspace_name: ALPHA, after_id: after, limit: 100, include_total: false, include_inactive: false, type_term: null });
       row = page.rows.find((r) => r.id === node);
       if (page.next_after_id === null) break;
       after = page.next_after_id;
@@ -118,7 +119,7 @@ describe("listNodes: keyset pagination", () => {
     expect(r1.ok).toBe(true);
     expect(r2.ok).toBe(true);
 
-    const page1 = await listNodes({ workspace_name: ALPHA, after_id: null, limit: 1, include_total: false, type_term: null });
+    const page1 = await listNodes({ workspace_name: ALPHA, after_id: null, limit: 1, include_total: false, include_inactive: false, type_term: null });
     expect(page1.rows.length).toBe(1);
     expect(page1.next_after_id).not.toBeNull();
     expect(typeof page1.next_after_id).toBe("string");
@@ -130,7 +131,7 @@ describe("listNodes: keyset pagination", () => {
     let guard = 0;
     while (!(seenIds.has(n1) && seenIds.has(n2)) && guard < 1000) {
       guard += 1;
-      const page = await listNodes({ workspace_name: ALPHA, after_id: after, limit: 1, include_total: false, type_term: null });
+      const page = await listNodes({ workspace_name: ALPHA, after_id: after, limit: 1, include_total: false, include_inactive: false, type_term: null });
       expect(page.rows.length).toBeGreaterThan(0);
       for (const row of page.rows) seenIds.add(row.id as string);
       after = page.next_after_id;
@@ -149,7 +150,7 @@ describe("listNodes: keyset pagination", () => {
         after_id: finalNextAfterId,
         limit: 100,
         include_total: false,
-        type_term: null,
+        include_inactive: false, type_term: null,
       });
       finalNextAfterId = page.next_after_id;
     }
@@ -172,7 +173,7 @@ describe("listNodes: keyset pagination", () => {
     for (;;) {
       guard += 1;
       if (guard > 10_000) throw new Error("pagination did not converge");
-      const page = await listNodes({ workspace_name: ALPHA, after_id: after, limit: 2, include_total: false, type_term: null });
+      const page = await listNodes({ workspace_name: ALPHA, after_id: after, limit: 2, include_total: false, include_inactive: false, type_term: null });
       // Every page except possibly the last is exactly `limit` long; a short
       // page that still claims `next_after_id` would be a gap, not a page.
       if (page.next_after_id !== null) expect(page.rows.length).toBe(2);
@@ -195,7 +196,7 @@ describe("listNodes: keyset pagination", () => {
     // Exhaustion is a real boundary, not just "the last call returned some
     // rows anyway": one more call from the final cursor is an empty page.
     const last = seen[seen.length - 1]!;
-    const afterEnd = await listNodes({ workspace_name: ALPHA, after_id: last, limit: 10, include_total: false, type_term: null });
+    const afterEnd = await listNodes({ workspace_name: ALPHA, after_id: last, limit: 10, include_total: false, include_inactive: false, type_term: null });
     expect(afterEnd.rows).toEqual([]);
     expect(afterEnd.next_after_id).toBeNull();
   }, 180_000);
@@ -203,7 +204,7 @@ describe("listNodes: keyset pagination", () => {
 
 describe("listNodes: include_total", () => {
   test("include_total: false always returns total: null", async () => {
-    const page = await listNodes({ workspace_name: ALPHA, after_id: null, limit: 10, include_total: false, type_term: null });
+    const page = await listNodes({ workspace_name: ALPHA, after_id: null, limit: 10, include_total: false, include_inactive: false, type_term: null });
     expect(page.total).toBeNull();
   });
 
@@ -213,14 +214,14 @@ describe("listNodes: include_total", () => {
       [revId("totalworkspacerA")],
     );
 
-    const before = await listNodes({ workspace_name: ALPHA, after_id: null, limit: 1, include_total: true, type_term: null });
+    const before = await listNodes({ workspace_name: ALPHA, after_id: null, limit: 1, include_total: true, include_inactive: false, type_term: null });
     // Compare against an independent full walk's count rather than a
     // hardcoded literal, since ALPHA accumulates nodes across this file's
     // other tests and test order is not something this test should pin.
     let walked = 0;
     let after: string | null = null;
     for (let guard = 0; guard < 1000; guard += 1) {
-      const page = await listNodes({ workspace_name: ALPHA, after_id: after, limit: 100, include_total: false, type_term: null });
+      const page = await listNodes({ workspace_name: ALPHA, after_id: after, limit: 100, include_total: false, include_inactive: false, type_term: null });
       walked += page.rows.length;
       if (page.next_after_id === null) break;
       after = page.next_after_id;
@@ -238,7 +239,7 @@ describe("listNodes: include_total", () => {
       after_id: null,
       limit: 10,
       include_total: true,
-      type_term: decisionType.name,
+      include_inactive: false, type_term: decisionType.name,
     });
     expect(page.total).toBeNull();
   });
@@ -283,7 +284,7 @@ describe("listNodes: type_term filter", () => {
       after_id: null,
       limit: 100,
       include_total: false,
-      type_term: decisionType.name,
+      include_inactive: false, type_term: decisionType.name,
     });
     const decisionIds = decisions.rows.map((r) => r.id);
     expect(decisionIds).toContain(decisionNode);
@@ -313,7 +314,7 @@ describe("listNodes: type_term filter", () => {
       after_id: null,
       limit: 100,
       include_total: false,
-      type_term: noteType.name,
+      include_inactive: false, type_term: noteType.name,
     });
     const noteIds = notes.rows.map((r) => r.id);
     expect(noteIds).toContain(noteNode);
@@ -326,7 +327,7 @@ describe("listNodes: type_term filter", () => {
       after_id: null,
       limit: 10,
       include_total: false,
-      type_term: "no-such-type-term-anywhere",
+      include_inactive: false, type_term: "no-such-type-term-anywhere",
     });
     expect(none.rows).toEqual([]);
     expect(none.next_after_id).toBeNull();

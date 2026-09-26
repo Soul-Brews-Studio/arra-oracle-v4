@@ -182,7 +182,11 @@ const SPECS: ListSpec[] = [
     cursorReqKey: "after_id",
     cursorRespKey: "next_after_id",
     identityField: "id",
-    defaultRequest: { ...ORDINARY_REQUEST, type_term: null },
+    // #29 slice B: `include_inactive: false` matches the ordinary "current"
+    // default this file's other listNodes requests already assume -- none
+    // of the seeded rows here carry a lifecycle event, so it changes nothing
+    // this proof measures.
+    defaultRequest: { ...ORDINARY_REQUEST, type_term: null, include_inactive: false },
   },
   {
     // Not merged yet (v4/list-activity is still working, per #88's own

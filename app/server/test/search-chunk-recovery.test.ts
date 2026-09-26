@@ -884,6 +884,7 @@ recoveryTest(
       missing_revisions: [],
       stale: 0,
       exhausted: false,
+      ineligible: 0,
     });
 
     // A second call, SAME limit: the SAME node (still `nodeSecond`), not the
