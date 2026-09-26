@@ -25,8 +25,13 @@ print(json.dumps({'jsonrpc': '2.0', 'id': int(sys.argv[1]), 'method': 'tools/cal
   local peer_args=()
   [ -n "$peer" ] && peer_args=(-H "x-arra-peer: $peer")
   show "curl -sS -X POST $ORIGIN/mcp/$BANK -H 'authorization: Bearer ***'${peer:+ -H \"x-arra-peer: $peer\"} -d '$args_json'   # tools/call $tool"
+  # Fix round (blocking finding 2): under `set -u`, expanding an EMPTY array
+  # with plain `"${peer_args[@]}"` is unbound-variable on bash < 4.4 (macOS
+  # system /bin/bash is 3.2.57) -- `${arr[@]+"${arr[@]}"}` expands to nothing
+  # when the array is empty/unset instead of erroring, on every bash version.
   local raw; raw="$(curl -sS -w $'\n%{http_code}' -X POST "$ORIGIN/mcp/$BANK" \
-    -H "content-type: application/json" -H "authorization: Bearer $TOKEN" "${peer_args[@]}" \
+    -H "content-type: application/json" -H "authorization: Bearer $TOKEN" \
+    ${peer_args[@]+"${peer_args[@]}"} \
     -d "$body")"
   LAST_STATUS="${raw##*$'\n'}"
   LAST_OUT="${raw%$'\n'*}"

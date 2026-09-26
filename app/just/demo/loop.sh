@@ -121,6 +121,16 @@ JSON
     step "embed pending chunks with the real local Ollama, $EMBEDDING_MODEL_NAME"
     echo "{\"workspace_name\":\"$BANK\",\"limit\":10}" >"$req/embed.json"
     run_cli kb embedPendingChunks --file "$req/embed.json" || fail "embed-chunks" "$LAST_OUT"
+    # Fix round (blocking finding 1): a call that answers `blocked` or writes
+    # nothing must not read as success just because the CLI exited 0 -- R20's
+    # whole point is that an unmeasurable/mismatched digest embeds NOTHING.
+    echo "$LAST_OUT" | "$PY" -c "
+import json, sys
+d = json.load(sys.stdin)
+assert d.get('blocked') is None, f\"embed blocked, nothing written: {d!r}\"
+assert d.get('failed', 0) == 0, f\"embed reported failures: {d!r}\"
+assert (d.get('embedded', 0) + d.get('reused', 0)) >= 1, f\"embed wrote no vector: {d!r}\"
+" || fail "embed-chunks" "embed result did not actually embed or reuse a vector"
     ok "embed-chunks"
   else
     skip "embed-chunks" "Ollama unreachable at $OLLAMA_BASE"
@@ -129,6 +139,19 @@ JSON
   step "getSearchFreshness (R20: show the pinned model digest)"
   echo "{\"workspace_name\":\"$BANK\"}" >"$req/freshness.json"
   run_cli kb getSearchFreshness --file "$req/freshness.json" || fail "search-freshness" "$LAST_OUT"
+  if [ "$OLLAMA_UP" -eq 1 ]; then
+    # Fix round: R20's claim ("pinned == last_measured" right after a real
+    # embed) was previously read off the transcript by eye. Assert it.
+    echo "$LAST_OUT" | "$PY" -c "
+import json, sys
+d = json.load(sys.stdin)
+v = d.get('vectors', {})
+digest = v.get('model_digest', {})
+assert v.get('ready', 0) >= 1, f\"R20: no ready vectors after a real embed: {v!r}\"
+assert digest.get('pinned') is not None, f\"R20: no pinned digest after a real embed: {digest!r}\"
+assert digest.get('pinned') == digest.get('last_measured'), f\"R20: pinned != last_measured: {digest!r}\"
+" || fail "search-freshness" "R20 digest not pinned/measured consistently after a real embed"
+  fi
   ok "search-freshness"
 
   step "keyword search 'ลืม' -- Thai INSIDE a word (R14: ngram(3,3), not ICU)"
@@ -144,6 +167,13 @@ assert any('$NODE1_ID' == r.get('node_id') for r in hits), 'keyword search did n
     step "semantic search over the same chunks"
     run_cli search --mode semantic --query "forgetting to snapshot the disk before a migration" --limit 5 \
       || fail "semantic-search" "$LAST_OUT"
+    # Fix round: same "did it actually find the node" check keyword-search
+    # already makes -- an empty `hits` array with exit 0 must not read OK.
+    echo "$LAST_OUT" | "$PY" -c "
+import json, sys
+hits = json.load(sys.stdin).get('hits', [])
+assert any('$NODE1_ID' == r.get('node_id') for r in hits), 'semantic search did not find the published node'
+" || fail "semantic-search" "expected node $NODE1_ID in the semantic hits"
     ok "semantic-search"
   else
     skip "semantic-search" "Ollama unreachable at $OLLAMA_BASE"

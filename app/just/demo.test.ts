@@ -32,6 +32,38 @@ type OllamaCall = { path: string; body: unknown };
  *  server ever calls (`embed.ts` /api/embed, `fetchOllamaModelDigest.ts`
  *  /api/tags, `chat-model.createOllamaChatModel.ts` /api/chat) -- see that
  *  trio named together in `stack.sh`'s own header comment. */
+/** Fix round (blocking finding 1, scenario a): a stub that answers `/api/tags`
+ *  with NO models listed -- exactly what a freshly-installed Ollama with the
+ *  wrong model pulled looks like. `measureModelDigest` cannot find `all-minilm`
+ *  in this list, so R20 must block the embed (`blocked: "digest_unmeasured"`)
+ *  and embed/search-freshness/semantic-search must all fail loudly instead of
+ *  reporting `STEP_OK` on an empty result. */
+function startOllamaStubNoModels() {
+  const calls: OllamaCall[] = [];
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(req) {
+      const url = new URL(req.url);
+      const body = req.method === "POST" ? await req.json().catch(() => null) : null;
+      calls.push({ path: url.pathname, body });
+      if (url.pathname === "/api/tags" && req.method === "GET") {
+        return Response.json({ models: [] });
+      }
+      if (url.pathname === "/api/embed" && req.method === "POST") {
+        const input = (body as { input?: unknown })?.input;
+        const n = Array.isArray(input) ? input.length : 0;
+        return Response.json({ embeddings: Array.from({ length: n }, stubVector) });
+      }
+      if (url.pathname === "/api/chat" && req.method === "POST") {
+        return Response.json({ message: { content: "stubbed answer: no real model was contacted." } });
+      }
+      return new Response("not found", { status: 404 });
+    },
+  });
+  return { url: `http://127.0.0.1:${server.port}`, calls, stop: () => server.stop(true) };
+}
+
 function startOllamaStub() {
   const calls: OllamaCall[] = [];
   const server = Bun.serve({
@@ -60,9 +92,11 @@ function startOllamaStub() {
 
 /** Run the real `demo.sh`, stdout+stderr merged (the script itself never
  *  merges them; `2>&1` here matches how a human reading a terminal would
- *  see it). `env` overrides/extends the current process env. */
-async function runDemo(env: Record<string, string>) {
-  const proc = Bun.spawn(["bash", "-c", `bash ${DEMO_SH} 2>&1`], {
+ *  see it). `env` overrides/extends the current process env. `bashBin` lets
+ *  a caller pin a specific `bash` binary rather than whatever `PATH` picks
+ *  up (fix round finding 2 -- see the "macOS system bash" test below). */
+async function runDemo(env: Record<string, string>, bashBin = "bash") {
+  const proc = Bun.spawn([bashBin, "-c", `${bashBin} ${DEMO_SH} 2>&1`], {
     cwd: APP_ROOT,
     env: { ...process.env, ...env },
     stdout: "pipe",
@@ -98,6 +132,57 @@ describe("app/just/demo.sh (stubbed Ollama)", () => {
       expect(paths).toContain("/api/tags");
       expect(paths).toContain("/api/embed");
       expect(paths).toContain("/api/chat");
+
+      // Fix round (blocking finding 1c): a single `/api/embed` call from the
+      // semantic-search QUERY alone must not be enough to pass. Assert there
+      // were at least two distinct calls -- one embedding the published
+      // node's Thai chunk text (index/embed step), one embedding the
+      // English search query (semantic-search step) -- so deleting the
+      // `embedPendingChunks` call (while keeping its `ok` line) would leave
+      // only the query call and fail this.
+      const embedCalls = stub.calls.filter((c) => c.path === "/api/embed");
+      const embedInputs = embedCalls.flatMap((c) => {
+        const input = (c.body as { input?: unknown })?.input;
+        return Array.isArray(input) ? (input as string[]) : [];
+      });
+      expect(embedCalls.length, JSON.stringify(embedCalls)).toBeGreaterThanOrEqual(2);
+      expect(embedInputs.some((t) => t.includes("หลงลืม")), embedInputs.join("\n---\n")).toBe(true);
+      expect(
+        embedInputs.some((t) => t.includes("forgetting to snapshot the disk before a migration")),
+        embedInputs.join("\n---\n"),
+      ).toBe(true);
+
+      // Fix round: the chat call must have carried the real question and the
+      // real recorded evidence, not a placeholder ping.
+      const chatCall = stub.calls.find((c) => c.path === "/api/chat");
+      const chatMessages = (chatCall?.body as { messages?: { content?: string }[] } | undefined)?.messages ?? [];
+      const chatText = chatMessages.map((m) => m.content ?? "").join("\n");
+      expect(chatText).toContain("What should I remember to do before a disk migration?");
+      expect(chatText).toContain("snapshot");
+
+      // Fix round: an empty hit list must never read as a found result.
+      expect(out).not.toContain('"hits": []');
+    } finally {
+      stub.stop();
+    }
+  }, 60_000);
+
+  test("R20 fix round: a stub with NO models listed blocks the embed, never reports it OK", async () => {
+    // Reproduces the verifier's scenario (a) exactly: `/api/tags` answers
+    // 200 with an empty model list, so `resolve_ollama` sees Ollama as UP,
+    // but `measureModelDigest` can never find `all-minilm` in it. Before the
+    // fix, `embed-chunks`, `search-freshness` and `semantic-search` all
+    // still printed `STEP_OK` on the CLI's exit code alone.
+    const stub = startOllamaStubNoModels();
+    try {
+      const { out, exitCode } = await runDemo({ DEMO_OLLAMA_URL: stub.url });
+      expect(exitCode, out).not.toBe(0);
+      expect(out).toContain("STEP_FAIL embed-chunks");
+      expect(out).not.toContain("STEP_OK embed-chunks");
+      expect(out).not.toContain("STEP_OK semantic-search");
+      expect(out).not.toContain("DEMO_DONE");
+      // The stack must still have come down even though the loop failed.
+      expect(out).toContain("STEP_OK stack-down");
     } finally {
       stub.stop();
     }
@@ -118,5 +203,21 @@ describe("app/just/demo.sh (stubbed Ollama)", () => {
     for (const name of EVERY_STEP) {
       expect(out, out).toContain(`STEP_OK ${name}`);
     }
+  }, 60_000);
+
+  test("fix round finding 2: v3.sh's peer_args expansion survives an empty array under set -u", async () => {
+    // The verifier's exact repro: `/bin/bash` on macOS is the system 3.2.57,
+    // which (unlike a newer bash on PATH, e.g. Homebrew's) aborts on
+    // `"${arr[@]}"` when `arr` is empty under `set -u`. `demo_v3_loop` calls
+    // `oracle_search` with an empty peer, which is exactly that case. Runs
+    // with Ollama unreachable (skip mode) so it stays fast -- the v3 loop
+    // never depends on a model.
+    const hasSystemBash = await Bun.file("/bin/bash").exists();
+    if (!hasSystemBash) return; // nothing to pin the binary to on this box
+    const { out, exitCode } = await runDemo({ DEMO_OLLAMA_URL: "http://127.0.0.1:1" }, "/bin/bash");
+    expect(out).not.toContain("unbound variable");
+    expect(exitCode, out).toBe(0);
+    expect(out).toContain("STEP_OK v3-oracle-search");
+    expect(out).toContain("DEMO_DONE");
   }, 60_000);
 });
