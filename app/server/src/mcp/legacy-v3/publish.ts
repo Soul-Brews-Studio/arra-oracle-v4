@@ -23,6 +23,9 @@ export type Published = {
   outcome: string;
   embedding: "enqueued" | "failed";
   embeddingError?: string;
+  /** Set only when the association reconcile below throws. Absent means
+   *  reconciled -- there is no separate "reconciled" literal to check. */
+  associationsError?: string;
 };
 
 /**
@@ -36,6 +39,23 @@ export type Published = {
  * profile, never the caller's; if it fails the publish still stands, the
  * answer says `embedding:"failed"`, and `reconcileSearchChunks` lists the
  * revision as missing -- v3's rule that embedding never blocks the write.
+ *
+ * `reconcileRevisionAssociations` runs here too, right after `publishRevision`
+ * and before indexing, for the same reason `indexRevisionChunks` runs here: a
+ * v3 client has no tool that can call it directly (it is `content:write` and
+ * no `V3_CATALOGUE` entry exposes it), so if this adapter did not call it,
+ * `node_revision_terms` would never be filled for a v3-created node and K6
+ * `listTermUsage` (`oracle_concepts`, `oracle_stats.unique_concepts`) would
+ * answer zero for every one of them, forever, with nothing on the wire to say
+ * so -- the exact "silently miss...and present that partial set as if it
+ * were complete" trap `service.listNodes.ts` already warns about for a
+ * different table. Like indexing, a reconcile failure does not fail the
+ * publish (the node is already written and readable; the answer says
+ * `associationsError`, and every caller of `publish()` turns that into a
+ * `compat_warnings` entry, so the gap is disclosed, never silent). A client
+ * retry with the same `idempotency_key` re-attempts both this call and
+ * indexing, since `publishRevision`'s `idempotent` outcome still falls
+ * through to them below.
  */
 export async function publish(context: V3ToolContext, input: PublishInput): Promise<Published> {
   const { bank, kb, tool } = context;
@@ -93,6 +113,11 @@ export async function publish(context: V3ToolContext, input: PublishInput): Prom
   }
 
   const published: Published = { node_id: outcome.node_id!, revision_id: outcome.revision_id!, outcome: outcome.outcome, embedding: "enqueued" };
+  try {
+    await kb("reconcileRevisionAssociations", { node_id: published.node_id, revision_id: published.revision_id });
+  } catch (error) {
+    published.associationsError = error instanceof Error ? error.message : String(error);
+  }
   try {
     await kb("indexRevisionChunks", { node_id: published.node_id, revision_id: published.revision_id, ...context.indexProfile });
   } catch (error) {

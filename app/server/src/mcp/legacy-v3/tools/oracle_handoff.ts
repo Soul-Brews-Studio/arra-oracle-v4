@@ -36,7 +36,12 @@ export async function oracle_handoff(args: Record<string, unknown>, context: V3T
     file: null,
     id: done.node_id,
     message: `Handoff saved as v4 node ${done.node_id}`,
-    compat_warnings: [{ code: "field_unavailable", field: "file", detail: "v4 writes no inbox file; the handoff is a node in LanceDB" }],
+    compat_warnings: [
+      { code: "field_unavailable", field: "file", detail: "v4 writes no inbox file; the handoff is a node in LanceDB" },
+      ...(done.associationsError === undefined
+        ? []
+        : [{ code: "partial", field: "concepts", detail: `this entry's term associations did not reconcile (${done.associationsError}); oracle_concepts/oracle_stats may undercount it until a retry succeeds` }]),
+    ],
     v4: { node_id: done.node_id, revision_id: done.revision_id, embedding: done.embedding },
   };
 }

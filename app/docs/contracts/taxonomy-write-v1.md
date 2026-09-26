@@ -214,3 +214,84 @@ v4-overnight, v3-stats slice (Claude Sonnet 5, AI). Ruling: `docs/overnight/DECI
 **V8: `oracle_concepts` and `oracle_stats` (V3-PARITY.md §4.3/§4.4).** `oracle_concepts` resolves the `concepts` vocabulary by name (K2 `lookupVocabularyByName`; absent means an exact empty list, not an error) and calls `listTermUsage` for it, mapping v3's `type` argument onto v4's own reserved `type` vocabulary with a `semantic_change` warning (v3's `principle`/`pattern`/`retro` do not exist in v4; R11 maps everything but `learning` to `note`). `oracle_stats` now returns the full shape: `total_documents`/`by_type`/`fts_indexed`/`last_indexed` from `knowledgeStats`, `unique_concepts` from one more `listTermUsage` hop through `concepts`, and `vector_status` (`empty`/`pending`/`ready`/`degraded`/`unknown`) derived from the per-status chunk counts -- never a live LanceDB connection probe, since v4 IS the vector store. Either tool's `mcp/legacy-v3/catalogue.ts` entry was amended to add `listTermUsage`/`knowledgeStats`/`lookupVocabularyByName` to its `uses`/`requires` list, since both entries predate K6/K7.
 
 **Tests.** `app/server/test/taxonomy-term-usage-service.test.ts`: registry/peer-field classification; `listTerms` pagination, `include_inactive` and workspace isolation against a real fixture; `listTermUsage`/`knowledgeStats` exact-zero baseline on a taxonomy-only (node-free) fixture; `coverage`/null-on-truncation for both bounded scans, proved with a fake `DatasetAdapter` at and past the 1000-row window; HTTP/MCP reachability under `content:read`. `app/server/test/mcp-v3-stats.test.ts`: `oracle_concepts`/`oracle_stats` end to end through a real gated writer -- publish, `reconcileRevisionAssociations`, count, shape-match against the v3 fixtures, and cross-workspace isolation. Both written before the methods/tools existed: with the kernel files stashed out, `taxonomy-term-usage-service.test.ts` failed to load at all (`Cannot find module '../src/publication/service.knowledgeStats'`) and every `mcp-v3-stats.test.ts` case answered `not_yet_available`/`isError` instead of the shape it asserts (0 pass / 9 fail there; the two live-checked afterward: 14 pass and 9 pass respectively).
+
+## Amendment 2026-09-27 (overnight R18 (K6 + K7 + V8), fix round)
+
+v4-overnight, v3-stats slice (Claude Sonnet 5, AI). Ruling: `docs/overnight/DECISIONS.md`
+R18, same design as the section above. An independent Opus verifier refuted the first cut
+of this slice; this section corrects the two documentation defects it found and records
+the code fix for the one that was a real bug, not only a documentation one. The section
+above is not rewritten.
+
+**Correction 1 (false premise).** The section above says `listTermUsage` counts over
+`node_revision_terms`, "never `term_snapshot_json`, which cannot answer a many-cardinality
+vocabulary like `concepts`". That is false. `taxonomy.termSnapshot.ts` writes one snapshot
+entry per concept, so a single revision's `term_snapshot_json` already lists every concept
+it was published with; a `many`-cardinality vocabulary is fully representable there. The
+real reason to read `node_revision_terms` instead is cost, not capability: `listNodes`'
+`type_term` filter tests one caller-named term's presence per row, which the raw snapshot
+answers directly, while `listTermUsage` ranks EVERY distinct term of a vocabulary by usage
+across every current head -- an aggregate the snapshot cannot serve without parsing and
+cross-referencing every revision's JSON blob for every term it will ever be asked about.
+`node_revision_terms` exists so that per-term aggregate is a plain scoped table scan
+instead. `app/server/src/publication/service.listTermUsage.ts` and
+`taxonomy.parseListTermUsage.ts` carry the corrected version of this note in full.
+
+**Correction 2 (a real bug, not only a documentation one): the derived table was never
+filled on the v3 write path.** `node_revision_terms` is a DERIVED projection --
+`reconcileRevisionAssociations` (`content:write`) is the only thing that ever writes it,
+and before this fix the v3 adapter's write path (`mcp/legacy-v3/publish.ts`) never called
+it. No `V3_CATALOGUE` entry exposes `reconcileRevisionAssociations` to a v3 client either.
+The result: after a real `oracle_learn`, `node_revision_terms` stayed empty for that
+revision forever, and `oracle_concepts`/`oracle_stats.unique_concepts` (K6, V8) answered
+zero, silently, with no `compat_warnings` entry -- exactly the "silently miss...and
+present that partial set as if it were complete" trap `service.listNodes.ts` already warns
+about for a different table. The slice's own tests did not catch this because they called
+`kb_reconcileRevisionAssociations` by hand after each `oracle_learn` step, a call no real
+v3 client can make.
+
+**Change.** `publish()` (`mcp/legacy-v3/publish.ts`), the one function every v3 write tool
+(`oracle_learn`, `oracle_research_note`, `oracle_handoff`) goes through, now calls
+`reconcileRevisionAssociations {node_id, revision_id}` immediately after `publishRevision`
+succeeds, before indexing. `reconcileRevisionAssociations` was added to those three tools'
+`V3_CATALOGUE` `uses`/`requires` lists (`mcp/legacy-v3/catalogue.ts`) so `createKb`'s gate
+(`mcp/legacy-v3/createKb.ts`) allows the call. Like `indexRevisionChunks`, a reconcile
+failure does not fail the publish -- the node is already written and readable -- but unlike
+before, it is never silent: the tool's response carries `associationsError`, and every one
+of the three tools turns that into a `compat_warnings` entry (`code: "partial", field:
+"concepts"`), so a real client sees a disclosed gap instead of a wrong exact number with no
+warning. A retry with the same `idempotency_key` re-attempts the reconcile too, since
+`publishRevision`'s `idempotent` outcome still falls through to it.
+
+**Correction 3 (documentation drift).** The "Change" bullet for `knowledgeStats` above
+groups `nodes_eligible` with `by_type` and `last_updated_at` as all coming "from one
+bounded scan of `nodes`". Only `by_type` and `last_updated_at` share that scan.
+`nodes_eligible` comes from a separate bounded scan of `supersede_log` (total minus the
+terminal old-ids seen there), exactly as the "Bounded scans discloses `null`" paragraph
+below that bullet already says correctly (three named scans: `nodes`, `supersede_log`,
+`search_chunks_v1`).
+
+**Tests.** `app/server/test/mcp-v3-stats.test.ts` no longer calls
+`kb_reconcileRevisionAssociations` by hand; its `oracle_learn` steps are now a plain,
+unmodified v3 client session, and a new `describe` block asserts no `oracle_learn` response
+carries an `associations`-related warning in the ordinary (reconcile-succeeds) case.
+`app/server/test/mcp-v3-stats-adapter.test.ts` (new) unit-tests `oracle_stats`'s handling
+of an unmeasured `knowledgeStats` field directly against a stub `kb`, covering
+Correction/finding 3 below. Removing the hand-inserted reconcile steps and rerunning
+against the pre-fix `publish.ts` reproduced the verifier's exact failure (`concepts:[]`,
+`total_unique:0`, `unique_concepts:0`, no warning) -- the red for this fix.
+
+**Correction 4 (a second real bug, `oracle_stats`, verifier finding 3).**
+`mcp/legacy-v3/tools/oracle_stats.ts` put fabricated values on the wire whenever
+`knowledgeStats` reported a field as unmeasured (`null`): `by_type` became `{}`,
+`fts_indexed` became `0`, and `fts_status` became the flatly false `"empty"` -- for a bank
+with thousands of unmeasured chunks, `fts_status` still read `"empty"`. Only `by_type` and
+`fts_indexed` carried a `compat_warnings` entry; `last_indexed` (unmeasured in the exact
+same case as `by_type`, since both come from the same bounded `nodes` scan) and
+`fts_status` carried none. This contradicted V3-PARITY.md §2.5 ("a field v4 cannot fill is
+present as `null` and named in `compat_warnings`") and this slice's own "measured not
+guessed" claim. Fixed: `by_type`, `fts_indexed` and `fts_status` are now `null` (never a
+placeholder) exactly when their source scan is unmeasured, each named in
+`compat_warnings`; `last_indexed` is named alongside `by_type` since they share one scan.
+A genuinely empty but fully-measured workspace is unaffected: `by_type:{}`,
+`fts_indexed:0`, `fts_status:"empty"`, no warnings.

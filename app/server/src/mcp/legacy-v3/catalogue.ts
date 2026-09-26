@@ -43,8 +43,13 @@ const RECALL = " Superseded and retired entries are excluded from recall (a v3 c
 const NO_FILE = " Nothing is written to disk; LanceDB is canonical, so `file` is null.";
 const TAXONOMY_READS = ["lookupVocabularyByName", "lookupTermByName"];
 const TAXONOMY_WRITES = ["seedReservedVocabularies", "createVocabulary", "createTerm"];
-const PUBLISH = [...TAXONOMY_READS, ...TAXONOMY_WRITES, "getPeer", "registerPeer", "publishRevision", "indexRevisionChunks"];
-const PUBLISH_REQUIRES = [...TAXONOMY_READS, ...TAXONOMY_WRITES, "publishRevision", "indexRevisionChunks"];
+// `reconcileRevisionAssociations` (K6's own write path, `publish.ts`) runs
+// inside every PUBLISH tool's write, never called by the tool body directly:
+// a v3 client has no tool of its own that reaches it, so without this the
+// node_revision_terms projection K6 `listTermUsage` reads would never be
+// filled for a v3-created node (see `publish.ts`'s doc comment).
+const PUBLISH = [...TAXONOMY_READS, ...TAXONOMY_WRITES, "getPeer", "registerPeer", "publishRevision", "reconcileRevisionAssociations", "indexRevisionChunks"];
+const PUBLISH_REQUIRES = [...TAXONOMY_READS, ...TAXONOMY_WRITES, "publishRevision", "reconcileRevisionAssociations", "indexRevisionChunks"];
 /** K1 chunk search (#30 wave 2), named as V3-PARITY.md §5 designs it. */
 const K1 = ["searchChunksKeyword", "searchChunksSemantic"];
 
@@ -190,18 +195,22 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
     // K7 (docs/overnight/V3-PARITY.md §5, DECISIONS.md R18 (K6+K7+V8)):
     // `knowledgeStats` carries total_documents/by_type/fts_indexed/
     // last_indexed/vector_status; `unique_concepts` needs one more hop
-    // through the `concepts` vocabulary (K6 `listTermUsage`), same as
-    // `oracle_concepts` below.
-    uses: ["listNodes", "knowledgeStats", "listTermUsage", ...TAXONOMY_READS],
-    requires: ["listNodes", "knowledgeStats"],
+    // through the `concepts` vocabulary (`lookupVocabularyByName` then K6
+    // `listTermUsage`), same composition `oracle_concepts` below uses. No
+    // `listNodes` call remains (fix round: drift, this tool stopped calling
+    // it once `knowledgeStats` landed).
+    uses: ["knowledgeStats", "listTermUsage", "lookupVocabularyByName"],
+    requires: ["knowledgeStats", "listTermUsage", "lookupVocabularyByName"],
     description: "Counts for this bank. Fields v4 cannot count yet are null and named in compat_warnings.",
     inputSchema: obj({}),
   }),
   spec({
     name: "oracle_concepts",
     action: "content:read",
-    uses: ["listTermUsage", ...TAXONOMY_READS],
-    requires: ["listTermUsage"],
+    // fix round: `requires` was missing `lookupVocabularyByName`, which this
+    // tool calls before every `listTermUsage` (K2 resolve-by-name).
+    uses: ["listTermUsage", "lookupVocabularyByName"],
+    requires: ["listTermUsage", "lookupVocabularyByName"],
     description:
       "Concept tags in use in this bank, with counts over current entries." +
       " type filters on v4's own type vocabulary (learning, note, conclusion, discussion, correction), not v3's principle/pattern/retro.",

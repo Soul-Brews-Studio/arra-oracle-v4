@@ -25,13 +25,36 @@ export type TermUsageResult = { rows: TermUsageRow[]; total_unique: string; cove
 /**
  * K6 (docs/overnight/V3-PARITY.md §5): how many CURRENT heads reference each
  * term of one vocabulary, counted over `node_revision_terms` -- the derived
- * association projection `reconcileRevisionAssociations` writes, NOT the
- * `term_snapshot_json` `listNodes`' `type_term` filter reads. That
- * difference is deliberate here: this method's whole point IS the derived
- * per-term join (a `many`-cardinality vocabulary like `concepts` can never
- * be answered from a single-value snapshot filter), so a head whose revision
- * has not been reconciled yet simply contributes zero rows -- an honest
- * "not yet reconciled", not a fabricated count.
+ * association projection `reconcileRevisionAssociations` writes -- never
+ * `term_snapshot_json`.
+ *
+ * Fix round correction (an independent verifier's finding 2 on the first cut
+ * of this slice): an earlier draft of this comment, and of the matching
+ * `taxonomy-write-v1.md` amendment, said `term_snapshot_json` "cannot answer
+ * a many-cardinality vocabulary like concepts". That premise was false:
+ * `taxonomy.termSnapshot.ts` writes one snapshot ENTRY PER CONCEPT, so a
+ * single revision's snapshot already lists every concept it was published
+ * with. The real reason to read `node_revision_terms` instead is cost, not
+ * capability. `listNodes`' `type_term` filter only tests ONE caller-named
+ * term's presence per row, which the raw snapshot already answers directly.
+ * This method instead RANKS EVERY distinct term of a vocabulary by usage
+ * across every current head -- an aggregate the snapshot cannot serve
+ * without parsing and cross-referencing every revision's JSON blob for
+ * every term it will ever be asked about. `node_revision_terms` exists so
+ * that per-term aggregate is a plain scoped table scan instead.
+ *
+ * That table is a DERIVED projection: it depends on every writer that
+ * publishes content also calling `reconcileRevisionAssociations` afterward
+ * (the same obligation `migration/deriveProjections.ts` fulfils for a
+ * migrated dataset). The v3 adapter now meets it itself --
+ * `mcp/legacy-v3/publish.ts` calls `reconcileRevisionAssociations` right
+ * after every `publishRevision`, so a node created through `oracle_learn`/
+ * `oracle_research_note`/`oracle_handoff` is never left unreconciled. A
+ * `content:write` caller that calls `publishRevision` directly and never
+ * reconciles is the one case that still contributes zero rows here --
+ * correctly, since the projection genuinely does not exist yet for it, but
+ * with nothing in THIS method's own response to distinguish that from a real
+ * zero (`coverage` discloses scan truncation, not reconciliation lag).
  *
  * Both scan windows are disclosed via `coverage`, the same honesty rule
  * `listNodes`' `type_term`-filtered `total` and the #10/R14 ngram fallback

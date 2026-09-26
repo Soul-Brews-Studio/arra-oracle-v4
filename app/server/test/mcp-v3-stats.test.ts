@@ -11,6 +11,22 @@
 // fresh, taxonomy-empty workspace, so `oracle_learn`'s K2 bootstrap and K6's
 // `reconcileRevisionAssociations` are both exercised for real before
 // `oracle_concepts`/`oracle_stats` read the result back.
+//
+// FIX ROUND (an independent verifier's finding on the first cut of this
+// slice): this file used to call `kb_reconcileRevisionAssociations` by hand
+// after each `oracle_learn` step, through the raw `kb_*` registry name --
+// a call no real v3 client can make, since it is `content:write` and no
+// `V3_CATALOGUE` entry ever exposes it. That hid the actual production bug:
+// `publish.ts` (the ONE place every v3 write goes through) never reconciled
+// associations itself, so a real `oracle_learn` left `node_revision_terms`
+// empty forever and `oracle_concepts`/`oracle_stats.unique_concepts` silently
+// answered zero, with no warning. Deleting those hand-inserted steps (which
+// is what the verifier did in a scratch copy to prove it) is the RED for
+// this fix: with `reconcileRevisionAssociations` still absent from
+// `publish.ts`'s call sequence, `concepts`/`stats` below fail exactly as the
+// verifier reported. The fix moved the reconcile call into `publish()`
+// itself (`mcp/legacy-v3/publish.ts`), so no step below calls it by hand
+// anymore -- these steps are now a plain, unmodified v3 client session.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
@@ -28,19 +44,6 @@ let taxonomy: TaxonomyFixture;
 let work: string;
 let out: Record<string, any> = {};
 
-const HEAD = (label: string, bank: string, ofLabel: string) => ({
-  label,
-  bank,
-  tool: "kb_getAcceptedHead",
-  args: { payload: { workspace_name: bank, node_id: { $ref: ofLabel } } },
-});
-const RECONCILE = (label: string, bank: string, nodeRef: string, revisionRef: string) => ({
-  label,
-  bank,
-  tool: "kb_reconcileRevisionAssociations",
-  args: { payload: { workspace_name: bank, node_id: { $ref: nodeRef }, revision_id: { $ref: revisionRef } } },
-});
-
 async function runChild(root: string, banks: string[], steps: unknown[]) {
   const result = await runGated(root, CHILD, [root, work, JSON.stringify({ banks, operator: [], steps })], {
     deadlineMs: 180_000,
@@ -57,17 +60,16 @@ beforeAll(async () => {
   taxonomy = await createTaxonomyFixture([BANK_A, BANK_B]);
 
   out = await runChild(taxonomy.datasetRoot, [BANK_A, BANK_B], [
+    // No `kb_reconcileRevisionAssociations` step anywhere here: a real v3
+    // client only ever calls the `oracle_*` names below. Reconciliation now
+    // happens inside `publish()` itself, once per `oracle_learn`.
     { label: "learn1", bank: BANK_A, tool: "oracle_learn", args: { pattern: "APFS snapshots: tmutil localsnapshot before disk surgery", concepts: ["apfs", "backup"] }, capture: { name: "learn1", path: ["id"] } },
-    { ...HEAD("learn1_head", BANK_A, "learn1"), capture: { name: "learn1_rev", path: ["revision", "id"] } },
-    RECONCILE("reconcile1", BANK_A, "learn1", "learn1_rev"),
     { label: "learn2", bank: BANK_A, tool: "oracle_learn", args: { pattern: "APFS snapshots also work over Time Machine", concepts: ["apfs"] }, capture: { name: "learn2", path: ["id"] } },
-    { ...HEAD("learn2_head", BANK_A, "learn2"), capture: { name: "learn2_rev", path: ["revision", "id"] } },
-    RECONCILE("reconcile2", BANK_A, "learn2", "learn2_rev"),
     { label: "concepts", bank: BANK_A, tool: "oracle_concepts", args: {} },
     { label: "concepts_filtered", bank: BANK_A, tool: "oracle_concepts", args: { type: "learning", limit: 1 } },
     { label: "stats", bank: BANK_A, tool: "oracle_stats", args: {} },
-    // A workspace with real content but no reconciled associations: an
-    // honest "no concepts vocabulary yet" (K2 lookup miss), not an error.
+    // A workspace with real content but nothing ever tagged with a concept:
+    // an honest "no concepts vocabulary yet" (K2 lookup miss), not an error.
     { label: "learn_b", bank: BANK_B, tool: "oracle_learn", args: { pattern: "unrelated content in another bank" }, capture: { name: "learn_b", path: ["id"] } },
     { label: "concepts_b", bank: BANK_B, tool: "oracle_concepts", args: {} },
     { label: "stats_b", bank: BANK_B, tool: "oracle_stats", args: {} },
@@ -77,6 +79,18 @@ beforeAll(async () => {
 afterAll(async () => {
   await taxonomy?.cleanup();
   if (work) await rm(work, { recursive: true, force: true });
+});
+
+describe("oracle_learn (V1) auto-reconciles associations (fix round, verifier finding 1)", () => {
+  test("plain oracle_learn calls -- no kb_reconcileRevisionAssociations step -- report no associations gap", () => {
+    for (const label of ["learn1", "learn2"] as const) {
+      const res = out[label];
+      expect(res.isError).toBe(false);
+      expect(res.value.success).toBe(true);
+      const warnings = (res.value.compat_warnings ?? []) as { field: string }[];
+      expect(warnings).not.toContainEqual(expect.objectContaining({ field: "concepts" }));
+    }
+  });
 });
 
 describe("oracle_concepts (V8, K6)", () => {
@@ -123,15 +137,19 @@ describe("oracle_stats (V8, K7 full shape)", () => {
     const res = out.stats;
     expect(res.isError).toBe(false);
     const value = res.value;
-    expect(value.total_documents).toBeGreaterThanOrEqual(2);
-    expect(value.by_type.learning).toBeGreaterThanOrEqual(2);
-    expect(value.fts_indexed).toBeGreaterThanOrEqual(2);
+    // BANK_A has exactly learn1 + learn2, both type learning, each a
+    // single sub-1000-char chunk: exact, not >=, so a doubled or dropped
+    // count fails this instead of surviving under a loose bound.
+    expect(value.total_documents).toBe(2);
+    expect(value.by_type).toEqual({ learning: 2 });
+    expect(value.fts_indexed).toBe(2);
     expect(value.unique_concepts).toBe(2);
     // Nothing has been embedded yet: chunks exist (pending) but none are ready.
     expect(value.vector_status).toBe("pending");
     expect(typeof value.last_indexed).toBe("string");
     expect(typeof value.version).toBe("string");
     expect(value.fts_status).toBe("healthy");
+    expect(value.compat_warnings).toBeUndefined();
   });
 
   test("matches the v3 shape fixture", () => {
@@ -140,9 +158,9 @@ describe("oracle_stats (V8, K7 full shape)", () => {
     expect(errors).toEqual([]);
   });
 
-  test("a fresh bank with one unreconciled entry: total_documents counts it, unique_concepts is 0", () => {
+  test("a fresh bank with one entry that was never tagged: total_documents counts it, unique_concepts is 0", () => {
     const value = out.stats_b.value;
-    expect(value.total_documents).toBeGreaterThanOrEqual(1);
+    expect(value.total_documents).toBe(1);
     expect(value.unique_concepts).toBe(0);
   });
 

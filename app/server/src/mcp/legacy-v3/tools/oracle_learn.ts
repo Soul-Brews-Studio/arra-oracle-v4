@@ -36,7 +36,12 @@ export async function oracle_learn(args: Record<string, unknown>, context: V3Too
     embedding: done.embedding,
     ...(done.embeddingError === undefined ? {} : { embeddingError: done.embeddingError }),
     message: `Learning saved as v4 node ${done.node_id}${done.outcome === "idempotent" ? " (replayed)" : ""}`,
-    compat_warnings: [{ code: "field_unavailable", field: "file", detail: "v4 writes no file; the learning is a node in LanceDB" }],
+    compat_warnings: [
+      { code: "field_unavailable", field: "file", detail: "v4 writes no file; the learning is a node in LanceDB" },
+      ...(done.associationsError === undefined
+        ? []
+        : [{ code: "partial", field: "concepts", detail: `this entry's term associations did not reconcile (${done.associationsError}); oracle_concepts/oracle_stats may undercount it until a retry succeeds` }]),
+    ],
     v4: { node_id: done.node_id, revision_id: done.revision_id },
   };
 }
