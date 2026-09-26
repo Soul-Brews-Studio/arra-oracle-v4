@@ -390,11 +390,9 @@ describe("#30 knowledge retrieval on a real gated dataset", () => {
     const hits = ok("kw_inside_word").hits as Hit[];
     expect(hits.map((hit) => hit.rank)).toEqual(hits.map((_, index) => index + 1));
     expect(hits.map((hit) => hit.node_id)).toEqual([N.pending, N.thai]);
-    // R22's measured residual (search-chunk-v1.md section 18.3): `limit: 1`
-    // reads a first round of 1 x FTS_CANDIDATE_FACTOR = 4 candidate chunks and
-    // alpha holds 5 with ลืม (retired, superseded, stale included). BM25 picks
-    // the 4, so the bounded hit need not be the full answer's first: thai.
-    expect((ok("kw_limit_one").hits as Hit[]).map((hit) => [hit.node_id, hit.rank])).toEqual([[N.thai, 1]]);
+    // A bounded answer is the head of the unbounded one: every candidate is
+    // read and ordered before `limit` applies (R22, search-chunk-v1.md 18.3).
+    expect(ok("kw_limit_one").hits).toEqual((ok("kw_inside_word").hits as Hit[]).slice(0, 1));
     expect(nodes("kw_english_case")).toEqual([N.fox]);
     expect(failed("kw_limit_over")).toMatchObject({ code: "invalid_value", path: "/limit" });
     expect(failed("kw_unknown_workspace")).toMatchObject({ code: "invalid_reference", path: "/workspace_name" });

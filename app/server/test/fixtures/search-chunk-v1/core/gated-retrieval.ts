@@ -24,7 +24,12 @@
 // carries its own `clockMs`: from that op on, the clock reads that instant.
 // That is how a test gives two publications different acceptance times
 // (overnight R22's second ordering key) without a wall clock.
-const [, , datasetRoot, payloadJson] = Bun.argv;
+//
+// A payload too large for argv (the candidate-ceiling case writes megabytes of
+// text; macOS caps argv near 1 MB) is passed as `@<path>`: the JSON is read
+// from that file, which the test owns and removes.
+const [, , datasetRoot, payloadArg] = Bun.argv;
+const payloadJson = payloadArg?.startsWith("@") ? await Bun.file(payloadArg.slice(1)).text() : payloadArg;
 const payload = JSON.parse(payloadJson ?? "{}") as {
   ops: Array<{ label: string; facade: "publication" | "context" | "reader" | "reader_other" | "harness"; method: string; request?: any; clockMs?: number }>;
   revisionIds: string[];
@@ -153,24 +158,36 @@ const harness: Record<string, (request: any) => Promise<unknown>> = {
   },
   /** Run searchKnowledgeKeyword over a spying adapter and report every
    *  CANDIDATE chunk's node id -- what the candidate query itself returned,
-   *  before any head/eligibility/workspace re-check. */
+   *  before any head/eligibility/workspace re-check -- plus each candidate
+   *  read in order (`reads`: which source, how many rows it asked for, how
+   *  many came back) and which nodes the #29 eligibility seam judged, in
+   *  order (`judged`: `evaluateNodeEligibility` reads its node by one id,
+   *  `AND id = '<id>'`; the head check reads nodes by `IN (...)`). */
   async spyKeyword(request) {
     const base = makeAdapter(await openPrivateConnection(datasetRoot!), () => {});
     const candidates: string[] = [];
-    const record = (rows: Record<string, unknown>[]) => {
+    const reads: { source: "index" | "scan"; asked: number; got: number }[] = [];
+    const judged: string[] = [];
+    const record = (source: "index" | "scan", asked: unknown, rows: Record<string, unknown>[]) => {
+      reads.push({ source, asked: asked as number, got: rows.length });
       for (const row of rows) candidates.push(row.node_id as string);
       return rows;
     };
     const spy = {
       ...base,
-      fullTextSearchChunks: async (...args: unknown[]) => record(await base.fullTextSearchChunks(...args)),
+      fullTextSearchChunks: async (...args: unknown[]) => record("index", args[2], await base.fullTextSearchChunks(...args)),
       orderedProjection: async (table: string, ...rest: unknown[]) => {
         const rows = await base.orderedProjection(table, ...rest);
-        return table === "search_chunks_v1" ? record(rows) : rows;
+        return table === "search_chunks_v1" ? record("scan", rest[3], rows) : rows;
+      },
+      query: async (table: string, predicate: string, ...rest: unknown[]) => {
+        const one = table === "nodes" ? / AND id = '([^']*)'$/.exec(predicate) : null;
+        if (one !== null) judged.push(one[1]!);
+        return base.query(table, predicate, ...rest);
       },
     };
     const value = await searchKnowledgeKeyword(spy, new TextEncoder().encode(JSON.stringify(request)));
-    return { value, candidates: [...new Set(candidates)].sort() };
+    return { value, candidates: [...new Set(candidates)].sort(), reads, judged };
   },
 };
 

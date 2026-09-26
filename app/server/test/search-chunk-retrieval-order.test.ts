@@ -25,6 +25,18 @@
  * CURRENT head (the stale chunks of the first revisions count for nothing),
  * and the scan paths, asked after the index is dropped, answer in the
  * identical order with identical hits.
+ *
+ * Two more corpora pin that `limit` applies only AFTER the whole candidate set
+ * is ordered (the R22 fix round):
+ *
+ *   WX_SEAM  wxyz cut 2+2 at a chunk boundary (only the seam scan finds it),
+ *            accepted after WX_IDX, whose one chunk holds wxyz whole. At
+ *            `limit: 1` the seam node is still first: the seam scan runs
+ *            whether or not the index already found `limit` hits.
+ *   LADLE_OFF  three occurrences but `is_active: false`, so R22 would put it
+ *            first and #29 refuses it; LADLE_1..3 one occurrence each. The
+ *            costly eligibility seam is asked only down R22's order, until
+ *            `limit` nodes pass.
  */
 
 import { afterAll, describe, expect, test } from "bun:test";
@@ -59,9 +71,23 @@ const R = {
   none: pad("ordRevNone"),
   tieB2: pad("ordRevTieB2"),
   tieA2: pad("ordRevTieA2"),
+  wxIdx: pad("ordRevWxIdx"),
+  wxSeam: pad("ordRevWxSeam"),
+  ladleOff: pad("ordRevLadleOff"),
+  ladle1: pad("ordRevLadle1"),
+  ladle2: pad("ordRevLadle2"),
+  ladle3: pad("ordRevLadle3"),
+};
+const M = {
+  wxIdx: pad("ordWxIdx"),
+  wxSeam: pad("ordWxSeam"),
+  ladleOff: pad("ordLadleOff"),
+  ladle1: pad("ordLadle1"),
+  ladle2: pad("ordLadle2"),
+  ladle3: pad("ordLadle3"),
 };
 /** In publish order: the child mints revision ids from this list. */
-const REVISIONS = [R.many, R.tieA, R.tieB, R.newer, R.none, R.tieB2, R.tieA2];
+const REVISIONS = [R.many, R.tieA, R.tieB, R.newer, R.none, R.tieB2, R.tieA2, R.wxIdx, R.wxSeam, R.ladleOff, R.ladle1, R.ladle2, R.ladle3];
 const ONE = "one kettle here, padded.";
 
 type Hit = { node_id: string; revision_id: string; title: string; snippet: string; chunk_ids: string[]; rank: number; match: string };
@@ -86,13 +112,13 @@ describe("#30 / #10 keyword hit order is workspace-local (R22), on the index and
       cleanups.push(fixture.cleanup);
       const alpha = fixture.workspaces[ALPHA]!;
       const ops: unknown[] = [];
-      const publish = (key: string, node: string, title: string, body: string, clockMs: number, base: string | null = null) =>
+      const publish = (key: string, node: string, title: string, body: string, clockMs: number, base: string | null = null, extra = {}) =>
         ops.push({
           label: `pub_${key}`,
           facade: "publication",
           method: "publishRevision",
           clockMs,
-          request: { operation_id: `op-${key}`, content: revisionEnvelope(ALPHA, alpha, node, { title, body, base_revision_id: base }) },
+          request: { operation_id: `op-${key}`, content: revisionEnvelope(ALPHA, alpha, node, { title, body, base_revision_id: base, ...extra }) },
         });
       const index = (key: string, node: string, revision: string) =>
         ops.push({
@@ -132,6 +158,19 @@ describe("#30 / #10 keyword hit order is workspace-local (R22), on the index and
       keyword("ix_head_limit2", "kettle", { limit: 2 });
       keyword("short_head", "kE");
       keyword("short_head_limit2", "kE", { limit: 2 });
+
+      // The seam node is accepted last; the index finds WX_IDX alone.
+      publish("wxIdx", M.wxIdx, "t", "one wxyz here.", T0 + 7000);
+      publish("wxSeam", M.wxSeam, "t", `${"b".repeat(995)}wxyz end`, T0 + 8000);
+      publish("ladleOff", M.ladleOff, "t", "ladle ladle ladle", T0 + 9000, null, { is_active: false });
+      publish("ladle1", M.ladle1, "t", "one ladle.", T0 + 10_000);
+      publish("ladle2", M.ladle2, "t", "one ladle.", T0 + 11_000);
+      publish("ladle3", M.ladle3, "t", "one ladle.", T0 + 12_000);
+      for (const key of ["wxIdx", "wxSeam", "ladleOff", "ladle1", "ladle2", "ladle3"] as const) index(key, M[key], R[key]);
+      keyword("seam_limit1", "wxyz", { limit: 1 });
+      keyword("seam_all", "wxyz");
+      ops.push({ label: "ladle_limit1", facade: "harness", method: "spyKeyword", request: { workspace_name: ALPHA, query: "ladle", limit: 1 } });
+      ops.push({ label: "ladle_all", facade: "harness", method: "spyKeyword", request: { workspace_name: ALPHA, query: "ladle" } });
       ops.push({ label: "drop", facade: "harness", method: "dropIndices" });
       keyword("scan_head", "kettle");
       keyword("scan_head_limit2", "kettle", { limit: 2 });
@@ -144,7 +183,7 @@ describe("#30 / #10 keyword hit order is workspace-local (R22), on the index and
       );
       if (result.code !== 0) throw new Error(`child exited ${result.code}: ${result.stderr.slice(0, 2000)}`);
       out = JSON.parse(result.stdout.trim().split("\n").filter(Boolean).at(-1)!);
-      for (const key of ["many", "tieA", "tieB", "newer", "none", "tieB2", "tieA2"]) {
+      for (const key of ["many", "tieA", "tieB", "newer", "none", "tieB2", "tieA2", "wxIdx", "wxSeam", "ladleOff", "ladle1", "ladle2", "ladle3"]) {
         ok(`pub_${key}`);
         ok(`idx_${key}`);
       }
@@ -196,5 +235,27 @@ describe("#30 / #10 keyword hit order is workspace-local (R22), on the index and
     // Everything but how each hit was found is the same answer.
     expect(found("scan_head")).toEqual(found("ix_head"));
     expect(found("scan_head_limit2")).toEqual(found("ix_head_limit2"));
+  });
+
+  runIt("limit applies after the whole answer is ordered: a seam-only node is not dropped because the index found enough", () => {
+    const all = ok("seam_all");
+    expect(all.match).toBe("ngram");
+    expect((all.hits as Hit[]).map((hit) => [hit.node_id, hit.match])).toEqual([
+      [M.wxSeam, "substring_scan"],
+      [M.wxIdx, "ngram"],
+    ]);
+    // The bounded answer is the head of the unbounded one, byte for byte.
+    expect(ok("seam_limit1").hits).toEqual((all.hits as Hit[]).slice(0, 1));
+  });
+
+  runIt("eligibility is asked only down R22's order, until limit nodes pass", () => {
+    const one = ok("ladle_limit1") as { value: { hits: Hit[] }; judged: string[] };
+    const all = ok("ladle_all") as { value: { hits: Hit[] }; judged: string[] };
+    // LADLE_OFF (three occurrences) is R22's first and #29 refuses it.
+    expect(all.value.hits.map((hit) => hit.node_id)).toEqual([M.ladle3, M.ladle2, M.ladle1]);
+    expect(one.value.hits).toEqual(all.value.hits.slice(0, 1));
+    // limit 1: LADLE_OFF, refused, then LADLE_3, kept -- two nodes judged, not four.
+    expect(one.judged).toEqual([M.ladleOff, M.ladle3]);
+    expect(all.judged).toEqual([M.ladleOff, M.ladle3, M.ladle2, M.ladle1]);
   });
 });
