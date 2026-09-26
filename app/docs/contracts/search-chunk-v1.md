@@ -531,8 +531,13 @@ searchKnowledgeKeyword -> { match, scan_reason, hits: [{ node_id, revision_id, t
 **Why not a per-workspace index instead:** the "Still NOT claimed" list posed this as Nat's open
 decision (a per-workspace index, no score, or rank only). A per-workspace index multiplies the
 index count with every workspace and was not measured; dropping the score to a position costs
-nothing extra to compute (the hits are already in that order) and removes the leak completely,
-so R21 takes it.
+nothing extra to compute (the hits are already in that order) and removes the raw-score-VALUE
+leak at no extra cost, so R21 takes it. It does **not** remove every cross-workspace leak this
+index carries -- see 1.1, corrected in the fix round below. *(Fix round, 2026-09-27: the first
+version of this line said dropping to `rank` "removes the leak completely." An independent
+verifier showed that is false -- see 1.1. R21's own ruling text never made that claim; it says
+only "a per-workspace index... would make the score local," i.e. rank-only does not. This
+amendment is corrected to match the ruling, not the overstatement.)*
 
 **Semantic search's `distance` is unaffected, and the claim is verified, not assumed:**
 `distance` is LanceDB's `l2`, the squared Euclidean distance between the query's OWN embedded
@@ -542,14 +547,54 @@ the number regardless of what any workspace's corpus holds. This is a property o
 metric itself (unlike BM25, whose score is defined in terms of corpus-wide document frequency),
 so no equivalent index-sharing measurement is needed to confirm it holds for every dataset shape.
 
-**Proof:** `app/server/test/search-chunk-retrieval-score-isolation.test.ts`, failing-first
-against the unfixed code (a raw, moving `score` on the wire) and green after: two workspaces,
-change ONLY workspace B's corpus (12 nodes repeating workspace A's search term, indexed between
-the two searches), and workspace A's `searchKnowledgeKeyword` response for the identical request
-is byte-for-byte identical before and after. The existing suites
+**Proof (raw-score VALUE removal, single hit):**
+`app/server/test/search-chunk-retrieval-score-isolation.test.ts`'s first `describe`,
+failing-first against the unfixed code (a raw, moving `score` on the wire) and green after: two
+workspaces, change ONLY workspace B's corpus (12 nodes repeating workspace A's search term,
+indexed between the two searches), and workspace A's `searchKnowledgeKeyword` response for the
+identical request -- ONE hit -- is byte-for-byte identical before and after. That byte-identity
+claim does not generalize past one hit; 1.1 states what does. The existing suites
 (`search-chunk-retrieval.test.ts`, `-straddle.test.ts`, `-live.test.ts`) were updated from
 pinning `score` to pinning `rank`, the same way `#32` chat tests were updated off
 `writer_unavailable` below.
+
+#### 1.1 · What `rank` does NOT close: hit order and limit-bound membership stay shared
+
+*(Added in the fix round, 2026-09-27, after an independent verifier refuted 1's original "removes
+the leak completely" line.)* `rank` is a POSITION -- 1-based, in BM25 order. That order is
+computed by the ONE FTS index every workspace shares, from corpus-wide IDF and average document
+length. Removing the raw score number stops a caller from reading another workspace's term
+statistics off that number; it does **not** stop another workspace's corpus from deciding the
+ORDER between two hits that both genuinely belong to the requesting workspace, and therefore does
+not stop it from deciding WHICH of that workspace's own nodes a bounded `limit` returns.
+
+**Measured:** workspace ALPHA holds two nodes that both contain the query once -- A1 additionally
+repeats the query's own `abc` trigram, A2 repeats its `def` trigram. Query ALPHA: `rank 1` names
+A1. Workspace BETA then indexes 12 nodes that repeat ONLY `abc` (never the query string itself,
+so BETA is never a candidate and never appears in ALPHA's answer). Query ALPHA again, same
+request, nothing ALPHA wrote changed: `rank 1` now names A2. At `limit: 1` this is not a
+reordering a caller can shrug off -- it is a different NODE coming back. This is the same shape
+the original verifier measured (5.65 → 2.38 single-hit score move), one level up: a corpus write
+in one workspace still steers what another workspace's bounded answer contains.
+
+**What this means for the earlier claim:** the answer SET (which nodes CAN ever appear) stays
+workspace-scoped -- BETA's own nodes never enter ALPHA's hits, in either test below. What is not
+workspace-scoped is the ORDER over that set, and therefore, once `limit` is smaller than the set,
+which of the workspace's OWN nodes survive the cut. "Removes the leak completely" was wrong;
+"removes the raw-score value from the wire" is what shipped.
+
+**Reverse (fully close this) by:** a per-workspace FTS index or per-workspace BM25 statistics
+(R21's own "reverse by" line), or a workspace-local re-rank over the FULL set of a workspace's own
+matching candidates rather than the shared index's top-K. Both are real engineering, out of scope
+for this fix round, and Nat's call, not made here.
+
+**Proof:** `app/server/test/search-chunk-retrieval-score-isolation.test.ts`'s second `describe`,
+failing-first in the sense that it reproduces, deterministically, the exact residual leak above
+(the assertion `expect(after).toEqual(before)` fails against current code with two ALPHA hits --
+captured once during this fix round and reverted, not left in the suite as a permanently red
+test); the committed version instead pins the HONEST, currently-true guarantee: the hit SET never
+crosses a workspace boundary and the raw score never reaches the wire, while explicitly asserting
+that hit ORDER between ALPHA's own two nodes flips when only BETA's corpus grows.
 
 ### 2 · Semantic search's embedder failure is `model_unavailable`, not `writer_unavailable`
 
@@ -591,3 +636,12 @@ transport-specific mapping needed updating.
 - A client that read `searchKnowledgeSemantic`'s `writer_unavailable` as "no model" should read
   `model_unavailable` (the same code `answerChat` already uses for the same reason).
 - `hits[].match` and `hits[].distance` (semantic) are unchanged.
+- A client relying on `rank` for cross-workspace isolation should read 1.1: the hit SET is
+  workspace-scoped and the raw score is gone, but hit ORDER (and, at a bounded `limit`, which of
+  this workspace's own nodes come back) is still decided by the shared index's corpus-wide BM25
+  statistics.
+- This amendment covers only `search_chunks_v1` / the two `#30` search methods. The legacy
+  `memories` path (`db.ts`) still returns a raw BM25 `score` over its own ngram index, scoped only
+  by `workspace_name` (`app/server/src/db.ts`) -- the "Still NOT claimed" bullet above already
+  named this, and R21 did not rule on it. A caller of the legacy path has neither the VALUE fix
+  nor the SET/order scoping this amendment describes.

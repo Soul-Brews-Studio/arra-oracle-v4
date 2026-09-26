@@ -57,11 +57,19 @@ const SEAM_ONLY_MAX_CODE_POINTS = 2 * (FTS_MIN_QUERY_CODE_POINTS - 1);
  * workspace, so that raw score depends on every workspace's text (measured:
  * one workspace's score for the identical hit set moved from 5.65 to 2.38
  * once a second workspace indexed 12 nodes holding the same term). The
- * answer SET stays workspace-scoped either way; only the leaked VALUE is
- * removed. Semantic search's `distance` has no such leak (verified in the
- * `search-chunk-v1.md` amendment: it is the L2 distance between the query
- * vector and one stored row's own vector, never a corpus-wide statistic) and
- * keeps its raw number.
+ * answer SET stays workspace-scoped either way, and the raw score NUMBER is
+ * never on the wire -- but `rank` is still a position derived from that same
+ * shared, corpus-wide BM25 order, so it does NOT make hit order (or, at a
+ * bounded `limit`, which of this workspace's own nodes come back)
+ * workspace-local: another workspace's writes can still swap which of THIS
+ * workspace's own nodes ranks first (measured and pinned by
+ * `search-chunk-retrieval-score-isolation.test.ts`'s second `describe`).
+ * Closing that fully needs a per-workspace index or per-workspace statistics
+ * (R21's own "reverse by" line) -- out of scope here, and said plainly in
+ * `search-chunk-v1.md`'s amendment rather than claimed away. Semantic
+ * search's `distance` has no such leak (verified in the `search-chunk-v1.md`
+ * amendment: it is the L2 distance between the query vector and one stored
+ * row's own vector, never a corpus-wide statistic) and keeps its raw number.
  *
  * Candidates are chunks; answers are NODES: `chunkMayHoldQuery` first drops,
  * without a read, every chunk no occurrence can touch; each surviving chunk
