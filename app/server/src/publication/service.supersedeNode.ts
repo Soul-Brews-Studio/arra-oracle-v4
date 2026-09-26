@@ -1,4 +1,3 @@
-import { type ChatModelFn } from "./chat";
 import { failPublication } from "./errors";
 import { parseSupersedeNode } from "./lifecycle";
 import { encodeNodeRow, encodeRevisionRow } from "./rows";
@@ -14,7 +13,7 @@ import { walkForwardChain } from "./service.walkForwardChain";
 import { writeContextRow } from "./service.writeContextRow";
 import { writeLifecycleEventFresh } from "./service.writeLifecycleEventFresh";
 
-export function supersedeNode(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn }, requestBytes: Uint8Array): Promise<LifecycleWriteOutcome> {
+export function supersedeNode(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null }, requestBytes: Uint8Array): Promise<LifecycleWriteOutcome> {
 const request = parseSupersedeNode(requestBytes);
       if (request.new_node_id === request.node_id) {
         failPublication("invalid_request", "/new_node_id");

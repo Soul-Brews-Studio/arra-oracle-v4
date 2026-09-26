@@ -11,8 +11,14 @@
 //
 // The MODEL is a real in-process function, never JSON-serialized (it is code,
 // not data), so `answerChat` can be driven end to end without any network.
+//
+// #32 / R9: `answerChat` is no longer a writer method. It lives on the chat
+// facade (`service.createChatService.ts`), built here over the SAME owner's
+// context facade the queue/poison cases drive -- so "chat on a poisoned
+// owner" is still exactly that owner's reads plus one model call.
 
 const servicePath = new URL("../../../../src/publication/service.ts", import.meta.url).pathname;
+const chatServicePath = new URL("../../../../src/publication/service.createChatService.ts", import.meta.url).pathname;
 const helperPath = new URL("../../../helpers/context-fixture.ts", import.meta.url).pathname;
 
 type Json = Record<string, unknown>;
@@ -25,6 +31,9 @@ const { openContextReader, openContextWriter, openEvidenceWriter } = (await impo
   openEvidenceWriter: (root: string, options: Json) => Promise<unknown>;
 };
 const { encodeRequest } = (await import(helperPath)) as { encodeRequest: (value: unknown) => Uint8Array };
+const { createChatService } = (await import(chatServicePath)) as {
+  createChatService: (reader: Facade, options: Json) => Facade;
+};
 
 const [, , mode, root, payloadPath] = process.argv;
 const payload: Json = JSON.parse(await Bun.file(payloadPath!).text());
@@ -55,9 +64,10 @@ const options = (extra: Json = {}) => ({
   newRevisionId: () => "r".repeat(21),
   clock: () => FIXED_CLOCK_MS,
   sourceNamespace: null,
-  model: stubModel,
   ...extra,
 });
+/** The chat facade over an owner's context reads, with the counted stub. */
+const chatOver = (context: Facade) => createChatService(context, { model: stubModel, settings: null });
 
 const send = (facade: Facade, method: string, body: Json) => facade[method]!(encodeRequest(body));
 
@@ -147,7 +157,7 @@ if (mode === "chat-bypasses-poison") {
   );
   await report(
     "answerChat:while-poisoned",
-    send(context, "answerChat", {
+    send(chatOver(context), "answerChat", {
       workspace_name: workspace,
       peer_name: names.peer,
       session_name: names.session,
@@ -180,7 +190,7 @@ if (mode === "answerchat-never-poisons") {
   payload.model_fail = true;
   await report(
     "answerChat:model-failed",
-    send(context, "answerChat", {
+    send(chatOver(context), "answerChat", {
       workspace_name: workspace,
       peer_name: names.peer,
       session_name: names.session,

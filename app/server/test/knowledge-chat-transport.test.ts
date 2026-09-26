@@ -8,7 +8,8 @@
 //
 // This is what "the Chat view calls a real endpoint, not a mock" means in
 // this codebase: the fake is at the facade seam publication/service.ts
-// already defines, not at the HTTP boundary the UI actually talks to.
+// already defines, not at the HTTP boundary the UI actually talks to. The
+// production model wiring over a real dataset is `chat-production-wiring.test.ts`.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
@@ -65,13 +66,11 @@ const CONTEXT_ITEM = {
 };
 
 /** Real governed request parsers (`parseGetContext`/`parseAnswerChat`), faked
- *  retrieval and faked model -- exactly the `getVocabulary` smoke-test shape. */
+ *  retrieval and faked model -- exactly the `getVocabulary` smoke-test shape.
+ *  It is the READER bundle: `answerChat` runs on its `chat` facade (#32 / R9),
+ *  the same shape `createKnowledgeAccess` composes. */
 const fakeBundle: KnowledgeBundle = {
-  // `registry.ts`'s `isWriterBundle` distinguishes a writer bundle by probing
-  // `publication.publishRevision` -- unrelated to chat, but the SAME writer
-  // bundle carries both facades, so this probe must be present for
-  // `answerChat` to be recognized as writer-side at all.
-  publication: { publishRevision: (async () => { throw new Error("unused in this test"); }) as never } as never,
+  publication: {} as never,
   taxonomy: {} as never,
   context: {
     async getContext(bytes: Uint8Array) {
@@ -79,29 +78,28 @@ const fakeBundle: KnowledgeBundle = {
       expect(request.workspace_name).toBe("acme");
       return { items: [CONTEXT_ITEM], coverage: "full" as const, excluded: [], excluded_omitted: 0 };
     },
+  } as never,
+  evidence: {} as never,
+  chat: {
     async answerChat(bytes: Uint8Array) {
       const request = parseAnswerChat(bytes); // REAL governed parser
       return {
         answer: `stub answer to: ${request.question}`,
-        coverage: "full",
+        coverage: "full" as const,
         excluded: [],
         excluded_omitted: 0,
         items_used: [CONTEXT_ITEM.public_id],
       };
     },
-  } as never,
-  evidence: {} as never,
+    async getChatSettings() {
+      return { model: null };
+    },
+  },
 };
 
-// `answerChat` is `ephemeralWrite` (registry.ts): the transport opens it
-// through `getEphemeralWriter`, never the cached `getBundle` path -- see
-// `knowledge-chat-writer-gate.test.ts` for why, and for the test that
-// actually asserts on that distinction. This fake's `close` is a no-op:
-// this file is about the round trip, not about gate lifetime.
-const access: KnowledgeAccess = {
-  getBundle: async () => fakeBundle,
-  getEphemeralWriter: async () => ({ ...fakeBundle, close: async () => {} }) as never,
-};
+// Both reads -- `getContext` and `answerChat` -- take the reader bundle.
+// `knowledge-chat-writer-gate.test.ts` asserts on WHICH bundle is asked for.
+const access: KnowledgeAccess = { getBundle: async () => fakeBundle };
 
 const request = (path: string, init: RequestInit = {}) =>
   new Request(url(path), { ...init, headers: { host: "127.0.0.1:3939", ...(init.headers ?? {}) } });
@@ -157,7 +155,7 @@ describe("knowledge explorer: getContext round-trips (read-only)", () => {
   });
 });
 
-describe("knowledge explorer: answerChat requires the writer action", () => {
+describe("knowledge explorer: answerChat is admitted under content:read (#32 / R9)", () => {
   test("a valid request round-trips the stub model's answer", async () => {
     const body = JSON.stringify({
       workspace_name: "acme",
@@ -173,36 +171,35 @@ describe("knowledge explorer: answerChat requires the writer action", () => {
     expect(parsed.items_used).toEqual([CONTEXT_ITEM.public_id]);
   });
 
-  test("a caller with only content:read on the workspace is refused before the facade runs", async () => {
-    const readOnlyPolicyPath = join(dataDir, "read-only-policy.json");
+  const appWith = async (file: string, actions: string[]) => {
+    const path = join(dataDir, file);
     await writeFile(
-      readOnlyPolicyPath,
+      path,
       JSON.stringify({
         ...policyDocument(),
-        principals: [
-          {
-            id: "acme-op",
-            disabled: false,
-            workspaces: [{ name: "acme", actions: ["content:read"] }],
-            global_actions: [],
-          },
-        ],
+        principals: [{ id: "acme-op", disabled: false, workspaces: [{ name: "acme", actions }], global_actions: [] }],
       }),
       { encoding: "utf-8", mode: 0o600 },
     );
-    const readOnlyApp = createApp({ origin: ORIGIN }, {} as unknown as OperationService, (() => {
+    return createApp({ origin: ORIGIN }, {} as unknown as OperationService, (() => {
       throw new Error("unused");
     }) as unknown as ReturnType<typeof createMcpAdapter>, {
-      knowledge: { policyPath: readOnlyPolicyPath, access },
+      knowledge: { policyPath: path, access },
     });
-    const body = JSON.stringify({
-      workspace_name: "acme",
-      peer_name: "nat",
-      session_name: "s1",
-      question: "should be refused",
-      max_items: 10,
-    });
-    const res = await readOnlyApp.handle(request("/api/knowledge/acme/answerChat", authedJson(body)));
+  };
+  const askBody = (question: string) =>
+    JSON.stringify({ workspace_name: "acme", peer_name: "nat", session_name: "s1", question, max_items: 10 });
+
+  test("a caller with only content:read on the workspace is ADMITTED: chat reads, it does not write", async () => {
+    const readOnlyApp = await appWith("read-only-policy.json", ["content:read"]);
+    const res = await readOnlyApp.handle(request("/api/knowledge/acme/answerChat", authedJson(askBody("admitted?"))));
+    expect(res.status).toBe(200);
+    expect((await res.json()).answer).toBe("stub answer to: admitted?");
+  });
+
+  test("a caller with only content:write on the workspace is refused before the facade runs", async () => {
+    const writeOnlyApp = await appWith("write-only-policy.json", ["content:write"]);
+    const res = await writeOnlyApp.handle(request("/api/knowledge/acme/answerChat", authedJson(askBody("refused?"))));
     expect(res.status).toBe(403);
   });
 });

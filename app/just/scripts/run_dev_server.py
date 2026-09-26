@@ -13,8 +13,15 @@ for its entire lifetime.
 
 All other env (ARRA_AUTH_POLICY, ARRA_ORIGIN, PORT, ARRA_DATA_DIR,
 ARRA_KNOWLEDGE_DATASET_ROOT) is expected to already be exported by the caller
-(`dev-stack.sh`) -- this script only adds the writer-gate pair on top of
+(`dev-stack.sh`) -- this script adds the writer-gate pair on top of
 `os.environ` and never returns on success.
+
+One dev default (#32, overnight ruling R9, docs/overnight/DECISIONS.md): the
+local dev server answers chat with the LOCAL Ollama, so `ARRA_CHAT_PROVIDER`
+defaults to `ollama` here (model gemma3:4b, at ARRA_CHAT_URL, else OLLAMA_URL,
+else 127.0.0.1:11434). An exported value -- including an empty one, which
+means "unconfigured" -- always wins. `bun src/index.ts` on its own stays
+unconfigured (answerChat answers `model_unavailable`) unless told otherwise.
 """
 
 from __future__ import annotations
@@ -35,6 +42,7 @@ def main() -> int:
     # resolved against cwd, matching how `just server start` runs it.
     os.chdir(server_dir)
 
+    os.environ.setdefault("ARRA_CHAT_PROVIDER", "ollama")
     exec_with_gate(dataset_root, ["bun", "run", "src/index.ts"])
     # Unreachable on success -- execvpe replaced this process.
     print("EXEC_FAILED", file=sys.stderr)

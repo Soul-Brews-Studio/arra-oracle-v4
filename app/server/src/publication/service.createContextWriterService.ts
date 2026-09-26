@@ -1,6 +1,4 @@
-import { type ChatModelFn } from "./chat";
 import { advanceReadCursor } from "./service.advanceReadCursor";
-import { answerChat } from "./service.answerChat";
 import { appendMessages } from "./service.appendMessages";
 import { createContextReadMethods } from "./service.createContextReadMethods";
 import { createSessionLink } from "./service.createSessionLink";
@@ -18,7 +16,7 @@ import { type Clock, type DatasetAdapter, type OwnerCore } from "./service.types
 export function createContextWriterService(
   writer: DatasetAdapter,
   core: OwnerCore,
-  options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn },
+  options: { clock: Clock; sourceNamespace: string | null },
 ) {
   const reads = createContextReadMethods(writer);
   return {
@@ -36,6 +34,8 @@ export function createContextWriterService(
     registerSession: (requestBytes: Uint8Array) => registerSession(writer, core, options, requestBytes),
     joinSession: (requestBytes: Uint8Array) => joinSession(writer, core, options, requestBytes),
     appendMessages: (requestBytes: Uint8Array) => appendMessages(writer, core, options, requestBytes),
-    answerChat: (requestBytes: Uint8Array) => answerChat(writer, core, options, requestBytes),
+    // No `answerChat` here any more (#32 slice A, R9): it persists nothing, so
+    // it is composed over the READER (service.createChatService.ts) and never
+    // needs, holds or releases this writer.
   };
 }

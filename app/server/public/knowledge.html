@@ -150,11 +150,11 @@
 
     <h3>Ask</h3>
     <div class="field-hint">
-      This calls <code>answerChat</code>, which composes the SAME context above and then calls an
-      injected model. This deployment (<code>composeKnowledgeAccess</code>) does not configure a
-      model, so the server-side default (<code>() =&gt; mapModelFailure()</code>) answers
-      <code>writer_unavailable</code> for every question — that is a real, honestly-surfaced 503 from
-      the running code, not a mock. Expect it here until a model is wired at the composition layer.
+      This calls <code>answerChat</code>, which composes the SAME context above and then asks the
+      chat model the server was started with (<code>ARRA_CHAT_PROVIDER=ollama</code>, default
+      <code>gemma3:4b</code>; the local dev stack turns it on). With no model configured, or one that
+      is stopped or failing, the server answers <code>model_unavailable</code> (503) — its own closed
+      code, never a hang. Answers are recorded understanding, not a live agent.
     </div>
     <div class="row">
       <textarea id="chatQuestion" placeholder="question"></textarea>

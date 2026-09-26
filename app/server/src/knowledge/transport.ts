@@ -35,6 +35,13 @@
  * open `openKnowledgeReader` / `openEvidenceReader`, which take no gate at
  * all. A future CLI writer must be started only while this server is stopped,
  * or must be pointed at a different dataset root.
+ *
+ * Chat (#32 slice A, overnight ruling R9): `answerChat` persists nothing, so
+ * it runs on the READER bundle's `chat` facade, composed here with the
+ * configured model. No request path opens, closes or releases a writer --
+ * the per-request "ephemeral writer" that chat used to take is gone, because
+ * in one gated process it both contended for the single owner slot and, on
+ * close, released the process's only inherited writer gate.
  */
 
 import { randomBytes } from "node:crypto";
@@ -47,8 +54,10 @@ import {
 } from "../auth/http";
 import { ContractError } from "../contracts/errors";
 import { parseStrictBytes, type JcsObject, type JcsValue } from "../contracts/jcs";
+import type { ChatModelFn, ChatSettings } from "../publication/chat";
 import { openEvidenceReader, openEvidenceWriter } from "../publication/service";
-import { KNOWLEDGE_METHODS, type KnowledgeAction, type KnowledgeBundle, type RequestAuthority } from "./registry";
+import { createChatService } from "../publication/service.createChatService";
+import { KNOWLEDGE_METHODS, type KnowledgeAction, type KnowledgeBundle, type KnowledgeReaderBundle, type RequestAuthority } from "./registry";
 import { KnowledgeAuthDenied, admitKnowledgeAction, type KnowledgeAuthFailure } from "./transport.admitKnowledgeAction";
 import { requireBoundPeers } from "./transport.requireBoundPeers";
 
@@ -156,6 +165,8 @@ const STATUS_FOR_CODE: Readonly<Record<string, number>> = Object.freeze({
   limit_exceeded: 413,
   // #87 / R3: the admitted caller's own authority does not cover the request.
   forbidden: 403,
+  // #32 / R9: no chat model configured, or it could not answer. Never 500.
+  model_unavailable: 503,
 });
 
 /**
@@ -232,6 +243,13 @@ function randomNanoid21(): string {
 export type KnowledgeDatasetConfig = {
   readonly datasetRoot: string | undefined;
   readonly env?: NodeJS.ProcessEnv;
+  /**
+   * #32 / R9: the chat model and its effective settings, trusted composition
+   * input (`composition.ts` builds them from env via `src/chat-model.ts`),
+   * never request data. Absent means unconfigured: `answerChat` answers
+   * `model_unavailable` and `getChatSettings` answers `{model: null}`.
+   */
+  readonly chat?: { readonly model?: ChatModelFn; readonly settings: ChatSettings | null };
 };
 
 /**
@@ -239,24 +257,13 @@ export type KnowledgeDatasetConfig = {
  * eagerly; the persisting writer is opened lazily on first use and never
  * released by a request path (see file header: writer-ownership decision).
  *
- * `getEphemeralWriter` is the ONE exception to "never released by a request
- * path", added for #33's `answerChat`: that method is defined only on the
- * writer facade (it needs the injected `model` only a writer carries) but
- * PERSISTS NOTHING (chat.ts: "must not share the write queue or the poison
- * state that guards actual persistence"). Handing it the SAME cached,
- * never-closed `writer` promise would seize the exclusive dataset gate
- * (`OWNERS` in publication/service.ts) on its first call and hold it for the
- * rest of the process -- for a call that cannot durably write anything and,
- * at this deployment, cannot even succeed (no model configured; see
- * registry.ts). A migration tool or a second server instance would then be
- * locked out by a feature that never persists. `getEphemeralWriter` opens its
- * own, uncached writer instance and the caller MUST close it once its single
- * call completes -- see `handleKnowledgeRequest`'s `finally` block, the only
- * place in this transport allowed to call `.close()` on a writer bundle.
+ * The reader bundle carries the `chat` facade, built over that reader's own
+ * `getContext` with the configured model, so every chat call is a read.
  */
 export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
-  let reader: Promise<KnowledgeBundle> | null = null;
+  let reader: Promise<KnowledgeReaderBundle> | null = null;
   let writer: Promise<Omit<import("../publication/service").EvidenceWriterBundle, "close">> | null = null;
+  const chatOptions = { model: config.chat?.model, settings: config.chat?.settings ?? null };
 
   const requireRoot = (): string => {
     if (config.datasetRoot === undefined) {
@@ -276,8 +283,8 @@ export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
     return config.datasetRoot;
   };
 
-  /** Trusted operator configuration shared by every writer open, cached or
-   *  ephemeral -- never request data (see the cached path's own note below). */
+  /** Trusted operator configuration for the one cached writer -- never
+   *  request data. No model travels here any more (#32 / R9). */
   const writerOptions = () => ({
     newRevisionId: randomNanoid21,
     clock: Date.now,
@@ -296,8 +303,11 @@ export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
       // are added, instead of silently routing a new read action into the
       // writer-gate path below, which would require a writer for a call that
       // never mutates anything and could deadlock a reader-only deployment.
+      // `answerChat` is one of these reads (#32 / R9).
       if (action !== "content:write") {
-        reader ??= openEvidenceReader(requireRoot());
+        reader ??= openEvidenceReader(requireRoot()).then((bundle) =>
+          Object.freeze({ ...bundle, chat: createChatService(bundle.context, chatOptions) }),
+        );
         return reader;
       }
       // Write path: cache only a SUCCESSFUL open. A failed attempt (writer
@@ -312,30 +322,15 @@ export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
       }
       return writer;
     },
-
-    /** A fresh, UNCACHED writer for one non-persisting call. Contends with
-     *  the cached writer through the same `OWNERS` gate `openEvidenceWriter`
-     *  already enforces (an active real write correctly refuses this with
-     *  `writer_unavailable`, exactly as it would refuse a second real
-     *  writer) but is never itself retained past the call that opened it. */
-    async getEphemeralWriter(): Promise<import("../publication/service").EvidenceWriterBundle> {
-      return openEvidenceWriter(requireRoot(), writerOptions());
-    },
   };
 }
 
 /**
- * `getEphemeralWriter` is declared OPTIONAL here even though the real
- * `createKnowledgeAccess` always provides it: several existing tests type a
- * hand-written fake as `KnowledgeAccess` with only `getBundle` (they never
- * exercise an `ephemeralWrite` method), and an explicit interface -- rather
- * than `ReturnType<typeof createKnowledgeAccess>`, which would make the new
- * method silently required everywhere -- keeps those fakes valid without
- * editing files this task does not own.
+ * What both transports need from dataset access: one bundle per action. There
+ * is deliberately no second, per-request writer here any more (#32 / R9).
  */
 export type KnowledgeAccess = {
   getBundle(action: KnowledgeAction): Promise<KnowledgeBundle>;
-  getEphemeralWriter?(): Promise<import("../publication/service").EvidenceWriterBundle>;
 };
 
 // ── HTTP handler ────────────────────────────────────────────────────────
@@ -392,14 +387,6 @@ export async function handleKnowledgeRequest(
     return knowledgeErrorResponse(error) ?? errorResponse(400);
   }
 
-  // A method marked `ephemeralWrite` (currently only `answerChat`) must run
-  // against a writer bundle THIS REQUEST opened and THIS REQUEST closes --
-  // never the process-lifetime cached one `getBundle` returns for a real
-  // persisting write. See `createKnowledgeAccess`'s own comment for why: that
-  // cached writer is never released by a request path, and this call
-  // persists nothing, so sharing it would seize the exclusive dataset gate
-  // for the rest of the process over a call that cannot durably write.
-  let closeEphemeral: (() => Promise<void>) | null = null;
   try {
     // Operations-root methods (R5) never touch the knowledge bundle at all --
     // checked BEFORE `getBundle`, which would otherwise throw
@@ -412,20 +399,7 @@ export async function handleKnowledgeRequest(
         headers: { "content-type": "application/json", "cache-control": "no-store" },
       });
     }
-    let bundle: KnowledgeBundle;
-    if (entry.ephemeralWrite === true) {
-      if (ctx.access.getEphemeralWriter === undefined) {
-        // Declared ephemeral but this `access` cannot open one: fail closed,
-        // the same way an absent dataset root does, rather than silently
-        // falling back to the cached writer this branch exists to avoid.
-        return errorResponse(503);
-      }
-      const opened = await ctx.access.getEphemeralWriter();
-      closeEphemeral = opened.close;
-      bundle = opened;
-    } else {
-      bundle = await ctx.access.getBundle(entry.action);
-    }
+    const bundle = await ctx.access.getBundle(entry.action);
     const result = await entry.call(bundle, raw.bytes, authority);
     return new Response(JSON.stringify(result ?? null), {
       status: 200,
@@ -438,9 +412,5 @@ export async function handleKnowledgeRequest(
       status: 500,
       headers: { "content-type": "application/json", "cache-control": "no-store" },
     });
-  } finally {
-    // Released unconditionally -- success, a governed refusal and a thrown
-    // 500 all end this one request's hold on the gate the same way.
-    if (closeEphemeral !== null) await closeEphemeral().catch(() => undefined);
   }
 }

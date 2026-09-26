@@ -153,14 +153,14 @@ try {
     // exit (the `kb`/alias dispatch below), but both share this one place
     // that touches the Authorization header, so the credential rule cannot
     // drift between them.
-    const rawRequest = async (path: string, init?: RequestInit) => {
+    const rawRequest = async (path: string, init?: RequestInit, timeoutMs = 30_000) => {
       const headers = new Headers((init?.headers as HeadersInit | undefined) ?? {});
       if (!isPublic) headers.set("authorization", `Bearer ${token}`);
       const response = await fetch(`${url.href.replace(/\/$/, "")}${path}`, {
         ...init,
         headers,
         redirect: "error",
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(timeoutMs),
       });
       const text = await response.text();
       let body: unknown;
@@ -176,9 +176,13 @@ try {
       method: "POST", headers: { "content-type": "application/json", "user-agent": "arra-v4-cli" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: tool, arguments: arguments_ } }),
     });
+    // answerChat waits on a model the server bounds at 60 s (#32 / R9); the
+    // CLI outwaits that bound so a slow answer arrives as the server's own
+    // result (an answer or model_unavailable), never a local abort.
     const postKnowledge = (targetMethod: string, bytes: Uint8Array) => rawRequest(
       `/api/knowledge/${encodeURIComponent(bank)}/${encodeURIComponent(targetMethod)}`,
       { method: "POST", headers: { "content-type": "application/json", "user-agent": "arra-v4-cli" }, body: bytes as BodyInit },
+      targetMethod === "answerChat" ? 75_000 : 30_000,
     );
 
     let result: unknown;

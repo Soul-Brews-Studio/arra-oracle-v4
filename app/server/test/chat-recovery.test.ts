@@ -27,7 +27,8 @@
  *   2. The model boundary is genuinely the STUBBED one: `answerChat` calls
  *      the injected function exactly once per call and nothing else, and
  *      with no `model` supplied at all it refuses via `mapModelFailure`
- *      (`writer_unavailable`) WITHOUT ever incrementing the fetch counter --
+ *      (`model_unavailable` since #32 / R9; it used to reuse
+ *      `writer_unavailable`) WITHOUT ever incrementing the fetch counter --
  *      proving the "unavailable" path is a local refusal, not a network
  *      attempt that happened to fail.
  *   3. A real SDK failure locking `messages.lance` to 0o500 (write blocked,
@@ -150,7 +151,7 @@ function id21(label: string): string {
 // ── child harness, styled on context-recovery.test.ts's own ────────────────
 
 type Boundary = "before_write" | "after_write" | "after_readback";
-type Facade = "context" | "publication" | "taxonomy";
+type Facade = "context" | "publication" | "taxonomy" | "chat";
 type Step = { facade: Facade; method: string; request: Record<string, unknown> };
 type ChildEvent = Record<string, any>;
 type ModelMode = "stub" | "fail" | "absent";
@@ -425,8 +426,10 @@ const getContextStep = (): Step => ({
   method: "getContext",
   request: { workspace_name: WORKSPACE, peer_name: PEER, session_name: SESSION, max_items: 10 },
 });
+// #32 / R9: answerChat is on the chat facade (over the owner's context
+// reads), no longer on the writer's context facade.
 const answerChatStep = (question = "what happened?"): Step => ({
-  facade: "context",
+  facade: "chat",
   method: "answerChat",
   request: { workspace_name: WORKSPACE, peer_name: PEER, session_name: SESSION, question, max_items: 10 },
 });
@@ -518,7 +521,7 @@ recoveryTest(
     expectThrown(errorOf(result, 0), {
       name: "PublicationError",
       version: PUBLICATION_ENVELOPE,
-      code: "writer_unavailable",
+      code: "model_unavailable",
       path: "",
     });
     expect(stepResult(result, 0).modelCalls).toBe(0);
@@ -527,14 +530,14 @@ recoveryTest(
 );
 
 recoveryTest(
-  "4 a commanded model failure maps onto writer_unavailable, having genuinely called the injected model once",
+  "4 a commanded model failure maps onto model_unavailable, having genuinely called the injected model once",
   async () => {
     const root = await seededDataset("model-fail");
     const result = await run(plan(root, [answerChatStep()], { modelMode: "fail" }), "model-fail");
     expectThrown(errorOf(result, 0), {
       name: "PublicationError",
       version: PUBLICATION_ENVELOPE,
-      code: "writer_unavailable",
+      code: "model_unavailable",
       path: "",
     });
     // The model boundary DID run -- this is a mapped model failure, not a

@@ -118,23 +118,9 @@ async function dispatchKnowledgeTool(name: string, args: Record<string, unknown>
   // `knowledge/transport.ts`'s `handleKnowledgeRequest`.
   if (entry.operations !== undefined) return entry.operations(bytes);
   if (knowledgeAccess === null) throw new Error("knowledge transport is not configured");
-  // Same gate discipline as the HTTP transport (`knowledge/transport.ts`'s
-  // `handleKnowledgeRequest`): an `ephemeralWrite` method (currently only
-  // `answerChat`) must never share the process-lifetime cached writer, or
-  // `kb_answerChat` would seize the exclusive dataset gate on its first MCP
-  // call and hold it for the rest of the process -- a call that persists
-  // nothing and, at this deployment, cannot even succeed.
-  if (entry.ephemeralWrite === true) {
-    if (knowledgeAccess.getEphemeralWriter === undefined) {
-      throw new Error("knowledge transport cannot open an ephemeral writer");
-    }
-    const opened = await knowledgeAccess.getEphemeralWriter();
-    try {
-      return await entry.call(opened, bytes, ops.authority);
-    } finally {
-      await opened.close().catch(() => undefined);
-    }
-  }
+  // Same bundle discipline as the HTTP transport (`knowledge/transport.ts`):
+  // the registry's action picks the bundle, and `kb_answerChat` is a READ on
+  // the reader's `chat` facade (#32 / R9) -- no per-call writer is opened.
   const bundle = await knowledgeAccess.getBundle(entry.action);
   return entry.call(bundle, bytes, ops.authority);
 }

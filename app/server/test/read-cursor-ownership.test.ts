@@ -68,7 +68,7 @@ const RUNTIME_EXPORTS = [
  *  eleven reader methods it spreads in), eleven on every context READER
  *  facade. */
 const CONTEXT_WRITE_METHODS =
-  "advanceReadCursor,answerChat,appendMessages,createSessionLink,createTrace,getContext," +
+  "advanceReadCursor,appendMessages,createSessionLink,createTrace,getContext," +
   "getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
   "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessions,listTraceHits," +

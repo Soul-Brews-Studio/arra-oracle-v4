@@ -1,11 +1,10 @@
-import { type ChatModelFn } from "./chat";
 import { PEER_FIELDS as PEER_FIELDS_LOCAL, encodePeerRow, parseRegisterPeer } from "./context";
 import { PEERS } from "./service.constants";
 import { mutateContextWrite } from "./service.mutateContextWrite";
 import { registerNamed } from "./service.registerNamed";
 import { type Clock, type ContextRegistration, type DatasetAdapter, type OwnerCore } from "./service.types";
 
-export function registerPeer(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn }, requestBytes: Uint8Array): Promise<ContextRegistration> {
+export function registerPeer(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null }, requestBytes: Uint8Array): Promise<ContextRegistration> {
 return mutateContextWrite(core, async () => {
         const request = parseRegisterPeer(requestBytes);
         return registerNamed(writer, core, options, 

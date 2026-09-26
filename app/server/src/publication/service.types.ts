@@ -1,5 +1,6 @@
-import { type ChatModelFn } from "./chat";
+import { type ContextResult } from "./chat";
 import { type BoundaryHook, type ContextBoundary, type ContextBoundaryHook, type EvidenceBoundary, type EvidenceBoundaryHook, type PublicationBoundary, type TaxonomyBoundary, type TaxonomyBoundaryHook } from "./service.boundaries";
+import { type createChatService } from "./service.createChatService";
 import { type createContextReadMethods } from "./service.createContextReadMethods";
 import { type createContextWriterService } from "./service.createContextWriterService";
 import { type createEvidenceReadMethods } from "./service.createEvidenceReadMethods";
@@ -276,11 +277,14 @@ export type ContextOptions = KnowledgeOptions & {
    *  an authorization credential. */
   sourceNamespace: string | null;
   onContextBoundary?: ContextBoundaryHook;
-  /** #32 chat's model call, injected exactly like `clock`. Absent means
-   *  `answerChat` is unavailable (mapped through `mapModelFailure` on first
-   *  use); never a network call this module makes on its own. */
-  model?: ChatModelFn;
 };
+
+/** What the chat facade needs from a reader: context assembly, nothing else
+ *  (#32 / R9). A writer's context facade satisfies it too, but the transport
+ *  composes chat over the READER bundle only. */
+export type ChatReader = { getContext(requestBytes: Uint8Array): Promise<ContextResult> };
+
+export type ChatService = ReturnType<typeof createChatService>;
 
 export type SetAction = "unchanged" | "filled" | "rebuilt";
 

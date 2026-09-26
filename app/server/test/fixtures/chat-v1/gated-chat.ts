@@ -16,6 +16,12 @@ const payload = JSON.parse(payloadJson ?? "{}") as {
 const { openContextWriter } = await import(
   new URL("../../../src/publication/service.ts", import.meta.url).pathname
 );
+// #32 / R9: `answerChat` is a chat-facade method over a reader's context,
+// no longer a writer method; the stub model is composed there, not into the
+// writer's options.
+const { createChatService } = await import(
+  new URL("../../../src/publication/service.createChatService.ts", import.meta.url).pathname
+);
 
 const enc = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 
@@ -43,14 +49,15 @@ const service = await openContextWriter(datasetRoot!, {
   newRevisionId: () => "unusedunusedunused000",
   clock: () => Date.parse("2026-09-21T00:00:00.000Z"),
   sourceNamespace: null,
-  model,
 });
+const chat = createChatService(service.context, { model, settings: null });
 
 const WS = "alpha-workspace";
 const pad = (seed: string) => `${seed}${"0".repeat(Math.max(0, 21 - seed.length))}`.slice(0, 21);
 
 const call = async (method: string, request: unknown) => {
-  const fn = (service.context as Record<string, (b: Uint8Array) => Promise<unknown>>)[method]!;
+  const facade = method === "answerChat" ? chat : service.context;
+  const fn = (facade as Record<string, (b: Uint8Array) => Promise<unknown>>)[method]!;
   return fn(enc(request));
 };
 

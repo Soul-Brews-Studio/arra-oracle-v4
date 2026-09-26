@@ -50,7 +50,7 @@ const READER_KEYS = "context,publication,taxonomy";
 /** §8: context writer has exactly these twenty-two (its own eleven plus the
  *  eleven reader methods it spreads in); the reader exactly the eleven. */
 const CONTEXT_WRITE_METHODS =
-  "advanceReadCursor,answerChat,appendMessages,createSessionLink,createTrace,getContext," +
+  "advanceReadCursor,appendMessages,createSessionLink,createTrace,getContext," +
   "getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
   "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessions,listTraceHits," +

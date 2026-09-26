@@ -74,9 +74,9 @@ describe("registry: the 13 previously-excluded methods are now named", () => {
     }
   });
 
-  test("none of the 13 is marked ephemeralWrite (only answerChat is)", () => {
+  test("no entry carries an ephemeral-writer flag (#32 / R9 removed the path; chat is a read)", () => {
     for (const name of EXPECTED_NAMES) {
-      expect(KNOWLEDGE_METHODS[name]!.ephemeralWrite).not.toBe(true);
+      expect(Object.hasOwn(KNOWLEDGE_METHODS[name]!, "ephemeralWrite")).toBe(false);
     }
   });
 });

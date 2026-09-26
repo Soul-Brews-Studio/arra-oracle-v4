@@ -1,4 +1,3 @@
-import { type ChatModelFn } from "./chat";
 import { PublicationError, failPublication } from "./errors";
 import { microsToTimestamp } from "./rows";
 import { SESSION_LINK_FIELDS, encodeSessionLinkRow, parseCreateSessionLink } from "./session-link";
@@ -13,7 +12,7 @@ import { resolveSessionLinkEndpoints } from "./service.resolveSessionLinkEndpoin
 import { type Clock, type DatasetAdapter, type OwnerCore } from "./service.types";
 import { writeContextRow } from "./service.writeContextRow";
 
-export function createSessionLink(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn }, requestBytes: Uint8Array) {
+export function createSessionLink(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null }, requestBytes: Uint8Array) {
 // Self-link is decidable from bytes alone, so it is checked by the
       // parser, OUTSIDE the queue: parsing inside the queued turn would make
       // a malformed request an owner event, exactly as appendMessages'

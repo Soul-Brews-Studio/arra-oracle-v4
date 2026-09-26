@@ -1,4 +1,3 @@
-import { type ChatModelFn } from "./chat";
 import { failPublication } from "./errors";
 import { CHUNK_STATUSES, SEARCH_CHUNK_FIELDS, chunkText, deriveChunkId, deriveContentHash, encodeSearchChunkRow, parseIndexRevision } from "./search-chunk";
 import { quote } from "./storage";
@@ -13,7 +12,7 @@ import { sameEncodedValue } from "./service.sameEncodedValue";
 import { selectAcceptedRevision } from "./service.selectAcceptedRevision";
 import { type Clock, type DatasetAdapter, type OwnerCore } from "./service.types";
 
-export function indexRevisionChunks(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn }, requestBytes: Uint8Array) {
+export function indexRevisionChunks(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null }, requestBytes: Uint8Array) {
 const request = parseIndexRevision(requestBytes);
       return mutateContextWrite(core, async () => {
         await requireContextWorkspaceRow(writer, request.workspace_name);

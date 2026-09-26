@@ -193,13 +193,33 @@ export async function composeService(config: RuntimeConfig): Promise<OperationSe
  * instead of trying to open a dataset that was never configured. Reads and
  * the writer are still opened lazily inside `createKnowledgeAccess` — this
  * function only decides WHERE, never whether a connection is attempted yet.
+ *
+ * #32 / R9: the chat model is composed HERE, from env, and handed to the
+ * access as trusted configuration -- the only place a model is wired. The
+ * model module is imported lazily, like `embed.ts` in `composeService`.
+ * `ARRA_CHAT_PROVIDER` unset leaves chat unconfigured (`model_unavailable`);
+ * a malformed `ARRA_CHAT_*` throws, and `startup` checks that first.
  */
-export function composeKnowledgeAccess(env: NodeJS.ProcessEnv = process.env): KnowledgeAccess {
+export async function composeKnowledgeAccess(env: NodeJS.ProcessEnv = process.env): Promise<KnowledgeAccess> {
   const datasetRoot = env.ARRA_KNOWLEDGE_DATASET_ROOT;
+  const { createChatModel } = await import("./chat-model");
+  const chat = createChatModel(env);
   return createKnowledgeAccess({
     datasetRoot: typeof datasetRoot === "string" && datasetRoot.trim() ? datasetRoot : undefined,
     env,
+    chat: { model: chat.model, settings: chat.settings },
   });
+}
+
+/**
+ * Validate the chat model configuration (#32 / R9) the way `readConfig`
+ * validates the rest: at startup, before listen, failing closed. Contacts no
+ * model -- reachability is a per-answer outcome (`model_unavailable`), not a
+ * startup precondition, so a stopped Ollama never stops the server.
+ */
+export async function checkChatConfig(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  const { readChatConfig } = await import("./chat-model");
+  readChatConfig(env);
 }
 
 /**

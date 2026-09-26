@@ -1,31 +1,25 @@
 /**
- * `answerChat` (service.ts) calls an injected `ChatModelFn` -- "a real
- * caller supplies a real model, a test supplies a stub" (chat.ts). A default
- * local server wires neither, so the call throws and `mapModelFailure()`
- * (chat.ts) maps it to a refusal:
- *
- *   return failPublication("writer_unavailable", "");
- *
- * That comment in chat.ts is explicit that this is a REUSE of an existing
- * code, not a new one, chosen because "the thing this call depends on to do
- * its job is not available right now" already fits a missing model exactly
- * as well as a timeout or rate limit. So on a stock local server, seeing
- * `writer_unavailable` from the dialectic panel is the EXPECTED result, not
- * a bug -- `getContext` (read-only, no model) still works fine, which is
- * the fastest way to tell "no model configured" apart from "server is
- * actually broken".
+ * `answerChat` calls the chat model the SERVER was configured with (#32,
+ * overnight ruling R9): local Ollama, `ARRA_CHAT_PROVIDER=ollama`, model
+ * `ARRA_CHAT_MODEL` (default gemma3:4b). The local dev stack turns it on by
+ * default. With no model configured -- or with one that is stopped, slow or
+ * failing -- the server answers its own closed code, `model_unavailable`
+ * (503). It used to answer `writer_unavailable`, which could not be told
+ * apart from a genuinely busy dataset writer. `getContext` never calls a
+ * model, so it still answers either way: that is the quickest way to tell
+ * "no model" from "server broken". `getChatSettings` says which model, or
+ * `{model: null}`.
  */
 export function ModelNote() {
   return (
     <div className="rounded border border-edge bg-panel px-3 py-2 text-[11px] leading-relaxed text-muted">
       <p>
-        <span className="text-accent">No chat model wired?</span> That's expected on a default local
-        server. `answerChat` needs an injected model function; without one it throws and{" "}
-        <code className="text-slate-300">mapModelFailure()</code> returns{" "}
-        <code className="text-slate-300">writer_unavailable</code> on purpose -- reused deliberately,
-        not a new error code. A refusal envelope here means the server is working correctly with no
-        model configured, not that something broke. `getContext` below has no model dependency and
-        should still answer normally.
+        <span className="text-accent">Answers come from a local model.</span> The server answers with the
+        chat model it was started with (<code className="text-slate-300">ARRA_CHAT_PROVIDER=ollama</code>,
+        default <code className="text-slate-300">gemma3:4b</code>), using only the evidence this peer may
+        read. It is recorded understanding, not a live agent: nobody is contacted. If no model is configured
+        or it is not running, Ask returns <code className="text-slate-300">model_unavailable</code> --
+        `getContext` below has no model dependency and should still answer normally.
       </p>
     </div>
   );

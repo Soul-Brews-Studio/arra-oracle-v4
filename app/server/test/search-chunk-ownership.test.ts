@@ -58,7 +58,7 @@ const RUNTIME_EXPORTS = [
  *  (grep for `indexRevisionChunks` / `listSearchChunks` / `reconcileSearchChunks`
  *  in `createContextWriterService`'s returned object), never handed a count. */
 const CONTEXT_WRITE_METHODS =
-  "advanceReadCursor,answerChat,appendMessages,createSessionLink,createTrace,getContext," +
+  "advanceReadCursor,appendMessages,createSessionLink,createTrace,getContext," +
   "getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
   "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessions,listTraceHits," +

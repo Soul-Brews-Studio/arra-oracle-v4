@@ -35,12 +35,7 @@ export function kbHelpText(method?: string): string {
   const entry = KNOWLEDGE_METHODS[method];
   if (entry === undefined) throw new Error(`unknown kb method '${method}'\n\n${kbHelpText()}`);
   const where = entry.scopePath.length === 0 ? "the request root" : `${entry.scopePath.join(".")}.workspace_name`;
-  const persistence =
-    entry.ephemeralWrite === true
-      ? "Authorized as content:write, but this method PERSISTS NOTHING (an ephemeral, per-request writer)."
-      : entry.action === "content:write"
-        ? "Persists a durable write."
-        : "Read-only.";
+  const persistence = entry.action === "content:write" ? "Persists a durable write." : "Read-only.";
   return [
     `kb ${method} — ${entry.action}`,
     "",

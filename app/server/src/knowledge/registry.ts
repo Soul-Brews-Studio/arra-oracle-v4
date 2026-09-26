@@ -30,6 +30,7 @@
 
 import type { RequestAuthority } from "../publication/context";
 import type { EvidenceReaderBundle, EvidenceWriterBundle } from "../publication/service";
+import type { ChatService } from "../publication/service.types";
 
 export type { RequestAuthority };
 
@@ -75,10 +76,19 @@ async function listConnectionsFromOperationsRoot(bytes: Uint8Array): Promise<unk
  */
 export type KnowledgeAction = "content:read" | "content:write" | "audit:read";
 
+/**
+ * The READER bundle as the transport composes it: the evidence reader plus the
+ * `chat` facade (#32 slice A, overnight ruling R9), built over that same
+ * reader's `getContext` with the model composition configured. Optional in the
+ * type only so a hand-written test fake need not carry it; the real
+ * `createKnowledgeAccess` always attaches one.
+ */
+export type KnowledgeReaderBundle = EvidenceReaderBundle & { readonly chat?: ChatService };
+
 /** Every write bundle also carries the full read surface (`...reads` spread
  *  in each writer factory), so this union covers both without a reader/writer
  *  split at the call site. */
-export type KnowledgeBundle = EvidenceReaderBundle | Omit<EvidenceWriterBundle, "close">;
+export type KnowledgeBundle = KnowledgeReaderBundle | Omit<EvidenceWriterBundle, "close">;
 
 export type KnowledgeMethod = {
   readonly action: KnowledgeAction;
@@ -91,17 +101,6 @@ export type KnowledgeMethod = {
    * every method are declared in `registry.peerFields.ts`.
    */
   readonly call: (bundle: KnowledgeBundle, bytes: Uint8Array, authority: RequestAuthority) => Promise<unknown>;
-  /**
-   * True for a `content:write`-gated method that is defined only on the
-   * writer facade but PERSISTS NOTHING (currently only `answerChat`). The
-   * transport (`knowledge/transport.ts`'s `handleKnowledgeRequest`) opens a
-   * fresh, uncached writer for these instead of the process-lifetime cached
-   * one, and closes it when the request ends -- otherwise the FIRST call
-   * would seize the exclusive dataset writer gate for the rest of the
-   * process over a call that can never durably write. Absent/false means the
-   * ordinary cached-writer path, unchanged for every other write method.
-   */
-  readonly ephemeralWrite?: boolean;
   /**
    * Operations-root methods (#103 / #102, DECISIONS.md R5): `mcp_calls` and
    * `connections` are written straight to `ARRA_DATA_DIR` on every admitted
@@ -119,6 +118,16 @@ export type KnowledgeMethod = {
 /** A reader bundle's `publication` facade has no `publishRevision`. */
 function isWriterBundle(bundle: KnowledgeBundle): bundle is Omit<EvidenceWriterBundle, "close"> {
   return typeof (bundle as Omit<EvidenceWriterBundle, "close">).publication.publishRevision === "function";
+}
+
+/** The reader bundle's chat facade. A `content:read` method is always handed
+ *  the reader, which `createKnowledgeAccess` composes with `chat`; its absence
+ *  is a wiring mistake, never a request-facing case -- the same backstop as
+ *  `writer()` below. */
+function chat(bundle: KnowledgeBundle): ChatService {
+  const facade = (bundle as KnowledgeReaderBundle).chat;
+  if (facade === undefined) throw new Error("knowledge: this method requires the reader's chat facade");
+  return facade;
 }
 
 function writer(bundle: KnowledgeBundle): Omit<EvidenceWriterBundle, "close"> {
@@ -203,18 +212,7 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
     call: (b, x) => writer(b).context.advanceReadCursor(x),
   },
   // #33: evidence-grounded chat (#32). `getContext` is retrieval-only and
-  // lives on the reader facade, matching every other content:read method
-  // above. `answerChat` is defined only on the writer facade (it needs the
-  // injected `model` the writer alone carries) so it must run as
-  // content:write even though it persists nothing -- but "runs as
-  // content:write" here means ONLY the authorization action: `ephemeralWrite`
-  // below tells the transport to open an uncached, per-request writer for it
-  // rather than the process-lifetime cached one every other `content:write`
-  // method shares, precisely because a persisting write must not be blocked
-  // for the rest of the process by a call that persists nothing. With no
-  // model configured at this deployment (`composeKnowledgeAccess` passes
-  // none), it currently always answers `writer_unavailable` -- a real,
-  // honestly-surfaced state, not a fabricated success.
+  // lives on the reader facade, matching every other content:read method.
   getContext: { action: "content:read", scopePath: [], call: (b, x) => b.context.getContext(x) },
   // Audit data, not content: entitles the caller to `h_metadata.auth.credential_id`
   // (see `context.encodeMcpCallRow.ts`), which `content:read` callers must
@@ -237,12 +235,18 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
     call: (b, x) => b.context.listConnections(x),
     operations: (x) => listConnectionsFromOperationsRoot(x),
   },
-  answerChat: {
-    action: "content:write",
-    scopePath: [],
-    ephemeralWrite: true,
-    call: (b, x) => writer(b).context.answerChat(x),
-  },
+  // #32 slice A + B, overnight ruling R9: `answerChat` READS -- context
+  // assembly, then one model call -- and persists nothing, so it is admitted
+  // under `content:read` and runs on the reader bundle's `chat` facade. It
+  // never opens, holds or releases a writer, so a chat can no longer lock
+  // writes out of the process or be locked out by one. The model it calls is
+  // composed from env (`src/chat-model.ts`); unconfigured or unreachable, it
+  // answers the closed `model_unavailable` (503). Admitting it under the
+  // same action as `getContext` widens nothing: the model sees exactly the
+  // items `getContext` would return to this caller.
+  answerChat: { action: "content:read", scopePath: [], call: (b, x) => chat(b).answerChat(x) },
+  // The effective model settings, or `{model: null}`: model-free, dataset-free.
+  getChatSettings: { action: "content:read", scopePath: [], call: (b, x) => chat(b).getChatSettings(x) },
 
   // ── session links (#28) ─────────────────────────────────────────────────
   // Every parser below carries `workspace_name` at the request root
