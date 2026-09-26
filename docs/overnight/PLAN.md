@@ -348,3 +348,4 @@ are part of done.
   than mine and wins: it accepts #87, #102 and #103 as done; #75 and #85 as measured repairs; #27–#32 as partial at whole-issue level (bounded probe);
   #33 as partial (no browser in its probe). PROOF.md §3b records this. PR **#109** says `Fixes` only for #87, #102, #103, #105 and #89, and `Refs` for the rest.
   19 issues got evidence comments, and the 9 where my label was stronger than the acceptor's got corrections.
+- 06:11 **GitHub CI GREEN ON THE FREEZE**: https://github.com/Soul-Brews-Studio/arra-oracle-v4/actions/runs/36277285008 (`7d03bce`): typecheck, build, **2005 tests / 143 files**, demo.test.ts, 3 Python suites and the UI build all passed on Linux. Code is unchanged since the freeze (docs only). Redundant docs-only CI runs were cancelled.

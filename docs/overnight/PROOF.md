@@ -26,7 +26,7 @@ Where something is partial or blocked, it says so.
   isolation probes (acceptor)        189 pass / 4 FAIL         191 pass / 0 FAIL
   acceptor issue checks              10 PASS / 69 FAIL / 4 GAP 146 PASS / 0 FAIL / 1 GAP
   v3 client session, 37 real steps   —                         37 PASS / 0 FAIL / 0 GAP
-  GitHub Actions CI                  no workflow               green: run 36275352354 (1985/0, 139 files, Linux); freeze-head runs in PR #109
+  GitHub Actions CI                  no workflow               green on the freeze: run 36277285008 (2005/0, 143 files, Linux)
   "LET PLAY" demo, real Ollama       —                         25 STEP_OK / 0 FAIL (5 runs)
 ```
 
