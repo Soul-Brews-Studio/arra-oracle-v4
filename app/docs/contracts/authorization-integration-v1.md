@@ -118,3 +118,37 @@ This section amends §1's `GET /api/search` and `MCP recall` rows and §2's "tru
 - it over-matches (`หลงทาง` returned the `หลงลืม` row), so candidates are verified.
 
 **Evidence.** `app/server/test/fts-service.test.ts` drives the product path (db, startup index work, HTTP, MCP) in a child process on a fresh mktemp dataset. `app/server/test/fts-precision.test.ts` pins the shared module. Both were red on `aff9c65` before the change.
+
+## Amendment 2026-09-26 (overnight R18 (V0 + K2 + VA fixes))
+
+v4-overnight, v3-frame slice (Claude Opus 5.5, AI). Ruling: `docs/overnight/DECISIONS.md` R18 (D1, D6, D8, D10); design `docs/overnight/V3-PARITY.md` §2-§3. Issue #31 ("legacy adapters"). The text above is left as written; where it conflicts, this section governs.
+
+**Why.** Nat's bar was "can v4 replace v3". Existing Claude Code configurations call v3 tool names (`oracle_search`, `oracle_learn`, ...) with v3 arguments. R18 serves those names on the same `POST /mcp/:bank`, as compositions over the same registry methods HTTP and `kb_*` call, without widening any grant.
+
+**§1, new request class: the v3-compatible family (MCP only).**
+
+- Off unless the operator sets `ARRA_MCP_V3_COMPAT=1` (read once in `composition.ts` as trusted configuration; any other value is off). With it off, every v3 name is unknown: 403, byte-identical to any unknown tool.
+- 25 carried tools, declared as data in `mcp/legacy-v3/catalogue.ts`. The tool -> action map (`auth/service.toolAction.ts`) is DERIVED from that table, as `kb_*` is derived from the registry; the adapter never names an action. Read tools are `content:read`, write tools `content:write`; no new action.
+- The five never-carried tools (`oracle_mcp_call`, `oracle_mcp_list_tools`, `oracle_trace_link`, `oracle_trace_unlink`, `oracle_profile`) have no entry, so they stay unknown (403) and nothing is spawned.
+- Inbound `arra_x` resolves to `oracle_x` in the service BEFORE the action lookup (D6), so it runs under that tool's action and can never pick a cheaper grant. Aliases are never listed. `muninn_*` stays unknown.
+- Scope: the route bank only. `workspace_name`, `bank`, `workspace` and v3's tenant carriers `tenantId`, `tenant_id`, `tenant`, `orgId`, `org_id` in arguments are refused with an `arra-v3-compat/1` `unsupported_argument` body before the tool runs.
+- A v3 tool calls the knowledge kernels only through `kb(method, payload)`, which refuses a method outside the tool's declared `uses` list or above the tool's action, sets `workspace_name` from the route bank (refusing a payload that names another workspace), and calls the same registry entry, governed parser and peer-binding check as `kb_*` (`mcp/index.callKnowledgeMethod.ts`).
+- A v3 refusal is the `arra-v3-compat/1` JSON body (`{success:false, error, compat:{version, code, tool, path?, detail}, v4_error}`), carried by the existing envelope pass-through in `runMcp` with `isError:true` and an audit row `status:"error"`. A governed v4 envelope that escapes a tool is wrapped as `kernel_error` with the envelope unchanged in `v4_error`.
+
+**§1, `tools/list`: listing is admission AND availability.** The rule "includes only tools mapped to successful actions" still holds; a tool is additionally hidden when this deployment cannot serve it (#31: nothing proposed is advertised as live):
+
+- `kb_*` tools are hidden when no knowledge dataset is configured (`ARRA_KNOWLEDGE_DATASET_ROOT` unset). Before this they were always listed and every call failed `unsupported_dataset` (parity defect 5).
+- A v3 tool is listed only when a dataset is configured, every method in its `requires` list exists in the registry, and this build has a handler. Calling a hidden-but-granted v3 tool answers `not_yet_available`; calling a hidden `kb_*` tool behaves as before.
+- Hiding never widens anything: a hidden tool is admitted or refused exactly as before.
+
+**§2, new optional header: `X-Arra-Peer` (A7 / D8).** A connection-level assertion of which peer is speaking, for tools that record an author or act as a peer.
+
+- Grammar: the same bounded name grammar as the route bank (non-blank, at most 256 UTF-8 bytes), checked with the bank before any policy I/O; a malformed value is a fixed 400.
+- After the four-action projection, from the SAME policy snapshot: when the admitting grant carries an R3 `peers` binding, the asserted name must be in it, else the whole request is a fixed 403 (discovery included), before the body is read and with no audit row. With no binding, any well-formed name is accepted (the trust unit stays the workspace).
+- It is never derived from the bearer, the user-agent or the cwd. Tools see it as `ops.assertedPeer` (data, not authority). A tool argument `peer` may override it per call and is bound by the same list before any peer row is written.
+
+**§3.** Unchanged: the adapter receives the facade, and the legacy-v3 modules import no store. The dead, uncalled second tool -> action map in `mcp/index.ts` is removed (parity defect 6), so the service map is the only one. `auth/service.ts` moved its type declarations to `auth/service.types.ts` and the per-request operation binder to `auth/service.bindToolOperations.ts` for the line cap; the private context constructor and the WeakMap stay in `service.ts`.
+
+**§4, audit.** For a v3 tool the row's `tool` is the canonical name, and `h_metadata.requested_as` records the alias when one was used. `mcp_calls.peer_name` now carries the speaker the connection ASSERTED (after the binding check), or null; the principal still never populates it. This relaxes "null-or-registered peer": the asserted name may not be registered yet, because the audit row records the assertion, not a kernel reference.
+
+**Evidence.** `app/server/test/mcp-v3-frame.test.ts` (flag default, grant-driven listing, availability, dataset unset, aliases, carriers, the catalogue/service agreement with a mutation check, `kb()` bounds, the compat body through `runMcp` and its audit row, the header binding), red before the frame existed (3 pass / 25 fail). `app/server/test/mcp-v3-writes.test.ts` (V1 writes on real gated datasets) and `app/server/test/mcp-v3-acceptance.test.ts` (the v3 client session, PASS/FAIL/GAP).
