@@ -220,3 +220,7 @@ are part of done.
   slice); GAP getChatSettings (probe fixture), #29 recall (needs the search surface), #33 browser.
 - 23:46 relic, following "keep using relic to understand me": the last v4 mention before tonight is 2026-09-25 20:51 (+07) in neo-oracle
   `9c77f5f5` #1568: *"use fleet cli bring arra oracle v4 back!"*. v4 was already his priority the evening before this run.
+- 23:53 honcho-rt (#8 phase 1) ACCEPTED in round 3 (every diff comparison now has a test that fails when it is removed) and MERGED.
+  migration's final repair was already inside the earlier merge. **Waves 1 and 1.5 are complete: 13 slices merged.**
+  Python suite: **268 OK** (baseline 139). Wave 2 is still running: chat merged; lifecycle, search-embed, search-query, sessions
+  and v3-frame are in progress.
