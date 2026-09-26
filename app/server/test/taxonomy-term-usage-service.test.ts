@@ -4,21 +4,21 @@
 // Structural, isolation and grammar proofs run against a REAL fixture
 // dataset through the gateless reader (`createFixture` seeds vocabularies
 // and terms but no nodes, so it also doubles as the "empty workspace"
-// baseline for K7). The bounded-scan `coverage`/null-on-truncation paths are
-// proved with a hand-built fake `DatasetAdapter` -- fast, deterministic, and
-// the only practical way to exercise a 1000+-row window without writing
-// 1000+ real rows through the gate. The real, populated end-to-end path
-// (publish, reconcile, count) is proved separately in
+// baseline for K7). Counting semantics that need row shapes a real fixture
+// cannot cheaply produce -- 1000+ node windows, a head whose projection was
+// never reconciled, stored corruption, workspaces with differing data in
+// every table -- live in `taxonomy-term-usage-scans.test.ts` (split out of
+// this file in the second fix round, when it passed the 500-line cap). The
+// real, populated end-to-end path (publish, count) is proved in
 // `test/mcp-v3-stats.test.ts` through the v3 adapter's `oracle_concepts` /
 // `oracle_stats`, which are K6/K7's first real callers.
 //
-// Written BEFORE the three methods existed. The red run (see PR description /
-// structured result, and `app/docs/contracts/taxonomy-write-v1.md`'s R18
-// amendment, which this file's own comment used to disagree with -- a
-// fix-round doc-drift correction): with the kernel files held out, this file
-// failed to load at all (`Cannot find module '../src/publication/service.
-// knowledgeStats'`), and `mcp-v3-stats.test.ts` answered `not_yet_available`/
-// `isError` for every step instead of the shape it asserts.
+// Written BEFORE the three methods existed. The red run (see
+// `app/docs/contracts/taxonomy-write-v1.md`'s R18 amendment): with the kernel
+// files held out, this file failed to load at all (`Cannot find module
+// '../src/publication/service.knowledgeStats'`), and `mcp-v3-stats.test.ts`
+// answered `not_yet_available`/`isError` for every step instead of the shape
+// it asserts.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
@@ -31,15 +31,13 @@ import { KNOWLEDGE_METHODS } from "../src/knowledge/registry";
 import { PEER_FIELDS } from "../src/knowledge/registry.peerFields";
 import { createKnowledgeAccess } from "../src/knowledge/transport";
 import { configureKnowledgeAccess, createMcpAdapter } from "../src/mcp";
-import { knowledgeStats } from "../src/publication/service.knowledgeStats";
-import { listTermUsage } from "../src/publication/service.listTermUsage";
-import { listTerms } from "../src/publication/service.listTerms";
 import { openEvidenceReader } from "../src/publication/service";
-import { type DatasetAdapter } from "../src/publication/service.types";
 import { createFixture, type Fixture } from "./helpers/publication-fixture";
 
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
+/** Granted to the reader below, but never seeded: no `workspaces` row exists. */
+const GAMMA = "gamma-workspace";
 const ORIGIN = "http://127.0.0.1:3939";
 const READ_TOKEN = "8".repeat(64);
 const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
@@ -64,7 +62,7 @@ beforeAll(async () => {
     policyPath,
     JSON.stringify({
       version: "arra-auth/v1",
-      principals: [{ id: "reader", disabled: false, workspaces: [{ name: ALPHA, actions: ["content:read"] }], global_actions: [] }],
+      principals: [{ id: "reader", disabled: false, workspaces: [{ name: ALPHA, actions: ["content:read"] }, { name: GAMMA, actions: ["content:read"] }], global_actions: [] }],
       credentials: [
         {
           id: "cred-reader",
@@ -169,283 +167,33 @@ describe("K6/K7 baseline: an empty-of-nodes workspace measures exactly zero", ()
     expect(usage).toEqual({ rows: [], total_unique: "0", coverage: "full" });
   });
 
-  test("knowledgeStats counts the seeded taxonomy and zero nodes, never null when exact", async () => {
+  // Exact, from the seed manifest itself: 3 vocabularies (type,
+  // memory_horizon, topic) and 5 terms (note, decision, short_term, storage,
+  // retired_topic) per workspace. Two workspaces seeded this way ALSO sit in
+  // the same dataset, so an unscoped count would read 6/10 here, not 3/5.
+  // (The first cut compared alpha's count to beta's, which an unscoped count
+  // passes too; the differing-data proof is in `taxonomy-term-usage-scans.test.ts`.)
+  const seededCounts = (workspace: string) => {
+    const seeded = fixture.workspaces[workspace]!;
+    const terms = Object.values(seeded.term_ids).reduce((n, byName) => n + Object.keys(byName).length, 0);
+    return { vocabularies: String(Object.keys(seeded.vocabulary_ids).length), terms: String(terms) };
+  };
+
+  test("knowledgeStats counts the seeded taxonomy and zero nodes, exactly, never null when exact", async () => {
     const stats = await taxonomy().knowledgeStats(bytes({ workspace_name: ALPHA }));
     expect(stats.nodes_total).toBe("0");
     expect(stats.nodes_eligible).toBe("0");
     expect(stats.by_type).toEqual([]);
     expect(stats.chunks).toEqual([]);
     expect(stats.last_updated_at).toBeNull();
-    expect(Number(stats.vocabularies)).toBeGreaterThanOrEqual(3);
-    expect(Number(stats.terms)).toBeGreaterThanOrEqual(5);
+    expect({ vocabularies: stats.vocabularies, terms: stats.terms }).toEqual(seededCounts(ALPHA));
+    expect(seededCounts(ALPHA)).toEqual({ vocabularies: "3", terms: "5" });
   });
 
-  test("isolation: beta's workspace is measured independently of alpha", async () => {
-    const alpha = await taxonomy().knowledgeStats(bytes({ workspace_name: ALPHA }));
+  test("isolation: beta counts only its own seed, not alpha's too", async () => {
     const beta = await taxonomy().knowledgeStats(bytes({ workspace_name: BETA }));
     expect(beta.nodes_total).toBe("0");
-    expect(beta.vocabularies).toBe(alpha.vocabularies); // same seed shape, independently counted
-  });
-});
-
-describe("K6/K7 bounded scans: coverage/null, not a fabricated partial count", () => {
-  /**
-   * Fix round: matches every `col = 'value'` clause the real predicates this
-   * file builds actually use (`service.constants.ts` `scopeOf`, plus a
-   * handful of `AND <col> = <quoted>` appends in `service.listTermUsage.ts`/
-   * `service.knowledgeStats.ts`). An unrecognized clause shape is not
-   * filtered on -- this stays a fake, not a SQL engine -- but every clause
-   * these two kernels build IS this shape, so it is enough to make the fake
-   * actually scope by workspace and by a specific id, which the mutant-kill
-   * and isolation tests below depend on.
-   */
-  function matchesPredicate(row: Record<string, unknown>, predicate: string): boolean {
-    for (const clause of predicate.split(" AND ")) {
-      const m = /^(\w+) = '((?:[^']|'')*)'$/.exec(clause.trim());
-      if (m === null) continue;
-      const value = m[2]!.replace(/''/g, "'");
-      if (String(row[m[1]!]) !== value) return false;
-    }
-    return true;
-  }
-
-  /** A minimal fake satisfying just the four methods these two kernels call. */
-  function fakeAdapter(tables: Record<string, Record<string, unknown>[]>): DatasetAdapter {
-    const notImplemented = (): Promise<never> => Promise.reject(new Error("not implemented in this fake"));
-    const adapter: DatasetAdapter = {
-      async query(table: string, predicate: string, limit?: number) {
-        const rows = (tables[table] ?? []).filter((row) => matchesPredicate(row, predicate));
-        return limit === undefined ? rows : rows.slice(0, limit);
-      },
-      async orderedProjection(table: string, predicate: string, columns: string[], ordering: { column: string; ascending: boolean }, limit: number) {
-        const rows = (tables[table] ?? []).filter((row) => matchesPredicate(row, predicate));
-        rows.sort((a, b) => {
-          const av = a[ordering.column] as string;
-          const bv = b[ordering.column] as string;
-          const cmp = av < bv ? -1 : av > bv ? 1 : 0;
-          return ordering.ascending ? cmp : -cmp;
-        });
-        return rows.slice(0, limit).map((row) => Object.fromEntries(columns.map((c) => [c, row[c]])));
-      },
-      async count(table: string, predicate: string) {
-        return (tables[table] ?? []).filter((row) => matchesPredicate(row, predicate)).length;
-      },
-      async refresh() {},
-      version: notImplemented,
-      deleteDerivedScope: notImplemented,
-      append: notImplemented,
-      updateWhere: notImplemented,
-      updateSearchChunkEmbedding: notImplemented,
-      release() {},
-    };
-    return adapter;
-  }
-
-  /** `count` distinct nodes, each with its OWN head revision carrying one
-   *  "apfs" term row -- a shared revision across nodes cannot happen in a
-   *  real dataset (`current_revision_id` is per-node), so the fixture must
-   *  not shortcut that to stay a faithful proof. */
-  function manyTaggedNodes(count: number): { nodes: Record<string, unknown>[]; node_revision_terms: Record<string, unknown>[] } {
-    const nodes = Array.from({ length: count }, (_, i) => ({
-      id: `node${String(i).padStart(17, "0")}`,
-      workspace_name: "ws",
-      current_revision_id: `rev${String(i).padStart(18, "0")}`,
-    }));
-    const node_revision_terms = nodes.map((n) => ({
-      workspace_name: "ws",
-      revision_id: n.current_revision_id,
-      vocabulary_id: "vocabAAAAAAAAAAAAAAAA",
-      term_id: "termA",
-      term_name_snapshot: "apfs",
-    }));
-    return { nodes, node_revision_terms };
-  }
-
-  test("listTermUsage discloses coverage:partial once the node scan window is exceeded", async () => {
-    // 1001 distinct nodes (one past the 1000-row window), each tagged apfs.
-    const adapter = fakeAdapter(manyTaggedNodes(1001));
-    const result = await listTermUsage(
-      adapter,
-      bytes({ workspace_name: "ws", vocabulary_id: "vocabAAAAAAAAAAAAAAAA", type_term: null, limit: 10 }),
-    );
-    expect(result.coverage).toBe("partial");
-    // The 1000-row window still counted whatever it saw -- a partial count
-    // that says so, never a silently wrong "full".
-    expect(result.rows[0]?.count).toBe("1000");
-  });
-
-  test("listTermUsage is full coverage at exactly the window size", async () => {
-    const adapter = fakeAdapter(manyTaggedNodes(1000));
-    const result = await listTermUsage(
-      adapter,
-      bytes({ workspace_name: "ws", vocabulary_id: "vocabAAAAAAAAAAAAAAAA", type_term: null, limit: 10 }),
-    );
-    expect(result.coverage).toBe("full");
-    expect(result.rows[0]?.count).toBe("1000");
-  });
-
-  test("knowledgeStats: by_type and last_updated_at are null (never a guessed partial) once the node window is exceeded", async () => {
-    const nodes = Array.from({ length: 1001 }, (_, i) => ({
-      id: `node${String(i).padStart(17, "0")}`,
-      workspace_name: "ws",
-      current_revision_id: "revAAAAAAAAAAAAAAAAAA",
-      updated_at: BigInt(1_700_000_000_000_000 + i * 1000),
-    }));
-    const adapter = fakeAdapter({ nodes, node_revisions: [], supersede_log: [], search_chunks_v1: [], vocabularies: [], terms: [] });
-    const stats = await knowledgeStats(adapter, bytes({ workspace_name: "ws" }));
-    expect(stats.nodes_total).toBe("1001");
-    expect(stats.by_type).toBeNull();
-    expect(stats.last_updated_at).toBeNull();
-  });
-
-  test("knowledgeStats: nodes_eligible is null once the supersede_log scan is exceeded, while nodes_total stays exact", async () => {
-    const nodes = [{ id: "nodeAAAAAAAAAAAAAAAAA", workspace_name: "ws", current_revision_id: "revAAAAAAAAAAAAAAAAAA", updated_at: 1_700_000_000_000_000n }];
-    const supersedeLog = Array.from({ length: 2001 }, (_, i) => ({ workspace_name: "ws", old_id: `old${i}` }));
-    const adapter = fakeAdapter({
-      nodes,
-      node_revisions: [{ id: "revAAAAAAAAAAAAAAAAAA", workspace_name: "ws", term_snapshot_json: JSON.stringify([{ vocabulary_name_snapshot: "type", term_name_snapshot: "learning" }]) }],
-      supersede_log: supersedeLog,
-      search_chunks_v1: [],
-      vocabularies: [],
-      terms: [],
-    });
-    const stats = await knowledgeStats(adapter, bytes({ workspace_name: "ws" }));
-    expect(stats.nodes_total).toBe("1");
-    expect(stats.nodes_eligible).toBeNull();
-    expect(stats.by_type).toEqual([{ term: "learning", count: "1" }]);
-  });
-
-  // Fix round: the verifier ran a small mutation-testing pass on this file
-  // against the first cut of `service.listTermUsage.ts`/`service.
-  // knowledgeStats.ts` and found four surviving mutants (M2/M3/M4/M10) --
-  // each a real behavioral change with no test that noticed. The four tests
-  // below are written to fail on exactly those four mutations; each was
-  // run against the described mutant by hand and confirmed to fail there,
-  // then confirmed to pass against the real (unmutated) source.
-
-  test("listTermUsage: type_term actually excludes a differently-typed head (kills M2, 'ignore the type_term filter')", async () => {
-    // Three distinct nodes/revisions, all tagged the same "apfs" concept
-    // term, but only two of them typed "learning" -- so filtering by
-    // type_term:"learning" must drop exactly one.
-    const nodes = [0, 1, 2].map((i) => ({
-      id: `node${String(i).padStart(17, "0")}`,
-      workspace_name: "ws",
-      current_revision_id: `rev${String(i).padStart(18, "0")}`,
-    }));
-    const node_revisions = nodes.map((n, i) => ({
-      id: n.current_revision_id,
-      workspace_name: "ws",
-      term_snapshot_json: JSON.stringify([{ vocabulary_name_snapshot: "type", term_name_snapshot: i < 2 ? "learning" : "note" }]),
-    }));
-    const node_revision_terms = nodes.map((n) => ({
-      workspace_name: "ws",
-      revision_id: n.current_revision_id,
-      vocabulary_id: "vocabAAAAAAAAAAAAAAAA",
-      term_id: "termA",
-      term_name_snapshot: "apfs",
-    }));
-    const adapter = fakeAdapter({ nodes, node_revisions, node_revision_terms });
-
-    const unfiltered = await listTermUsage(adapter, bytes({ workspace_name: "ws", vocabulary_id: "vocabAAAAAAAAAAAAAAAA", type_term: null, limit: 10 }));
-    expect(unfiltered.rows[0]?.count).toBe("3");
-
-    const filtered = await listTermUsage(adapter, bytes({ workspace_name: "ws", vocabulary_id: "vocabAAAAAAAAAAAAAAAA", type_term: "learning", limit: 10 }));
-    expect(filtered.rows[0]?.count).toBe("2");
-  });
-
-  test("knowledgeStats: nodes_eligible subtracts exactly the terminal supersede rows, not the whole total (kills M3, 'nodes_eligible = total')", async () => {
-    // 5 nodes, 2 of them superseded (terminal in supersede_log): eligible
-    // must read 3, distinguishable from both "5" (M3's mutation) and "0".
-    const nodes = Array.from({ length: 5 }, (_, i) => ({
-      id: `node${String(i).padStart(17, "0")}`,
-      workspace_name: "ws",
-      current_revision_id: "revAAAAAAAAAAAAAAAAAA",
-      updated_at: BigInt(1_700_000_000_000_000 + i * 1000),
-    }));
-    const supersedeLog = [0, 1].map((i) => ({ workspace_name: "ws", old_id: `node${String(i).padStart(17, "0")}` }));
-    const adapter = fakeAdapter({
-      nodes,
-      node_revisions: [{ id: "revAAAAAAAAAAAAAAAAAA", workspace_name: "ws", term_snapshot_json: JSON.stringify([{ vocabulary_name_snapshot: "type", term_name_snapshot: "learning" }]) }],
-      supersede_log: supersedeLog,
-      search_chunks_v1: [],
-      vocabularies: [],
-      terms: [],
-    });
-    const stats = await knowledgeStats(adapter, bytes({ workspace_name: "ws" }));
-    expect(stats.nodes_total).toBe("5");
-    expect(stats.nodes_eligible).toBe("3");
-  });
-
-  test("knowledgeStats: a chunk group's count is exact, not doubled (kills M4, 'chunk counts doubled')", async () => {
-    const nodes: Record<string, unknown>[] = [];
-    const chunks = Array.from({ length: 3 }, () => ({ workspace_name: "ws", embedding_profile: "p1", status: "ready" }));
-    const adapter = fakeAdapter({ nodes, node_revisions: [], supersede_log: [], search_chunks_v1: chunks, vocabularies: [], terms: [] });
-    const stats = await knowledgeStats(adapter, bytes({ workspace_name: "ws" }));
-    expect(stats.chunks).toEqual([{ embedding_profile: "p1", status: "ready", count: "3" }]);
-  });
-
-  test("knowledgeStats: last_updated_at is the true MAXIMUM, not the minimum (kills M10, 'computed as min')", async () => {
-    const values = [1_700_000_000_100_000n, 1_700_000_000_900_000n, 1_700_000_000_500_000n];
-    const nodes = values.map((updated_at, i) => ({
-      id: `node${String(i).padStart(17, "0")}`,
-      workspace_name: "ws",
-      current_revision_id: "revAAAAAAAAAAAAAAAAAA",
-      updated_at,
-    }));
-    const adapter = fakeAdapter({
-      nodes,
-      node_revisions: [{ id: "revAAAAAAAAAAAAAAAAAA", workspace_name: "ws", term_snapshot_json: JSON.stringify([{ vocabulary_name_snapshot: "type", term_name_snapshot: "learning" }]) }],
-      supersede_log: [],
-      search_chunks_v1: [],
-      vocabularies: [],
-      terms: [],
-    });
-    const stats = await knowledgeStats(adapter, bytes({ workspace_name: "ws" }));
-    // The largest of the three, formatted -- not the smallest.
-    expect(stats.last_updated_at).not.toBeNull();
-    expect(new Date(stats.last_updated_at!).getTime()).toBe(1_700_000_000_900);
-  });
-
-  test("isolation: two workspaces with real, DIFFERING node/term data are each measured independently (a fake DatasetAdapter scoped by workspace_name, unlike the 0-node/0-node check above)", async () => {
-    const nodeIn = (ws: string, i: number) => ({
-      id: `${ws}node${String(i).padStart(13, "0")}`,
-      workspace_name: ws,
-      current_revision_id: `${ws}rev${String(i).padStart(14, "0")}`,
-      updated_at: 1_700_000_000_000_000n,
-    });
-    const alphaNodes = [0, 1].map((i) => nodeIn("alpha", i));
-    const betaNodes = [0].map((i) => nodeIn("beta", i));
-    const termRow = (n: (typeof alphaNodes)[number], ws: string) => ({
-      workspace_name: ws,
-      revision_id: n.current_revision_id,
-      vocabulary_id: "vocabAAAAAAAAAAAAAAAA",
-      term_id: "termA",
-      term_name_snapshot: "apfs",
-    });
-    const revisionRow = (n: (typeof alphaNodes)[number], ws: string) => ({
-      id: n.current_revision_id,
-      workspace_name: ws,
-      term_snapshot_json: JSON.stringify([{ vocabulary_name_snapshot: "type", term_name_snapshot: "learning" }]),
-    });
-    const adapter = fakeAdapter({
-      nodes: [...alphaNodes, ...betaNodes],
-      node_revisions: [...alphaNodes.map((n) => revisionRow(n, "alpha")), ...betaNodes.map((n) => revisionRow(n, "beta"))],
-      node_revision_terms: [...alphaNodes.map((n) => termRow(n, "alpha")), ...betaNodes.map((n) => termRow(n, "beta"))],
-      supersede_log: [],
-      search_chunks_v1: [],
-      vocabularies: [],
-      terms: [],
-    });
-
-    const alphaUsage = await listTermUsage(adapter, bytes({ workspace_name: "alpha", vocabulary_id: "vocabAAAAAAAAAAAAAAAA", type_term: null, limit: 10 }));
-    const betaUsage = await listTermUsage(adapter, bytes({ workspace_name: "beta", vocabulary_id: "vocabAAAAAAAAAAAAAAAA", type_term: null, limit: 10 }));
-    expect(alphaUsage.rows[0]?.count).toBe("2");
-    expect(betaUsage.rows[0]?.count).toBe("1");
-
-    const alphaStats = await knowledgeStats(adapter, bytes({ workspace_name: "alpha" }));
-    const betaStats = await knowledgeStats(adapter, bytes({ workspace_name: "beta" }));
-    expect(alphaStats.nodes_total).toBe("2");
-    expect(betaStats.nodes_total).toBe("1");
+    expect({ vocabularies: beta.vocabularies, terms: beta.terms }).toEqual(seededCounts(BETA));
   });
 });
 
@@ -567,6 +315,22 @@ describe("K6 wire: listTerms/listTermUsage grammar and reachability", () => {
     const seeded = fixture.workspaces[BETA]!;
     const res = await http("listTermUsage", { workspace_name: BETA, vocabulary_id: seeded.vocabulary_ids.type, type_term: null, limit: 10 });
     expect(res.status).toBe(400);
+  });
+
+  test("a granted bank with no workspaces row is invalid_reference at /workspace_name, never exact-looking zeros (second fix round)", async () => {
+    const seeded = fixture.workspaces[ALPHA]!;
+    const bodies: Record<string, Record<string, unknown>> = {
+      knowledgeStats: { workspace_name: GAMMA },
+      listTermUsage: { workspace_name: GAMMA, vocabulary_id: seeded.vocabulary_ids.type, type_term: null, limit: 10 },
+      listTerms: { workspace_name: GAMMA, vocabulary_id: seeded.vocabulary_ids.type, after_id: null, limit: 10, include_inactive: false },
+    };
+    for (const [method, body] of Object.entries(bodies)) {
+      const res = await app.handle(
+        new Request(`${ORIGIN}/api/knowledge/${GAMMA}/${method}`, { method: "POST", headers, body: JSON.stringify(body) }),
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ code: "invalid_reference", path: "/workspace_name" });
+    }
   });
 
   test("a route to a bank this credential is not granted on is 403", async () => {

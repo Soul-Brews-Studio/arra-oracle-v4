@@ -22,16 +22,11 @@ export type ListTermUsageRequest = {
 /**
  * K6 (docs/overnight/V3-PARITY.md §5): how many CURRENT heads reference each
  * term of one vocabulary -- `oracle_concepts`' (#31 V8) real capability.
- * Counted over `node_revision_terms`, never `term_snapshot_json`. Unlike
- * `listNodes`' `type_term` filter (a single caller-named term's membership,
- * which the raw snapshot answers directly), this method ranks EVERY distinct
- * term of a vocabulary by usage, an aggregate the snapshot cannot serve
- * without parsing every revision's JSON blob for every term -- not because
- * a many-cardinality vocabulary like `concepts` cannot appear in a snapshot
- * (it does, one entry per concept, `taxonomy.termSnapshot.ts`); see
- * `service.listTermUsage.ts`'s doc comment for the full reasoning and the
- * fix-round correction to an earlier, false version of this note. `coverage`
- * discloses it honestly when the scan cannot see the whole workspace.
+ * Counted from each accepted head's own `term_snapshot_json`, never from the
+ * derived `node_revision_terms` projection, which lags every writer that
+ * does not reconcile (see `service.listTermUsage.ts` for the second fix
+ * round that moved it). `coverage` discloses it honestly when the bounded
+ * node scan cannot see the whole workspace.
  */
 export function parseListTermUsage(bytes: Uint8Array): ListTermUsageRequest {
   const request = requireClosedObject(

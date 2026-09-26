@@ -5,6 +5,7 @@ import { TERM_FIELDS } from "./taxonomy.constants";
 import { failTaxonomy } from "./taxonomy.failTaxonomy";
 import { TERMS, scopeOf } from "./service.constants";
 import { readTaxonomy } from "./service.readTaxonomy";
+import { requireWorkspace } from "./service.requireWorkspace";
 import { type DatasetAdapter } from "./service.types";
 import { wireBytesOf } from "./service.wireBytesOf";
 
@@ -19,6 +20,9 @@ export async function listTerms(
 ): Promise<{ rows: Record<string, unknown>[]; next_after_id: string | null }> {
   return readTaxonomy(async () => {
     const request = parseListTerms(requestBytes);
+    // Same workspace precedence as `listNodes`/`listPeers`/`listSessions`:
+    // an unseeded bank is `invalid_reference`, not an empty listing.
+    await requireWorkspace(reader, request.workspace_name);
     await reader.refresh(TERMS);
 
     const scope =

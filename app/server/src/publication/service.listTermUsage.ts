@@ -1,9 +1,12 @@
-import { quote } from "./storage";
+import { snapshotText } from "./association.snapshotText";
 import { parseListTermUsage } from "./taxonomy.parseListTermUsage";
 import { failTaxonomy } from "./taxonomy.failTaxonomy";
-import { NODE_REVISIONS, NODES, TERMS_TABLE, scopeOf } from "./service.constants";
+import { NODE_REVISIONS, NODES, scopeOf } from "./service.constants";
 import { deriveNodeType } from "./service.deriveNodeType";
+import { parseSnapshotArray } from "./service.parseSnapshotArray";
+import { readHeadRevision } from "./service.readHeadRevision";
 import { readTaxonomy } from "./service.readTaxonomy";
+import { requireWorkspace } from "./service.requireWorkspace";
 import { type DatasetAdapter } from "./service.types";
 
 /**
@@ -14,49 +17,32 @@ import { type DatasetAdapter } from "./service.types";
  */
 const MAX_SCANNED_NODES = 1000;
 
-/** Bounded scan window over `node_revision_terms` for one vocabulary. Every
- *  accepted head can carry several rows in a `many`-cardinality vocabulary
- *  (e.g. `concepts`), so this is sized well above `MAX_SCANNED_NODES`. */
-const MAX_SCANNED_TERM_ROWS = 5000;
-
 export type TermUsageRow = { term_id: string; name: string; count: string };
 export type TermUsageResult = { rows: TermUsageRow[]; total_unique: string; coverage: "full" | "partial" };
 
 /**
  * K6 (docs/overnight/V3-PARITY.md §5): how many CURRENT heads reference each
- * term of one vocabulary, counted over `node_revision_terms` -- the derived
- * association projection `reconcileRevisionAssociations` writes -- never
- * `term_snapshot_json`.
+ * term of one vocabulary, counted from each accepted head revision's own
+ * `term_snapshot_json` -- the authoritative record, written WITH the
+ * revision in the same accepted publish -- never from the derived
+ * `node_revision_terms` projection.
  *
- * Fix round correction (an independent verifier's finding 2 on the first cut
- * of this slice): an earlier draft of this comment, and of the matching
- * `taxonomy-write-v1.md` amendment, said `term_snapshot_json` "cannot answer
- * a many-cardinality vocabulary like concepts". That premise was false:
- * `taxonomy.termSnapshot.ts` writes one snapshot ENTRY PER CONCEPT, so a
- * single revision's snapshot already lists every concept it was published
- * with. The real reason to read `node_revision_terms` instead is cost, not
- * capability. `listNodes`' `type_term` filter only tests ONE caller-named
- * term's presence per row, which the raw snapshot already answers directly.
- * This method instead RANKS EVERY distinct term of a vocabulary by usage
- * across every current head -- an aggregate the snapshot cannot serve
- * without parsing and cross-referencing every revision's JSON blob for
- * every term it will ever be asked about. `node_revision_terms` exists so
- * that per-term aggregate is a plain scoped table scan instead.
+ * Second fix round (an independent verifier's blocking finding): the first
+ * two cuts of this method counted `node_revision_terms` rows. That table only
+ * exists for a revision once `reconcileRevisionAssociations` has run for it,
+ * and no ordinary writer runs it -- not `kb_publishRevision`, not HTTP
+ * `publishRevision`, not the v4 UI -- so every such head was silently left
+ * out while `coverage` still said "full", with nothing on the wire to tell
+ * that apart from a real zero. `association-evidence-v1.md` §4 already forbids
+ * exactly this ("Do not answer completeness from projection candidates"),
+ * and `listNodes`' `type_term` filter already avoids the table for the same
+ * reason. Reading the snapshot costs one point read per head: the same read
+ * `listNodes`' `type_term` filter and `knowledgeStats`' `by_type` already pay.
+ * In exchange no writer can make this count wrong by skipping a step, and a
+ * stale or partial projection cannot change it either.
  *
- * That table is a DERIVED projection: it depends on every writer that
- * publishes content also calling `reconcileRevisionAssociations` afterward
- * (the same obligation `migration/deriveProjections.ts` fulfils for a
- * migrated dataset). The v3 adapter now meets it itself --
- * `mcp/legacy-v3/publish.ts` calls `reconcileRevisionAssociations` right
- * after every `publishRevision`, so a node created through `oracle_learn`/
- * `oracle_research_note`/`oracle_handoff` is never left unreconciled. A
- * `content:write` caller that calls `publishRevision` directly and never
- * reconciles is the one case that still contributes zero rows here --
- * correctly, since the projection genuinely does not exist yet for it, but
- * with nothing in THIS method's own response to distinguish that from a real
- * zero (`coverage` discloses scan truncation, not reconciliation lag).
- *
- * Both scan windows are disclosed via `coverage`, the same honesty rule
+ * `coverage` therefore means exactly one thing: whether the bounded node
+ * window saw every node of the workspace. "partial" is the same honesty rule
  * `listNodes`' `type_term`-filtered `total` and the #10/R14 ngram fallback
  * already use: a bounded scan that hits its cap says so instead of silently
  * presenting a partial count as exact.
@@ -64,6 +50,7 @@ export type TermUsageResult = { rows: TermUsageRow[]; total_unique: string; cove
 export async function listTermUsage(reader: DatasetAdapter, requestBytes: Uint8Array): Promise<TermUsageResult> {
   return readTaxonomy(async () => {
     const request = parseListTermUsage(requestBytes);
+    await requireWorkspace(reader, request.workspace_name);
     const scope = scopeOf(request.workspace_name);
 
     await reader.refresh(NODES);
@@ -75,53 +62,30 @@ export async function listTermUsage(reader: DatasetAdapter, requestBytes: Uint8A
       MAX_SCANNED_NODES + 1,
     );
     const nodesTruncated = scanned.length > MAX_SCANNED_NODES;
-    const window = scanned.slice(0, MAX_SCANNED_NODES);
 
-    const headIds: string[] = [];
-    for (const node of window) {
-      const headId = node.current_revision_id;
-      // Every node this kernel creates is written WITH its first revision's
-      // id already in `current_revision_id` (`service.publishRevision.ts`):
-      // a null head here is corruption to report, not an emptier row to
-      // silently skip -- the same rule `listNodes` follows for the same field.
-      if (typeof headId !== "string") failTaxonomy("integrity_failure");
-      headIds.push(headId);
-    }
-
-    let eligibleHeadIds = headIds;
-    if (request.type_term !== null) {
-      await reader.refresh(NODE_REVISIONS);
-      const kept: string[] = [];
-      for (const headId of headIds) {
-        const rows = await reader.query(NODE_REVISIONS, `${scope} AND id = ${quote(headId)}`, 2);
-        if (rows.length !== 1) failTaxonomy("integrity_failure");
-        if (deriveNodeType(rows[0]!) === request.type_term) kept.push(headId);
-      }
-      eligibleHeadIds = kept;
-    }
-    const headSet = new Set(eligibleHeadIds);
-
-    await reader.refresh(TERMS_TABLE);
-    const termRows = await reader.query(
-      TERMS_TABLE,
-      `${scope} AND vocabulary_id = ${quote(request.vocabulary_id)}`,
-      MAX_SCANNED_TERM_ROWS + 1,
-    );
-    const rowsTruncated = termRows.length > MAX_SCANNED_TERM_ROWS;
-    const rowWindow = termRows.slice(0, MAX_SCANNED_TERM_ROWS);
-
+    await reader.refresh(NODE_REVISIONS);
     const counts = new Map<string, { name: string; count: bigint }>();
-    for (const row of rowWindow) {
-      const revisionId = row.revision_id;
-      const termId = row.term_id;
-      const termName = row.term_name_snapshot;
-      if (typeof revisionId !== "string" || typeof termId !== "string" || typeof termName !== "string") {
-        failTaxonomy("integrity_failure");
+    for (const node of scanned.slice(0, MAX_SCANNED_NODES)) {
+      const head = await readHeadRevision(reader, scope, node.current_revision_id);
+      // The node's type comes from the SAME snapshot, through the same
+      // decoder `listNodes`' `type_term` filter uses.
+      if (request.type_term !== null && deriveNodeType(head) !== request.type_term) continue;
+
+      const seen = new Set<string>();
+      for (const entry of parseSnapshotArray(head.term_snapshot_json, "")) {
+        if (entry === null || typeof entry !== "object") failTaxonomy("integrity_failure");
+        if (snapshotText(entry.vocabulary_id) !== request.vocabulary_id) continue;
+        const termId = snapshotText(entry.term_id);
+        const termName = snapshotText(entry.term_name_snapshot);
+        // Publication refuses a duplicate term_id in one snapshot
+        // (`contracts/revision-v1.ts`), so a stored one is corruption, not a
+        // head that references the term twice.
+        if (seen.has(termId)) failTaxonomy("integrity_failure");
+        seen.add(termId);
+        const existing = counts.get(termId);
+        if (existing === undefined) counts.set(termId, { name: termName, count: 1n });
+        else existing.count += 1n;
       }
-      if (!headSet.has(revisionId)) continue;
-      const existing = counts.get(termId);
-      if (existing === undefined) counts.set(termId, { name: termName, count: 1n });
-      else existing.count += 1n;
     }
 
     const ranked = [...counts.entries()]
@@ -131,7 +95,7 @@ export async function listTermUsage(reader: DatasetAdapter, requestBytes: Uint8A
     return {
       rows: ranked.slice(0, request.limit).map((r) => ({ term_id: r.term_id, name: r.name, count: r.count.toString(10) })),
       total_unique: BigInt(counts.size).toString(10),
-      coverage: nodesTruncated || rowsTruncated ? "partial" : "full",
+      coverage: nodesTruncated ? "partial" : "full",
     };
   });
 }

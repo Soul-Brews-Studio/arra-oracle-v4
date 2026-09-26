@@ -4,9 +4,10 @@ import { failTaxonomy } from "./taxonomy.failTaxonomy";
 import { NODE_REVISIONS, NODES, SEARCH_CHUNKS, SUPERSEDE_LOG, TERMS, VOCABULARIES, scopeOf } from "./service.constants";
 import { decimalOf } from "./service.decimalOf";
 import { deriveNodeType } from "./service.deriveNodeType";
+import { readHeadRevision } from "./service.readHeadRevision";
 import { readTaxonomy } from "./service.readTaxonomy";
+import { requireWorkspace } from "./service.requireWorkspace";
 import { type DatasetAdapter } from "./service.types";
-import { quote } from "./storage";
 
 /**
  * Bounded scan window over `nodes`, matching `listNodes`' own
@@ -45,6 +46,10 @@ export type KnowledgeStats = {
 export async function knowledgeStats(reader: DatasetAdapter, requestBytes: Uint8Array): Promise<KnowledgeStats> {
   return readTaxonomy(async () => {
     const request = parseKnowledgeStats(requestBytes);
+    // A granted bank with no `workspaces` row is `invalid_reference`, the
+    // same answer `listNodes`/`listPeers`/`listSessions` give, never a
+    // workspace of exact-looking zeros (second fix round).
+    await requireWorkspace(reader, request.workspace_name);
     const scope = scopeOf(request.workspace_name);
 
     await reader.refresh(NODES);
@@ -80,11 +85,7 @@ export async function knowledgeStats(reader: DatasetAdapter, requestBytes: Uint8
       await reader.refresh(NODE_REVISIONS);
       const counts = new Map<string, bigint>();
       for (const node of window) {
-        const headId = node.current_revision_id;
-        if (typeof headId !== "string") failTaxonomy("integrity_failure");
-        const revision = await reader.query(NODE_REVISIONS, `${scope} AND id = ${quote(headId)}`, 2);
-        if (revision.length !== 1) failTaxonomy("integrity_failure");
-        const term = deriveNodeType(revision[0]!);
+        const term = deriveNodeType(await readHeadRevision(reader, scope, node.current_revision_id));
         counts.set(term, (counts.get(term) ?? 0n) + 1n);
       }
       by_type = [...counts.entries()]

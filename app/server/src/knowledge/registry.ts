@@ -179,9 +179,8 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
   },
   lookupTermByName: { action: "content:read", scopePath: [], call: (b, x) => b.taxonomy.lookupTermByName(x) },
   // K6+K7 (docs/overnight/V3-PARITY.md §5, DECISIONS.md R18 (K6+K7+V8)): a
-  // plain term listing, per-vocabulary term usage counts over
-  // `node_revision_terms` of accepted heads, and workspace-wide knowledge
-  // stats. The v3 adapter's `oracle_concepts` (K6) and `oracle_stats` (K7)
+  // plain term listing, per-vocabulary term usage counts over the accepted
+  // heads' own term snapshots, and workspace-wide knowledge stats. The v3 adapter's `oracle_concepts` (K6) and `oracle_stats` (K7)
   // are the first callers (V8).
   listTerms: { action: "content:read", scopePath: [], call: (b, x) => b.taxonomy.listTerms(x) },
   listTermUsage: { action: "content:read", scopePath: [], call: (b, x) => b.taxonomy.listTermUsage(x) },
