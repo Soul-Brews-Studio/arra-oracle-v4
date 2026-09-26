@@ -46,7 +46,16 @@ export const PEER_FIELDS: Readonly<Record<string, readonly PeerFieldPath[]>> = O
     ["content", "author_peer_name"],
     ["content", "observer_peer_name"],
   ],
+  // #28: who created the link (session-link-v1.md Decision 6 -- a stored
+  // fact, not identity, but still a caller-asserted acting peer)
+  createSessionLink: [["created_by_peer_name"]],
+  // #28: who ran the trace (trace-v1.md section 2 -- unverified attribution,
+  // this binding is the only check it gets)
+  createTrace: [["peer_name"]],
   // reviewed: these assert no acting peer (lookups, taxonomy, evidence, audit)
+  getTrace: [],
+  listTraceHits: [],
+  listSessionLinks: [],
   getAcceptedHead: [],
   listAcceptedHistory: [],
   listNodes: [],
