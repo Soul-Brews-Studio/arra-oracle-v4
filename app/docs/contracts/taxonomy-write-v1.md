@@ -197,101 +197,54 @@ Result: the complete wire row, encoded exactly as `getVocabulary`/`getTerm` enco
 
 ## Amendment 2026-09-26 (overnight R18 (K6 + K7 + V8))
 
-v4-overnight, v3-stats slice (Claude Sonnet 5, AI). Ruling: `docs/overnight/DECISIONS.md` R18, design `docs/overnight/V3-PARITY.md` §5 (K6, K7) and §4.3/§4.4 (V8). The text above is not rewritten; this section adds three reads to "Results and read evidence" and changes nothing else.
+v4-overnight, v3-stats slice (Claude, AI). Ruling: `docs/overnight/DECISIONS.md` R18, design `docs/overnight/V3-PARITY.md` §5 (K6, K7) and §4.3/§4.4 (V8). The text above is not rewritten; this section adds three reads to "Results and read evidence" and changes nothing else. It was rewritten in place across two verifier fix rounds before it merged anywhere, so it states the final behaviour once; the corrections are listed under "Fix rounds" below instead of as contradicting sections.
 
-**Why.** `oracle_concepts` and the full (post-K7) shape of `oracle_stats` (V3-PARITY.md §4.1/§4.3) had no kernel to call: nothing counted how many current entries carry a term, and nothing counted nodes/revisions/chunks/taxonomy for a workspace. Both are read-only aggregates over existing columns -- no new table, no new column.
+**Why.** `oracle_concepts` and the full (post-K7) shape of `oracle_stats` had no kernel to call: nothing counted how many current entries carry a term, and nothing counted nodes, chunks or taxonomy rows for a workspace. All three methods are read-only aggregates over existing columns. There is no new table and no new column.
 
 **Change.** Three read methods on every taxonomy reader facade (and so on every writer facade, which spreads the reads in), registered in `knowledge/registry.ts` under `content:read`, `scopePath: []`, reachable as `POST /api/knowledge/:bank/<method>` and MCP `kb_<method>`:
 
-- `listTerms {workspace_name, vocabulary_id, after_id, limit, include_inactive}` -- a plain, keyset-paginated listing of one vocabulary's terms, encoded exactly as `getTerm` encodes each row. `getTerm`/`lookupTermByName` are get-by-one only; this is the first way to enumerate a vocabulary.
-- `listTermUsage {workspace_name, vocabulary_id, type_term, limit}` -- for one vocabulary, how many CURRENT heads carry each term, counted over `node_revision_terms` of the accepted head (never `term_snapshot_json`, which cannot answer a `many`-cardinality vocabulary like `concepts`). `type_term`, when not null, is a reserved `type` term name that further restricts counting to heads of that type (derived the same way `listNodes`' `type_term` filter derives it, from the snapshot, not the derived table). Returns `{rows:[{term_id,name,count}], total_unique, coverage}`, `rows` sorted by count descending then name ascending and capped at `limit`, `total_unique` counting every distinct term seen before that cap. `count`/`total_unique` are canonical decimal-text Int64 strings, matching this contract's existing convention for every other count.
-- `knowledgeStats {workspace_name}` -- workspace-wide counts: `{nodes_total, nodes_eligible, by_type, chunks, vocabularies, terms, last_updated_at}`. `nodes_total`/`vocabularies`/`terms` are the SDK's own native `countRows`, exact and unbounded. `nodes_eligible` (total minus nodes with a terminal `supersede_log` row), `by_type` (`[{term,count}]` over accepted heads) and `last_updated_at` (the greatest `nodes.updated_at` in the workspace) come from one bounded scan of `nodes`; `chunks` (`[{embedding_profile,status,count}]`) comes from one bounded scan of `search_chunks_v1`.
+- `listTerms {workspace_name, vocabulary_id, after_id, limit, include_inactive}`: a keyset-paginated listing of one vocabulary's terms, each row encoded exactly as `getTerm` encodes it. `getTerm` and `lookupTermByName` fetch one row only; this is the first way to enumerate a vocabulary.
+- `listTermUsage {workspace_name, vocabulary_id, type_term, limit}`: for one vocabulary, how many CURRENT heads carry each term. The count comes from each accepted head revision's own `term_snapshot_json`, one point read per head (the read `listNodes`' `type_term` filter already pays). It never reads the derived `node_revision_terms` projection; see "Source of the count" below. `type_term`, when not null, is a reserved `type` term name that restricts counting to heads of that type, derived from the same snapshot by the same decoder `listNodes` uses. The response is `{rows:[{term_id,name,count}], total_unique, coverage}`. `rows` is sorted by count descending, then name ascending, and capped at `limit`. `total_unique` counts every distinct term before that cap. `name` is the head snapshot's `term_name_snapshot`. When a rename has left heads disagreeing, the first node in id order wins. `count` and `total_unique` are canonical decimal-text Int64 strings, like every other count in this contract. A null head, a head pointer that matches 0 or more than 1 revision row, or a duplicate `term_id` inside one stored snapshot (publication refuses one) is `integrity_failure`, never a quietly smaller count.
+- `knowledgeStats {workspace_name}`: workspace-wide counts `{nodes_total, nodes_eligible, by_type, chunks, vocabularies, terms, last_updated_at}`. `nodes_total`, `vocabularies` and `terms` are the SDK's own native `countRows`, exact and unbounded. `by_type` (`[{term,count}]` over accepted heads, each head's type from its snapshot) and `last_updated_at` (the greatest `nodes.updated_at`) come from one bounded scan of `nodes`. `nodes_eligible` (total minus the terminal old ids in `supersede_log`) comes from a separate bounded scan of `supersede_log`. `chunks` (`[{embedding_profile,status,count}]`) comes from a bounded scan of `search_chunks_v1`.
 
-**Bounded scans discloses `null`, never a guessed partial.** `listTermUsage`'s node scan and `node_revision_terms` scan, and `knowledgeStats`' `nodes`/`supersede_log`/`search_chunks_v1` scans, are each capped (1000 nodes, matching `listNodes`' own `MAX_SCANNED_NODES`; 5000 term/chunk rows; 2000 supersede rows). `listTermUsage` discloses this as `coverage: "full" | "partial"`, the same shape R14's ngram fallback and R7's `listNodes` `type_term`-filtered `total` already use. `knowledgeStats` has no single caller-visible aggregate to attach a `coverage` flag to, so each field a truncated scan cannot answer exactly comes back `null` instead of an approximation dressed up as a real number -- "measured not guessed" per R18. A field that IS a native count (`nodes_total`, `vocabularies`, `terms`) is never null: `countRows` has no truncation to disclose.
+**Workspace.** All three check the `workspaces` row right after request validity, as `listNodes`, `listPeers` and `listSessions` do. A granted bank with no row is `invalid_reference /workspace_name`, never an answer of exact-looking zeros.
+
+**Source of the count (a stated deviation from V3-PARITY.md §5, which lists `node_revision_terms` as a K6 source).** The projection exists for a revision only after `reconcileRevisionAssociations` has run for it, and no ordinary writer runs it: not `kb_publishRevision`, not HTTP `publishRevision`, not the v4 UI. Only the migration's `deriveProjections` does. Counting projection rows therefore dropped every unreconciled head while `coverage` still said `"full"`. The verifier measured this live: after `oracle_learn {concepts:[apfs,backup]}` and a `kb_publishRevision` of a second node with the same snapshot, `oracle_concepts` answered `apfs:1, backup:1` with no warning, while the published terms give 2 and 2. `association-evidence-v1.md` §4 already rules this out ("Do not answer completeness from projection candidates"). `listTermUsage` now reads neither derived table, so no writer can make its count wrong by skipping a step, and a stale or partial projection cannot change it either. The snapshot can answer a `many`-cardinality vocabulary: `taxonomy.termSnapshot.ts` writes one entry per concept. An earlier draft of this section claimed it could not; that claim was false.
+
+**Bounded scans disclose; they never guess.** Every scan is capped: `nodes` at 1000 (the same as `listNodes`' `MAX_SCANNED_NODES`), `supersede_log` at 2000 and `search_chunks_v1` at 5000.
+- `listTermUsage` reports a truncated node scan as `coverage: "partial"`. That is the same shape R14's ngram fallback and `listNodes`' `type_term`-filtered `total` use. `coverage` has no other meaning, because the count no longer depends on any projection lag.
+- `knowledgeStats` has no single aggregate to hang a flag on. Each field a truncated scan cannot answer exactly comes back `null`: `by_type` and `last_updated_at` together, `nodes_eligible`, and `chunks`. A native count is never null.
 
 **Peer binding.** All three assert no acting peer; `knowledge/registry.peerFields.ts` classifies them `[]`.
 
-**V8: `oracle_concepts` and `oracle_stats` (V3-PARITY.md §4.3/§4.4).** `oracle_concepts` resolves the `concepts` vocabulary by name (K2 `lookupVocabularyByName`; absent means an exact empty list, not an error) and calls `listTermUsage` for it, mapping v3's `type` argument onto v4's own reserved `type` vocabulary with a `semantic_change` warning (v3's `principle`/`pattern`/`retro` do not exist in v4; R11 maps everything but `learning` to `note`). `oracle_stats` now returns the full shape: `total_documents`/`by_type`/`fts_indexed`/`last_indexed` from `knowledgeStats`, `unique_concepts` from one more `listTermUsage` hop through `concepts`, and `vector_status` (`empty`/`pending`/`ready`/`degraded`/`unknown`) derived from the per-status chunk counts -- never a live LanceDB connection probe, since v4 IS the vector store. Either tool's `mcp/legacy-v3/catalogue.ts` entry was amended to add `listTermUsage`/`knowledgeStats`/`lookupVocabularyByName` to its `uses`/`requires` list, since both entries predate K6/K7.
+**V8: `oracle_concepts` and `oracle_stats`.**
+- `oracle_concepts` resolves the `concepts` vocabulary by name (K2 `lookupVocabularyByName`). If it is absent, the answer is an exact empty list, not an error. Otherwise the tool calls `listTermUsage`. `limit` follows v3's own `normalizeLimit`: a missing, non-integer or non-positive value (including `0`) means 50, and anything above 200 means 200.
+- v3's `type:learning` is also a v4 type, so it passes through with no warning. v3's `principle`, `pattern` and `retro` are stored as `note` plus a `legacy_type` term (A5), which this filter does not read. They match nothing and carry a `semantic_change` warning.
+- `oracle_stats` takes `total_documents`, `by_type`, `fts_indexed` and `last_indexed` from `knowledgeStats`, and `unique_concepts` from `listTermUsage`'s `total_unique`. `vector_status` (`empty`/`pending`/`ready`/`degraded`/`unknown`) is derived from the per-status chunk counts, never from a live LanceDB probe, because v4 IS the vector store.
+- An unmeasured K7 field is `null` on the wire and named in `compat_warnings`, never a placeholder (`{}`, `0`, `"empty"`). `last_indexed` is named alongside `by_type` because they share one scan, and `fts_status` alongside `fts_indexed`.
+- Both tools pass K6's honesty on. `coverage: "partial"` becomes a `partial` warning on `concepts` or `unique_concepts`.
+- A counted `handoff` concept becomes a `semantic_change` warning. Every `oracle_handoff` call is a v4 node (type `note`, `concepts:handoff`), while v3 kept handoffs as inbox files it never counted. `oracle_stats` asks K6 for the full 200-row ranking so that it sees the handoff row.
+- Both `mcp/legacy-v3/catalogue.ts` entries list exactly the methods they call.
 
-**Tests.** `app/server/test/taxonomy-term-usage-service.test.ts`: registry/peer-field classification; `listTerms` pagination, `include_inactive` and workspace isolation against a real fixture; `listTermUsage`/`knowledgeStats` exact-zero baseline on a taxonomy-only (node-free) fixture; `coverage`/null-on-truncation for both bounded scans, proved with a fake `DatasetAdapter` at and past the 1000-row window; HTTP/MCP reachability under `content:read`. `app/server/test/mcp-v3-stats.test.ts`: `oracle_concepts`/`oracle_stats` end to end through a real gated writer -- publish, `reconcileRevisionAssociations`, count, shape-match against the v3 fixtures, and cross-workspace isolation. Both written before the methods/tools existed: with the kernel files stashed out, `taxonomy-term-usage-service.test.ts` failed to load at all (`Cannot find module '../src/publication/service.knowledgeStats'`) and every `mcp-v3-stats.test.ts` case answered `not_yet_available`/`isError` instead of the shape it asserts (0 pass / 9 fail there; the two live-checked afterward: 14 pass and 9 pass respectively).
+**v3 write path unchanged.** The adapter's `publish()` (`mcp/legacy-v3/publish.ts`) does not call `reconcileRevisionAssociations`. The first fix round made it do so, to fill the projection K6 then read. Once K6 read snapshots nothing needed that call, and it cost one more gated write per v3 write plus a failure path of its own. The second fix round removed it, and `publish.ts` is back to the base behaviour.
 
-## Amendment 2026-09-27 (overnight R18 (K6 + K7 + V8), fix round)
+**Fix rounds.**
+- The first cut counted `node_revision_terms`. Its end-to-end test hid the lag by calling `kb_reconcileRevisionAssociations` by hand, which no v3 client can do. `oracle_stats` also put `{}`, `0` and `"empty"` on the wire for unmeasured fields.
+- The first fix round made the v3 write path reconcile, nulled and named the unmeasured `oracle_stats` fields, and killed mutants M2, M3, M4 and M10.
+- The second fix round, after the verifier's blocking finding that every non-v3 writer was still undercounted with `coverage: "full"`:
+  - moved the count to head snapshots;
+  - removed the v3 reconcile call;
+  - added the workspace check;
+  - limited the `type` warning to non-v4 types;
+  - named counted handoffs;
+  - killed M12, M13 and M14 (a dropped workspace scope), M16 (name-only sort), and M18 and M19 (a dropped `partial` warning).
 
-v4-overnight, v3-stats slice (Claude Sonnet 5, AI). Ruling: `docs/overnight/DECISIONS.md`
-R18, same design as the section above. An independent Opus verifier refuted the first cut
-of this slice; this section corrects the two documentation defects it found and records
-the code fix for the one that was a real bug, not only a documentation one. The section
-above is not rewritten.
-
-**Correction 1 (false premise).** The section above says `listTermUsage` counts over
-`node_revision_terms`, "never `term_snapshot_json`, which cannot answer a many-cardinality
-vocabulary like `concepts`". That is false. `taxonomy.termSnapshot.ts` writes one snapshot
-entry per concept, so a single revision's `term_snapshot_json` already lists every concept
-it was published with; a `many`-cardinality vocabulary is fully representable there. The
-real reason to read `node_revision_terms` instead is cost, not capability: `listNodes`'
-`type_term` filter tests one caller-named term's presence per row, which the raw snapshot
-answers directly, while `listTermUsage` ranks EVERY distinct term of a vocabulary by usage
-across every current head -- an aggregate the snapshot cannot serve without parsing and
-cross-referencing every revision's JSON blob for every term it will ever be asked about.
-`node_revision_terms` exists so that per-term aggregate is a plain scoped table scan
-instead. `app/server/src/publication/service.listTermUsage.ts` and
-`taxonomy.parseListTermUsage.ts` carry the corrected version of this note in full.
-
-**Correction 2 (a real bug, not only a documentation one): the derived table was never
-filled on the v3 write path.** `node_revision_terms` is a DERIVED projection --
-`reconcileRevisionAssociations` (`content:write`) is the only thing that ever writes it,
-and before this fix the v3 adapter's write path (`mcp/legacy-v3/publish.ts`) never called
-it. No `V3_CATALOGUE` entry exposes `reconcileRevisionAssociations` to a v3 client either.
-The result: after a real `oracle_learn`, `node_revision_terms` stayed empty for that
-revision forever, and `oracle_concepts`/`oracle_stats.unique_concepts` (K6, V8) answered
-zero, silently, with no `compat_warnings` entry -- exactly the "silently miss...and
-present that partial set as if it were complete" trap `service.listNodes.ts` already warns
-about for a different table. The slice's own tests did not catch this because they called
-`kb_reconcileRevisionAssociations` by hand after each `oracle_learn` step, a call no real
-v3 client can make.
-
-**Change.** `publish()` (`mcp/legacy-v3/publish.ts`), the one function every v3 write tool
-(`oracle_learn`, `oracle_research_note`, `oracle_handoff`) goes through, now calls
-`reconcileRevisionAssociations {node_id, revision_id}` immediately after `publishRevision`
-succeeds, before indexing. `reconcileRevisionAssociations` was added to those three tools'
-`V3_CATALOGUE` `uses`/`requires` lists (`mcp/legacy-v3/catalogue.ts`) so `createKb`'s gate
-(`mcp/legacy-v3/createKb.ts`) allows the call. Like `indexRevisionChunks`, a reconcile
-failure does not fail the publish -- the node is already written and readable -- but unlike
-before, it is never silent: the tool's response carries `associationsError`, and every one
-of the three tools turns that into a `compat_warnings` entry (`code: "partial", field:
-"concepts"`), so a real client sees a disclosed gap instead of a wrong exact number with no
-warning. A retry with the same `idempotency_key` re-attempts the reconcile too, since
-`publishRevision`'s `idempotent` outcome still falls through to it.
-
-**Correction 3 (documentation drift).** The "Change" bullet for `knowledgeStats` above
-groups `nodes_eligible` with `by_type` and `last_updated_at` as all coming "from one
-bounded scan of `nodes`". Only `by_type` and `last_updated_at` share that scan.
-`nodes_eligible` comes from a separate bounded scan of `supersede_log` (total minus the
-terminal old-ids seen there), exactly as the "Bounded scans discloses `null`" paragraph
-below that bullet already says correctly (three named scans: `nodes`, `supersede_log`,
-`search_chunks_v1`).
-
-**Tests.** `app/server/test/mcp-v3-stats.test.ts` no longer calls
-`kb_reconcileRevisionAssociations` by hand; its `oracle_learn` steps are now a plain,
-unmodified v3 client session, and a new `describe` block asserts no `oracle_learn` response
-carries an `associations`-related warning in the ordinary (reconcile-succeeds) case.
-`app/server/test/mcp-v3-stats-adapter.test.ts` (new) unit-tests `oracle_stats`'s handling
-of an unmeasured `knowledgeStats` field directly against a stub `kb`, covering
-Correction/finding 3 below. Removing the hand-inserted reconcile steps and rerunning
-against the pre-fix `publish.ts` reproduced the verifier's exact failure (`concepts:[]`,
-`total_unique:0`, `unique_concepts:0`, no warning) -- the red for this fix.
-
-**Correction 4 (a second real bug, `oracle_stats`, verifier finding 3).**
-`mcp/legacy-v3/tools/oracle_stats.ts` put fabricated values on the wire whenever
-`knowledgeStats` reported a field as unmeasured (`null`): `by_type` became `{}`,
-`fts_indexed` became `0`, and `fts_status` became the flatly false `"empty"` -- for a bank
-with thousands of unmeasured chunks, `fts_status` still read `"empty"`. Only `by_type` and
-`fts_indexed` carried a `compat_warnings` entry; `last_indexed` (unmeasured in the exact
-same case as `by_type`, since both come from the same bounded `nodes` scan) and
-`fts_status` carried none. This contradicted V3-PARITY.md §2.5 ("a field v4 cannot fill is
-present as `null` and named in `compat_warnings`") and this slice's own "measured not
-guessed" claim. Fixed: `by_type`, `fts_indexed` and `fts_status` are now `null` (never a
-placeholder) exactly when their source scan is unmeasured, each named in
-`compat_warnings`; `last_indexed` is named alongside `by_type` since they share one scan.
-A genuinely empty but fully-measured workspace is unaffected: `by_type:{}`,
-`fts_indexed:0`, `fts_status:"empty"`, no warnings.
+**Tests.**
+- `app/server/test/taxonomy-term-usage-scans.test.ts` (in-memory adapter): snapshot counting with zero projection rows, stale projection rows ignored, count-then-name order, `total_unique` beyond `limit`, `type_term`, integrity failures, bounded windows at 1000 and 1001, exact `knowledgeStats` counts, two workspaces with different data in every table, and `invalid_reference` for a missing workspace row.
+- `taxonomy-term-usage-service.test.ts` (real fixture and wire): listing, exact seeded counts, grammar, HTTP/MCP parity, and `invalid_reference` over HTTP for a granted but unseeded bank.
+- `mcp-v3-stats.test.ts` (real gate, real dataset, MCP): the verifier's repro, plus the V8 shapes.
+- `mcp-v3-stats-adapter.test.ts`: `oracle_stats`/`oracle_concepts` translation of unmeasured or partial kernel answers, type warnings and handoff warnings.
+- Second-round red, recorded before the fix:
+  - `listTermUsage` answered `{rows:[], total_unique:"0", coverage:"full"}` for three unreconciled heads carrying apfs ×2 and backup ×1.
+  - `oracle_concepts` answered `apfs:2, backup:1` after a `kb_publishRevision` whose published terms give 3 and 2.
+  - The unseeded bank answered 200.
