@@ -8,11 +8,21 @@
  * with `bun test`, no browser required, the same discipline `roster.ts`'s
  * pure helpers already follow.
  *
- * Three independent comparisons, because the three fields disagree about
- * what "changed" means:
+ * Four independent comparisons, because the fields disagree about what
+ * "changed" means:
  *   - `title`/`body`  -- free text, diffed line by line (LCS-based, the
  *     textbook algorithm -- there is no existing diff dependency in this
  *     POC and the hard rule for this slice is "no new dependencies").
+ *   - every OTHER per-revision request field (`author_peer_name`,
+ *     `observer_peer_name`, `subject_peer_name`, `session_name`,
+ *     `is_active`, `valid_from`, `valid_to`, `change_reason`, `fields` --
+ *     see `contracts/revision-v1.ts`'s request fields) -- a plain
+ *     from/to/changed comparison per field. Fix-round finding: an earlier
+ *     version of this file compared only title/body/terms/links, so a
+ *     revision whose ONLY change was re-attributing authorship or expiring
+ *     `valid_to` read as "no difference" -- exactly the case #33's design
+ *     revision-2 example needs ("distinct author/observer/subject") and
+ *     the one thing a lifecycle-review reader most needs to see.
  *   - `term_snapshot_json` -- a small SET of terms, keyed by `term_id`
  *     (the stable identity a term snapshot carries); a term is either
  *     present or not, so this is a set difference, not a line diff.
@@ -31,12 +41,68 @@ export type TermChange = { change: "added" | "removed"; term: TermSnapshot };
 
 export type LinkChange = { change: "added" | "removed"; entry: unknown };
 
+/** Every per-revision request field this diff can compare besides
+ *  title/body/terms/links -- see `PublishInput`/`RevisionRow` in
+ *  `api/knowledge.ts` and contracts/revision-v1.ts §"content" for why this
+ *  exact list is complete: it is every field a `publishRevision` request
+ *  carries that is not already covered by one of the other three
+ *  comparisons above. */
+export const FIELD_KEYS = [
+  "author_peer_name",
+  "observer_peer_name",
+  "subject_peer_name",
+  "session_name",
+  "is_active",
+  "valid_from",
+  "valid_to",
+  "change_reason",
+  "fields",
+] as const;
+export type FieldKey = (typeof FIELD_KEYS)[number];
+
+/** `from`/`to` are always rendered as text (or `null`): `is_active` is the
+ *  one boolean in this set, stringified so the UI has one shape to render
+ *  regardless of which field it is showing, not a special case per type. */
+export type FieldChange = { field: FieldKey; changed: boolean; from: string | null; to: string | null };
+
+function fieldText(revision: RevisionRow, field: FieldKey): string | null {
+  const value = revision[field];
+  if (value === null) return null;
+  if (typeof value === "boolean") return value ? "true" : "false";
+  return value;
+}
+
+function diffFields(from: RevisionRow, to: RevisionRow): FieldChange[] {
+  return FIELD_KEYS.map((field) => {
+    const a = fieldText(from, field);
+    const b = fieldText(to, field);
+    return { field, changed: a !== b, from: a, to: b };
+  });
+}
+
+/** n*m LCS table cells this diff will build before it refuses. Fix-round
+ *  finding: `diffLines` had no size guard, and `KnowledgeView` renders it
+ *  automatically for the two newest revisions of any node with 2+
+ *  revisions -- a body well inside the server's own 256 KiB request cap
+ *  (`auth/http.ts` `MAX_BODY_BYTES`) could freeze or crash the tab, because
+ *  the table is quadratic in line count. Measured under Bun (fix-round
+ *  finding, same-length bodies differing on every line): 2,000 lines
+ *  (4,000,000 cells) ~27ms/~73MB; 5,000 lines (25,000,000 cells)
+ *  ~183ms/~247MB; 10,000 lines (100,000,000 cells) ~776ms/~865MB. This
+ *  bound sits at the low end of that measured range on purpose. */
+export const MAX_DIFF_CELLS = 4_000_000;
+
+export type BodyDiffResult =
+  | { tooLarge: false; lines: LineDiffOp[] }
+  | { tooLarge: true; fromLineCount: number; toLineCount: number };
+
 export type RevisionDiffResult = {
   from: Pick<RevisionRow, "id" | "revision_no" | "title">;
   to: Pick<RevisionRow, "id" | "revision_no" | "title">;
   titleChanged: boolean;
   bodyFormatChanged: boolean;
-  bodyLines: LineDiffOp[];
+  fieldChanges: FieldChange[];
+  body: BodyDiffResult;
   termChanges: TermChange[];
   linkChanges: LinkChange[];
 };
@@ -44,7 +110,10 @@ export type RevisionDiffResult = {
 /** Classic O(n*m) LCS over lines, then a backtrack that emits one op per
  *  line. Bodies in this app are short (POC content, not imported corpora),
  *  so the quadratic table is the right trade for "no new dependency" over
- *  a faster streaming algorithm. */
+ *  a faster streaming algorithm -- PROVIDED the caller has already checked
+ *  `n*m` against `MAX_DIFF_CELLS` (see `diffBody`, the only caller): this
+ *  function itself does not guard, so it must never be called directly on
+ *  unbounded input. */
 function diffLines(a: string[], b: string[]): LineDiffOp[] {
   const n = a.length;
   const m = b.length;
@@ -74,6 +143,21 @@ function diffLines(a: string[], b: string[]): LineDiffOp[] {
   while (i < n) ops.push({ op: "removed", text: a[i++]! });
   while (j < m) ops.push({ op: "added", text: b[j++]! });
   return ops;
+}
+
+/** The size-guarded entry point for the body diff: split into lines, check
+ *  `n*m` against `MAX_DIFF_CELLS` BEFORE allocating anything proportional to
+ *  it, and only then hand off to the unguarded `diffLines`. A body over the
+ *  bound reports its line counts so the caller can still say something
+ *  concrete ("149 KB, 10,000 lines -- too large to diff") instead of a bare
+ *  refusal. */
+function diffBody(from: string, to: string): BodyDiffResult {
+  const a = from.split("\n");
+  const b = to.split("\n");
+  if (a.length * b.length > MAX_DIFF_CELLS) {
+    return { tooLarge: true, fromLineCount: a.length, toLineCount: b.length };
+  }
+  return { tooLarge: false, lines: diffLines(a, b) };
 }
 
 /** Terms are a SET, identified by `term_id` -- a snapshot's own position or
@@ -176,7 +260,8 @@ export function revisionDiff(from: RevisionRow, to: RevisionRow): RevisionDiffRe
     to: { id: to.id, revision_no: to.revision_no, title: to.title },
     titleChanged: from.title !== to.title,
     bodyFormatChanged: from.body_format !== to.body_format,
-    bodyLines: diffLines(from.body.split("\n"), to.body.split("\n")),
+    fieldChanges: diffFields(from, to),
+    body: diffBody(from.body, to.body),
     termChanges: diffTerms(from, to),
     linkChanges: diffLinks(from, to),
   };
