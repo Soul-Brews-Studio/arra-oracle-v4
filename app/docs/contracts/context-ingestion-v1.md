@@ -353,4 +353,6 @@ over it needs a composite cursor the ordered projection does not provide. Per-me
 - Fix round, each red first: the null-peer close refused without `audit:read` (kernel and
   `kb_closeSession`), the kernel's own re-check of the binding, the grammar bounds, and
   `listSessionMembers` refusing a stranger, a departed member, an unbound requester and a
-  peerless non-operator (kernel and `kb_listSessionMembers`).
+  peerless non-operator: at the kernel (`context-session-close.test.ts`,
+  `context-session-reads.test.ts`) and over `kb_*` and HTTP `/api/knowledge`
+  (`app/server/test/mcp-v3-forum-boundary.test.ts`).
