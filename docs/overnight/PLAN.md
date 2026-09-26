@@ -293,3 +293,8 @@ are part of done.
   then push the slice branch and watch a real GitHub run finish green.
 - 03:01 **demo slice** launched (`wf_47183233-920`): `app/just/demo.sh` is Nat's "LET PLAY" loop through the real CLI and the v3 MCP adapter against real local
   Ollama, with a verbatim transcript in `docs/overnight/DEMO.md` and a stubbed-model test so CI keeps it honest.
+- 03:11 Repairs ACCEPTED ui-33 (the side-by-side diff pairs whole hunks; #33 AC3 labels for locator-only, unresolved, stale and superseded evidence; 106 UI unit
+  tests; real screenshots under `docs/overnight/ui/`, e.g. `11-revision-diff-pairing.png` shows alpha→ALPHA, beta→BETA, Thai lines, a removed hunk and a
+  pure insertion) and v3-stats (honest coverage when the term projection lags). MERGED v3-stats (handlers union; a new test fake got explicit throwing stubs
+  for the 5 search adapter methods) and ui-33 (clean). The UI bundle was rebuilt once from the merged source. **v3 harness now PASS 28 / FAIL 0 / GAP 9.**
+  Gate 7 is running.
