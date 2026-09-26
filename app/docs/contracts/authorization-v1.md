@@ -157,19 +157,27 @@ because every existing policy stays valid and means exactly what it meant before
 
 - The binding is anti-spoofing only. It grants no action and no visibility.
 - When a grant carries `peers`, every peer name the caller ASSERTS in a request admitted
-  by that grant must be in the list. Otherwise the request is refused with HTTP 403 and
-  `arra-publication-error/v1` code `forbidden`, whose path points at the offending field.
-- The refusal happens after admission and before any dataset writer is opened or any
-  kernel runs. It is identical over HTTP (`/api/knowledge`) and MCP (`kb_*`).
+  by that grant must be in the list. This covers every surface such a grant admits
+  today: the knowledge methods (`/api/knowledge`, MCP `kb_*`) and the legacy memories
+  write (MCP `remember`, HTTP `POST /api/memories`). The table below lists every field.
+- The refusal happens after admission and before any dataset writer is opened, any
+  kernel runs, or any row is stored. Each surface refuses in its own existing error
+  shape:
+  - knowledge methods: HTTP 403 and MCP `isError`, both carrying the
+    `arra-publication-error/v1` envelope with code `forbidden`, whose path points at the
+    offending field;
+  - `POST /api/memories`: HTTP 403 with the fixed body `{"error":"forbidden"}` that every
+    memories-route 403 already uses (`auth/http.ts` `ERROR_BODIES`);
+  - `remember`: an MCP `isError` tool result whose text is `forbidden`. It is audited
+    like every other admitted tool failure.
 - When `peers` is absent, nothing is checked and the trust unit remains the workspace, as
   before.
 - This does not contradict §2 ("principal is not a peer"). A principal is still never
   automatically any peer; an operator binds one explicitly, per workspace grant.
 
-**Which fields are asserted peers.** They are listed in
-`app/server/src/knowledge/registry.peerFields.ts`, one data entry per method:
+**Which fields are asserted peers.**
 
-| Role | Method | Field |
+| Role | Surface | Field |
 |---|---|---|
 | requester | `getMessage`, `listMessages` | `/requester_peer_name` |
 | requester | `getContext`, `answerChat` | `/peer_name` |
@@ -177,12 +185,24 @@ because every existing policy stays valid and means exactly what it meant before
 | joining peer | `joinSession` | `/peer_name` |
 | author | `appendMessages` | `/items/i/message/peer_name` |
 | author, observer | `publishRevision` | `/content/author_peer_name`, `/content/observer_peer_name` |
+| author | legacy `remember`, `POST /api/memories` | `peer_name` |
 
-Lookup targets (`getPeer.peer_name`, `registerPeer.name`) and a revision's
-`subject_peer_name` are not bound: naming a peer, or writing about one, is not acting as
-it. A future method with an acting-peer field must add it there. For example, #28's
-`created_by_peer_name` and `traces.peer_name` join the table when they are exposed
-(DECISIONS.md R7).
+Lookup targets (`getPeer.peer_name`, `registerPeer.name`), `list_memories`' `peer_name`
+filter, and the subject of a revision or memory (`subject_peer_name`) are not bound.
+Naming a peer, or writing ABOUT one, is not acting as it.
+
+Where each surface is declared:
+
+- The knowledge rows are data in `app/server/src/knowledge/registry.peerFields.ts`. That
+  table is exhaustive over the registry, and `[]` there is a reviewed "asserts no peer".
+- A knowledge method the table does not classify is refused outright under a binding,
+  at the request root (path `""`). It is never let through unchecked.
+- `transport-peer-fields.test.ts` fails while any registered method is unclassified.
+  So a future method with an acting-peer field is classified when it is exposed. Examples
+  are #28's `created_by_peer_name` and `traces.peer_name` (DECISIONS.md R7), and a
+  lifecycle `peer_name`.
+- The legacy row is checked in `app/server/src/auth/service.ts`, in both insert paths,
+  through `service.isBoundAuthor.ts`.
 
 **Pure-module surface (§7) is unchanged.**
 
@@ -216,5 +236,12 @@ MCP request context is unchanged: the authority travels as data on the per-reque
 - `app/server/test/auth-peer-binding.test.ts`: grammar, limits, lookup, frozen surface.
 - `app/server/test/transport-read-boundary.test.ts`: HTTP and MCP refusals and the unbound
   control.
+- `app/server/test/auth-legacy-peer-binding.test.ts`: the legacy author over the service,
+  HTTP and MCP. A refused write stores nothing; the subject stays free; the unbound
+  control is unchanged.
+- `app/server/test/transport-peer-fields.test.ts`: the table equals the registry, and an
+  unclassified method fails closed.
 
-Both were seen red before the change.
+All four were seen red before the change. The legacy and classification rows were added
+in a fix round after verification showed a bound principal could still store
+`peer_name: "outsider"` through `remember` and `POST /api/memories`.

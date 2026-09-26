@@ -15,6 +15,7 @@
 import { admit, type Admission, type GlobalAction, type Policy, type WorkspaceAction } from "./policy";
 import { loadPolicy } from "./loader";
 import { peerBinding } from "./policy.peerBinding";
+import { isBoundAuthor } from "./service.isBoundAuthor";
 import { TOOL_NAMES } from "../mcp/tools";
 import { KNOWLEDGE_METHODS, type RequestAuthority } from "../knowledge/registry";
 
@@ -220,6 +221,16 @@ export function createOperationService(
     return contextFrom(admitOrDeny(policy, authorization, now, { kind: "global", action }));
   }
 
+  /** #87 / R3: the admitting grant's `peers` binding (null = unbound). A
+   *  snapshot/admission mismatch is a wiring fault, so it fails closed. */
+  function bindingOf(policy: Policy, admission: Admission): readonly string[] | null {
+    try {
+      return peerBinding(policy, admission);
+    } catch {
+      return deny("policy_unavailable");
+    }
+  }
+
   const scopeOf = (context: RequestContext, action: WorkspaceAction | GlobalAction): string => {
     const record = recordFor(context, { action });
     return record.workspace!;
@@ -312,9 +323,14 @@ export function createOperationService(
         subject_peer_name?: string;
       } | null,
     ) {
-      const context = admitWorkspace(authorization, workspace, "content:write");
+      const policy = snapshot();
+      const admission = admitOrDeny(policy, authorization, clock(), { kind: "workspace", workspace, action: "content:write" });
+      const context = contextFrom(admission);
       const row = buildRow();
       if (row === null) deny("invalid_request");
+      // #87 / R3: the row's author is caller-asserted, so the grant's `peers`
+      // binding, read from the SAME snapshot, bounds it.
+      if (!isBoundAuthor(row, bindingOf(policy, admission))) deny("forbidden");
       // Scope comes from the ADMITTED context, never from the caller's payload.
       return deps.insert({ ...row, workspace_name: scopeOf(context, "content:write") });
     },
@@ -393,7 +409,7 @@ export function createOperationService(
       // it is the same whichever of the four actions admitted first).
       let authority: RequestAuthority;
       try {
-        authority = Object.freeze({ operator: granted.has("audit:read"), peers: peerBinding(policy, firstAdmission!) });
+        authority = Object.freeze({ operator: granted.has("audit:read"), peers: bindingOf(policy, firstAdmission!) });
       } catch {
         return { kind: "denied", code: "policy_unavailable" };
       }
@@ -461,6 +477,8 @@ export function createOperationService(
         authority,
         insert: (row) => {
           requires("content:write");
+          // #87 / R3: `remember`'s author is bound like HTTP's, before the store.
+          if (!isBoundAuthor(row, authority.peers)) deny("forbidden");
           return deps.insert({ ...row, workspace_name: bank });
         },
         list: (limit, filters) => {

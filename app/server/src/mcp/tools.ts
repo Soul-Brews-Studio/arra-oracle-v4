@@ -29,7 +29,11 @@ export const MEMORY_TOOLS = [
             "Free-text type in the current spike; default note. Controlled taxonomy validation is planned, not implemented.",
         },
         session_name: { type: "string", description: "File it in a session. Organisation, not scope." },
-        peer_name: { type: "string", description: "Who wrote it." },
+        peer_name: {
+          type: "string",
+          description:
+            "Who wrote it. When this credential's grant carries an arra-auth/v1 peers binding, it must be one of those peers, else the call is refused (forbidden) and nothing is stored.",
+        },
         subject_peer_name: { type: "string", description: "Who it is ABOUT, if different." },
       },
       required: ["content"],
