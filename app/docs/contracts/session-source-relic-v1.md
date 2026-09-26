@@ -15,6 +15,14 @@ dependency of it).
 No schema change. No transport route. No live wiring into any request-serving code path —
 see section 5 for exactly what that means and why.
 
+**2026-09-26, fix round**: an independent adversarial review found this adapter was not
+actually read-only against a real relic install (missing `--no-index` on `session`, `tail`
+resolving a bare id through the same import path, no `RELIC_NO_TRACE`), that `get()` could
+return an unrelated session or a subagent transcript, and that the isolation test proved
+absence rather than the real spawned argv. Sections 2, 5, 7 and 8 are corrected below; the
+code (`relic.getSession.ts`, `relic.readSession.ts`, `relic.runRelicJson.ts`,
+`relic.findSessions.ts`) and tests were fixed to match, failing-first.
+
 ---
 
 ## 1. What this adapter is for
@@ -37,17 +45,47 @@ kernel, never a new write path, never a new transport route.
 
 Three, and only three, `relic` subcommands, each with `--json` always appended by this
 adapter (`relic.runRelicJson.ts`'s `ALLOWED_SUBCOMMANDS` — a closed allowlist checked BEFORE
-`spawn`, not documentation only):
+`spawn`, not documentation only), and EVERY spawn carries `RELIC_NO_TRACE=1` in its
+environment, regardless of subcommand (`relic.runRelicJson.ts`):
 
 | Command | Used for | Measured shape (2026-09-26, real `relic` on this machine) |
 |---|---|---|
-| `relic session <id\|prefix> --json` | `SessionSource.get` | `{query, matchedBy, stats, sessions:[{session_uuid, file_path, repo, source, title?, started_at, ended_at, ...}], neighbours}` |
+| `relic session <id> --no-index --json` | `SessionSource.get` | `{query, matchedBy, stats, sessions:[{session_uuid, file_path, repo, source, tier, title?, started_at, ended_at, ...}], neighbours}` |
 | `relic search <query> --json --limit N` | `SessionSource.find` | `{query, hits:[{session_uuid, file_path, repo, source, seq, role, ts, text, ...}]}`, BM25-ranked |
-| `relic tail <id> -n N --json` | `SessionSource.read` | `{file, title, turns:[{seq, role, ts, text}]}` — most-recent bounded window, harness turns already stripped by `relic`'s own default |
+| `relic tail <file_path> -n N --json` | `SessionSource.read` | `{file, title, turns:[{seq, role, ts, text}]}` — most-recent bounded window, harness turns already stripped by `relic`'s own default |
 
 `relic index`, `relic prune` and `relic embed` — the only subcommands that ever write —
 are never invoked; they are not in the allowlist, and no code path in this module accepts a
-caller-chosen subcommand string.
+caller-chosen subcommand string. Three narrower isolation properties hold beyond the
+allowlist, each closing a specific way a "read-only" allowlisted subcommand can still write
+or misidentify (measured directly against `agents-relic/src/cli.ts` and `src/query.ts`, an
+earlier version of this adapter got each of these wrong — see §8):
+
+1. **`session` always carries `--no-index`.** Without it, relic's own `resolveSession`
+   imports a matching on-disk file into the user's REAL index on a cache miss — exactly the
+   case for a real, recently started, not-yet-indexed session. `--no-index` skips that
+   fallback; relic still answers from whatever is already indexed, so an unindexed session
+   is correctly reported as not found, never silently imported.
+2. **`read()` never passes a bare id to `tail`.** `cmdTail` resolves a bare id (no `/`)
+   through the SAME import-on-miss path `session` uses — it passes `{noIndex:true}` as a
+   THIRD argument to `resolveSession`, whose two-parameter signature silently drops it, so no
+   flag suppresses the import. A target CONTAINING `/` is read directly as a file path with
+   no index lookup at all. `relic.readSession.ts` therefore resolves the file path via
+   `SessionSource.get`'s `--no-index` lookup FIRST, then tails that path.
+3. **`RELIC_NO_TRACE=1` on every spawn.** `search`'s `cmdSearch` appends one line to
+   `<data-root>/trace.jsonl` per call unless this env var is set; `relic.runRelicJson.ts`
+   sets it unconditionally rather than only for `search`, so the property holds regardless of
+   which allowlisted subcommand is added here later.
+
+**Argument safety.** relic's flag parser does not honor `--` as an end-of-options marker
+(`agents-relic/src/flags.ts`): a value starting with `-` is parsed as a FLAG, not positional
+text. Measured probe: `flags(["search","--data-root=/tmp/elsewhere","--limit","100","--json"])`
+⇒ `{f:{"data-root":"/tmp/elsewhere",...}, pos:["search"]}` — the query vanished and the index
+root was redirected. `relic.assertNotFlagLike.ts` refuses any caller-supplied `sessionId` or
+`query` starting with `-` before it is ever spawned (`bad_output`), and an empty `sessionId`
+or `query` is refused/short-circuited rather than spawned at all — relic's own prefix query
+(`session_uuid LIKE '${q}%'`) matches every row when `q` is empty, and `tail ""` resolves to
+"the previous session in the process's cwd", neither of which is "no result".
 
 **Field mapping** (`relic.rowToSessionRef.ts`, `relic.findSessions.ts`, `relic.readSession.ts`):
 
@@ -55,14 +93,16 @@ caller-chosen subcommand string.
   `<bank>/<repo_key>` (e.g. `"peer-projects/github.com/Soul-Brews-Studio/odin-oracle"`,
   `"projects/github.com/nat-build-with-oracle/…"`), and `relic banks --json` lists exactly
   the bank names that first segment is drawn from ("A bank is one whole source root").
+  Extracted once, in `relic.bankFromRepo.ts`, shared by the session and search-hit paths.
 - `provider` — the row's `source` field verbatim (`"claude-live"`, `"claude-peer"`,
   `"claude-archive"`, `"codex"`, …). This is the field `relic` itself uses to say which
   harness/tier produced the transcript; nothing here renames or buckets it further.
-- `sessionUuid` — the row's `session_uuid`.
+- `sessionUuid` — the row's `session_uuid`, but ONLY for `get()` when it exactly equals the
+  requested id AND the row's `tier` is `"session"` — see §7's "absence is `null`" note.
 - `transcriptRef` — the row's `file_path` (an absolute path to the source `.jsonl`, not a
   network locator — never fetched, never dereferenced by this module).
 - `eventSeq` / `speaker` / `content` / `sourceTime` — a search hit's or tail turn's
-  `seq` / `role` / `text` / `ts`, unchanged.
+  `seq` / `role` / `text` / `ts`, type-checked before use and unchanged otherwise.
 
 `content` is retrieved, **untrusted** text (`session-source.types.ts`'s `SourceExcerpt`
 doc comment): a caller must carry or display it, never interpret it as an instruction —
@@ -124,8 +164,14 @@ Relic lookup; it does not touch `service.createTrace.ts` or `service.createSessi
 
 ## 5. Why this stays an internal service, not a `content:read` registry method
 
-`docs/overnight/DECISIONS.md` R7's Unit D leaves this decision explicitly open ("Expose …
-only if the contract calls for server-side lookup … else keep it an internal service").
+This dispatch's own slice brief (the per-agent task text for R7's `#28` part, not itself
+committed to this repo) leaves this decision explicitly open: "Expose what is needed as
+content:read registry methods only if the contract calls for server-side lookup … else keep
+it an internal service used by createTrace/evidence pinning — decide, document, justify."
+`docs/overnight/DECISIONS.md` R7's own `#28` bullets settle the adjacent questions (mixed-
+relation cycles, caller-asserted attribution, the CLI-subprocess mechanism) but do not
+themselves use the words "Unit D" or discuss server-side exposure — that framing is
+`.tmp/understand/analysis-28.json`'s Unit D fix-plan item 5 and the slice brief above.
 **Decision: internal service. Not exposed on HTTP, MCP, or the CLI, in this dispatch.**
 
 Reasons, checked against the current authorities before writing this down:
@@ -170,7 +216,7 @@ ARRA_RELIC_TIMEOUT_MS=10000      # optional, default 10s
 ARRA_RELIC_MAX_OUTPUT_BYTES=8388608   # optional, default 8 MiB
 ```
 
-`resolveSessionSourceConfig` (`relic.resolveConfig.ts`) is pure and reads these once, at
+`resolveSessionSourceConfig` (`relic.resolveSessionSourceConfig.ts`) is pure and reads these once, at
 composition time, exactly like every other `ARRA_*` variable in `composition.ts`. It is not
 consulted per-request, and nothing in this module accepts a caller-supplied bin path,
 timeout, or byte cap — those would turn a trusted local tool invocation into a
@@ -204,7 +250,8 @@ is no wire shape to keep stable.
 | `timeout` | `RelicAdapterConfig.timeoutMs` elapsed; the child is SIGKILLed by its own handle, never left running |
 | `exit_nonzero` | the process exited with a nonzero code |
 | `output_too_large` | stdout exceeded `maxOutputBytes`; the child is killed immediately rather than drained to completion |
-| `bad_output` | stdout was not the JSON shape the calling function expects for that subcommand, OR a caller-chosen subcommand fell outside the allowlist, OR `read()`'s `options.from` was set (see below) |
+| `bad_output` | stdout was not the JSON shape the calling function expects for that subcommand, OR a hit/row/turn was missing a field this adapter needs (§2 field mapping), OR a caller-chosen subcommand fell outside the allowlist, OR a `sessionId`/`query` looked like a relic flag (§2 "argument safety"), OR `read()`'s `options.from` was set (see below) |
+| `not_found` | `read()`'s internal `get()`-based resolve step found no exact-uuid, tier:`"session"` row for the given `sessionUuid` |
 
 **`read()`'s `from` parameter is refused when set, never silently ignored.** `relic tail`
 has no seq-offset pagination — it returns the most-recent bounded window only. A caller
@@ -212,11 +259,28 @@ asking to resume reading from a specific point deserves a clear refusal (`bad_ou
 a page that silently starts somewhere else. A future provider (or a future `relic` flag)
 that supports real pagination can lift this restriction without changing the interface.
 
-**Absence is `null`, never thrown** — `get()` on an unknown id returns `null`, matching this
+**Absence is `null`, never thrown, from `get()`** — an unknown id, OR a row relic did return
+that does not exactly identify the requested session, returns `null`, matching this
 codebase's existing convention (`trace-v1.md` section 6: "`getTrace` returns the literal row
-or `null`").
+or `null`"). "Does not exactly identify" covers two measured relic behaviors an evidence-
+pinning caller cannot tolerate: relic's `session` command falls back to matching the text as
+a NAME (title or opening message) when no id/prefix hits, so a returned row's `session_uuid`
+can be a completely different session than the one asked for; and an id/prefix hit returns
+every row sharing that `session_uuid`, including subagent transcripts, in no guaranteed
+order. `getSession` therefore accepts only a row whose OWN `session_uuid` equals the request
+AND whose `tier` is exactly `"session"` — never `sessions[0]`. `read()` has no `null` state of
+its own (its contract is an array or a throw), so the same resolution failure is `not_found`
+there rather than a silently empty transcript.
 
 ## 8. Isolation from the user's real index
+
+An earlier version of this section claimed isolation on the strength of one test alone (a
+scratch directory the adapter was never even pointed at stays untouched) and called that "a
+direct proof, not just an absence of a real path in test code" — a fair mutation-testing
+critique showed that claim was itself a tautology: mutating `runRelicJson` to write an
+arbitrary file elsewhere did not fail that test, because the test never inspected what the
+adapter actually sent to the child process. This section now states what is ACTUALLY proven,
+by what mechanism, none of it against the real relic index:
 
 - **No write subcommand is ever reachable** — the allowlist in `relic.runRelicJson.ts`
   (`search`, `session`, `sessions`, `tail`) is checked before every `spawn`, so a bug in a
@@ -224,16 +288,31 @@ or `null`").
 - **The binary path is always the caller's own injected configuration** — never resolved
   from `$PATH`, never read from a request. A test's fake script and the real
   `/Users/beta/.bun/bin/relic` are indistinguishable to every function in this module except
-  by which path is configured.
-- **Every test in `relic-session-source.test.ts` injects a fake binary**
+  by which path is configured. Every test in `relic-session-source.test.ts` injects the fake
   (`test/fixtures/relic-v1/fake-relic.ts`) and never sets `ARRA_RELIC_BIN` to the real path.
-  The fake's scenarios are selected by MAGIC ids/queries in argv (`__not_found__`,
-  `__bad_json__`, `__exit_nonzero__`, `__timeout__`, `__big__`), never by a shared
-  environment variable, so parallel test files cannot interfere with each other through
-  process-global state.
-- **A direct proof, not just an absence of a real path in test code**: one test creates a
-  scratch directory standing in for "the user's real relic index", calls `find`/`get`/`read`
-  against the fake binary, and asserts the scratch directory's one marker file is
+- **The fake REFUSES to run a call that would be unsafe against real relic** — it exits
+  nonzero if `RELIC_NO_TRACE=1` is missing from its environment, if a `session` call lacks
+  `--no-index`, or if a `tail` call's target is a bare id rather than a file path (§2's three
+  isolation properties). A regression in any of them turns EVERY test that exercises the
+  normal `find`/`get`/`read` path into a loud, specific failure (`exit_nonzero`), not a silent
+  pass — this is what actually replaces the withdrawn "direct proof" claim.
+- **The exact argv and `RELIC_NO_TRACE` value delivered to the child is recorded and
+  asserted on directly** — an opt-in side channel (`RELIC_FAKE_RECORD`, read by
+  `recordCalls()` in the test file) has the fake append one JSON line per invocation. The
+  "read-only against relic" describe block asserts the literal argv for `get`/`find`/`read`
+  (`--no-index` present, the tail target containing `/` and equal to the resolved
+  `transcript_ref`, `--limit`/`-n` values after clamping) and that `RELIC_NO_TRACE` is `"1"`
+  — a mutation that drops any of these is a direct, immediate assertion failure, not an
+  absence of one.
+- **Scenario selection stays MAGIC-argv, not environment-based**, so parallel test files
+  cannot interfere with each other through process-global state: `__not_found__`,
+  `__bad_json__`, `__exit_nonzero__`, `__timeout__`, `__big__`, plus the identity-mismatch/
+  subagent/malformed-output scenarios in §7's field-mapping tests. `RELIC_FAKE_RECORD` is the
+  one exception, and it is set and restored around a single `recordCalls()` call, never left
+  set across tests.
+- **A scratch-directory check remains, as a coarse sanity check, not the load-bearing
+  proof**: one test creates a directory standing in for "the user's real relic index", calls
+  `find`/`get`/`read` against the fake binary, and asserts the directory's one marker file is
   byte-identical and its mtime unchanged afterward, with no new files created.
 
 ## 9. What this dispatch does NOT claim
@@ -254,6 +333,11 @@ or `null`").
 `app/server/test/relic-session-source.test.ts` — config resolution (all four
 configured/not-configured branches), `find`/`get`/`read` against the fake binary including
 result-shape and dedup checks, every failure code in section 7 (each independently
-triggered), the isolation proof (section 8), capture-digest determinism/distinctness
-(section 3), and both target builders producing a codec-valid, already-canonical
-`relic_event`/`relic_session` object that `targetOp` accepts unchanged.
+triggered, including `not_found` and the identity/tier checks), the isolation proof (section
+8: the argv/env recording, the fake's own refusal checks, and the scratch-directory check),
+argument-injection refusal for a flag-like `sessionId`/`query` (section 2), bounded-excerpt
+clamping for both `find`'s overfetch and `read`'s `-n` (measured against the real `--limit`/
+`-n` argument, not just the returned array length), malformed-hit/turn rejection (section 2's
+field mapping), capture-digest determinism/distinctness (section 3), and both target builders
+producing a codec-valid, already-canonical `relic_event`/`relic_session` object that
+`targetOp` accepts unchanged.

@@ -18,6 +18,11 @@ export const RELIC_ADAPTER_ERROR_CODES = [
   "output_too_large",
   /** stdout was not the JSON shape this adapter expects for the command run. */
   "bad_output",
+  /** `read()`'s internal, read-only `session --no-index` resolve step found
+   *  no exact-uuid, tier:"session" row -- e.g. a real session relic has not
+   *  indexed yet. Reported as a typed refusal, never answered by falling
+   *  back to a `tail` call that would risk relic's import-on-miss path. */
+  "not_found",
 ] as const;
 
 export type RelicAdapterErrorCode = (typeof RELIC_ADAPTER_ERROR_CODES)[number];

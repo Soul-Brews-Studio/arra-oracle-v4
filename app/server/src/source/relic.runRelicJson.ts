@@ -23,6 +23,12 @@ const ALLOWED_SUBCOMMANDS = ["search", "session", "sessions", "tail"] as const;
  * never resolved from `$PATH`, never read from the request. A test points it
  * at a fake script; nothing here can reach the real relic index unless the
  * caller's OWN config names it.
+ *
+ * `RELIC_NO_TRACE=1` is set on EVERY spawn, regardless of subcommand: real
+ * relic's `search` subcommand (`agents-relic/src/cli.ts` `cmdSearch` ->
+ * `trace.ts`) appends one line to `<data-root>/trace.jsonl` on every call
+ * unless this env var is set, and this adapter's contract is read-only --
+ * appending to relic's own query log is a write this module must never make.
  */
 export async function runRelicJson(config: RelicAdapterConfig, args: readonly string[]): Promise<unknown> {
   const subcommand = args[0];
@@ -36,7 +42,10 @@ export async function runRelicJson(config: RelicAdapterConfig, args: readonly st
   let truncated = false;
 
   const exitCode = await new Promise<number | null>((resolvePromise, reject) => {
-    const child = spawn(config.binPath, fullArgs, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(config.binPath, fullArgs, {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, RELIC_NO_TRACE: "1" },
+    });
     let settled = false;
     const timer = setTimeout(() => {
       if (!settled) child.kill("SIGKILL");

@@ -4,8 +4,12 @@
  * EVERY test in this file points `RelicAdapterConfig.binPath` at the FAKE
  * script `test/fixtures/relic-v1/fake-relic.ts`, never the real
  * `/Users/beta/.bun/bin/relic`. Nothing here can open, read or write the
- * user's real `~/.relic/` index -- see the "isolation" describe block for a
- * direct proof, not just an assertion.
+ * user's real `~/.relic/` index -- see the "isolation" and "read-only against
+ * relic" describe blocks below: the fake itself refuses a call that would be
+ * unsafe against real relic (missing `RELIC_NO_TRACE`, a `session` lookup
+ * without `--no-index`, a `tail` target that is a bare id), and a separate
+ * recording side channel asserts the EXACT argv/env a call produced, not just
+ * that an unrelated scratch directory stayed untouched.
  *
  * Contract: app/docs/contracts/session-source-relic-v1.md.
  */
@@ -17,7 +21,7 @@ import { join } from "node:path";
 import { targetOp } from "../src/contracts/evidence-v1";
 import { obj } from "../src/contracts/jcs";
 import { ContractError } from "../src/contracts/errors";
-import { resolveSessionSourceConfig } from "../src/source/relic.resolveConfig";
+import { resolveSessionSourceConfig } from "../src/source/relic.resolveSessionSourceConfig";
 import { createRelicSessionSource } from "../src/source/relic.createRelicSessionSource";
 import { runRelicJson } from "../src/source/relic.runRelicJson";
 import { RelicAdapterError } from "../src/source/relic.errors";
@@ -190,6 +194,145 @@ describe("isolation: the adapter never touches any filesystem location of its ow
     } finally {
       await rm(scratchRoot, { recursive: true, force: true });
     }
+  });
+});
+
+/**
+ * `RELIC_FAKE_RECORD` (fake-relic.ts) makes the fake append one JSON line
+ * per invocation recording the EXACT argv and `RELIC_NO_TRACE` env value the
+ * child process received -- read here to prove what the adapter actually
+ * spawned, not merely that an unrelated scratch directory was untouched.
+ * (A prior version of this suite proved isolation only by absence -- see
+ * the "isolation" block above and the contract's history; this block is the
+ * fix for that.)
+ */
+async function recordCalls(fn: () => Promise<unknown>): Promise<Array<{ argv: string[]; env_no_trace: string | null }>> {
+  const dir = await mkdtemp(join(tmpdir(), "relic-record-"));
+  const recordPath = join(dir, "record.jsonl");
+  const prevRecord = process.env.RELIC_FAKE_RECORD;
+  process.env.RELIC_FAKE_RECORD = recordPath;
+  try {
+    await fn();
+  } finally {
+    if (prevRecord === undefined) delete process.env.RELIC_FAKE_RECORD;
+    else process.env.RELIC_FAKE_RECORD = prevRecord;
+  }
+  let text = "";
+  try {
+    text = await readFile(recordPath, "utf8");
+  } catch {
+    text = "";
+  }
+  await rm(dir, { recursive: true, force: true });
+  return text.trim().length === 0 ? [] : text.trim().split("\n").map((line) => JSON.parse(line));
+}
+
+describe("read-only against relic: proven from the real argv/env the adapter spawns, not an absence elsewhere", () => {
+  test("get() calls `relic session <id> --no-index --json` with RELIC_NO_TRACE=1 -- --no-index is what keeps a cache miss from importing into the user's real index", async () => {
+    const calls = await recordCalls(() => createRelicSessionSource(config()).get("s-normal-1"));
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.argv).toEqual(["session", "s-normal-1", "--no-index", "--json"]);
+    expect(calls[0]!.env_no_trace).toBe("1");
+  });
+
+  test("find() calls `relic search <query> --limit N --json` with RELIC_NO_TRACE=1 -- real relic's cmdSearch appends a trace.jsonl line otherwise", async () => {
+    const calls = await recordCalls(() => createRelicSessionSource(config()).find("some topic", 3));
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.argv).toEqual(["search", "some topic", "--limit", "15", "--json"]);
+    expect(calls[0]!.env_no_trace).toBe("1");
+  });
+
+  test("read() NEVER passes the bare session id to `tail` -- it resolves the file path first (one `session --no-index` call), then tails THAT path", async () => {
+    const calls = await recordCalls(() => createRelicSessionSource(config()).read("s-normal-1"));
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.argv).toEqual(["session", "s-normal-1", "--no-index", "--json"]);
+    const tailCall = calls[1]!;
+    expect(tailCall.argv[0]).toBe("tail");
+    expect(tailCall.argv[1]).toBe("/Users/nat/.claude/projects/-opt-Code-github-com-example-repo/s-normal-1.jsonl");
+    expect(tailCall.argv[1]).toContain("/");
+    expect(tailCall.env_no_trace).toBe("1");
+  });
+
+  test("read()'s limit is clamped to MAX_LIMIT before it ever becomes the `-n` argument", async () => {
+    const calls = await recordCalls(() => createRelicSessionSource(config()).read("s-normal-1", { limit: 100_000 }));
+    const tailCall = calls[1]!;
+    const nIndex = tailCall.argv.indexOf("-n");
+    expect(nIndex).toBeGreaterThanOrEqual(0);
+    expect(tailCall.argv[nIndex + 1]).toBe("200"); // MAX_LIMIT in relic.readSession.ts
+  });
+
+  test("find()'s overfetch is clamped to MAX_OVERFETCH before it ever becomes the `--limit` argument", async () => {
+    const calls = await recordCalls(() => createRelicSessionSource(config()).find("some topic", 1_000_000));
+    const limitIndex = calls[0]!.argv.indexOf("--limit");
+    expect(limitIndex).toBeGreaterThanOrEqual(0);
+    expect(calls[0]!.argv[limitIndex + 1]).toBe("500"); // MAX_OVERFETCH in relic.findSessions.ts
+  });
+});
+
+describe("get(): exact session identity only, never a look-alike or a subagent transcript", () => {
+  test("a NAME-fallback row whose session_uuid differs from what was asked for is rejected, not returned as-is", async () => {
+    const source = createRelicSessionSource(config());
+    expect(await source.get("__name_mismatch__")).toBeNull();
+  });
+
+  test("a matching session_uuid whose ONLY row is a subagent transcript (tier !== 'session') is rejected", async () => {
+    const source = createRelicSessionSource(config());
+    expect(await source.get("__subagent_only__")).toBeNull();
+  });
+
+  test("a tree of rows sharing one session_uuid: the tier:'session' row is picked regardless of array order, never rows[0]", async () => {
+    const source = createRelicSessionSource(config());
+    const ref = await source.get("__tree__");
+    expect(ref).not.toBeNull();
+    expect(ref!.transcriptRef).toBe("/Users/nat/.claude/projects/-x/__tree__.jsonl");
+    expect(ref!.title).toBe("tree parent");
+  });
+
+  test("an empty sessionId is absence, not \"match everything\" -- relic's own prefix query (`LIKE '${q}%'`) matches every row when q is empty", async () => {
+    const source = createRelicSessionSource(config({ binPath: NONEXISTENT_BIN }));
+    expect(await source.get("")).toBeNull(); // NONEXISTENT_BIN proves no spawn happened
+  });
+});
+
+describe("read(): a session get() cannot resolve without indexing fails closed, never falls back to an unsafe tail", () => {
+  test("an unindexed/unknown session_uuid is 'not_found', never silently imported to answer the read", async () => {
+    const source = createRelicSessionSource(config());
+    expect(await codeOf(() => source.read("__not_found__"))).toBe("not_found");
+  });
+});
+
+describe("argument injection: a query/id that looks like a relic flag is refused before anything spawns", () => {
+  // relic's flag parser does not honor `--` (agents-relic/src/flags.ts): a
+  // value starting with `-` becomes a FLAG, not positional text. Measured:
+  // flags(["search","--data-root=/tmp/elsewhere","--limit","100","--json"])
+  // => {f:{"data-root":"/tmp/elsewhere",...}, pos:["search"]} -- the query
+  // vanished and the index root was redirected. NONEXISTENT_BIN proves each
+  // of these is refused before `spawn`, exactly like the empty-query guard.
+  test("get() refuses a flag-like sessionId", async () => {
+    const source = createRelicSessionSource(config({ binPath: NONEXISTENT_BIN }));
+    expect(await codeOf(() => source.get("--data-root=/tmp/elsewhere"))).toBe("bad_output");
+  });
+
+  test("find() refuses a flag-like query", async () => {
+    const source = createRelicSessionSource(config({ binPath: NONEXISTENT_BIN }));
+    expect(await codeOf(() => source.find("--data-root=/tmp/elsewhere"))).toBe("bad_output");
+  });
+
+  test("read() refuses a flag-like sessionUuid (it is checked by the get()-based resolve step)", async () => {
+    const source = createRelicSessionSource(config({ binPath: NONEXISTENT_BIN }));
+    expect(await codeOf(() => source.read("-n"))).toBe("bad_output");
+  });
+});
+
+describe("malformed relic output is 'bad_output', never a bare TypeError", () => {
+  test("a search hit missing `repo` fails typed, instead of throwing inside bankFromRepo", async () => {
+    const source = createRelicSessionSource(config());
+    expect(await codeOf(() => source.find("__missing_repo_hit__"))).toBe("bad_output");
+  });
+
+  test("a tail turn missing role/text/ts fails typed, instead of returning a garbage excerpt", async () => {
+    const source = createRelicSessionSource(config());
+    expect(await codeOf(() => source.read("__malformed_turn__"))).toBe("bad_output");
   });
 });
 

@@ -33,6 +33,11 @@ export type RelicSessionRow = {
   file_path: string;
   repo: string;
   source: string;
+  /** `"session"` for the top-level transcript, `"subagent"` (or another
+   *  non-session value) for a child transcript sharing the same
+   *  `session_uuid`. `relic.getSession.ts` trusts only `tier === "session"`
+   *  rows -- see its header comment for why. */
+  tier: string;
   title?: string | null;
   description?: string | null;
   started_at: string | null;

@@ -1,3 +1,5 @@
+import { assertNotFlagLike } from "./relic.assertNotFlagLike";
+import { bankFromRepo } from "./relic.bankFromRepo";
 import { failRelic } from "./relic.errors";
 import { runRelicJson } from "./relic.runRelicJson";
 import type { RelicAdapterConfig, RelicSearchCommandOutput, RelicSearchHit } from "./relic.types";
@@ -13,6 +15,9 @@ const OVERFETCH_FACTOR = 5;
 const MAX_OVERFETCH = 500;
 
 function hitToRef(hit: RelicSearchHit): SessionRef {
+  if (typeof hit.repo !== "string" || hit.repo === "") failRelic("bad_output", "relic search hit missing repo");
+  if (typeof hit.source !== "string" || hit.source === "") failRelic("bad_output", "relic search hit missing source");
+  if (typeof hit.file_path !== "string" || hit.file_path === "") failRelic("bad_output", "relic search hit missing file_path");
   return {
     sourceBank: bankFromRepo(hit.repo),
     provider: hit.source,
@@ -22,11 +27,6 @@ function hitToRef(hit: RelicSearchHit): SessionRef {
     startedAt: null,
     endedAt: null,
   };
-}
-
-function bankFromRepo(repo: string): string {
-  const slash = repo.indexOf("/");
-  return slash === -1 ? repo : repo.slice(0, slash);
 }
 
 /**
@@ -47,6 +47,7 @@ export async function findSessions(
   limit = DEFAULT_LIMIT,
 ): Promise<SessionRef[]> {
   if (query === "") return [];
+  assertNotFlagLike("query", query);
   const boundedLimit = Math.max(1, Math.min(limit, MAX_LIMIT));
   const overfetch = Math.min(boundedLimit * OVERFETCH_FACTOR, MAX_OVERFETCH);
 
