@@ -224,3 +224,10 @@ are part of done.
   migration's final repair was already inside the earlier merge. **Waves 1 and 1.5 are complete: 13 slices merged.**
   Python suite: **268 OK** (baseline 139). Wave 2 is still running: chat merged; lifecycle, search-embed, search-query, sessions
   and v3-frame are in progress.
+- 00:43 MERGED v3-frame (VA harness fixes + V0 frame + K2 name lookups + V1 learn/research_note/handoff). Merge fixes: the shared
+  `callKnowledgeMethod` helper now carries the operations branch and drops the ephemeral writer, which the chat slice removed; duplicate PEER_FIELDS
+  entries were removed; a fixture now awaits the async `composeKnowledgeAccess`; 4 new importers passed Python-guard review; the chat gate
+  test pins "no callable but getBundle", its real intent.
+  **GATE 5 on `2db2bc0`+fixes: TS 1446/1, the 1 failure fixed in `ad46ebc` (4/4) · Python 268 OK · probe 47 methods ×4 transports,
+  isolation 0 · v3 harness: PASS 10 / FAIL 0 / GAP 27 of 37 steps** (the GAPs are tools not built yet, honestly unscored).
+- 00:43 wave 2 status: chat and v3-frame merged; lifecycle, search-query and sessions are in repair round 3 (`wf_34eb9ce4-70b`); search-embed is in its fix round.
