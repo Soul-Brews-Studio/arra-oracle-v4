@@ -74,7 +74,7 @@ export async function searchKnowledgeKeyword(reader: DatasetAdapter, requestByte
   const current = currentEligibleChunks(reader, request.workspace_name, query);
   /** One overfetch round: candidates -> pre-filter -> current, matching, eligible -> hits. */
   const answer = async (rows: Record<string, unknown>[], rank: (row: Record<string, unknown>) => unknown, skip: ReadonlySet<string>) => {
-    const candidates: RankedChunk[] = rows.map((row) => rankedChunk(row, rank(row))).filter((chunk) => chunkMayHoldQuery(chunk.text, query));
+    const candidates: RankedChunk[] = rows.map((row) => rankedChunk(row, rank(row))).filter((chunk) => chunkMayHoldQuery(chunk.text, chunk.chunk_index, query));
     const kept = await current(candidates);
     const hits = groupKnowledgeHits(kept.chunks, kept.heads, "descending", query).filter((hit) => !skip.has(hit.node_id));
     return { fetched: rows.length, kept: hits };

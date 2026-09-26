@@ -133,25 +133,35 @@ describe("searchSnippet", () => {
 });
 
 describe("chunkMayHoldQuery: the per-chunk pre-filter is exact about every way a chunk can hold part of an occurrence", () => {
+  // Chunks of 6 code units, so a 6-unit chunk has a seam after it.
+  const may = (chunk: string, index: number, query: string) => chunkMayHoldQuery(chunk, BigInt(index), query, 6);
+
   test("whole, cut at the end, cut at the start, or wholly inside a longer query", () => {
-    expect(chunkMayHoldQuery("ฉันหลงลืมกุญแจ", "ลืม")).toBe(true);
-    expect(chunkMayHoldQuery("aaaaหล", "หลงลืม")).toBe(true); // ends with a prefix
-    expect(chunkMayHoldQuery("งลืม tail", "หลงลืม")).toBe(true); // starts with a suffix
-    expect(chunkMayHoldQuery("cdefgh", "abcdefghij")).toBe(true); // inside
-    expect(chunkMayHoldQuery("xx QU", "quick")).toBe(true); // case-folded
+    expect(may("ฉันหลงลืมกุญแจ", 0, "ลืม")).toBe(true);
+    expect(may("aaaaหล", 0, "หลงลืม")).toBe(true); // full length, ends with a prefix
+    expect(may("งลืม t", 1, "หลงลืม")).toBe(true); // after a seam, starts with a suffix
+    expect(may("cdefgh", 1, "abcdefghij")).toBe(true); // between two seams, inside
+    expect(may("xx  QU", 0, "quick")).toBe(true); // case-folded
+    expect(chunkMayHoldQuery("a".repeat(998) + "หล", 0n, "หลงลืม")).toBe(true); // the real chunk size
   });
 
   test("a chunk that only shares a trigram with the query is dropped", () => {
-    expect(chunkMayHoldQuery("ฉันหลงลืมกุญแจไว้ที่บ้าน", "หลงทาง")).toBe(false);
-    expect(chunkMayHoldQuery("ทางxyq", "zหลง")).toBe(false);
+    expect(may("ฉันหลงลืมกุญแจไว้ที่บ้าน", 0, "หลงทาง")).toBe(false);
+    expect(may("ทางxyq", 1, "zหลง")).toBe(false);
+  });
+
+  test("only a real seam counts: no seam before chunk 0, none after a short (last) chunk", () => {
+    expect(may("aหล", 0, "หลงลืม")).toBe(false); // short, so the last chunk: the text ends here
+    expect(may("aaaaหล", 0, "หลงลืม")).toBe(true); // the same ending on a full chunk: a seam follows
+    expect(may("งลืม t", 0, "หลงลืม")).toBe(false); // chunk 0 has nothing before it
+    expect(may("ลืม x", 1, "หลงลืม")).toBe(true); // a short last chunk still has a seam before it
   });
 
   test("final sigma: a chunk-local fold never hides an occurrence the whole text holds", () => {
     // "ΟΔΟΣ" alone folds its last Σ to final ς; followed by Α it folds to σ.
-    const text = "ΟΔΟΣΑΒ";
-    expect(containsFolded(text, "σα")).toBe(true);
-    expect(chunkMayHoldQuery("ΟΔΟΣ", "σα")).toBe(true);
-    expect(chunkMayHoldQuery("ΑΒ", "σα")).toBe(true);
+    expect(containsFolded("ΟΔΟΣΑΒ", "σα")).toBe(true);
+    expect(chunkMayHoldQuery("ΟΔΟΣ", 0n, "σα", 4)).toBe(true);
+    expect(chunkMayHoldQuery("ΑΒ", 1n, "σα", 4)).toBe(true);
   });
 
   test("property: every chunk an occurrence spans passes, for every cut position", () => {
@@ -161,9 +171,11 @@ describe("chunkMayHoldQuery: the per-chunk pre-filter is exact about every way a
       const chunks = chunkText(text, 5);
       let at = 0;
       const start = text.indexOf(query);
-      for (const chunk of chunks) {
+      for (const [index, chunk] of chunks.entries()) {
         const [from, to] = [at, at + chunk.length];
-        if (from < start + query.length && to > start) expect(chunkMayHoldQuery(chunk, query), `pad ${pad} chunk ${JSON.stringify(chunk)}`).toBe(true);
+        if (from < start + query.length && to > start) {
+          expect(chunkMayHoldQuery(chunk, BigInt(index), query, 5), `pad ${pad} chunk ${JSON.stringify(chunk)}`).toBe(true);
+        }
         at = to;
       }
     }
