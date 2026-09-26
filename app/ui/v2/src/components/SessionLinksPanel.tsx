@@ -13,6 +13,8 @@ export function SessionLinksPanel({
   rows,
   loading,
   error,
+  hasMore,
+  onLoadMore,
 }: {
   sessionName: string | null;
   direction: "from" | "to";
@@ -20,6 +22,8 @@ export function SessionLinksPanel({
   rows: SessionLinkRow[];
   loading: boolean;
   error: string | null;
+  hasMore: boolean;
+  onLoadMore: () => void;
 }) {
   return (
     <section className="flex flex-col gap-2 border-b border-edge p-3">
@@ -72,6 +76,14 @@ export function SessionLinksPanel({
             </li>
           ))}
         </ul>
+      )}
+      {hasMore && (
+        <button
+          onClick={onLoadMore}
+          className="self-start rounded border border-edge px-2 py-1 text-[11px] text-muted hover:border-accent hover:text-accent"
+        >
+          load more links
+        </button>
       )}
     </section>
   );

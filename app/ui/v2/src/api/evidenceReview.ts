@@ -1,23 +1,36 @@
 /** Typed wrappers for the #33 "evidence review" surface: traces, session
- *  links and node lifecycle. All five methods here are `content:read` (see
- *  `knowledge/registry.ts`), so this file only reads -- creating a trace or
- *  a session link, or superseding/retiring a node, stays out of this UI's
- *  scope tonight (R7/R8 expose the writes; wiring their forms is not part
- *  of this issue's four surfaces).
+ *  links, node lifecycle, and (fix-round R12) the direct/reverse revision
+ *  evidence lists and the two lifecycle WRITES.
  *
- * Three DIFFERENT scopes, not one "evidence" key, because the kernels
+ * Fix round: brief item (4) named `supersedeNode`/`retireNode` and
+ * `getRevisionAssociations`/`scanDependents` explicitly -- all four exist in
+ * `registry.ts` on this base -- and the previous pass left every one of them
+ * unwired. This file now covers all four plus their two reads. Creating a
+ * TRACE or a SESSION LINK stays out of this UI's scope (the issue's four
+ * surfaces do not ask for authoring evidence, only reviewing it), which is
+ * why `createTrace`/`createSessionLink` still have no wrapper here.
+ *
+ * FIVE different scopes, not one "evidence" key, because the kernels
  * disagree about what identifies a row:
  *   - a trace is looked up by ITS OWN id (`getTrace`/`listTraceHits`) --
  *     there is no `listTraces`, so a caller must already hold the id, the
  *     same "no enumeration" property `api/knowledge.ts` documents for nodes.
  *   - a session link is looked up by `session_name` (`listSessionLinks`).
  *   - lifecycle history and recall eligibility are looked up by `node_id`.
- * `EvidenceReviewPanel`'s three sections each take the identifier they
- * actually need, rather than a single "evidence for X" prop that would
- * imply one of the three is authoritative over the others.
+ *   - direct evidence (`getRevisionAssociations`) is looked up by
+ *     `(node_id, revision_id)`, `revision_id: null` meaning the captured
+ *     head (`association-evidence-v1.md` §2).
+ *   - reverse evidence (`scanDependents`) is looked up by a TARGET, not a
+ *     node: this file only ever builds a `node_revision` target (the exact
+ *     `(node_id, revision_id)` `getRevisionAssociations` just resolved), so
+ *     "who cites this revision" and "what does this revision cite" describe
+ *     the SAME resolved identity from two directions.
+ * `EvidenceReviewPanel`'s sections each take the identifier they actually
+ * need, rather than a single "evidence for X" prop that would imply one of
+ * them is authoritative over the others.
  */
 import { type ApiResult, callMethod } from "./client";
-import { type Bank } from "./memory";
+import { type Bank, newPublicId } from "./memory";
 
 const call = (b: Bank, method: string, body: Record<string, unknown>): Promise<ApiResult> =>
   callMethod(b.bank, method, { workspace_name: b.workspace, ...body }, b.token);
@@ -174,4 +187,168 @@ export function recallEligibilityOf(result: ApiResult): RecallEligibility | null
   const body = result.body as Partial<RecallEligibility> | null;
   if (typeof body?.eligible !== "boolean" || typeof body?.witness_event_id !== "string") return null;
   return { eligible: body.eligible, witness_event_id: body.witness_event_id };
+}
+
+// ── direct evidence: what THIS revision cites (#33 R12) ─────────────────────
+// `association-evidence-v1.md` §3's exact physical wire field order.
+export type AssociationTermRow = {
+  workspace_name: string;
+  revision_id: string;
+  term_id: string;
+  vocabulary_id: string;
+  vocabulary_name_snapshot: string;
+  term_name_snapshot: string;
+  label_snapshot: string | null;
+  position: string;
+};
+
+export type AssociationLinkRow = {
+  workspace_name: string;
+  revision_id: string;
+  position: string;
+  relation: string;
+  target_kind: string;
+  target: string;
+  target_key: string;
+  excerpt: string | null;
+  content_hash: string | null;
+  captured_at: string | null;
+  capture_status: string;
+  note: string | null;
+};
+
+export type AssociationResult = {
+  workspace_name: string;
+  node_id: string;
+  revision_id: string;
+  content_digest: string;
+  snapshot_head_revision_id: string;
+  is_snapshot_head: boolean;
+  terms: AssociationTermRow[];
+  links: AssociationLinkRow[];
+};
+
+/** `revision_id: null` means the CAPTURED HEAD (`association-evidence-v1.md`
+ *  §2) -- distinct from omitting the key, so this always sends the key,
+ *  explicitly null when no exact revision was picked. */
+export const getRevisionAssociations = (b: Bank, node_id: string, revision_id: string | null) =>
+  call(b, "getRevisionAssociations", { node_id, revision_id });
+
+/** The kernel answers a bare `null` for "no such node/revision on accepted
+ *  ancestry" -- an ANSWER, the same "null is not an error" contract
+ *  `getAcceptedHead`/`getTrace` use, not a shape to reject. */
+export function associationsOf(result: ApiResult): AssociationResult | null {
+  if (!result.ok) return null;
+  return (result.body as AssociationResult | null) ?? null;
+}
+
+// ── reverse evidence: who cites THIS revision (#33 R12) ─────────────────────
+// This file only ever targets `node_revision` (`contracts/evidence-v1.ts`
+// TARGET_KEYS), because the identity being asked about is always the exact
+// `(node_id, revision_id)` `getRevisionAssociations` just resolved -- never a
+// raw caller-typed key (the contract forbids that: "No raw caller-supplied
+// target key").
+export type NodeRevisionTarget = { node_id: string; revision_id: string };
+
+/** Opaque to this client: the exact shape is `association-evidence-v1.md`
+ *  §4's closed cursor object, but nothing here reads its fields -- it is
+ *  only ever round-tripped, unchanged, from a page's `next_cursor` back into
+ *  the next request's `cursor`, per the contract's "Cursor fields are
+ *  request data" rule. */
+export type DependentsCursor = Record<string, unknown>;
+
+export type DependentOccurrence = {
+  workspace_name: string;
+  node_id: string;
+  revision_id: string;
+  revision_no: string;
+  content_digest: string;
+  snapshot_head_revision_id: string;
+  is_snapshot_head: boolean;
+  link: AssociationLinkRow;
+};
+
+export const MAX_DEPENDENTS_PAGE = 100;
+
+/** `revision_mode: "current"` -- dependents scoped to what OTHER nodes'
+ *  captured heads cite right now, matching how `getRecallEligibility` and
+ *  the rest of this review surface already read "current" state rather than
+ *  full history. `"history"` exists in the kernel but is not exposed here:
+ *  the brief asks for direct/reverse evidence, not a history-mode toggle. */
+export const scanDependents = (
+  b: Bank,
+  target: NodeRevisionTarget,
+  limit: number,
+  cursor: DependentsCursor | null,
+) =>
+  call(b, "scanDependents", {
+    target_kind: "node_revision",
+    target,
+    revision_mode: "current",
+    limit,
+    cursor,
+  });
+
+export function dependentsOf(result: ApiResult): {
+  outcome: "page" | "restart_required" | "error";
+  occurrences: DependentOccurrence[];
+  nextCursor: DependentsCursor | null;
+} {
+  if (!result.ok) return { outcome: "error", occurrences: [], nextCursor: null };
+  const body = result.body as
+    | { outcome?: string; occurrences?: DependentOccurrence[]; next_cursor?: DependentsCursor | null }
+    | null;
+  if (body?.outcome === "restart_required") return { outcome: "restart_required", occurrences: [], nextCursor: null };
+  return {
+    outcome: "page",
+    occurrences: Array.isArray(body?.occurrences) ? (body!.occurrences as DependentOccurrence[]) : [],
+    nextCursor: body?.next_cursor ?? null,
+  };
+}
+
+// ── lifecycle writes: retire / supersede (#29, #33 R12) ──────────────────────
+// Both are `content:write` (`registry.ts`), reached the same way every other
+// write in this app is: the same bank/token `callMethod` already carries --
+// there is no separate client-side "writer gate" concept, the server enforces
+// that. `operation_id` is minted the same way `publishRevision` mints one:
+// caller-owned, reused only on an intentional retry.
+export type RetireNodeInput = {
+  node_id: string;
+  expected_revision_id: string;
+  reason: string;
+  peer_name: string | null;
+};
+
+export const retireNode = (b: Bank, input: RetireNodeInput) =>
+  call(b, "retireNode", { ...input, operation_id: newPublicId() });
+
+export type SupersedeNodeInput = {
+  node_id: string;
+  expected_revision_id: string;
+  new_node_id: string;
+  new_revision_id: string;
+  reason: string;
+  peer_name: string | null;
+};
+
+export const supersedeNode = (b: Bank, input: SupersedeNodeInput) =>
+  call(b, "supersedeNode", { ...input, operation_id: newPublicId() });
+
+export type LifecycleWriteOutcome =
+  | { outcome: "accepted" | "idempotent" }
+  | { outcome: "conflict"; reason: string };
+
+/** `service.writeLifecycleEvent.ts`'s three outcomes. The stored `row` is
+ *  intentionally NOT surfaced here: the caller already knows what it asked
+ *  for, and a fresh `listLifecycleHistory`/`getRecallEligibility` refetch
+ *  (which every caller of this does) is the authoritative post-write read,
+ *  not a second, divergent shape carried on the write response. */
+export function lifecycleWriteOutcomeOf(result: ApiResult): LifecycleWriteOutcome | null {
+  if (!result.ok) return null;
+  const body = result.body as { outcome?: string; reason?: string } | null;
+  if (body?.outcome === "accepted" || body?.outcome === "idempotent") return { outcome: body.outcome };
+  if (body?.outcome === "conflict" && typeof body.reason === "string") {
+    return { outcome: "conflict", reason: body.reason };
+  }
+  return null;
 }

@@ -53,7 +53,7 @@ export function ExploreView({
   const listing = useListing(bank);
   const k = useKnowledge(bank);
   const m = useMemory();
-  const evidence = useEvidenceReview(bank, selectedNode, selectedSession);
+  const evidence = useEvidenceReview(bank, selectedNode, selectedSession, selectedPeer);
 
   useEffect(() => {
     m.setBank(bank.bank);
@@ -187,6 +187,7 @@ export function ExploreView({
           evidence={{
             nodeId: selectedNode,
             sessionName: selectedSession,
+            headRevisionId: k.snapshotHead ?? k.head?.revision?.id ?? null,
             trace: {
               id: evidence.trace.id,
               onIdChange: evidence.trace.setId,
@@ -205,6 +206,8 @@ export function ExploreView({
               rows: evidence.sessionLinks.rows,
               loading: evidence.sessionLinks.loading,
               error: evidence.sessionLinks.error,
+              hasMore: evidence.sessionLinks.hasMore,
+              onLoadMore: evidence.sessionLinks.loadMore,
               direction: evidence.sessionLinks.direction,
               onDirectionChange: evidence.sessionLinks.setDirection,
             },
@@ -216,6 +219,25 @@ export function ExploreView({
             recall: {
               value: evidence.recall.value,
               error: evidence.recall.error,
+            },
+            lifecycleActions: {
+              busy: evidence.lifecycle.actions.busy,
+              error: evidence.lifecycle.actions.error,
+              outcome: evidence.lifecycle.actions.outcome,
+              onRetire: evidence.lifecycle.actions.retire,
+              onSupersede: evidence.lifecycle.actions.supersede,
+            },
+            association: {
+              row: evidence.association.row,
+              loading: evidence.association.loading,
+              error: evidence.association.error,
+            },
+            dependents: {
+              rows: evidence.dependents.rows,
+              loading: evidence.dependents.loading,
+              error: evidence.dependents.error,
+              hasMore: evidence.dependents.hasMore,
+              onLoadMore: evidence.dependents.loadMore,
             },
           }}
           config={{

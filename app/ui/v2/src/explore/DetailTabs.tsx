@@ -2,7 +2,16 @@ import { TYPE_TERMS, type TypeTerm } from "../api/knowledge";
 import type { NodeRow } from "../api/listing";
 import type { ChatAnswer, MessageRow as MessageRowType } from "../api/memory";
 import type { TaxonomyIds } from "../api/knowledge";
-import type { LifecycleEventRow, RecallEligibility, SessionLinkRow, TraceHitRow, TraceRow } from "../api/evidenceReview";
+import type {
+  AssociationResult,
+  DependentOccurrence,
+  LifecycleEventRow,
+  LifecycleWriteOutcome,
+  RecallEligibility,
+  SessionLinkRow,
+  TraceHitRow,
+  TraceRow,
+} from "../api/evidenceReview";
 import { DialecticPanel } from "../components/DialecticPanel";
 import { Composer } from "../components/Composer";
 import { Transcript } from "../components/Transcript";
@@ -10,6 +19,9 @@ import { TaxonomySetup } from "../components/TaxonomySetup";
 import { TracePanel } from "../components/TracePanel";
 import { SessionLinksPanel } from "../components/SessionLinksPanel";
 import { LifecyclePanel } from "../components/LifecyclePanel";
+import { LifecycleActions } from "../components/LifecycleActions";
+import { AssociationPanel } from "../components/AssociationPanel";
+import { DependentsPanel } from "../components/DependentsPanel";
 import { ListPanel } from "./ListPanel";
 
 export type ExploreTab = "nodes" | "chat" | "messages" | "evidence" | "config";
@@ -66,6 +78,7 @@ export function DetailTabs(props: {
   evidence: {
     nodeId: string | null;
     sessionName: string | null;
+    headRevisionId: string | null;
     trace: {
       id: string;
       onIdChange: (id: string) => void;
@@ -84,6 +97,8 @@ export function DetailTabs(props: {
       rows: SessionLinkRow[];
       loading: boolean;
       error: string | null;
+      hasMore: boolean;
+      onLoadMore: () => void;
       direction: "from" | "to";
       onDirectionChange: (d: "from" | "to") => void;
     };
@@ -95,6 +110,25 @@ export function DetailTabs(props: {
     recall: {
       value: RecallEligibility | null;
       error: string | null;
+    };
+    lifecycleActions: {
+      busy: boolean;
+      error: string | null;
+      outcome: LifecycleWriteOutcome | null;
+      onRetire: (expectedRevisionId: string, reason: string) => void;
+      onSupersede: (expectedRevisionId: string, newNodeId: string, newRevisionId: string, reason: string) => void;
+    };
+    association: {
+      row: AssociationResult | null;
+      loading: boolean;
+      error: string | null;
+    };
+    dependents: {
+      rows: DependentOccurrence[];
+      loading: boolean;
+      error: string | null;
+      hasMore: boolean;
+      onLoadMore: () => void;
     };
   };
   config: {
@@ -216,6 +250,20 @@ export function DetailTabs(props: {
             rows={props.evidence.sessionLinks.rows}
             loading={props.evidence.sessionLinks.loading}
             error={props.evidence.sessionLinks.error}
+            hasMore={props.evidence.sessionLinks.hasMore}
+            onLoadMore={props.evidence.sessionLinks.onLoadMore}
+          />
+          <AssociationPanel
+            row={props.evidence.association.row}
+            loading={props.evidence.association.loading}
+            error={props.evidence.association.error}
+          />
+          <DependentsPanel
+            rows={props.evidence.dependents.rows}
+            loading={props.evidence.dependents.loading}
+            error={props.evidence.dependents.error}
+            hasMore={props.evidence.dependents.hasMore}
+            onLoadMore={props.evidence.dependents.onLoadMore}
           />
           <LifecyclePanel
             nodeId={props.evidence.nodeId}
@@ -224,6 +272,15 @@ export function DetailTabs(props: {
             history={props.evidence.lifecycle.rows}
             loading={props.evidence.lifecycle.loading}
             error={props.evidence.lifecycle.error}
+          />
+          <LifecycleActions
+            nodeId={props.evidence.nodeId}
+            expectedRevisionId={props.evidence.headRevisionId}
+            busy={props.evidence.lifecycleActions.busy}
+            error={props.evidence.lifecycleActions.error}
+            outcome={props.evidence.lifecycleActions.outcome}
+            onRetire={props.evidence.lifecycleActions.onRetire}
+            onSupersede={props.evidence.lifecycleActions.onSupersede}
           />
         </div>
       )}
