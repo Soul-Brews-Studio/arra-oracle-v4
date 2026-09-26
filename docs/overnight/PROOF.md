@@ -15,18 +15,18 @@ Where something is partial or blocked, it says so.
 
 ```text
                                      main  f919369            this branch
-  bun tests (all files)              1123 pass / 0 fail       FINAL_TS
-  test files                         68                        FINAL_FILES
+  bun tests (all files)              1123 pass / 0 fail       2005 pass / 0 fail
+  test files                         68                        143
   python  migrate-py discover        139 OK                    268 OK (1 skipped)
           fixture suites             (not run)                 17 + 22 OK
           app/benchmarks             (not in CI)               123 OK
   UI unit tests (app/ui/v2)          0                         106 pass / 0 fail
   knowledge methods (registry)       44                        57
     reachable HTTP / MCP / CLI       31 / 31 / 0               57 / 57 / 57
-  isolation probes (acceptor)        189 pass / 4 FAIL         FINAL_ISO
-  acceptor issue checks              10 PASS / 69 FAIL / 4 GAP FINAL_ACC
+  isolation probes (acceptor)        189 pass / 4 FAIL         191 pass / 0 FAIL
+  acceptor issue checks              10 PASS / 69 FAIL / 4 GAP 146 PASS / 0 FAIL / 1 GAP
   v3 client session, 37 real steps   —                         37 PASS / 0 FAIL / 0 GAP
-  GitHub Actions CI                  no workflow               green: runs 36275352354, FINAL_CI
+  GitHub Actions CI                  no workflow               green: run 36275352354 (1985/0, 139 files, Linux); freeze-head runs in PR #109
   "LET PLAY" demo, real Ollama       —                         25 STEP_OK / 0 FAIL (5 runs)
 ```
 
@@ -100,6 +100,26 @@ Refutations did most of the work. Each row is a real defect caught before merge:
 | 7 | Thai/Eng recall measurement | **blocked on you** | R16 | the harness is done; the judgments must come from a human, as the issue itself requires |
 | 8 | Honcho round-trip | **partial / blocked** | R15 | phase 1 is done against a fixture; the live run needs a container runtime |
 | 22 | epic | open | — | tracks the above |
+
+## 3b · The independent acceptor's final verdict (Codex, verbatim in substance)
+
+Final live run on the freeze: **146 PASS / 0 FAIL / 1 GAP**, isolation 191/0, methods
+57 × HTTP/MCP/CLI, payload gaps 0. R22 is PASS on all three transports: ALPHA's bytes and
+hit order were identical after 36 BETA-only mutations. No new application defect was found.
+
+| acceptor classification | issues |
+|---|---|
+| **accepted as done** against the ruled contracts | #87, #102, #103 |
+| **measured repair passes**, but not every frozen fault/ownership gate was certified by this run | #75, #85 |
+| **partial at whole-issue level**: every selected live check passes, but a bounded probe does not prove every historical acceptance criterion | #27, #28, #29, #30, #31, #32 |
+| **partial**: its probe did not run a real browser (the fresh build and served assets pass). The driver's ego-browser screenshots are in `ui/` | #33 |
+
+> "This is a green bounded backend acceptance, not blanket production-ready or
+> all-issues-closed certification."
+
+Where this verdict is stricter than the status column in §3, **the acceptor's verdict
+wins**. The PR therefore says `Fixes` only for #87, #102, #103, #105 (misdiagnosed and
+resolved) and #89 (decided). It says `Refs` for everything else, and Nat closes those.
 
 ## 4 · Live proofs on m5 (real services, fresh datasets)
 
