@@ -263,3 +263,15 @@ are part of done.
 - 02:13 **GATE 6 on `31b4f8b`: typecheck OK · TS 1629 pass / 0 fail (109/109 files, 184s) · Python 268 OK · probe 51 methods, HTTP/MCP/CLI 51 each,
   isolation 0.** #29 lifecycle checks now PASS. What remains is the acceptor's instrument lagging behind new contracts: 7 new methods have no fixture
   yet (GAP), and #30 still indexes under the bare model name, which the R20 profile registry refuses by design. Sent to Codex as TASK 5.
+- 02:16 **ACCEPTOR TASK 5 on `b29d5ca`: scoreboard 134 PASS / 3 FAIL / 1 GAP** (baseline 10/69/4). Isolation 191/0; payload gaps 0; 51 methods on HTTP, MCP and CLI.
+  Codex ACCEPTED R20 (closed profile id; the bare name is refused on all 3 transports), wrote fixtures for all 7 new methods, and proved live on all 3
+  transports: ลืม finds หลงลืม and not หลงทาง; own-bank hits only; a node indexed, embedded and searchable disappears from BOTH searches after retirement.
+  ```text
+  issue  PASS FAIL GAP    issue  PASS FAIL GAP    issue  PASS FAIL GAP
+  #27      2    0   0     #31     54    0   0     #85      6    0   0
+  #28      4    0   0     #32      2    0   0     #87     36    0   0
+  #29     10    0   0     #33      1    0   1     #102     1    0   0
+  #30     14    3   0     #75      2    0   0     #103     2    0   0
+  ```
+  The 3 FAILs are one defect: R21 is not on this head yet (a raw `score` is still returned). The search-polish slice implements it. The GAP is #33's
+  browser proof, which ui-33 is producing.
