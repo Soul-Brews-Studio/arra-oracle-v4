@@ -948,3 +948,21 @@ transport-specific mapping needed updating.
   by `workspace_name` (`app/server/src/db.ts`) -- the "Still NOT claimed" bullet above already
   named this, and R21 did not rule on it. A caller of the legacy path has neither the VALUE fix
   nor the SET/order scoping this amendment describes.
+
+## 18. Amendment 2026-09-26 (overnight Nat style: 350-500 lines per file)
+
+Source: the overnight run's code-style rule (`docs/overnight/PLAN.md` §1, "Code style from Nat:
+one function per file, 350–500 line cap per file") and `docs/overnight/DECISIONS.md`, under which
+the style-split slice (2026-09-27) split a test file §12 cites as evidence. No ruling, behavior,
+code or contract wording above changes — only where the cited evidence now lives on disk.
+
+**What moved.** §12's evidence paragraph cites `app/server/test/lifecycle-eligibility.test.ts`'s
+"search-chunk read paths never treat a terminal node as ordinary" test. That file had grown to
+544 lines, over the cap, and is split in two by concern; this describe (with its
+`reconcileSearchChunks`/`indexRevisionChunks`-on-a-terminal-node assertions, unchanged) moved
+verbatim to a new file, `app/server/test/lifecycle-eligibility-enforcement.test.ts`, alongside the
+lifecycle contract's own supersede-into-terminal-successor describe. Both old-name and new-file
+suites were run before and after the split: `bun test test/lifecycle-*.test.ts` reports 35 pass /
+0 fail / 416 `expect()` calls on both sides, identical — no test or assertion dropped. §12's
+paragraph itself is left as written (frozen contracts are not rewritten); this amendment is the
+correction.

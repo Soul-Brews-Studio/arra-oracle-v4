@@ -733,3 +733,27 @@ caller-supplied time. That would be a historical-browse channel, which V3-PARITY
 
 `list-nodes-tie-edge.test.ts` also asserts the narrowed scan window is live, so it cannot pass
 vacuously if the seam stops being honored.
+
+## 18. Amendment 2026-09-26 (overnight Nat style: 350-500 lines per file)
+
+Source: the overnight run's code-style rule (`docs/overnight/PLAN.md` §1, "Code style from Nat:
+one function per file, 350–500 line cap per file") and `docs/overnight/DECISIONS.md`, under which
+the style-split slice (2026-09-27) split a test file §13 cites as evidence. No ruling, behavior,
+code or contract wording above changes — only where the cited evidence now lives on disk.
+
+**What moved.** `app/server/test/lifecycle-eligibility.test.ts` had grown to 544 lines, over the
+cap. It is split in two, by concern, with every `test`/`expect` kept: the READ-surface describes
+(default exclusion/history-mode labelling, `include_inactive` omission, `total` across pages, the
+validity window) stay in `lifecycle-eligibility.test.ts`. The two ENFORCEMENT describes §13's
+evidence paragraph cites — "superseding into an already-terminal successor is refused" and
+"search-chunk read paths never treat a terminal node as ordinary" — moved verbatim (same
+fixture, same `gated-lifecycle.ts` child harness, same assertions, nothing added or weakened) to
+a new file, `app/server/test/lifecycle-eligibility-enforcement.test.ts`. Both old-name and
+new-file suites were run before and after the split: `bun test test/lifecycle-*.test.ts` reports
+35 pass / 0 fail / 416 `expect()` calls on both sides, identical.
+
+**Where §13's evidence paragraph now points.** "superseding into an already-retired and an
+already-superseded successor, both refused with no side effect on the refused caller's own
+eligibility" and "`reconcileSearchChunks`/`indexRevisionChunks` on a terminal node" are now in
+`lifecycle-eligibility-enforcement.test.ts`, not `lifecycle-eligibility.test.ts`. §13's paragraph
+itself is left as written (frozen contracts are not rewritten); this amendment is the correction.

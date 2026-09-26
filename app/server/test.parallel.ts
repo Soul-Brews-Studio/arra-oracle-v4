@@ -8,7 +8,8 @@
 // separate processes with separate TMPDIRs can overlap them.
 //
 // Guarantees, each checked rather than assumed:
-//   - every file in test.order.txt plus ../cli.test.ts runs in exactly one shard
+//   - every file in test.order.txt plus every ../cli*.test.ts file runs in
+//     exactly one shard
 //   - the per-shard "Ran N tests across M files" lines sum to the file count;
 //     a shard that crashes before printing its summary fails the run
 //   - exit code is nonzero on any failing test, any nonzero shard exit,
@@ -16,7 +17,7 @@
 //
 // Usage: bun test.parallel.ts [shards]   (default: TEST_SHARDS or 6)
 // Logs:  .tmp/test-parallel/shard-<i>.log
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -27,10 +28,18 @@ if (order.exitCode !== 0) {
   process.stderr.write(order.stderr);
   throw new Error("test.parallel.ts: test.order.ts failed");
 }
+// `cli.test.ts` itself lives one level up (outside test/, hardcoded here
+// rather than by test.order.ts's test/-only scan); style splits add
+// cli-*.test.ts siblings, so this globs the parent directory instead of
+// naming one file, matching the per-kernel package.json scripts' `-*.test.ts`
+// convention.
+const cliTestFiles = readdirSync(join(here, ".."))
+  .filter((f) => /^cli.*\.test\.ts$/.test(f))
+  .sort();
 const files = readFileSync(join(here, "test.order.txt"), "utf8")
   .split("\n")
   .filter(Boolean)
-  .concat("../cli.test.ts");
+  .concat(cliTestFiles.map((f) => `../${f}`));
 
 const census = new Map<string, number>();
 for (const line of readFileSync(join(here, "test.census.tsv"), "utf8").split("\n")) {

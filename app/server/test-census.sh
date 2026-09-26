@@ -31,7 +31,9 @@ OUT=test.census.tsv
 TMP=$(mktemp)
 
 FILES=$(find test -name '*.test.ts' | sort)
-FILES="$FILES ../cli.test.ts"
+# `cli.test.ts` lives one level up (outside test/); style splits add
+# cli-*.test.ts siblings, so glob the parent dir rather than name one file.
+FILES="$FILES $(cd .. && ls cli*.test.ts | sed 's#^#../#' | sort)"
 NFILES=$(echo "$FILES" | wc -w | tr -d ' ')
 
 for f in $FILES; do
