@@ -1,5 +1,6 @@
 import type { ToolOperations } from "../../auth/service";
 import type { KnowledgeAccess } from "../../knowledge/transport";
+import { indexProfile } from "../../knowledge/transport.indexProfile";
 import { availability } from "./availability";
 import { V3_CATALOGUE } from "./catalogue";
 import { CompatError } from "./compat-error";
@@ -53,7 +54,14 @@ export async function dispatchLegacyV3(
   const kb = createKb({ spec, bank: ops.bank, authority: ops.authority, access });
   let result: unknown;
   try {
-    result = await V3_HANDLERS[name]!(input, { tool: name, bank: ops.bank, kb, assertedPeer: ops.assertedPeer, authority: ops.authority });
+    result = await V3_HANDLERS[name]!(input, {
+      tool: name,
+      bank: ops.bank,
+      kb,
+      assertedPeer: ops.assertedPeer,
+      authority: ops.authority,
+      indexProfile: access?.indexProfile ?? indexProfile({}),
+    });
   } catch (error) {
     if (error instanceof CompatError) throw error;
     if (isEnvelope(error)) throw fromKernel(name, error);
