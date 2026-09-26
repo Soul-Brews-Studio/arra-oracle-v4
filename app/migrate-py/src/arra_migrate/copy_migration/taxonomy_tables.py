@@ -3,9 +3,28 @@
 Legacy vocabularies carry no policy columns, so every one is backfilled with
 the ruled policy: ``cardinality: many``, ``required: false``, ``hierarchy: flat``.
 
+FLAT means no parents. The kernel reads a non-null stored ``parent_id`` in a
+flat vocabulary as corruption (taxonomy-write-v1 ``reparentTerm``;
+``service.reparentTerm.ts``: ``integrity_failure``, and no API can repair it),
+so a legacy ``terms.parent_id`` is NEVER stored: the term migrates with
+``parent_id`` NULL and the legacy parent is a ``terms.parent_id`` pointer
+record (``unresolved`` / ``parent_dropped_flat_hierarchy``) naming the legacy
+and the mapped target id. The source keeps it. This invariant spans rows, so
+the per-row codecs cannot see it; ``verify.taxonomy_problems`` checks it.
+
 Names the target reserves are refused per record, not merged:
   - ``type`` / ``memory_horizon`` belong to the kernel's reserved seed;
   - ``legacy_type`` belongs to the R11 tag vocabulary this migration creates.
+
+Vocabulary and term names follow the kernel's write grammar
+(``taxonomy.requireName.ts``: nonempty, at most 256 UTF-8 bytes). The stored-row
+codec does not re-check the bound, so a longer legacy name is rejected HERE
+rather than written as a row the kernel could never have produced.
+
+A legacy vocabulary named like an R18 D2 adapter vocabulary (``concepts``,
+``project``) is copied with its own policy -- loosening a sealed vocabulary is
+not ruled -- but a policy the v3 adapter cannot use (it creates terms on
+demand, which R6 refuses in a sealed vocabulary) is flagged on its record.
 
 A term whose vocabulary did not migrate is UNRESOLVED with a record -- the
 old rehearsal raised ``KeyError`` there and left a partial target.
@@ -26,11 +45,20 @@ RESERVED_VOCABULARY_NAMES = ("type", "memory_horizon")
 LEGACY_TYPE_VOCABULARY = "legacy_type"
 #: R17, docs/overnight/DECISIONS.md.
 LEGACY_VOCABULARY_POLICY = {"cardinality": "many", "required": False, "hierarchy": "flat"}
+#: taxonomy.requireName.ts: the kernel's bound on a vocabulary or term name.
+MAX_NAME_BYTES = 256
+#: R18 D2 (docs/overnight/V3-PARITY.md A4): the v3 adapter's own vocabularies, open.
+ADAPTER_VOCABULARY_NAMES = ("concepts", "project")
+
+
+def name_too_long(name: str) -> bool:
+    return len(name.encode("utf-8")) > MAX_NAME_BYTES
 
 
 def copy_vocabularies(rows: list[Row], state: CopyState) -> list[Row]:
     out = []
     seen: set[tuple[str, str]] = set()
+    state.report.policies["adapter_vocabulary_policy_mismatch"] += 0
     for row in rows:
         ws, key, name = row["workspace_name"], row["id"], row["name"]
         if ws not in state.workspaces:
@@ -53,6 +81,10 @@ def copy_vocabularies(rows: list[Row], state: CopyState) -> list[Row]:
         if not name or not row["label"]:
             state.rejected("vocabularies", key, ws, "invalid_value", "/name" if not name else "/label")
             continue
+        if name_too_long(name):
+            state.rejected("vocabularies", key, ws, "limit_exceeded", "/name",
+                           detail=f"name is {len(name.encode('utf-8'))} UTF-8 bytes; the kernel allows {MAX_NAME_BYTES}")
+            continue
         bad = first_sub_ms(row, ("created_at",))
         if bad is not None:
             state.rejected("vocabularies", key, ws, "sub_millisecond_timestamp", "/created_at")
@@ -67,7 +99,12 @@ def copy_vocabularies(rows: list[Row], state: CopyState) -> list[Row]:
             continue
         seen.add((ws, name))
         state.vocabularies[key] = {"workspace": ws, "id": target, "name": name}
-        state.migrated("vocabularies", key, ws, target, detail="R17 policy many/optional/flat")
+        detail = "R17 policy many/optional/flat"
+        if name in ADAPTER_VOCABULARY_NAMES and row["term_policy"] != "open":
+            state.report.policies["adapter_vocabulary_policy_mismatch"] += 1
+            detail += (f"; R18 D2: the v3 adapter expects {name!r} open, legacy term_policy="
+                       f"{row['term_policy']!r} kept -- its on-demand term creation will be refused (R6)")
+        state.migrated("vocabularies", key, ws, target, detail=detail)
         out.append({**row, "id": target, **LEGACY_VOCABULARY_POLICY})
     return out
 
@@ -75,6 +112,7 @@ def copy_vocabularies(rows: list[Row], state: CopyState) -> list[Row]:
 def copy_terms(rows: list[Row], state: CopyState) -> list[Row]:
     accepted: list[Row] = []
     seen: set[tuple[str, str]] = set()
+    state.report.policies["term_parent_dropped"] += 0
     for row in rows:
         key = row["id"]
         vocabulary = state.vocabularies.get(row["vocabulary_id"])
@@ -85,6 +123,10 @@ def copy_terms(rows: list[Row], state: CopyState) -> list[Row]:
         ws = vocabulary["workspace"]
         if not row["name"]:
             state.rejected("terms", key, ws, "invalid_value", "/name")
+            continue
+        if name_too_long(row["name"]):
+            state.rejected("terms", key, ws, "limit_exceeded", "/name",
+                           detail=f"name is {len(row['name'].encode('utf-8'))} UTF-8 bytes; the kernel allows {MAX_NAME_BYTES}")
             continue
         if not isinstance(row["weight"], float) or not math.isfinite(row["weight"]):
             state.rejected("terms", key, ws, "invalid_value", "/weight")
@@ -111,19 +153,23 @@ def copy_terms(rows: list[Row], state: CopyState) -> list[Row]:
     for row in accepted:
         term = state.terms[row["id"]]
         parent = row["parent_id"]
-        mapped_parent = None
         if parent is not None:
+            # Every migrated vocabulary is flat (R17): no parent is ever stored.
+            state.report.policies["term_parent_dropped"] += 1
             candidate = state.terms.get(parent)
-            same_scope = candidate is not None and candidate["vocabulary_id"] == term["vocabulary_id"]
-            mapped_parent = candidate["id"] if same_scope else None
-            state.pointer("terms.parent_id", row["id"], term["workspace"], same_scope,
-                          code="parent_unresolved",
-                          detail="parent retained under the R17 flat policy" if same_scope
-                          else f"legacy parent_id={parent!r} did not migrate into this vocabulary")
+            if candidate is not None and candidate["vocabulary_id"] == term["vocabulary_id"]:
+                state.pointer("terms.parent_id", row["id"], term["workspace"], False,
+                              code="parent_dropped_flat_hierarchy",
+                              detail=f"legacy parent_id={parent!r} (target {candidate['id']!r}) not stored: "
+                                     "R17 hierarchy flat, and the kernel refuses a stored parent there")
+            else:
+                state.pointer("terms.parent_id", row["id"], term["workspace"], False,
+                              code="parent_unresolved",
+                              detail=f"legacy parent_id={parent!r} did not migrate into this vocabulary")
         state.migrated("terms", row["id"], term["workspace"], term["id"])
         out.append({
             "id": term["id"], "workspace_name": term["workspace"], "vocabulary_id": term["vocabulary_id"],
-            "name": row["name"], "description": row["description"], "parent_id": mapped_parent,
+            "name": row["name"], "description": row["description"], "parent_id": None,
             "weight": row["weight"], "is_active": True, "h_metadata": row["h_metadata"],
             "created_at": row["created_at"],
         })

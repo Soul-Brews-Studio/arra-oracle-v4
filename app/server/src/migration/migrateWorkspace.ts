@@ -13,7 +13,9 @@ import { seedWorkspaceTaxonomy } from "./seedWorkspaceTaxonomy";
  *
  * Supersession runs after EVERY memory is published, because a successor must
  * already be an accepted head to be pinned. Every planned memory and event
- * gets exactly one line, even when an earlier step was refused.
+ * gets exactly one line, even when an earlier step was refused. A refused
+ * reserved seed blocks the workspace (no memory can carry its `type` term);
+ * a refused R11 tag blocks only the memories that carry it.
  */
 export async function migrateWorkspace(
   bundle: EvidenceWriterBundle,
@@ -24,8 +26,8 @@ export async function migrateWorkspace(
   emit: Emit,
 ): Promise<void> {
   const ws = workspace.workspace_name;
-  const seeded = await seedWorkspaceTaxonomy(bundle, controls, intakeMs, workspace, emit);
-  if (!seeded) {
+  const unavailableTags = await seedWorkspaceTaxonomy(bundle, controls, intakeMs, workspace, emit);
+  if (unavailableTags === null) {
     for (const memory of workspace.memories) {
       emit({ kind: "memory", workspace: ws, legacy_id: memory.legacy_id, outcome: "error", code: "taxonomy_unavailable", path: "" });
     }
@@ -36,6 +38,11 @@ export async function migrateWorkspace(
   }
 
   for (const memory of workspace.memories) {
+    if (memory.legacy_type_tag !== null && unavailableTags.has(memory.legacy_type_tag)) {
+      emit({ kind: "memory", workspace: ws, legacy_id: memory.legacy_id, outcome: "error",
+             code: "legacy_type_term_unavailable", path: "/type" });
+      continue;
+    }
     if (await publishPlannedMemory(bundle, controls, workspace, memory, emit)) published.add(memory.legacy_id);
   }
   for (const memory of workspace.memories) {

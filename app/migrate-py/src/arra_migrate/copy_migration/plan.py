@@ -9,7 +9,10 @@ Per memory (ruling R11 + R17, docs/overnight/DECISIONS.md):
     first revision id: deterministic from the legacy id (ids.py);
   - ``type``: an EXACT reserved term (note, conclusion, learning, discussion,
     correction) is kept; anything else becomes ``note`` and the original
-    string becomes a term in the workspace's ``legacy_type`` tag vocabulary;
+    string becomes a term in the workspace's ``legacy_type`` tag vocabulary.
+    A string that cannot BE a term name (over the kernel's 256-byte bound)
+    rejects that one memory (``legacy_type_unrepresentable``): R11 keeps the
+    original as a tag, and one bad row must never block its workspace;
   - ``memory_terms`` rows become the revision's term snapshot, which the
     kernel projects into ``node_revision_terms``;
   - ``traces.distilled_to`` pointing here becomes a ``derived_from`` link to
@@ -38,7 +41,7 @@ from .ids import IdCollision, legacy_node_id
 from .report import REPORT_VERSION
 from .state import CopyState
 from .tables import read_rows
-from .taxonomy_tables import LEGACY_TYPE_VOCABULARY
+from .taxonomy_tables import LEGACY_TYPE_VOCABULARY, MAX_NAME_BYTES
 from .timestamps import epoch_ms, first_sub_ms, iso_ms
 
 Row = dict[str, Any]
@@ -48,6 +51,9 @@ RESERVED_TYPE_TERMS = ("note", "conclusion", "learning", "discussion", "correcti
 HORIZON_TERMS = ("short_term", "long_term")
 #: R17: the target requires a reason; the legacy log allowed NULL.
 NULL_REASON = "legacy: reason not recorded"
+#: R11 tags are term names (taxonomy.requireName.ts). A module constant so a
+#: test can lift it and prove the kernel-side refusal is contained as well.
+LEGACY_TYPE_TAG_MAX_BYTES = MAX_NAME_BYTES
 OP = "arra-migrate-copy/v1"
 
 
@@ -130,6 +136,12 @@ def build_knowledge_plan(source_db: Any, state: CopyState, candidate_root: str) 
         if bad is not None:
             state.rejected("memories", key, ws, "sub_millisecond_timestamp", f"/{bad}",
                            detail=f"{row[bad].isoformat()} is not millisecond-exact; refusing to round")
+            continue
+        size = len((row["type"] or "").encode("utf-8"))
+        if row["type"] not in RESERVED_TYPE_TERMS and size > LEGACY_TYPE_TAG_MAX_BYTES:
+            state.rejected("memories", key, ws, "legacy_type_unrepresentable", "/type",
+                           detail=f"R11 keeps a non-reserved type as a legacy_type tag term; this one is "
+                                  f"{size} UTF-8 bytes and a term name allows {LEGACY_TYPE_TAG_MAX_BYTES}")
             continue
         try:
             node_id = state.ids.assign_fixed("nodes", ws, key, legacy_node_id(ws, key), "arra-legacy-node/v1 (R18 D1)")

@@ -1,9 +1,12 @@
 """Launch the Bun knowledge worker with the orchestrator's held writer gate.
 
-The worker (``app/server/src/migration/worker.ts``) is an argument-array
-subprocess with a hard deadline and bounded output; it never runs through a
-shell. Its stdout is JSONL outcome lines (see ``results.py``); a nonzero exit
-or an unparsable line is a ``CopyMigrationFailed``, never a partial success.
+The worker (``app/server/src/migration/runMigrationWorker.ts``) is an
+argument-array subprocess with a deadline and bounded output; it never runs
+through a shell. The deadline defaults to ``DEADLINE_SECONDS`` and is the
+operator's to raise (``--worker-deadline-seconds``) for a large dataset. Its
+stdout is JSONL outcome lines (see ``results.py``); a nonzero exit, a timeout
+or an unparsable line is a ``CopyMigrationFailed``, never a partial success,
+and the orchestrator then discards every candidate table.
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ from typing import Any
 
 _HERE = Path(__file__).resolve()
 SERVER_DIR = _HERE.parents[4] / "server"
-WORKER_SCRIPT = SERVER_DIR / "src" / "migration" / "worker.ts"
+WORKER_SCRIPT = SERVER_DIR / "src" / "migration" / "runMigrationWorker.ts"
 DEADLINE_SECONDS = 600.0
 MAX_STDOUT_BYTES = 64 * 1024 * 1024
 
@@ -34,7 +37,8 @@ def resolve_bun(explicit: str | None) -> str:
     return bun
 
 
-def run_worker(candidate_root: Path, gate_fd: int, plan_path: Path, bun: str | None) -> list[dict[str, Any]]:
+def run_worker(candidate_root: Path, gate_fd: int, plan_path: Path, bun: str | None,
+               deadline_seconds: float = DEADLINE_SECONDS) -> list[dict[str, Any]]:
     argv = [
         sys.executable, "-m", "arra_migrate.copy_migration.adopt_gate", str(gate_fd), str(candidate_root), "--",
         resolve_bun(bun), "run", str(WORKER_SCRIPT), str(plan_path),
@@ -45,9 +49,10 @@ def run_worker(candidate_root: Path, gate_fd: int, plan_path: Path, bun: str | N
     env["PYTHONPATH"] = src + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     try:
         done = subprocess.run(argv, cwd=SERVER_DIR, env=env, pass_fds=(gate_fd,), capture_output=True,
-                              timeout=DEADLINE_SECONDS, check=False)
+                              timeout=deadline_seconds, check=False)
     except subprocess.TimeoutExpired as error:
-        raise CopyMigrationFailed(f"knowledge worker exceeded {DEADLINE_SECONDS}s") from error
+        raise CopyMigrationFailed(f"knowledge worker exceeded {deadline_seconds}s "
+                                  "(raise --worker-deadline-seconds for a large dataset)") from error
     if len(done.stdout) > MAX_STDOUT_BYTES:
         raise CopyMigrationFailed("knowledge worker output exceeded its cap")
     if done.returncode != 0:

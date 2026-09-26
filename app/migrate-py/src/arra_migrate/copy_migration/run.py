@@ -10,7 +10,10 @@
     6    knowledge plan   memories/memory_terms/supersede_log/distilled_to -> plan.json
     7    Bun worker       inherits the SAME held gate; publishes through the kernel,
                           reads every head back, runs every stored-row codec
-    8  confirm            re-hash the original source; schema + body checks
+         any failure in 4-7 drops every table this run created, still under the
+         gate, and re-raises: no half-written candidate is left to mount
+    8  confirm            re-hash the original source; schema, body and
+                          cross-row taxonomy checks
     9  report             <work>/report.json, records.jsonl, id_map.jsonl
 
 Operator-only. Nothing here is reachable over HTTP, MCP or ``app/cli.ts``, and
@@ -47,10 +50,10 @@ from .snapshot import (
     snapshot_source,
 )
 from .state import CopyState
-from .tables import copy_direct_tables, create_target_tables
+from .tables import copy_direct_tables, create_target_tables, discard_candidate
 from .timestamps import iso_ms, parse_intake
-from .verify import body_mismatches, candidate_schema_problems
-from .worker import CopyMigrationFailed, run_worker
+from .verify import body_mismatches, candidate_schema_problems, taxonomy_problems
+from .worker import DEADLINE_SECONDS, CopyMigrationFailed, run_worker
 
 
 def run_copy_migration(
@@ -60,6 +63,7 @@ def run_copy_migration(
     *,
     intake_at: str,
     bun: str | None = None,
+    worker_deadline_seconds: float = DEADLINE_SECONDS,
 ) -> dict[str, Any]:
     try:
         intake = parse_intake(intake_at)
@@ -75,22 +79,27 @@ def run_copy_migration(
 
     with writer_gate(cand) as gate_fd:
         candidate_db = lancedb.connect(str(cand))
-        create_target_tables(candidate_db)
-        copy_direct_tables(source_db, candidate_db, state)
-        plan, pending = build_knowledge_plan(source_db, state, str(cand))
-        plan_path = wrk / "plan.json"
-        plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=1) + "\n", "utf-8")
-        lines = run_worker(cand, gate_fd, plan_path, bun)
-        readback = apply_worker_results(lines, pending, state)
+        try:
+            create_target_tables(candidate_db)
+            copy_direct_tables(source_db, candidate_db, state)
+            plan, pending = build_knowledge_plan(source_db, state, str(cand))
+            plan_path = wrk / "plan.json"
+            plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=1) + "\n", "utf-8")
+            lines = run_worker(cand, gate_fd, plan_path, bun, worker_deadline_seconds)
+            readback = apply_worker_results(lines, pending, state)
+        except BaseException:
+            discard_candidate(candidate_db)
+            raise
 
     source_state = confirm_untouched(snapshot)
     migrated = {r.legacy_key for r in report.records() if r.table == "memories" and r.outcome == "migrated"}
     schema_problems = candidate_schema_problems(cand)
     body_problems = body_mismatches(cand, plan, migrated)
+    taxonomy = taxonomy_problems(cand)
     tables = report.table_summary()
     conserved = report.conservation_ok()
     verified = (
-        conserved and source_state["untouched"] and not schema_problems and not body_problems
+        conserved and source_state["untouched"] and not schema_problems and not body_problems and not taxonomy
         and readback["worker_completed"] and readback["target_dataset_ok"] and not readback["codec_failures"]
         and readback["heads_ok"] == len(migrated) and not readback["heads_failed"]
         and not readback["projection_failures"]
@@ -100,12 +109,15 @@ def run_copy_migration(
         "intake_at": iso_ms(intake),
         "assumptions": [INTAKE_ASSUMPTION],
         "source": source_state,
-        "candidate": {"root": str(cand), "schema_problems": schema_problems, "body_problems": body_problems},
+        "candidate": {"root": str(cand), "schema_problems": schema_problems, "body_problems": body_problems,
+                      "taxonomy_problems": taxonomy},
         "tables": tables,
         "conservation_ok": conserved,
         "policies": {
-            "r11_type": "exact reserved type term kept; else note + original string as a legacy_type tag term",
-            "r17_vocabulary": "legacy vocabularies: cardinality many, required false, hierarchy flat",
+            "r11_type": "exact reserved type term kept; else note + original string as a legacy_type tag term; "
+                        "a string over the 256-byte term-name bound rejects that memory alone",
+            "r17_vocabulary": "legacy vocabularies: cardinality many, required false, hierarchy flat; "
+                              "flat keeps no parent, so every legacy terms.parent_id is dropped and recorded",
             "r17_null_reason": NULL_REASON,
             "trace_status_map": "raw->open (R17, corrected 22:00); distilled->complete and "
                                 "retired->abandoned are an IMPLEMENTER extension, not ruled; "
@@ -133,9 +145,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--work", required=True, help="absent or empty directory for snapshot and report")
     parser.add_argument("--intake-at", required=True, help="frozen migration intake time, YYYY-MM-DDTHH:MM:SS.sssZ")
     parser.add_argument("--bun", default=None, help="bun executable (default: $ARRA_BUN or PATH)")
+    parser.add_argument("--worker-deadline-seconds", type=float, default=DEADLINE_SECONDS,
+                        help=f"hard cap on the Bun knowledge phase (default {DEADLINE_SECONDS:g})")
     args = parser.parse_args(argv)
     try:
-        document = run_copy_migration(args.source, args.candidate, args.work, intake_at=args.intake_at, bun=args.bun)
+        document = run_copy_migration(args.source, args.candidate, args.work, intake_at=args.intake_at,
+                                      bun=args.bun, worker_deadline_seconds=args.worker_deadline_seconds)
     except CopyMigrationRefused as error:
         print(json.dumps({"refused": error.code, "message": str(error)}), file=sys.stderr)
         return 2

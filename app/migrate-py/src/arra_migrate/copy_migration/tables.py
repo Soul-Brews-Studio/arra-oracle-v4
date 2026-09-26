@@ -63,6 +63,22 @@ def create_target_tables(candidate_db: Any) -> None:
         candidate_db.create_table(name, schema=TARGET_TABLES[name])
 
 
+def discard_candidate(candidate_db: Any) -> None:
+    """A failed run leaves NO table behind.
+
+    A half-written candidate still has the 19-table SHAPE, which is all
+    ``assertTargetDataset`` checks, so it could be mounted by mistake. Every
+    table in the candidate is this run's own: preflight proved the directory
+    empty (bar the gate's lock file) and the caller still holds the writer
+    gate, so nobody else can have written one. Only target table names are
+    dropped; the lock file stays with the gate.
+    """
+
+    for name in candidate_db.table_names(limit=1000):
+        if name in TARGET_TABLE_NAMES:
+            candidate_db.drop_table(name)
+
+
 def read_rows(source_db: Any, name: str) -> list[Row]:
     return source_db.open_table(name).to_arrow().to_pylist()
 

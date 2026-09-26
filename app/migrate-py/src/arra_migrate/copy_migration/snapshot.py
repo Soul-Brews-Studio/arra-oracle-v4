@@ -7,7 +7,10 @@ Everything here runs BEFORE any byte is written anywhere:
   - the source must be an existing local directory holding all 15 legacy
     tables;
   - the candidate must be an EXISTING, EMPTY directory (no overwrite, no reset
-    option: revision-publication-v1.md "No migration overwrite/reset option");
+    option: revision-publication-v1.md "No migration overwrite/reset option").
+    The one entry tolerated is the writer gate's own lock file, which a failed
+    run leaves behind (the gate never deletes a lock) after discarding every
+    table it created; a live holder of that lock still refuses the run;
   - the work directory must be absent or empty, and none of the three may
     nest inside another.
 
@@ -28,6 +31,7 @@ from typing import Any
 import lancedb
 
 from ..models import TABLES as ACTIVE_TABLES
+from ..writer_gate import LOCK_FILENAME
 
 
 class CopyMigrationRefused(RuntimeError):
@@ -61,7 +65,7 @@ def preflight(source: Any, candidate: Any, work: Any) -> tuple[Path, Path, Path]
         raise CopyMigrationRefused("source_missing", f"source {src} is not a directory")
     if not cand.is_dir():
         raise CopyMigrationRefused("candidate_missing", f"candidate {cand} must be an existing empty directory")
-    if any(cand.iterdir()):
+    if any(p.name != LOCK_FILENAME or p.is_symlink() or not p.is_file() for p in cand.iterdir()):
         raise CopyMigrationRefused("candidate_not_empty", f"candidate {cand} is not empty; refusing to overwrite")
     if wrk.exists() and (not wrk.is_dir() or any(wrk.iterdir())):
         raise CopyMigrationRefused("work_not_empty", f"work directory {wrk} must be absent or empty")

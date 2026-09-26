@@ -3,7 +3,7 @@
  *
  *   python -m arra_migrate.copy_migration  (holds writer_gate(candidate))
  *     -> adopt_gate: the SAME held descriptor becomes fd 42
- *       -> bun run src/migration/worker.ts <plan.json>
+ *       -> bun run src/migration/runMigrationWorker.ts <plan.json>
  *
  * Not imported by any route, MCP tool or `app/cli.ts`, and not reachable from
  * the composition root. It opens the evidence writer bundle on the candidate
@@ -15,13 +15,24 @@
  */
 
 import { readFileSync } from "node:fs";
+import { type BoundaryHook } from "../publication/service.boundaries";
 import { openEvidenceWriter } from "../publication/service.openEvidenceWriter";
 import { checkStoredRows } from "./checkStoredRows";
 import { migrateWorkspace } from "./migrateWorkspace";
 import { type Emit, type MigrationPlan, type WorkerControls } from "./plan.types";
 import { readBackNodes } from "./readBackNodes";
 
-export async function runMigrationWorker(planPath: string, env: NodeJS.ProcessEnv, emit: Emit): Promise<void> {
+/**
+ * `hooks` is never set by the entry below: it exists so an owned test child
+ * can crash this REAL worker at a chosen kernel boundary (the crash lane in
+ * app/migrate-py/tests/test_copy_migration_faults.py).
+ */
+export async function runMigrationWorker(
+  planPath: string,
+  env: NodeJS.ProcessEnv,
+  emit: Emit,
+  hooks: { onBoundary?: BoundaryHook } = {},
+): Promise<void> {
   const plan = JSON.parse(readFileSync(planPath, "utf-8")) as MigrationPlan;
   if (plan.version !== "arra-migrate-copy/plan-v1") throw new Error(`unsupported plan version ${String(plan.version)}`);
 
@@ -37,6 +48,7 @@ export async function runMigrationWorker(planPath: string, env: NodeJS.ProcessEn
     // Local-only intake: migrated messages are source-less legacy rows.
     sourceNamespace: null,
     env,
+    onBoundary: hooks.onBoundary,
   });
   const published = new Set<string>();
   try {
@@ -54,7 +66,7 @@ export async function runMigrationWorker(planPath: string, env: NodeJS.ProcessEn
 if (import.meta.main) {
   const planPath = process.argv[2];
   if (!planPath) {
-    console.error("usage: bun run src/migration/worker.ts <plan.json>");
+    console.error("usage: bun run src/migration/runMigrationWorker.ts <plan.json>");
     process.exit(2);
   }
   const lines: string[] = [];

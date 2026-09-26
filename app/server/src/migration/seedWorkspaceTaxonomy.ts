@@ -14,9 +14,13 @@ import { requestBytes } from "./requestBytes";
  *      and one term per distinct original string.
  *
  * Taxonomy rows are stamped at the migration intake time: they are created BY
- * the migration and have no legacy time of their own. Returns false when any
- * step was refused, so the caller publishes nothing into a half-seeded
- * workspace (each memory is then reported rejected, not silently skipped).
+ * the migration and have no legacy time of their own.
+ *
+ * Returns `null` when the reserved seed was refused: no memory in the
+ * workspace can be published. Otherwise returns the R11 tag names that are
+ * NOT available (every tag when the vocabulary itself was refused), so the
+ * caller rejects only the memories that carry one. One refused tag is its
+ * memories' problem, never the whole workspace's.
  */
 export async function seedWorkspaceTaxonomy(
   bundle: EvidenceWriterBundle,
@@ -24,7 +28,7 @@ export async function seedWorkspaceTaxonomy(
   intakeMs: number,
   workspace: PlannedWorkspace,
   emit: Emit,
-): Promise<boolean> {
+): Promise<Set<string> | null> {
   const ws = workspace.workspace_name;
   controls.now = intakeMs;
   const step = async (name: string, run: () => Promise<{ outcome: string }>) => {
@@ -44,10 +48,11 @@ export async function seedWorkspaceTaxonomy(
       type: workspace.seed.type,
       memory_horizon: workspace.seed.memory_horizon,
     })));
-  if (!seeded) return false;
+  if (!seeded) return null;
 
+  const unavailable = new Set<string>();
   const vocabulary = workspace.legacy_type_vocabulary;
-  if (vocabulary === null) return true;
+  if (vocabulary === null) return unavailable;
   const created = await step("legacy_type_vocabulary", () =>
     bundle.taxonomy.createVocabulary(requestBytes({
       workspace_name: ws,
@@ -61,11 +66,10 @@ export async function seedWorkspaceTaxonomy(
       required: false,
       hierarchy: "flat",
     })));
-  if (!created) return false;
+  if (!created) return new Set(workspace.legacy_type_terms.map((term) => term.name));
 
-  let ok = true;
   for (const term of workspace.legacy_type_terms) {
-    ok = (await step(`legacy_type_term:${term.name}`, () =>
+    const ok = await step(`legacy_type_term:${term.name}`, () =>
       bundle.taxonomy.createTerm(requestBytes({
         workspace_name: ws,
         term_id: term.term_id,
@@ -73,7 +77,8 @@ export async function seedWorkspaceTaxonomy(
         name: term.name,
         description: null,
         parent_id: null,
-      })))) && ok;
+      })));
+    if (!ok) unavailable.add(term.name);
   }
-  return ok;
+  return unavailable;
 }
