@@ -359,6 +359,31 @@ class ExporterLimitPreChecksTests(unittest.TestCase):
             _message_payload(msg)
 
 
+class MessagePayloadDoesNotMutateCallerMetadataTests(unittest.TestCase):
+    """2026-09-26 fix-round finding: `bundle._parse_json_metadata` returned a
+    dict-shaped `h_metadata`/`configuration` value BY REFERENCE (`if
+    isinstance(raw, dict): return raw`), and `_message_payload` then wrote
+    `FOLD_KEY` into that SAME dict object when folding role/in_reply_to/read/
+    read_at -- exporting a bundle silently mutated the caller's own input
+    row. `dump.dump_tier1` always reads `h_metadata` as a JSON STRING (a
+    LanceDB column), so this never fired through that path -- only a
+    hand-built or in-memory `Tier1Bundle` with dict-shaped metadata (a form
+    `_parse_json_metadata`'s own docstring says it accepts) hits it. Probe:
+    exporting a message with `h_metadata={"note": "kept"}` (a dict) and one
+    folded field left the caller's dict holding `{"note": "kept", "_v4":
+    {...}}` afterwards."""
+
+    def test_message_payload_does_not_mutate_a_dict_shaped_h_metadata(self) -> None:
+        original = {"note": "kept"}
+        msg = _single_message_bundle(h_metadata=original, role="question").messages[0]
+
+        payload = _message_payload(msg)
+
+        self.assertEqual(payload["metadata"], {"note": "kept", "_v4": {"role": "question"}})
+        self.assertEqual(msg["h_metadata"], {"note": "kept"}, msg["h_metadata"])
+        self.assertNotIn("_v4", msg["h_metadata"])
+
+
 def _bundle_with_n_messages(n: int) -> Tier1Bundle:
     """One workspace/peer/session, *n* messages in seq order -- for exercising
     `export_to_honcho`'s MESSAGE_BATCH_MAX chunking for real."""

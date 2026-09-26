@@ -12,7 +12,28 @@ from __future__ import annotations
 
 import unittest
 
-from arra_migrate.honcho_roundtrip.pin import NotALoopbackTargetError, require_loopback_url
+from arra_migrate.honcho_roundtrip.pin import HONCHO_V3_2_0, NotALoopbackTargetError, require_loopback_url
+
+
+class PinEnvIsValidForPinnedHonchoTests(unittest.TestCase):
+    """analysis-8 test #8 / 2026-09-26 fix-round finding: nothing pinned
+    `HONCHO_V3_2_0.env`'s two LLM-avoidance settings with a test of its own.
+    `pin.py`'s own module comment explains why each matters and what an
+    earlier, wrong version of this pin got wrong -- these tests are that
+    comment, enforced: `DERIVER_WORKERS=0` fails Honcho's own `WORKERS:
+    Field(..., gt=0)` at `AppSettings()` import time (the api container would
+    never boot), and `EMBED_MESSAGES` defaulting back to its ON default would
+    make a boot with no embedding credential try to reach an external
+    provider on every message create."""
+
+    def test_deriver_is_disabled_the_correct_way(self) -> None:
+        self.assertEqual(HONCHO_V3_2_0.env.get("DERIVER_ENABLED"), "false")
+        # NOT DERIVER_WORKERS=0 -- see pin.py's own comment on why that
+        # specific, earlier wrong value fails the container at boot.
+        self.assertNotIn("DERIVER_WORKERS", HONCHO_V3_2_0.env)
+
+    def test_background_embedding_is_disabled(self) -> None:
+        self.assertEqual(HONCHO_V3_2_0.env.get("EMBED_MESSAGES"), "false")
 
 
 class RequireLoopbackUrlTests(unittest.TestCase):

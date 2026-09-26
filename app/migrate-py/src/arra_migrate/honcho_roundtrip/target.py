@@ -7,16 +7,25 @@ Honcho v3.2.0 (``pin.HONCHO_V3_2_0``), read directly from
 below is transcribed from that source, not guessed. It is the "live leg": it
 does nothing until pointed at a real, running instance.
 
-Known, undone gap in this class specifically (not carried by the Fake, which
-does not paginate at all): every ``.../list`` and ``GET .../peers`` route
-returns a ``fastapi_pagination`` ``Page``, and this client reads only
-``page["items"]`` -- a workspace with more members/messages than one page
-returns an incomplete list (measured, issue #8 repro G: a 120-item page of
-size 50 came back as 50). Fixing this needs the exact ``page``/``size`` query
-contract confirmed against a live instance, which this session does not have;
-guessing it would violate this class's own no-guessing rule above. Left as a
-documented gap, not a silent one -- see the round-trip test module's live-leg
-skip message.
+2026-09-26 fix-round finding, issue #8 repro G: every ``.../list`` and ``GET
+.../peers`` route returns a ``fastapi_pagination`` ``Page``, and this client
+used to read only the first page's ``items`` -- a workspace with more
+members/messages than one page came back truncated (measured: a 120-item
+page of size 50 came back as 50). Fixed by ``_paginate_all`` below, which
+loops ``page=1,2,...`` at ``size=_PAGE_SIZE`` until ``Page.pages`` (or, if
+that key is ever absent, a short page) says there is no more -- the query
+contract (``page``/``size`` params, ``items``/``total``/``page``/``size``/
+``pages`` response fields, default ``size=50`` capped at 100) is
+``fastapi_pagination.Params``/``Page``'s OWN default shape at the version
+this repo pins (``fastapi-pagination==0.15.12``, per the pinned commit's own
+``uv.lock``), confirmed by reading ``src/routers/messages.py`` at
+``pin.HONCHO_V3_2_0.commit_sha`` (``get_messages`` calls bare
+``apaginate(db, messages_query)`` with no explicit ``Params`` override, so
+the app-wide default from ``add_pagination`` applies) -- not guessed, and not
+yet exercised against a REAL Honcho process (only a loopback stub server; see
+``test_honcho_roundtrip.py``'s ``HttpTargetPaginationTests``), which is why
+the round-trip test module's live-leg skip message still applies to this
+class as a whole.
 
 ``FakeHonchoTarget`` is NOT a mock of convenience -- it encodes the specific,
 verified behaviours of that same schema that make the round trip lossy, ALL
@@ -116,6 +125,12 @@ class HonchoTarget(Protocol):
     def list_messages(self, workspace_id: str, session_id: str) -> list[dict[str, Any]]: ...
 
 
+# fastapi_pagination.Params' own default cap (`size: int = Query(50, ge=1,
+# le=100)` at 0.15.12) -- requesting the max page size minimises round trips
+# without exceeding what the server will accept.
+_PAGE_SIZE = 100
+
+
 class HttpHonchoTarget:
     """Real HTTP client for a running Honcho instance. Untested against a
     live server in this session -- see the round-trip test module for why.
@@ -125,15 +140,43 @@ class HttpHonchoTarget:
         self._base = base_url.rstrip("/") + "/v3"  # src/main.py: every router mounted under /v3
         self._timeout = timeout_s
 
-    def _post(self, path: str, body: Any) -> Any:
-        resp = requests.post(f"{self._base}{path}", json=body, timeout=self._timeout)
+    def _post(self, path: str, body: Any, *, params: dict[str, Any] | None = None) -> Any:
+        resp = requests.post(f"{self._base}{path}", json=body, params=params, timeout=self._timeout)
         resp.raise_for_status()
         return resp.json()
 
-    def _get(self, path: str) -> Any:
-        resp = requests.get(f"{self._base}{path}", timeout=self._timeout)
+    def _get(self, path: str, *, params: dict[str, Any] | None = None) -> Any:
+        resp = requests.get(f"{self._base}{path}", params=params, timeout=self._timeout)
         resp.raise_for_status()
         return resp.json()
+
+    @staticmethod
+    def _paginate_all(fetch_page: Any) -> list[dict[str, Any]]:
+        """*fetch_page(page_num)* returns one raw ``Page[...]`` dict (1-indexed,
+        ``_PAGE_SIZE`` per page) -- collect every item across every page. See
+        this class's own docstring (issue #8 repro G) for the query contract
+        this assumes and where it was confirmed, not guessed."""
+
+        items: list[dict[str, Any]] = []
+        page_num = 1
+        while True:
+            page = fetch_page(page_num)
+            page_items = page["items"]
+            items.extend(page_items)
+            if not page_items:
+                break
+            total_pages = page.get("pages")
+            if total_pages is not None:
+                if page_num >= total_pages:
+                    break
+            elif len(page_items) < _PAGE_SIZE:
+                # Defensive fallback only -- a `Page` response missing `pages`
+                # would be a change to fastapi_pagination's own default shape
+                # this class has not observed; a short page is still reliable
+                # proof there is nothing left to fetch.
+                break
+            page_num += 1
+        return items
 
     # routers/workspaces.py: POST /workspaces, body=WorkspaceCreate{id,metadata,configuration}
     def create_workspace(self, workspace_id: str, metadata: dict[str, Any], configuration: dict[str, Any]) -> dict[str, Any]:
@@ -154,11 +197,12 @@ class HttpHonchoTarget:
     def create_session(self, workspace_id: str, session_id: str, metadata: dict[str, Any], configuration: dict[str, Any]) -> dict[str, Any]:
         return self._post(f"/workspaces/{workspace_id}/sessions", {"id": session_id, "metadata": metadata, "configuration": configuration})
 
-    # POST .../sessions/list -> Page[Session]. See the class docstring: first
-    # page only.
+    # POST .../sessions/list -> Page[Session]. Every page (see _paginate_all
+    # and the class docstring, issue #8 repro G).
     def list_sessions(self, workspace_id: str) -> list[dict[str, Any]]:
-        page = self._post(f"/workspaces/{workspace_id}/sessions/list", None)
-        return page["items"]
+        return self._paginate_all(
+            lambda p: self._post(f"/workspaces/{workspace_id}/sessions/list", None, params={"page": p, "size": _PAGE_SIZE})
+        )
 
     # POST /workspaces/{workspace_id}/sessions/{session_id}/peers, body=dict[peer_id, SessionPeerConfig]
     def add_session_peers(self, workspace_id: str, session_id: str, peers: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -168,20 +212,23 @@ class HttpHonchoTarget:
     def create_messages(self, workspace_id: str, session_id: str, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return self._post(f"/workspaces/{workspace_id}/sessions/{session_id}/messages", {"messages": messages})
 
-    # POST .../peers/list -> Page[Peer]
+    # POST .../peers/list -> Page[Peer]. Every page.
     def list_peers(self, workspace_id: str) -> list[dict[str, Any]]:
-        page = self._post(f"/workspaces/{workspace_id}/peers/list", None)
-        return page["items"]
+        return self._paginate_all(
+            lambda p: self._post(f"/workspaces/{workspace_id}/peers/list", None, params={"page": p, "size": _PAGE_SIZE})
+        )
 
-    # GET .../sessions/{session_id}/peers -> Page[Peer]
+    # GET .../sessions/{session_id}/peers -> Page[Peer]. Every page.
     def get_session_peers(self, workspace_id: str, session_id: str) -> list[dict[str, Any]]:
-        page = self._get(f"/workspaces/{workspace_id}/sessions/{session_id}/peers")
-        return page["items"]
+        return self._paginate_all(
+            lambda p: self._get(f"/workspaces/{workspace_id}/sessions/{session_id}/peers", params={"page": p, "size": _PAGE_SIZE})
+        )
 
-    # POST .../messages/list -> Page[Message]
+    # POST .../messages/list -> Page[Message]. Every page.
     def list_messages(self, workspace_id: str, session_id: str) -> list[dict[str, Any]]:
-        page = self._post(f"/workspaces/{workspace_id}/sessions/{session_id}/messages/list", None)
-        return page["items"]
+        return self._paginate_all(
+            lambda p: self._post(f"/workspaces/{workspace_id}/sessions/{session_id}/messages/list", None, params={"page": p, "size": _PAGE_SIZE})
+        )
 
 
 def _wire_roundtrip(payload: Any) -> Any:

@@ -102,12 +102,20 @@ LOSSY_INDEX: dict[tuple[str, str], LossyField] = {(f.table, f.field): f for f in
 # Entries that CANNOT be confirmed by inspecting an outgoing payload or a
 # round-trip diff against THIS harness's own fixtures, because the API has a
 # slot for the field (`configuration` IS sent) -- the loss is conditional on
-# the v4 payload using one of the four reserved sub-schema key names, which
-# `dump.build_spec_15_5_bank`'s workspace/session configuration deliberately
-# does not do (so the bank's own configuration values round-trip, which is
-# the common case, not the exception). A dedicated unit test exercises the
-# reserved-key-collision case directly instead of forcing it into the main
-# bank. Kept in a SEPARATE set, deliberately never merged into
+# the v4 payload using one of the four reserved sub-schema key names. As of
+# the 2026-09-26 fix round, `diff.diff_against_input` no longer treats this
+# whole column as unconditionally lossy either way (see `_normalized_
+# configuration`): it compares the INPUT, shaped through `apply_workspace_
+# configuration_shape` the same way stock Honcho would store it, against
+# Honcho's actual answer -- so even `dump.build_spec_15_5_bank`'s own
+# workspace configuration (`{"peer_card": {"max_tokens": 500}}`, a RESERVED
+# key with an undeclared sub-key -- this bank does NOT avoid the collision,
+# an earlier version of this comment wrongly claimed it did) round-trips with
+# no reported problem, because both sides of the comparison are shaped
+# identically. `WorkspaceConfigurationReservedKeyCollisionTests` (see the
+# diff test module) exercises the collision more pointedly, with an
+# `notes`-style extra key present too, to prove the two are told apart. Kept
+# in a SEPARATE set, deliberately never merged into
 # `lossy_fields_confirmed`, so a reader (and
 # `test_every_declared_lossy_field_is_actually_confirmed_not_just_asserted`)
 # can tell "measured against the shared bank" from "known from reading the
@@ -133,10 +141,21 @@ TARGET19_ONLY_MESSAGE_FIELDS = (
 
 
 def _parse_json_metadata(raw: Any) -> dict[str, Any]:
+    """Always a NEW dict, never the caller's own -- `_message_payload` (and
+    `_workspace_payload`/`_peer_payload`/`_session_payload`) mutate the
+    result in place (folding `FOLD_KEY` into a message's metadata, for
+    example). Before this fix, a `raw` that was already a `dict` (as opposed
+    to a JSON string -- both are valid `Tier1Bundle` shapes, see this
+    module's docstring) was returned BY REFERENCE, so exporting a bundle
+    silently wrote `_v4` back into the caller's own input row. `dump_tier1`
+    always reads `h_metadata` as a JSON string (LanceDB column type), so this
+    never fired there -- only a hand-built or in-memory `Tier1Bundle` with
+    dict-shaped metadata could hit it. 2026-09-26 fix-round finding."""
+
     if raw is None or raw == "":
         return {}
     if isinstance(raw, dict):
-        return raw
+        return dict(raw)
     return json.loads(raw)
 
 
