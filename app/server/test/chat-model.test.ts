@@ -20,7 +20,10 @@ import type { ChatContextItem } from "../src/publication/chat";
 import { startChatModelStub } from "./helpers/chat-model-stub";
 
 const stub = startChatModelStub("ok");
-afterAll(() => stub.stop());
+// The "hang" test leaves one request open until the client aborts it; a forced
+// stop can outlast bun's 5 s hook default on a loaded machine (it did once in
+// the overnight integration suite). The generous bound is for the hook only.
+afterAll(() => stub.stop(), 30_000);
 
 const item = (public_id: string, content: string, session_name = "main", peer_name = "peer-a"): ChatContextItem => ({
   public_id,
