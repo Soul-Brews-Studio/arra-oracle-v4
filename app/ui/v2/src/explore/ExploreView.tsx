@@ -231,6 +231,7 @@ export function ExploreView({
               row: evidence.association.row,
               loading: evidence.association.loading,
               error: evidence.association.error,
+              citedStatus: evidence.association.citedStatus,
             },
             dependents: {
               rows: evidence.dependents.rows,
@@ -238,6 +239,7 @@ export function ExploreView({
               error: evidence.dependents.error,
               hasMore: evidence.dependents.hasMore,
               onLoadMore: evidence.dependents.loadMore,
+              citingStatus: evidence.dependents.citingStatus,
             },
           }}
           config={{

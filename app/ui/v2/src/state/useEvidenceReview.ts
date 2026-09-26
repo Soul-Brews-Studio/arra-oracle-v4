@@ -37,7 +37,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type ApiResult } from "../api/client";
-import { type Bank, asError } from "../api/memory";
+import { type Bank } from "../api/memory";
 import {
   type AssociationResult,
   type DependentOccurrence,
@@ -67,17 +67,12 @@ import {
   supersedeNode,
   traceOf,
 } from "../api/evidenceReview";
+import { describeResult as describe } from "./describeResult";
+import { useEvidenceStatus } from "./useEvidenceStatus";
 
 const HITS_PAGE = 50;
 const LINKS_PAGE = 50;
 const LIFECYCLE_PAGE = 50;
-
-function describe(result: ApiResult): string {
-  if (result.error !== undefined) return result.error;
-  const envelope = asError(result.body);
-  if (envelope !== null) return String(envelope.code);
-  return `HTTP ${result.status}`;
-}
 
 export function useEvidenceReview(
   b: Bank,
@@ -364,6 +359,14 @@ export function useEvidenceReview(
   const [lifecycleActionError, setLifecycleActionError] = useState<string | null>(null);
   const [lifecycleActionOutcome, setLifecycleActionOutcome] = useState<LifecycleWriteOutcome | null>(null);
 
+  // Fix-round 2 finding: node A's retire/supersede outcome must not linger
+  // under node B (`DetailTabs` also remounts `LifecycleActions` per node, so
+  // a half-filled form cannot be confirmed against the next node either).
+  useEffect(() => {
+    setLifecycleActionOutcome(null);
+    setLifecycleActionError(null);
+  }, [nodeId, scope]);
+
   const applyLifecycleWrite = useCallback(
     async (result: ApiResult) => {
       setLifecycleActionBusy(false);
@@ -419,6 +422,9 @@ export function useEvidenceReview(
     [b, nodeId, peerName, applyLifecycleWrite],
   );
 
+  // #33 AC3: live status behind the stale/unavailable evidence labels.
+  const evidenceStatus = useEvidenceStatus(b, association, dependents);
+
   return {
     trace: {
       id: traceId,
@@ -465,6 +471,7 @@ export function useEvidenceReview(
       row: association,
       loading: associationLoading,
       error: associationError,
+      citedStatus: evidenceStatus.cited,
     },
     dependents: {
       rows: dependents,
@@ -472,6 +479,7 @@ export function useEvidenceReview(
       error: dependentsError,
       hasMore: dependentsNextCursor !== null,
       loadMore: () => void loadMoreDependents(),
+      citingStatus: evidenceStatus.citing,
     },
   };
 }

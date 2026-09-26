@@ -2,6 +2,7 @@ import { TYPE_TERMS, type TypeTerm } from "../api/knowledge";
 import type { NodeRow } from "../api/listing";
 import type { ChatAnswer, MessageRow as MessageRowType } from "../api/memory";
 import type { TaxonomyIds } from "../api/knowledge";
+import type { CitedRevisionStatus, CitingNodeStatus } from "../state/evidenceStatus.types";
 import type {
   AssociationResult,
   DependentOccurrence,
@@ -122,6 +123,7 @@ export function DetailTabs(props: {
       row: AssociationResult | null;
       loading: boolean;
       error: string | null;
+      citedStatus: ReadonlyMap<string, CitedRevisionStatus>;
     };
     dependents: {
       rows: DependentOccurrence[];
@@ -129,6 +131,7 @@ export function DetailTabs(props: {
       error: string | null;
       hasMore: boolean;
       onLoadMore: () => void;
+      citingStatus: ReadonlyMap<string, CitingNodeStatus>;
     };
   };
   config: {
@@ -257,6 +260,7 @@ export function DetailTabs(props: {
             row={props.evidence.association.row}
             loading={props.evidence.association.loading}
             error={props.evidence.association.error}
+            citedStatus={props.evidence.association.citedStatus}
           />
           <DependentsPanel
             rows={props.evidence.dependents.rows}
@@ -264,6 +268,7 @@ export function DetailTabs(props: {
             error={props.evidence.dependents.error}
             hasMore={props.evidence.dependents.hasMore}
             onLoadMore={props.evidence.dependents.onLoadMore}
+            citingStatus={props.evidence.dependents.citingStatus}
           />
           <LifecyclePanel
             nodeId={props.evidence.nodeId}
@@ -273,7 +278,10 @@ export function DetailTabs(props: {
             loading={props.evidence.lifecycle.loading}
             error={props.evidence.lifecycle.error}
           />
+          {/* Keyed by node: a retire/supersede form opened (and half filled)
+              on node A must not survive into node B and be confirmed there. */}
           <LifecycleActions
+            key={props.evidence.nodeId ?? "none"}
             nodeId={props.evidence.nodeId}
             expectedRevisionId={props.evidence.headRevisionId}
             busy={props.evidence.lifecycleActions.busy}

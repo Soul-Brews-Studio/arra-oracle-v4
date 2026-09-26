@@ -1,13 +1,24 @@
 import type { DependentOccurrence } from "../api/evidenceReview";
+import type { CitingNodeStatus } from "../state/evidenceStatus.types";
+import { reverseEvidenceLabels } from "../state/reverseEvidenceLabels";
 import { EmptyState } from "./EmptyState";
+import { EvidenceBadges } from "./EvidenceBadges";
 
 /** One occurrence: some OTHER node's revision links to the revision this
  *  panel is showing dependents for. `is_snapshot_head` tells whether that
  *  citing revision is itself still the citing node's current head, or a
  *  historical one -- `revision_mode: "current"` (see `api/evidenceReview.ts`)
  *  means every occurrence here has it `true`, kept in the row anyway because
- *  it is part of the contract's exact occurrence shape. */
-function OccurrenceRow({ occurrence }: { occurrence: DependentOccurrence }) {
+ *  it is part of the contract's exact occurrence shape. Its status badges
+ *  (`reverseEvidenceLabels`, fix-round 2, #33 AC3) show the citing link's
+ *  `capture_status` and whether the citing node is still recall-eligible. */
+function OccurrenceRow({
+  occurrence,
+  citingStatus,
+}: {
+  occurrence: DependentOccurrence;
+  citingStatus: ReadonlyMap<string, CitingNodeStatus>;
+}) {
   return (
     <li className="flex flex-col gap-0.5 rounded border border-edge px-2 py-1.5 text-[11px]">
       <div className="flex items-center gap-2">
@@ -20,6 +31,7 @@ function OccurrenceRow({ occurrence }: { occurrence: DependentOccurrence }) {
         <span className="rounded border border-edge px-1 font-mono text-[10px]">{occurrence.link.target_kind}</span>
         <span>{occurrence.link.relation}</span>
       </div>
+      <EvidenceBadges labels={reverseEvidenceLabels(occurrence, citingStatus)} />
     </li>
   );
 }
@@ -35,12 +47,14 @@ export function DependentsPanel({
   error,
   hasMore,
   onLoadMore,
+  citingStatus,
 }: {
   rows: DependentOccurrence[];
   loading: boolean;
   error: string | null;
   hasMore: boolean;
   onLoadMore: () => void;
+  citingStatus: ReadonlyMap<string, CitingNodeStatus>;
 }) {
   return (
     <section className="flex flex-col gap-2 border-b border-edge p-3">
@@ -55,7 +69,11 @@ export function DependentsPanel({
       ) : (
         <ul className="flex flex-col gap-1">
           {rows.map((o, i) => (
-            <OccurrenceRow key={`${o.node_id}:${o.revision_no}:${o.link.position}:${i}`} occurrence={o} />
+            <OccurrenceRow
+              key={`${o.node_id}:${o.revision_no}:${o.link.position}:${i}`}
+              occurrence={o}
+              citingStatus={citingStatus}
+            />
           ))}
         </ul>
       )}
