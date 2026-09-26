@@ -222,11 +222,17 @@ amendment).
 - The model digest is pinned per dataset outside the table, in
   `.embedding-profile-pins.json` (R20).
 
-**Timestamps split by tier.** Every table uses `timestamp[us]` except two:
-`traces.created_at`/`updated_at` and `mcp_calls.created_at` are `int64`
-(re-measured from `TARGET_SCHEMA`). That is inherited from v3's trace format, not
-a design choice made here, and it means a query joining a trace to a revision
-cannot compare the two time columns directly. The frozen contracts require
+**Timestamps split by tier.** Every time column is `timestamp[us]` (25
+columns) except five `int64` ones, all in two tables (re-measured by importing
+`TARGET_SCHEMA`):
+
+- `traces.session_from_ts`, `traces.session_to_ts`, `traces.created_at`,
+  `traces.updated_at`;
+- `mcp_calls.created_at`.
+
+That is inherited from v3's trace format, not a design choice made here, and it
+means a query joining a trace to a revision cannot compare the two time columns
+directly. The frozen contracts require
 stored `timestamp[us]` values to be millisecond-aligned: a sub-millisecond value
 fails closed rather than being truncated on read (for example
 `context-ingestion-v1.md:57`, `read-cursor-v1.md:30`). The case hit in practice
@@ -339,9 +345,17 @@ surfaces, with screenshots in `docs/overnight/UI-PROOF.md`:
 - traces;
 - chat with citations.
 
-A name scan of the UI's non-test source finds 35 of the 57 knowledge methods called. Still
+A name scan of the UI's non-test source (`git ls-files app/ui/v2/src`, 87 files, each of
+the 57 `KNOWLEDGE_METHOD_NAMES` matched as a whole word) finds 35 called. The other 22 are
 absent from the UI:
 
-- both knowledge searches;
-- the taxonomy writes other than seeding the reserved vocabularies;
-- the embed backfill and freshness methods.
+- search: `searchKnowledgeKeyword`, `searchKnowledgeSemantic`;
+- taxonomy, everything but seeding (`seedReservedVocabularies`), `getVocabulary` and
+  `getTerm`: `createVocabulary`, `createTerm`, `renameTerm`, `retireTerm`,
+  `reparentTerm`, `lookupVocabularyByName`, `lookupTermByName`, `listTerms`,
+  `listTermUsage`;
+- derived search index: `indexRevisionChunks`, `embedPendingChunks`,
+  `writeChunkEmbedding`, `reconcileSearchChunks`, `listSearchChunks`,
+  `getSearchFreshness`;
+- sessions: `listSessionMembers`, `closeSession`, `advanceReadCursor`;
+- `knowledgeStats`, `reconcileRevisionAssociations`.
