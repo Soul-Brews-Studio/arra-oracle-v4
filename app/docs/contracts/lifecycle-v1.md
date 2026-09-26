@@ -189,11 +189,14 @@ poisons.
   touched atomically with it.
 - No live dataset or retained-compatibility inspection beyond what the stored-row codec
   checks on read.
-- **Ownership, recovery and precision test lanes do not exist for this kernel.** Only
-  `lifecycle-service.test.ts` (core behavior) exists. Queue-exclusion-under-contention,
-  poison-both-directions, kill-after-write recovery, and an Int64/boundary precision sweep
-  are not covered by any test file today — this is a real, disclosed gap, not an oversight
-  glossed over.
+- **Ownership, recovery and precision test lanes exist**: `lifecycle-ownership.test.ts`,
+  `lifecycle-recovery.test.ts` and `lifecycle-precision.test.ts` cover queue-exclusion-under-
+  contention/poison-both-directions, kill-after-write recovery, and an Int64/boundary precision
+  sweep, respectively, alongside `lifecycle-service.test.ts`'s core behavior. *(Fix round 2
+  correction, 2026-09-26: this bullet previously said none of that coverage existed anywhere;
+  `.tmp/understand/analysis-29.json`'s fix plan B7 measured the claim false — all three files
+  predate this slice (`a9a6ed0`) — and §12's "Not changed here" line below had re-affirmed the
+  false claim instead of correcting it.)*
 
 ## 9. Places code and expectation disagreed
 
@@ -345,16 +348,35 @@ lie or silently degrade to an approximation, `listNodes`'s default filter stays 
 "replaced or retired," and `is_active`/the validity window stay additive-only, surfaced through
 `getRecallEligibility`'s `reasons` and the `lifecycle` label above. **This is a deliberate,
 disclosed narrowing of the brief's fuller "inactive head, outside validity window" phrasing**, not
-an oversight -- see the session's `deviations_from_ruling` for the full reasoning.
+an oversight -- the reasoning is the paragraph above: no native, join-free way exists to count
+`is_active`/the validity window exactly, and this kernel refuses to fake an exact total with a full
+scan the way it refuses one for `type_term`.
+
+*Fix round 2 correction, 2026-09-26 (R7, `docs/overnight/DECISIONS.md`).* The paragraph above
+originally said `include_inactive` was a new REQUIRED key, "closed, like every other key on this
+request -- there is no default for an omitted key." That broke the in-repo daily-loop alias
+(`app/cli/kb.aliases.ts`'s `nodes list`, documented at `app/README.md`'s `bun app/cli.ts nodes list
+--bank example --limit 20`) and any other caller built against the pre-#29 grammar: none of them
+ever sent this key, so every call was refused `invalid_request`. The ruling itself only ever
+required the DEFAULT to exclude retired/superseded nodes -- "`listNodes` excludes retired and
+superseded nodes by default" -- not that every caller assert that default explicitly, and a
+required key with no default cannot express a default at all. `include_inactive` is now OPTIONAL:
+omitted means `false` (the same ordinary "current" view described above), present still means
+STRICTLY boolean (an explicit `include_inactive: null` is refused `invalid_request`, not treated as
+omitted -- "optional" changes only whether the key may be absent, never what it may hold once
+present). Every caller that already sent the key explicitly (`app/ui/v2/src/api/listing.ts`) is
+unaffected. The alias itself gains a `--history` flag mapping to `include_inactive: true`; without
+it, the alias sends the exact five-key body it always has, byte-for-byte.
 
 **`total` (amending PRs #99/#100's frozen "native, predicate-scoped count" semantics
 at `service.listNodes.ts`):** with `include_total: true` and `type_term: null`,
 - `include_inactive: true` (history mode): unchanged, `count(nodes, scope)`.
-- `include_inactive: false` (default): `count(nodes, scope) - count(supersede_log, scope)`. This is
-  an EXACT identity, not a scan-and-count: `old_id` is scoped-unique (`writeLifecycleEventFresh`'s
-  `already_terminal` rule) and every event names a node that exists in the same workspace
-  (`invalid_reference` refuses any other), so `count(supersede_log, scope)` is precisely the number
-  of terminal nodes in scope. Two native counts, no join, no row read.
+- `include_inactive: false`, INCLUDING omitted (default, fix round 2): `count(nodes, scope) -
+  count(supersede_log, scope)`. This is an EXACT identity, not a scan-and-count: `old_id` is
+  scoped-unique (`writeLifecycleEventFresh`'s `already_terminal` rule) and every event names a node
+  that exists in the same workspace (`invalid_reference` refuses any other), so
+  `count(supersede_log, scope)` is precisely the number of terminal nodes in scope. Two native
+  counts, no join, no row read.
 - `type_term` set: unchanged, `null` (no native scoped count exists for a JSON-embedded field).
 
 `app/ui/v2/src/api/listing.ts`'s `listNodes` sends `include_inactive` on every call in the SAME
@@ -398,9 +420,12 @@ existence and `/new_revision_id` match checks have likewise always run before th
 `app/server/test/lifecycle-supersede-terminal-order.test.ts`, red against the original placement,
 green after the move.
 
-**Not changed here.** §§1-3 (identity, replay, conflict classification), §7 (the closed error code
-set: no new thrown code was needed; every new refusal above is a returned value), and §8's
-disclosed gaps (no ownership/recovery/precision lanes for this kernel) all stand exactly as before.
+**Not changed here.** §§1-3 (identity, replay, conflict classification) and §7 (the closed error
+code set: no new thrown code was needed; every new refusal above is a returned value) stand exactly
+as before. §8's ownership/recovery/precision bullet is **corrected above, not left standing** --
+*fix round 2, 2026-09-26*: it previously claimed no test lane existed for any of the three; that was
+already false when this section was first written, and this section had re-affirmed the false claim
+instead of fixing it (`.tmp/understand/analysis-29.json` fix plan B7).
 
 **Evidence.** `app/server/test/lifecycle-eligibility.test.ts` (new): default exclusion and
 history-mode labelling with the amended `total`, across a page boundary; the validity window at a
@@ -424,3 +449,16 @@ non-finite-`as_of` guard in `service.evaluateNodeEligibility.ts` (red without th
 `lifecycle-eligibility-ac1.test.ts` (new): #29 AC1, a `correction`-typed node and a `corrects` link
 into another node's accepted revision are ordinary content, not lifecycle events, and change
 nothing about eligibility -- untracked by any test before this round.
+
+**Fix round 2 evidence, 2026-09-26.** `app/server/test/list-nodes-service.test.ts` (new): red on
+this round's HEAD before the fix (a `listNodes` request with no `include_inactive` key at all
+raised `PublicationError{code: "invalid_request", path: "/include_inactive"}`), green after --
+omitting the key now behaves exactly like an explicit `include_inactive: false`; a companion test
+pins that an explicit `include_inactive: null` is still refused, proving "optional" did not also
+mean "any type accepted." `app/server/test/lifecycle-eligibility.test.ts` (new): the same red/green,
+this time through the gated writer with a real retired node, proving the omitted-key default
+actually excludes retired/superseded content end-to-end, not just that parsing succeeds.
+`app/cli.test.ts` (new): `nodes list --history` maps to `include_inactive: true`; the pre-existing
+`nodes list` alias test (unchanged assertion, now the fix-round regression pin) proves the alias's
+wire body without `--history` is byte-for-byte identical to what it always sent -- this is the
+`invalid_request` regression the verifier measured on the alias's real HTTP/MCP path, now closed.

@@ -28,20 +28,36 @@ export type ListNodesRequest = {
   /** Nullable term NAME from the reserved `type` vocabulary (e.g. "conclusion"). */
   type_term: string | null;
   /**
-   * #29 slice B (overnight R7): closed, required, like every other key here
-   * -- never an optional default. `false` (the ordinary "current" view)
-   * excludes a node with its own terminal `supersede_log` event (retired or
-   * superseded); `true` is history mode and includes it, labelled. See
-   * `service.listNodes.ts` for the exact filter and `lifecycle-v1.md`'s
-   * amendment for why `is_active`/the validity window are NOT part of this
-   * filter (only DESIGN.md §9's "replaced or retired" predicate is).
+   * #29 slice B (overnight R7), amended in the fix round: the ONE optional
+   * key on this request -- every other field here is required-but-nullable,
+   * but a required `include_inactive` broke the in-repo daily-loop alias
+   * (`app/cli/kb.aliases.ts`'s `nodes list`, documented at `app/README.md`'s
+   * `bun app/cli.ts nodes list --bank example --limit 20`) and any other
+   * caller built against the pre-#29 grammar, none of which ever sent this
+   * key. Omitted means `false`, the ordinary "current" view -- the SAME
+   * default the ruling always intended (`docs/overnight/DECISIONS.md` R7:
+   * "`listNodes` excludes retired and superseded nodes by default"), just
+   * expressed as a key default instead of a required key with no default.
+   * `true` is history mode. Still closed-TYPED when present: an explicit
+   * `include_inactive: null` is refused `invalid_request`, exactly like
+   * `include_total`'s boolean -- "optional" only changes whether the key may
+   * be ABSENT, never what it may hold once present. See `service.listNodes.ts`
+   * for the exact filter and `lifecycle-v1.md`'s amendment for why
+   * `is_active`/the validity window are NOT part of this filter (only
+   * DESIGN.md §9's "replaced or retired" predicate is).
    */
   include_inactive: boolean;
 };
 
+/** Every OTHER key on this request: required-but-nullable, closed exactly as
+ *  before. `include_inactive` alone is admitted only when the caller sends it
+ *  (see the field's own doc comment above). */
+const REQUIRED_KEYS = ["workspace_name", "after_id", "limit", "include_total", "type_term"] as const;
+const INCLUDE_INACTIVE_KEY = "include_inactive";
+
 export function parseListNodes(requestBytes: Uint8Array): ListNodesRequest {
   const o = parseRequest(requestBytes);
-  closedKeys(o, ["workspace_name", "after_id", "limit", "include_total", "type_term", "include_inactive"], "");
+  closedKeys(o, o.has(INCLUDE_INACTIVE_KEY) ? [...REQUIRED_KEYS, INCLUDE_INACTIVE_KEY] : REQUIRED_KEYS, "");
 
   const workspace_name = requireWorkspaceName(o.get("workspace_name"), "/workspace_name");
 
@@ -57,8 +73,16 @@ export function parseListNodes(requestBytes: Uint8Array): ListNodesRequest {
   const rawIncludeTotal = o.get("include_total");
   if (typeof rawIncludeTotal !== "boolean") failPublication("invalid_request", "/include_total");
 
-  const rawIncludeInactive = o.get("include_inactive");
-  if (typeof rawIncludeInactive !== "boolean") failPublication("invalid_request", "/include_inactive");
+  // Optional: absent means false (see the field's doc comment above). Present
+  // means strictly boolean -- `null` is a type error, not a spelling of
+  // "absent"; the closed-key check above already guarantees "present" here
+  // means the caller actually sent the key.
+  let include_inactive = false;
+  if (o.has(INCLUDE_INACTIVE_KEY)) {
+    const rawIncludeInactive = o.get(INCLUDE_INACTIVE_KEY);
+    if (typeof rawIncludeInactive !== "boolean") failPublication("invalid_request", "/include_inactive");
+    include_inactive = rawIncludeInactive;
+  }
 
   const rawTypeTerm = o.get("type_term");
   let type_term: string | null = null;
@@ -74,6 +98,6 @@ export function parseListNodes(requestBytes: Uint8Array): ListNodesRequest {
     limit: rawLimit,
     include_total: rawIncludeTotal,
     type_term,
-    include_inactive: rawIncludeInactive,
+    include_inactive,
   };
 }

@@ -285,7 +285,8 @@ lifecycle state is relevant to a read or a write, not only at `listNodes`/`getRe
 **Not changed here.** §5's write path, idempotency mechanism and readback comparison are
 unchanged for a NON-terminal node. §6's `missing`/`stale` definitions, its bounded/non-pageable
 sweep shape, and its measured gaps (§9, §10 — `stale`'s undercounting relative to a differently
-migrated dataset, and its lack of profile-scoping) are unchanged. §30's own missing piece —
+migrated dataset, and its lack of profile-scoping) are unchanged. #30's own missing piece — *(fix
+round 2 correction, 2026-09-26: this previously read "§30", a section-mark typo for issue #30)* —
 filtering retrieval at query time for a terminal node's chunks that were written before it became
 terminal — is explicitly **not** addressed here: `indexRevisionChunks` refuses NEW indexing of a
 terminal node, but chunks already written before retirement/supersession stay in
