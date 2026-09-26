@@ -27,11 +27,13 @@ Friendly aliases (thin sugar over kb; --bank is required on all of these):
   nodes list --bank NAME [--after ID] [--limit N] [--include-total] [--type TERM]
   context get --bank NAME --peer NAME --session NAME [--max-items N]
   chat ask --bank NAME --peer NAME --session NAME --question TEXT [--max-items N]
-  search --bank NAME --query TEXT [--mode keyword|semantic] [--limit N] [--profile NAME]
+  search --bank NAME --query TEXT --mode keyword|semantic [--limit N] [--profile NAME]
       knowledge-tier recall (#30): keyword = searchKnowledgeKeyword, semantic =
-      searchKnowledgeSemantic (--profile: stored embedding profile, semantic only).
-      Answers are nodes at their current head, retired/superseded excluded;
-      keyword says match "ngram" or "substring_scan"; the two are never fused.
+      searchKnowledgeSemantic (--profile: stored embedding profile, semantic only;
+      default: the server's query embedder's own). Answers are nodes at their
+      current head, retired/superseded excluded; keyword says match "ngram" or
+      "substring_scan"; the two are never fused. Without --mode keyword|semantic,
+      search is the legacy memories search below, unchanged.
 
 Legacy commands (13; kept for compatibility, not removed — prefer kb/aliases for new work):
   remember --content TEXT [--name NAME] [--type TYPE] [--session NAME] [--peer NAME] [--subject NAME]
@@ -39,13 +41,11 @@ Legacy commands (13; kept for compatibility, not removed — prefer kb/aliases f
   get-memory --id ID
   list-memories [--type TYPE] [--session NAME] [--peer NAME] [--subject NAME] [--active true|false] [--sync-state pending|synced|failed] [--limit N]
   bank-info | call-log [--limit N] [--status ok|error] | call-stats | status
-  health | list [--limit N] | search --query TEXT --mode text|vector [--limit N]
-  NOTE: search reaches the legacy memories store only with --mode text|vector;
-        without it, search is the knowledge-tier search above.
+  health | list [--limit N] | search --query TEXT [--mode text|vector] [--limit N]
   backfill [--batch N] | reindex
   NOTE: backfill/reindex are GLOBAL maintenance operations, not bank-scoped.
 
-recall and search --mode text|vector answer {mode, match, count, rows}. Text mode is a substring
+recall and search (text|vector) answer {mode, match, count, rows}. Text mode is a substring
 match: match is "ngram" (character-trigram index, each hit re-checked to contain
 the query, case-insensitive) or "substring_scan" (a query under 3 characters,
 scanned instead). Vector mode has no match field.
@@ -219,9 +219,10 @@ try {
         case "health": result = await request("/health"); break;
         case "list": result = await request(`/api/memories?bank=${encodeURIComponent(bank)}&limit=${integer("limit", 50)}`); break;
         case "search": {
-          // #30: keyword|semantic (the default) is the knowledge tier over kb;
-          // text|vector stays the legacy memories route, unchanged.
-          const mode = choice("mode", ["keyword", "semantic", "text", "vector"], "keyword")!;
+          // #30: --mode keyword|semantic is the knowledge tier over kb. The
+          // default stays `text`, the legacy memories route, unchanged (R8:
+          // legacy commands stay -- a bare `search` must answer what it did).
+          const mode = choice("mode", ["keyword", "semantic", "text", "vector"], "text")!;
           if (mode === "keyword" || mode === "semantic") {
             const target = searchKnowledgeRequest(options, bank, mode);
             const { ok, body } = await postKnowledge(target.method, new TextEncoder().encode(JSON.stringify(target.body)));
