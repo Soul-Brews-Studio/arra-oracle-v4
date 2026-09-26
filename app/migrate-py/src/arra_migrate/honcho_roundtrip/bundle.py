@@ -130,6 +130,19 @@ LOSSY_FIELDS_BY_CONSTRUCTION: frozenset[tuple[str, str]] = frozenset(
 # adapters"), verified round-trippable because FakeHonchoTarget proves
 # arbitrary metadata keys pass through unchanged.
 FOLDED_V4_MESSAGE_FIELDS = ("role", "in_reply_to", "read", "read_at")
+
+# 2026-09-26 fix-round-two disclosure: this key COLLIDES with any v4
+# `h_metadata` that already carries a top-level `_v4` key of its own. When
+# a message has at least one non-null folded field, `_message_payload` below
+# OVERWRITES that user key with the folded dict -- `diff._diff_one_message`
+# does catch the result (it compares `h_metadata` field by field and reports
+# an `h_metadata` mismatch), so this does not fail silently. If NO field is
+# folded (every one of `FOLDED_V4_MESSAGE_FIELDS` is null) the user's own
+# `_v4` value is left untouched and survives; `diff.honcho_to_bundle`
+# unconditionally `metadata.pop(FOLD_KEY, {})`s it back out on the way back,
+# so a non-dict user `_v4` (e.g. a plain string) would raise `AttributeError`
+# on the `.get(...)` calls that follow, not compare cleanly -- this is a
+# real, if narrow, latent defect this fix round did not change.
 FOLD_KEY = "_v4"
 
 # target-19-only message columns this phase declares lossy outright (see

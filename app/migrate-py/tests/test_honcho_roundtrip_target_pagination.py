@@ -78,9 +78,17 @@ class HttpTargetPaginationTests(unittest.TestCase):
         self.port = self.server.server_address[1]
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
-        self.addCleanup(self.server.shutdown)
-        self.addCleanup(self.thread.join, timeout=5)
+        # `addCleanup` runs LIFO -- added in this order so the ACTUAL teardown
+        # sequence is shutdown() first (signals `serve_forever` to stop),
+        # THEN join (returns almost immediately once the loop has actually
+        # exited), THEN server_close(). 2026-09-26 fix-round-two finding: the
+        # previous order (close, join, shutdown) called shutdown() only AFTER
+        # the 5s join timeout had already elapsed, since `serve_forever` never
+        # got the stop signal until then -- every test in this class paid the
+        # full 5s (5 tests, ~25s total, versus ~0.7s for the other 79).
         self.addCleanup(self.server.server_close)
+        self.addCleanup(self.thread.join, timeout=5)
+        self.addCleanup(self.server.shutdown)
         self.target = HttpHonchoTarget(f"http://127.0.0.1:{self.port}")
 
     def test_list_messages_follows_every_page(self) -> None:

@@ -187,7 +187,7 @@ recorded here as an explicit, permanent exception to SPEC §15.1's tier-1 rule (
 add **nullable** columns and nothing else") and to §15.2 invariant 1 ("additive nullable
 columns only"). `ingested_at` is `NOT NULL` on the target-19 physical schema
 (`app/migrate-py/src/arra_migrate/target_v1/core.py`) and on the golden schema fixture,
-by original design (§2 above: "`ingested_at` is the service-selected intake time for the
+by original design (§4 above: "`ingested_at` is the service-selected intake time for the
 new accepted record, not caller input and not recomputed on retry"). A nullable
 `ingested_at` would let a row exist with no recorded intake time, which this contract's
 §2/§3 never permitted for either the sourced or the locally-authored path.
@@ -198,7 +198,7 @@ against the physical schema (`.tmp/understand/issue-8/repro_output.txt`, finding
 contradicts §15.1/§15.2 inv.1 'nullable columns only'"*). The column was correct when
 this contract was written; §15.1's blanket nullability rule is what did not anticipate a
 column whose whole job is to always carry a real value. Making it nullable to satisfy
-§15.1 literally would reopen exactly the ambiguity §2 was written to close (a row with an
+§15.1 literally would reopen exactly the ambiguity §4 was written to close (a row with an
 unrecorded, unknowable ingestion time) for one clause's sake.
 
 **Scope**: this is a recorded exception, not a precedent for future NOT-NULL additions --
@@ -210,3 +210,8 @@ round-trip regardless of its nullability.
 
 **Cites**: `docs/overnight/DECISIONS.md` R15 (`v4-overnight`, 2026-09-26); SPEC.md §15.1,
 §15.2 invariant 1.
+
+*(Corrected 2026-09-26, fix round two: both citations above originally read "§2 above" --
+the quoted intake-time sentence is at line 31, inside §4 "Time policy", not §2 "Namespace
+and source identity". An independent verifier caught the mismatch; the heading, the R15
+citation and the substance were already correct.)*
