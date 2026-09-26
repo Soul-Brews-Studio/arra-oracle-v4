@@ -1,9 +1,8 @@
 import { type IndexConfig, type Table } from "@lancedb/lancedb";
 import { ftsIndexConfig } from "./fts.ftsIndexConfig";
 import { ftsIndexMatches } from "./fts.ftsIndexMatches";
+import { isFtsIndexOn } from "./fts.isFtsIndexOn";
 
-const isFtsOn = (column: string) => (index: IndexConfig) =>
-  ["FTS", "INVERTED"].includes(index.indexType.toUpperCase()) && index.columns.includes(column);
 const label = (index: IndexConfig) => `${index.name}:${index.indexType}`;
 
 /**
@@ -28,7 +27,7 @@ export async function ensureFtsIndexOn(
   column: string,
   replace: boolean,
 ): Promise<string[]> {
-  const fts = (await table.listIndices()).filter(isFtsOn(column));
+  const fts = (await table.listIndices()).filter(isFtsIndexOn(column));
   const keep = fts.find((index) => ftsIndexMatches(index.indexDetails)) ?? fts[0];
   if (replace || keep === undefined || !ftsIndexMatches(keep.indexDetails)) {
     await table.createIndex(column, {

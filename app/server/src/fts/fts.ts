@@ -1,5 +1,7 @@
 /**
- * The shared lexical-search module (R14 / #10; R7 for the #30 chunk index).
+ * The shared lexical-search module (R14 / #10; R7 for the #30 chunk index,
+ * which `publication/service.makeAdapter.ts` builds and reads through the
+ * same options, status check and overfetch bound).
  *
  * One options constant, one way to build and verify the index, one substring
  * contract for answers. Store-agnostic: every function takes the LanceDB table
@@ -22,5 +24,8 @@ export { containsFolded } from "./fts.containsFolded";
 export { ensureFtsIndexOn } from "./fts.ensureFtsIndexOn";
 export { ftsIndexConfig } from "./fts.ftsIndexConfig";
 export { ftsIndexMatches } from "./fts.ftsIndexMatches";
+export { ftsIndexStatus } from "./fts.ftsIndexStatus";
+export { isFtsIndexOn } from "./fts.isFtsIndexOn";
 export { likeContainsPredicate } from "./fts.likeContainsPredicate";
+export { overfetch } from "./fts.overfetch";
 export { substringSearch } from "./fts.substringSearch";
