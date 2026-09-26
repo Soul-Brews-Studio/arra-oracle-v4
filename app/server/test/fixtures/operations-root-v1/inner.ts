@@ -39,6 +39,7 @@ import { registerAuditPoisoningTests } from "./audit-poisoning";
 import { openOperationsRootFixture, type OperationsRootFixture } from "./fixture";
 import { registerLiveTransportTests } from "./live-transports";
 import { registerServiceLevelTests } from "./service-level";
+import { testTimeout } from "../../helpers/timing.testTimeout";
 
 // Filled in by `beforeAll`; the registered tests only dereference it at RUN
 // time, by which point it is complete.
@@ -46,11 +47,11 @@ const fx = {} as OperationsRootFixture;
 
 beforeAll(async () => {
   Object.assign(fx, await openOperationsRootFixture());
-}, 30_000);
+}, testTimeout(30_000));
 
 afterAll(async () => {
   await fx.cleanup?.();
-}, 30_000);
+}, testTimeout(30_000));
 
 registerServiceLevelTests(fx);
 registerLiveTransportTests(fx);

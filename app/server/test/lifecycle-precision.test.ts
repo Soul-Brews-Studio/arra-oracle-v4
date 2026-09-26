@@ -23,6 +23,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { createFixture, idSource, revisionEnvelope, runGated, type Fixture } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/lifecycle-v1/precision/seed-child.ts", import.meta.url).pathname;
 const ALPHA = "alpha-workspace";
@@ -124,7 +125,7 @@ describe("all sixteen physical columns wire exactly", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });
 
 describe("the Int64 ceiling: an allocation that would overflow stops BEFORE any write", () => {
@@ -166,7 +167,7 @@ describe("the Int64 ceiling: an allocation that would overflow stops BEFORE any 
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("one BELOW the ceiling allocates exactly the ceiling, as canonical decimal TEXT", async () => {
     const fixture = await createFixture([ALPHA]);
@@ -194,7 +195,7 @@ describe("the Int64 ceiling: an allocation that would overflow stops BEFORE any 
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });
 
 describe("superseded_at: timestamp[us] precision", () => {
@@ -217,7 +218,7 @@ describe("superseded_at: timestamp[us] precision", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("the Gregorian endpoints render exactly; one microsecond outside never does", async () => {
     const MIN_MS = -62135596800000n; // 0001-01-01T00:00:00.000Z
@@ -275,7 +276,7 @@ describe("superseded_at: timestamp[us] precision", () => {
         await fixture.cleanup();
       }
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });
 
 describe("the half-null successor pair has no event-kind column to fall back on", () => {
@@ -299,5 +300,5 @@ describe("the half-null successor pair has no event-kind column to fall back on"
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });

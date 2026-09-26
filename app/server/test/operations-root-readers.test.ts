@@ -31,6 +31,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runOwnedChild } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const SERVER_DIR = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const INNER = join(SERVER_DIR, "test", "fixtures", "operations-root-v1", "inner.ts");
@@ -39,7 +41,7 @@ const BARE_ROOT_PROBE = join(SERVER_DIR, "test", "fixtures", "operations-root-v1
 test("operations-root readers (#103 #102): isolated suite, own process", async () => {
   const result = await runOwnedChild(process.execPath, ["test", INNER], {
     cwd: SERVER_DIR,
-    deadlineMs: 120_000,
+    deadlineMs: scaledMs(120_000),
   });
   if (result.code !== 0) {
     throw new Error(
@@ -53,7 +55,7 @@ test("operations-root readers (#103 #102): isolated suite, own process", async (
   // success just because exit was 0.
   expect(result.stderr).toMatch(/\d+ pass\b/);
   expect(result.stderr).not.toMatch(/[1-9]\d* fail\b/);
-}, 130_000);
+}, testTimeout(130_000));
 
 /**
  * Nonblocking fix-round finding: an `ARRA_DATA_DIR` with NEITHER table used
@@ -68,7 +70,7 @@ for (const kind of ["calls", "connections"] as const) {
       const result = await runOwnedChild(process.execPath, [BARE_ROOT_PROBE, kind], {
         cwd: SERVER_DIR,
         env: { ...process.env, ARRA_DATA_DIR: bareRoot },
-        deadlineMs: 20_000,
+        deadlineMs: scaledMs(20_000),
       });
       if (result.code !== 0) {
         throw new Error(`bare-root-probe.ts (${kind}) failed (exit ${result.code})\n${result.stdout}\n${result.stderr}`);
@@ -86,5 +88,5 @@ for (const kind of ["calls", "connections"] as const) {
     } finally {
       await rm(bareRoot, { recursive: true, force: true });
     }
-  }, 25_000);
+  }, testTimeout(25_000));
 }

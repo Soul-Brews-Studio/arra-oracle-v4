@@ -22,6 +22,8 @@ import { join } from "node:path";
 import { runGated } from "./helpers/publication-fixture";
 import { createTaxonomyFixture, type TaxonomyFixture } from "./helpers/taxonomy-fixture";
 import { loadShape, matchesShape } from "./helpers/v3-compat-shapes";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const CHILD = join(import.meta.dir, "fixtures", "v3-compat-v1", "core", "search-child.ts");
 const A = "ws-v5-a";
@@ -113,7 +115,7 @@ beforeAll(async () => {
   ];
   try {
     const result = await runGated(taxonomy.datasetRoot, CHILD, [taxonomy.datasetRoot, work, JSON.stringify({ banks: { a: A, b: B }, steps })], {
-      deadlineMs: 240_000,
+      deadlineMs: scaledMs(240_000),
       env: { ARRA_DATA_DIR: join(work, "legacy"), ARRA_KNOWLEDGE_DATASET_ROOT: taxonomy.datasetRoot },
     });
     const line = result.stdout.trim().split("\n").filter(Boolean).at(-1);
@@ -122,7 +124,7 @@ beforeAll(async () => {
   } catch (error) {
     setupError = error instanceof Error ? error.message : String(error);
   }
-}, 300_000);
+}, testTimeout(300_000));
 
 afterAll(async () => {
   await taxonomy?.cleanup();

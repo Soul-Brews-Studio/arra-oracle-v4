@@ -25,12 +25,13 @@ import {
   type Fixture,
 } from "./helpers/publication-fixture";
 import { contextId } from "./helpers/context-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/isolation-v1/core/gated-isolation.ts", import.meta.url).pathname;
 const CLOCK_MS = Date.parse("2026-09-21T00:00:00.000Z");
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
-const TEST_TIMEOUT_MS = 300_000;
+const TEST_TIMEOUT_MS = testTimeout(300_000);
 
 const ctx = (method: string, request: unknown) => ({ facade: "context", method, request });
 const pub = (method: string, request: unknown) => ({ facade: "publication", method, request });

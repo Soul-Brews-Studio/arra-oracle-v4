@@ -15,6 +15,8 @@ import { join } from "node:path";
 import { createFixture, runGated, type Fixture } from "./helpers/publication-fixture";
 import { createTaxonomyFixture, type TaxonomyFixture } from "./helpers/taxonomy-fixture";
 import { activeEmbeddingProfileId } from "../src/publication/search-chunk";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const CHILD = join(import.meta.dir, "fixtures", "v3-compat-v1", "core", "writes-child.ts");
 const FRESH = "ws-fresh";
@@ -39,7 +41,7 @@ let outSeeded: Record<string, any> = {};
 
 async function runChild(root: string, banks: string[], steps: unknown[], operator: unknown[] = []) {
   const result = await runGated(root, CHILD, [root, work, JSON.stringify({ banks, operator, steps, cwd })], {
-    deadlineMs: 180_000,
+    deadlineMs: scaledMs(180_000),
     env: { ARRA_DATA_DIR: join(work, "legacy"), ARRA_KNOWLEDGE_DATASET_ROOT: root, HOME: home },
   });
   const line = result.stdout.trim().split("\n").filter(Boolean).at(-1);
@@ -125,7 +127,7 @@ beforeAll(async () => {
     { label: "learn", bank: SEEDED, tool: "oracle_learn", args: { pattern: "works on a workspace another writer seeded", concepts: ["seeded"] }, capture: { name: "learn", path: ["id"] } },
     HEAD("head_learn", SEEDED),
   ]);
-}, 300_000);
+}, testTimeout(300_000));
 
 afterAll(async () => {
   await taxonomy?.cleanup();

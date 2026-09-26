@@ -25,11 +25,12 @@ import {
   activeEmbeddingProfileId,
   deriveChunkId,
 } from "../src/publication/search-chunk";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/search-chunk-v1/embed/gated-embed.ts", import.meta.url).pathname;
 const ALPHA = "alpha-workspace";
 const CLOCK = Date.parse("2026-09-21T00:00:00.000Z");
-const TEST_TIMEOUT_MS = 300_000;
+const TEST_TIMEOUT_MS = testTimeout(300_000);
 const PROFILE_ID = activeEmbeddingProfileId();
 
 const pad = (seed: string) => `${seed}${"0".repeat(Math.max(0, 21 - seed.length))}`.slice(0, 21);

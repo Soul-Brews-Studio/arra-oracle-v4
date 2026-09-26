@@ -41,12 +41,14 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createContextFixture } from "./helpers/context-fixture";
 import { PYTHON, runGated, runOwnedChild, spawnGatedChild } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const TEST_DIR = import.meta.dir;
 const SERVER_DIR = resolve(TEST_DIR, "..");
 const OWNERSHIP_CHILD = join(TEST_DIR, "fixtures", "read-cursor-v1", "ownership", "cursor-child.ts");
 const RAW_MUTATE = join(TEST_DIR, "fixtures", "read-cursor-v1", "ownership", "raw-mutate.ts");
-const TEST_TIMEOUT_MS = 180_000;
+const TEST_TIMEOUT_MS = testTimeout(180_000);
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
 
@@ -883,7 +885,7 @@ describe.skipIf(!READY)(`shared owner lifecycle [${PENDING}]`, () => {
             ].join("\n"),
             root,
           ],
-          { deadlineMs: 30_000 },
+          { deadlineMs: scaledMs(30_000) },
         );
         expect({ code: contender.code, events: eventsOf(contender.stdout) }).toEqual({
           code: 0,

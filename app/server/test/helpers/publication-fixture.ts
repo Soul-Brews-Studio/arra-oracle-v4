@@ -21,9 +21,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertExecLimits } from "./argv.assertExecLimits";
 import { spillOversizedArgs } from "./argv.spillOversizedArgs";
+import { scaledMs } from "./timing.scaledMs";
 
 /** Deadline every owned child is held to, in milliseconds. */
-export const CHILD_DEADLINE_MS = 60_000;
+export const CHILD_DEADLINE_MS = scaledMs(60_000);
 
 const REPO_ROOT = new URL("../../../../", import.meta.url).pathname.replace(/\/$/, "");
 const MIGRATE_DIR = join(REPO_ROOT, "app", "migrate-py");

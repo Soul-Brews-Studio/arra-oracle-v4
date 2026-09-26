@@ -21,9 +21,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createScratch, TOKENS, type Scratch } from "./helpers/auth-fixture";
 import { runOwnedChild } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/fts-v1/core/fts-child.ts", import.meta.url).pathname;
-const TIMEOUT_MS = 120_000;
+const TIMEOUT_MS = testTimeout(120_000);
 
 /** The index R14 requires, as `listIndices().indexDetails` reports it. */
 const TRIGRAM_DETAILS = {

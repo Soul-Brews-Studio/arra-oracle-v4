@@ -12,6 +12,8 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFixture, runGated, type Fixture } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const CHILD = join(import.meta.dir, "fixtures", "v3-compat-v1", "core", "writes-child.ts");
 const A = "ws-a";
@@ -28,7 +30,7 @@ const id = (label: string) => out[label].value.id as string;
 
 async function runChild(banks: string[], steps: unknown[]) {
   const result = await runGated(fixture.datasetRoot, CHILD, [fixture.datasetRoot, work, JSON.stringify({ banks, operator: [], steps })], {
-    deadlineMs: 180_000,
+    deadlineMs: scaledMs(180_000),
     env: { ARRA_DATA_DIR: join(work, "legacy"), ARRA_KNOWLEDGE_DATASET_ROOT: fixture.datasetRoot },
   });
   const line = result.stdout.trim().split("\n").filter(Boolean).at(-1);
@@ -85,7 +87,7 @@ beforeAll(async () => {
     { label: "verify_check_false", bank: A, tool: "oracle_verify", args: { check: false } },
     { label: "verify_type_ignored", bank: A, tool: "oracle_verify", args: { type: "learning" } },
   ]);
-}, 300_000);
+}, testTimeout(300_000));
 
 afterAll(async () => {
   await fixture?.cleanup();

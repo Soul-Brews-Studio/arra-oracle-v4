@@ -54,6 +54,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { connect } from "@lancedb/lancedb";
 import { PYTHON, runOwnedChild, spawnGatedChild } from "./helpers/publication-fixture";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 // ── dependencies ────────────────────────────────────────────────────────────
 
@@ -277,7 +278,7 @@ type ResumableChild = {
 };
 
 /** Every parent wait in this file is bounded by this, not by the test runner. */
-const HANDSHAKE_DEADLINE_MS = 60_000;
+const HANDSHAKE_DEADLINE_MS = scaledMs(60_000);
 /**
  * Cap on RETAINED stderr, in UTF-16 code units (JS string length), not bytes.
  *
@@ -883,7 +884,7 @@ recoveryTest("T8b the parent's own deadline fires: a silent child is killed and 
   // timeout. Scheduling jitter makes a strict upper bound of 1.5s a flaky
   // claim, so it is not made.
   expect(elapsedMs).toBeGreaterThan(configuredMs * 0.9);
-  expect(elapsedMs).toBeLessThan(30_000);
+  expect(elapsedMs).toBeLessThan(scaledMs(30_000));
   // nextEvent kills and reaps on the way out, so this returns immediately.
   await child.killAndReap(5_000);
 });

@@ -29,6 +29,7 @@ import {
   validateWorkspaceRow,
   WORKSPACE_FIELDS,
 } from "../src/publication/read-cursor";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 /**
  * PREFLIGHT, recorded once.
@@ -69,7 +70,7 @@ describe("preflight: the required surface", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 120_000);
+  }, testTimeout(120_000));
 });
 
 describe("real persistence: cursors inside the real gate", () => {
@@ -132,7 +133,7 @@ describe("real persistence: cursors inside the real gate", () => {
         await fixture.cleanup();
       }
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("absent reads as null, then creation persists all five physical fields", async () => {
     const fixture = await createReadCursorFixture([ALPHA]);
@@ -164,7 +165,7 @@ describe("real persistence: cursors inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a retained NULL pointer advances through the composed IS NULL + TIMESTAMP cast", async () => {
     /**
@@ -220,7 +221,7 @@ describe("real persistence: cursors inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   describe("the post-write readback discriminates its failure classes", () => {
     /**
@@ -269,7 +270,7 @@ describe("real persistence: cursors inside the real gate", () => {
       expect(parsed[`op${SEED + 1}`].code).toBe("recovery_required");
       // after_readback never fired for the failed write.
       expect(parsed.trace.filter((b: string) => b === "after_readback")).toHaveLength(6);
-    }, 300_000);
+    }, testTimeout(300_000));
 
     test("a DUPLICATED target is corruption and keeps integrity_failure", async () => {
       const parsed = await readback("duplicate");
@@ -285,7 +286,7 @@ describe("real persistence: cursors inside the real gate", () => {
       // Corruption poisons too, and the class is preserved through the
       // shared boundary rather than normalized to recovery_required.
       expect(parsed[`op${SEED + 1}`].ok).toBe(false);
-    }, 300_000);
+    }, testTimeout(300_000));
 
     test("a DIFFERENT legacy id under the same public_id and ordinal is caught", async () => {
       /**
@@ -303,7 +304,7 @@ describe("real persistence: cursors inside the real gate", () => {
         path: "",
       });
       expect(parsed[`op${SEED + 1}`].ok).toBe(false);
-    }, 300_000);
+    }, testTimeout(300_000));
   });
 
   test("replay and both conflicts NEVER sample the clock", async () => {
@@ -354,7 +355,7 @@ describe("real persistence: cursors inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });
 
 describe("the stored row codec refuses what it cannot vouch for", () => {

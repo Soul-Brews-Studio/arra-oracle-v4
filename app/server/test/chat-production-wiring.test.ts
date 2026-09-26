@@ -36,10 +36,11 @@ import { configureKnowledgeAccess, createMcpAdapter } from "../src/mcp";
 import { startChatModelStub, type ChatModelStub } from "./helpers/chat-model-stub";
 import { createContextFixture } from "./helpers/context-fixture";
 import { runGated } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const SEED = new URL("./fixtures/chat-v1/wiring-seed-child.ts", import.meta.url).pathname;
 const CLI = new URL("../../cli.ts", import.meta.url).pathname;
-const TIMEOUT_MS = 240_000;
+const TIMEOUT_MS = testTimeout(240_000);
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
 

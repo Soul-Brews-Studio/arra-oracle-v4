@@ -49,6 +49,7 @@ import {
   parseRegisterSession,
   rowWireBytes,
 } from "../src/publication/context";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const WS = "alpha-workspace";
 const id = (seed: string) => `${seed}${"0".repeat(Math.max(0, 21 - seed.length))}`.slice(0, 21);
@@ -552,7 +553,7 @@ describe("real persistence: registration, shapes and reads", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a fresh registration writes one row and emits one literal triple", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -570,7 +571,7 @@ describe("real persistence: registration, shapes and reads", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("an identical re-registration is already_satisfied and emits NO boundary", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -586,7 +587,7 @@ describe("real persistence: registration, shapes and reads", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("ID and NAME collisions report their own reason, and neither writes", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -606,7 +607,7 @@ describe("real persistence: registration, shapes and reads", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a missing workspace is an invalid REFERENCE, in the publication envelope", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -624,7 +625,7 @@ describe("real persistence: registration, shapes and reads", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("joinSession requires an active session and a real peer", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -648,7 +649,7 @@ describe("real persistence: registration, shapes and reads", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("reads return the row or exactly null, never not_found", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -674,7 +675,7 @@ describe("real persistence: registration, shapes and reads", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("an empty page has rows:[] and a null cursor", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -687,7 +688,7 @@ describe("real persistence: registration, shapes and reads", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("listPeers pages by name ascending, keyset resumes past the cursor, and total is opt-in", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -718,7 +719,7 @@ describe("real persistence: registration, shapes and reads", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("listSessions pages by name ascending and stays workspace-scoped", async () => {
     const BETA = "beta-workspace";
@@ -740,7 +741,7 @@ describe("real persistence: registration, shapes and reads", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a second writer on the same root is refused while the first holds it", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -756,7 +757,7 @@ describe("real persistence: registration, shapes and reads", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("reads after RELEASE are refused with the full envelope", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -773,7 +774,7 @@ describe("real persistence: registration, shapes and reads", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });
 
 describe("real persistence: ordered batch ingestion", () => {
@@ -839,7 +840,7 @@ describe("real persistence: ordered batch ingestion", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("an identical local replay is idempotent and allocates nothing new", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -864,7 +865,7 @@ describe("real persistence: ordered batch ingestion", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("item 0 is durable, item 1 stops the batch, item 2 is NEVER attempted", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -897,7 +898,7 @@ describe("real persistence: ordered batch ingestion", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a changed payload under the same public_id is a CONFLICT, not an error", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -920,7 +921,7 @@ describe("real persistence: ordered batch ingestion", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a self reply is refused, and a reply to an earlier item resolves", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -948,7 +949,7 @@ describe("real persistence: ordered batch ingestion", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });
 
 describe("core: the sourced path and the reader bundle", () => {
@@ -1001,7 +1002,7 @@ describe("core: the sourced path and the reader bundle", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a sourced replay returns the ORIGINAL identity and allocates nothing", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -1029,7 +1030,7 @@ describe("core: the sourced path and the reader bundle", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a replay into the WRONG session is a governed scope_mismatch", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -1063,7 +1064,7 @@ describe("core: the sourced path and the reader bundle", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a LOCAL replay into the wrong session carries the SAME governed envelope", async () => {
     // Local and sourced wrong-destination share semantics, so they must share
@@ -1089,7 +1090,7 @@ describe("core: the sourced path and the reader bundle", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("the READER bundle has exactly three facades and twenty context methods", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -1114,5 +1115,5 @@ describe("core: the sourced path and the reader bundle", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });

@@ -25,6 +25,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ARGFILE_PREFIX, ARGV_INLINE_MAX_BYTES, LINUX_MAX_ARG_STRING_BYTES } from "./helpers/argv.constants";
 import { runGated, runOwnedChild, spawnGatedChild } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const ECHO = new URL("./fixtures/argv-v1/echo-payload.ts", import.meta.url).pathname;
 
@@ -68,7 +69,7 @@ describe("argv spill: an oversized payload reaches a gated child intact, within 
     // The spill file is the parent's own and is gone once the child closed.
     expect(echo.rawPayload.startsWith(ARGFILE_PREFIX)).toBe(true);
     expect(existsSync(echo.rawPayload.slice(ARGFILE_PREFIX.length))).toBe(false);
-  }, 60_000);
+  }, testTimeout(60_000));
 
   test("spawnGatedChild: the same, and the spill is removed when the child exits", async () => {
     const child = spawnGatedChild(await gateRoot(), ECHO, ["spawnGatedChild", OVERSIZED]);
@@ -85,7 +86,7 @@ describe("argv spill: an oversized payload reaches a gated child intact, within 
       child.kill();
       await child.wait();
     }
-  }, 60_000);
+  }, testTimeout(60_000));
 
   test("a payload at the inline limit is still passed inline, exactly as before", async () => {
     const inline = "y".repeat(ARGV_INLINE_MAX_BYTES);
@@ -95,7 +96,7 @@ describe("argv spill: an oversized payload reaches a gated child intact, within 
     expect(echo.rawPayload).toBe(inline.slice(0, 200));
     expect(echo.argvBytes[1]).toBe(ARGV_INLINE_MAX_BYTES);
     expect(echo.payloadSha256).toBe(sha256(inline));
-  }, 60_000);
+  }, testTimeout(60_000));
 });
 
 describe("argv guard: a direct spawn that Linux would refuse is refused everywhere, before spawning", () => {
@@ -112,7 +113,7 @@ describe("argv guard: a direct spawn that Linux would refuse is refused everywhe
     expect(refused).toBeInstanceOf(Error);
     expect(String((refused as Error).message)).toContain("argv[3] is 131072 bytes");
     expect(String((refused as Error).message)).toContain("E2BIG");
-  }, 60_000);
+  }, testTimeout(60_000));
 
   test("an environment string over the limit is refused the same way", async () => {
     let refused: unknown = null;
@@ -124,5 +125,5 @@ describe("argv guard: a direct spawn that Linux would refuse is refused everywhe
     expect(refused).toBeInstanceOf(Error);
     expect(String((refused as Error).message)).toContain("env ARRA_ARGV_PROBE");
     expect(String((refused as Error).message)).toContain("E2BIG");
-  }, 60_000);
+  }, testTimeout(60_000));
 });

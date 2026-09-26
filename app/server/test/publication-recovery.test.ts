@@ -1421,6 +1421,7 @@ with writer_gate(root):
             raise SystemExit("migration matched no rows: " + item["where"])
 print(json.dumps({"ok": True}))
 `;
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 async function migrateTerms(
   datasetRoot: string,
@@ -1612,7 +1613,7 @@ recoveryTest("H1 both child runners really do kill and reap on their own deadlin
   const hung = await runOwnedChild(PYTHON, ["-c", "import time\ntime.sleep(120)"], { deadlineMs: 750 });
   const elapsedMs = (Bun.nanoseconds() - startedAt) / 1_000_000;
   expect(hung.code).not.toBe(0);
-  expect(elapsedMs).toBeLessThan(30_000);
+  expect(elapsedMs).toBeLessThan(scaledMs(30_000));
 
   // 2. This file's own owner harness, against a child parked at a real
   //    boundary that is waiting for a handshake which will never come.

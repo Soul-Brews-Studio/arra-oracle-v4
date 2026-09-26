@@ -19,6 +19,7 @@ import { obj, parseStrict, type JcsObject, type JcsValue } from "../src/contract
 import { ENVELOPE_KEYS, revisionOp, verifyRevisionOp, termProjection } from "../src/contracts/revision-v1";
 import { targetOp, verifyTargetOp } from "../src/contracts/evidence-v1";
 import { formatTimestamp } from "../src/contracts/v1";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const python = process.env.ARRA_CONTRACT_PYTHON ?? fileURLToPath(new URL("../../migrate-py/.venv/bin/python", import.meta.url));
 const exporter = fileURLToPath(new URL("../../migrate-py/tests/export_target_schema_fixture.py", import.meta.url));
@@ -168,7 +169,7 @@ test("Python-persisted revisions and links verify byte-for-byte in Bun; single s
   } finally {
     await rm(root, { recursive: true, force: true });
   }
-}, 120_000);
+}, testTimeout(120_000));
 
 test("re-running the revision op on stored content reproduces the stored digest (idempotent bytes)", async () => {
   const samples = JSON.parse(await readFile(samplePath, "utf8")) as { tables: Record<string, any[]> };
@@ -222,4 +223,4 @@ db.create_table("ts", schema=schema).add(pa.table({"id": pa.array(["ms", "plus1u
   } finally {
     await rm(root, { recursive: true, force: true });
   }
-}, 60_000);
+}, testTimeout(60_000));

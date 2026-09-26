@@ -20,11 +20,12 @@ import * as context from "../src/publication/context";
 import { appendRequest, contextId, createContextFixture, messageItem, type ContextFixture } from "./helpers/context-fixture";
 import { runGated } from "./helpers/publication-fixture";
 import { OPERATOR, READER, bound, driveContext, op } from "./helpers/read-boundary-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
 const CLOCK_ISO = "2026-09-21T00:00:00.000Z";
-const TIMEOUT = 300_000;
+const TIMEOUT = testTimeout(300_000);
 const RAW_MUTATE = new URL("./fixtures/context-v1/ownership/raw-mutate.ts", import.meta.url).pathname;
 const TITLE = 'Birth thread: ลืม "quoted"';
 const REASON = "done: it's \\ ok ลืม";

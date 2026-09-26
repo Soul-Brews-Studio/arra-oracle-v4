@@ -45,12 +45,13 @@ import { getReadCursorRequest, advanceReadCursorRequest, expectedPointer } from 
 import { getAssociationsRequest, reconcileRequest } from "./helpers/association-fixture";
 import { CHUNKER_VERSION, activeEmbeddingProfileId } from "../src/publication/search-chunk";
 import { OPERATOR } from "./helpers/read-boundary-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/isolation-v1/core/gated-isolation.ts", import.meta.url).pathname;
 const CLOCK_MS = Date.parse("2026-09-21T00:00:00.000Z");
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
-const TEST_TIMEOUT_MS = 300_000;
+const TEST_TIMEOUT_MS = testTimeout(300_000);
 
 const ctx = (method: string, request: unknown, authority?: unknown) =>
   authority === undefined ? { facade: "context", method, request } : { facade: "context", method, request, authority };

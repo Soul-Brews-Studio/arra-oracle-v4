@@ -31,6 +31,7 @@ import {
 } from "./helpers/publication-fixture";
 import { activeEmbeddingProfileId } from "../src/publication/search-chunk";
 import { openContextReader } from "../src/publication/service";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/lifecycle-v1/core/gated-lifecycle.ts", import.meta.url).pathname;
 const ALPHA = "alpha-workspace";
@@ -181,7 +182,7 @@ describe("#29 slice B: listNodes default excludes retired and superseded nodes",
     } finally {
       await fixture.cleanup();
     }
-  }, 180_000);
+  }, testTimeout(180_000));
 });
 
 describe("#29 fix round: include_inactive is OPTIONAL on the wire, default false", () => {
@@ -233,7 +234,7 @@ describe("#29 fix round: include_inactive is OPTIONAL on the wire, default false
     } finally {
       await fixture.cleanup();
     }
-  }, 180_000);
+  }, testTimeout(180_000));
 });
 
 describe("#29 slice B: listNodes total matches the filtered set across pages", () => {
@@ -308,7 +309,7 @@ describe("#29 slice B: listNodes total matches the filtered set across pages", (
     } finally {
       await fixture.cleanup();
     }
-  }, 180_000);
+  }, testTimeout(180_000));
 });
 
 describe("#29 slice B: the validity window (is_active, valid_from, valid_to) at a controlled as_of", () => {
@@ -381,7 +382,7 @@ describe("#29 slice B: the validity window (is_active, valid_from, valid_to) at 
     } finally {
       await fixture.cleanup();
     }
-  }, 180_000);
+  }, testTimeout(180_000));
 });
 
 describe("#29 slice B: superseding into an already-terminal successor is refused", () => {
@@ -480,7 +481,7 @@ describe("#29 slice B: superseding into an already-terminal successor is refused
     } finally {
       await fixture.cleanup();
     }
-  }, 180_000);
+  }, testTimeout(180_000));
 });
 
 describe("#29 slice B: search-chunk read paths never treat a terminal node as ordinary", () => {
@@ -540,5 +541,5 @@ describe("#29 slice B: search-chunk read paths never treat a terminal node as or
     } finally {
       await fixture.cleanup();
     }
-  }, 180_000);
+  }, testTimeout(180_000));
 });

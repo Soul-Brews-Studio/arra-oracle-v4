@@ -53,6 +53,7 @@ import { fileURLToPath } from "node:url";
 import { connect } from "@lancedb/lancedb";
 import { PYTHON, runOwnedChild } from "./helpers/publication-fixture";
 import { createContextFixture } from "./helpers/context-fixture";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 // ── dependencies ────────────────────────────────────────────────────────────
 
@@ -155,7 +156,7 @@ type Plan = {
   steps: Step[];
 };
 
-const HANDSHAKE_DEADLINE_MS = 60_000;
+const HANDSHAKE_DEADLINE_MS = scaledMs(60_000);
 /** Retained stderr cap, in UTF-16 code units (JS string length), not bytes. */
 const MAX_CAPTURED_STDERR_UNITS = 64 * 1024;
 
@@ -1176,7 +1177,7 @@ recoveryTest("H1 the parent deadline fires: a silent child is killed and reaped"
   // returned far inside the runner timeout. A strict upper bound would be a
   // flaky claim under scheduling jitter.
   expect(elapsedMs).toBeGreaterThan(configuredMs * 0.9);
-  expect(elapsedMs).toBeLessThan(30_000);
+  expect(elapsedMs).toBeLessThan(scaledMs(30_000));
   await child.killAndReap(5_000);
   expect(await cursorRows(created.datasetRoot)).toEqual([]);
 });

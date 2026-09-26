@@ -23,9 +23,10 @@ import { createFixture, revisionEnvelope, runGated, type Fixture } from "./helpe
 import { KNOWLEDGE_METHODS, type KnowledgeReaderBundle, type RequestAuthority } from "../src/knowledge/registry";
 import { CHUNKER_VERSION, activeEmbeddingProfileId, deriveChunkId } from "../src/publication/search-chunk";
 import { openEvidenceReader } from "../src/publication/service";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = join(import.meta.dir, "fixtures", "search-chunk-v1", "core", "gated-retrieval.ts");
-const TIMEOUT_MS = 180_000;
+const TIMEOUT_MS = testTimeout(180_000);
 const ALPHA = "alpha-workspace";
 // #30 R7 (search-embed): the closed registry accepts only its active id.
 const PROFILE = activeEmbeddingProfileId();

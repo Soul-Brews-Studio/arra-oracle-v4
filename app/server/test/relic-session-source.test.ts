@@ -30,6 +30,7 @@ import { buildRelicEventTarget } from "../src/source/relic.buildRelicEventTarget
 import { buildRelicSessionTarget } from "../src/source/relic.buildRelicSessionTarget";
 import type { RelicAdapterConfig } from "../src/source/relic.types";
 import type { SessionRef, SourceExcerpt } from "../src/source/session-source.types";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const FAKE_BIN = new URL("./fixtures/relic-v1/fake-relic.ts", import.meta.url).pathname;
 const NONEXISTENT_BIN = new URL("./fixtures/relic-v1/does-not-exist", import.meta.url).pathname;
@@ -155,12 +156,12 @@ describe("failure modes: every one is a typed RelicAdapterError, nothing throws 
   test("exceeding the configured deadline is 'timeout', the child is killed, not left to hang", async () => {
     const source = createRelicSessionSource(config({ timeoutMs: 200 }));
     expect(await codeOf(() => source.get("__timeout__"))).toBe("timeout");
-  }, 10_000);
+  }, testTimeout(10_000));
 
   test("exceeding maxOutputBytes is 'output_too_large', not a slow silent success", async () => {
     const source = createRelicSessionSource(config({ maxOutputBytes: 1024 }));
     expect(await codeOf(() => source.get("__big__"))).toBe("output_too_large");
-  }, 10_000);
+  }, testTimeout(10_000));
 
   test("runRelicJson refuses any subcommand outside its own read-only allowlist", async () => {
     expect(await codeOf(() => runRelicJson(config(), ["index", "--prune"]))).toBe("bad_output");

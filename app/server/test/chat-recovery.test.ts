@@ -57,6 +57,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PYTHON } from "./helpers/publication-fixture";
 import { createContextFixture } from "./helpers/context-fixture";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 // ── dependencies ────────────────────────────────────────────────────────────
 
@@ -172,7 +173,7 @@ type Plan = {
 };
 
 const INTAKE_MS = 1_789_930_000_000;
-const HANDSHAKE_DEADLINE_MS = 60_000;
+const HANDSHAKE_DEADLINE_MS = scaledMs(60_000);
 const MAX_CAPTURED_STDERR_UNITS = 64 * 1024;
 
 const LAUNCHER_SOURCE = [

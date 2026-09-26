@@ -29,8 +29,9 @@ import { configureKnowledgeAccess, createMcpAdapter } from "../src/mcp";
 import { createKnowledgeAccess } from "../src/knowledge/transport";
 import type { ContextFixture } from "./helpers/context-fixture";
 import { ALPHA, BETA, MAIN_ID, SECRET_ID, createReadBoundaryFixture } from "./helpers/read-boundary-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
-const TEST_TIMEOUT_MS = 300_000;
+const TEST_TIMEOUT_MS = testTimeout(300_000);
 const ORIGIN = "http://127.0.0.1:3939";
 
 const tokenFor = (label: string) => createHash("sha256").update(`read-boundary:${label}`).digest("hex");

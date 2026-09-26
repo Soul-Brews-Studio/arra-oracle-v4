@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { connect } from "@lancedb/lancedb";
 import { canonicalMessage, messageDigest, formatInt64, validateId } from "../src/contracts/v1";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 test("TS consumes the same proposed target-19 manifest without activating it", async () => {
   const path = fileURLToPath(new URL("../../migrate-py/contracts/target-19-manifest.json", import.meta.url));
@@ -87,7 +88,7 @@ test("Python declares Arrow types and bytes; Bun reads the same scratch Lance ro
   } finally {
     await rm(root, { recursive: true, force: true });
   }
-}, 60_000);
+}, testTimeout(60_000));
 
 test("Python and TS accept/reject the same message corpus with identical bytes", () => {
   const base = { source_namespace: "relic://bank/provider/session/transcript", source_message_id: "1", peer_name: "neo", role: null, content: "ภาษาไทย 🌱", source_created_at: null, in_reply_to: null };

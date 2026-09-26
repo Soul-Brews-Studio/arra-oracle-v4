@@ -12,6 +12,7 @@ import { connect } from "@lancedb/lancedb";
 import { Type } from "apache-arrow";
 import { createHash } from "node:crypto";
 import { formatInt64, formatTimestamp, validateId } from "../src/contracts/v1";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 // The literal expected target, written out here rather than derived, so a
 // rename on the Python side shows up as a failure on the TypeScript side.
@@ -285,4 +286,4 @@ test("Bun reads the persisted Arrow schema of all 19 Python-created tables", asy
   } finally {
     await rm(root, { recursive: true, force: true });
   }
-}, 180_000);
+}, testTimeout(180_000));

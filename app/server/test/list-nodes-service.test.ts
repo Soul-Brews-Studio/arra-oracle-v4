@@ -18,6 +18,7 @@ import {
   type SeededWorkspace,
 } from "./helpers/publication-fixture";
 import { openPublicationReader } from "../src/publication/service";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/publication-v1/gated-publish.ts", import.meta.url).pathname;
 const ALPHA = "alpha-workspace";
@@ -64,7 +65,7 @@ beforeAll(async () => {
   fixture = await createFixture([ALPHA, BETA]);
   alpha = fixture.workspaces[ALPHA]!;
   beta = fixture.workspaces[BETA]!;
-}, 180_000);
+}, testTimeout(180_000));
 
 afterAll(async () => {
   await fixture?.cleanup();
@@ -103,7 +104,7 @@ describe("listNodes: base cases", () => {
     expect(row!.revision_no).toBe("1");
     expect(row!.content_digest).toBe(result.outcome!.content_digest);
     expect(row!.current_revision_id).toBe(revision);
-  }, 180_000);
+  }, testTimeout(180_000));
 });
 
 describe("listNodes: include_inactive is OPTIONAL (#29 fix round: unblocks the `nodes list` CLI alias)", () => {
@@ -190,7 +191,7 @@ describe("listNodes: keyset pagination", () => {
       finalNextAfterId = page.next_after_id;
     }
     expect(finalNextAfterId).toBeNull();
-  }, 180_000);
+  }, testTimeout(180_000));
 
   test("a full keyset walk visits every id exactly once, strictly increasing, with no short-but-continuing page", async () => {
     const seeds = ["walk1", "walk2", "walk3", "walk4", "walk5"].map((s) => nodeId(`listnodes${s}`));
@@ -234,7 +235,7 @@ describe("listNodes: keyset pagination", () => {
     const afterEnd = await listNodes({ workspace_name: ALPHA, after_id: last, limit: 10, include_total: false, include_inactive: false, type_term: null });
     expect(afterEnd.rows).toEqual([]);
     expect(afterEnd.next_after_id).toBeNull();
-  }, 180_000);
+  }, testTimeout(180_000));
 });
 
 describe("listNodes: include_total", () => {
@@ -265,7 +266,7 @@ describe("listNodes: include_total", () => {
     expect(before.total).toBe(String(walked));
     // Canonical decimal text: no leading zeros, no plus sign.
     expect(before.total).toMatch(/^(?:0|[1-9][0-9]*)$/);
-  }, 180_000);
+  }, testTimeout(180_000));
 
   test("include_total: true with type_term set leaves total null -- no native scoped count for a JSON-embedded field", async () => {
     const decisionType = alpha.term_ids.type.decision;
@@ -366,5 +367,5 @@ describe("listNodes: type_term filter", () => {
     });
     expect(none.rows).toEqual([]);
     expect(none.next_after_id).toBeNull();
-  }, 180_000);
+  }, testTimeout(180_000));
 });

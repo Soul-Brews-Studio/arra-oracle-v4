@@ -25,6 +25,8 @@ import { join } from "node:path";
 import { derivedId } from "../src/mcp/legacy-v3/ids.derivedId";
 import { runGated } from "./helpers/publication-fixture";
 import { createTaxonomyFixture, type TaxonomyFixture } from "./helpers/taxonomy-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const CHILD = join(import.meta.dir, "fixtures", "v3-compat-v1", "core", "forum-child.ts");
 const F = "ws-forum";
@@ -110,13 +112,13 @@ beforeAll(async () => {
     http("http_close_again", "closeSession", { session_name: ref("TH_HTTP"), reason: HTTP_REASON, peer_name: "nat", operation_id: "h-3" }, { as: "free" }),
   ];
   const result = await runGated(fixture.datasetRoot, CHILD, [fixture.datasetRoot, work, JSON.stringify({ banks: [F], steps })], {
-    deadlineMs: 240_000,
+    deadlineMs: scaledMs(240_000),
     env: { ARRA_DATA_DIR: join(work, "legacy"), ARRA_KNOWLEDGE_DATASET_ROOT: fixture.datasetRoot },
   });
   const line = result.stdout.trim().split("\n").filter(Boolean).at(-1);
   if (result.code !== 0 || line === undefined) throw new Error(`forum-child exited ${result.code}: ${result.stderr.slice(0, 2000)}`);
   out = JSON.parse(line);
-}, 300_000);
+}, testTimeout(300_000));
 
 afterAll(async () => {
   await fixture?.cleanup();

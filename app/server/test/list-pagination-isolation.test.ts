@@ -81,6 +81,7 @@ import {
   mcpCallRow,
   connectionRow,
 } from "./helpers/list-isolation-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/list-isolation-v1/core/gated-list-isolation.ts", import.meta.url).pathname;
 const CLOCK_MS = Date.parse("2026-09-21T00:00:00.000Z");
@@ -109,7 +110,7 @@ const PAGE_SIZES = [1, 2, 3, 5, 7] as const;
  *  rows. 1, 2, 3; 5 divides 10 exactly; 3 does not (3, 3, 3, 1). */
 const TYPED_N = 20;
 const FILTER_PAGE_SIZES = [1, 2, 3, 5] as const;
-const TEST_TIMEOUT_MS = 300_000;
+const TEST_TIMEOUT_MS = testTimeout(300_000);
 
 type ListSpec = {
   name: string;

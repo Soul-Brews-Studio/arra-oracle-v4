@@ -37,8 +37,9 @@ import {
   driveContext,
   op,
 } from "./helpers/read-boundary-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
-const TEST_TIMEOUT_MS = 300_000;
+const TEST_TIMEOUT_MS = testTimeout(300_000);
 const RAW_MUTATE = new URL("./fixtures/context-v1/ownership/raw-mutate.ts", import.meta.url).pathname;
 
 const list = (workspace: string, session: string, requester?: string | null) => ({

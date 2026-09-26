@@ -39,10 +39,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFixture, PYTHON, revisionEnvelope, runGated, type Fixture } from "./helpers/publication-fixture";
 import { activeEmbeddingProfileId } from "../src/publication/search-chunk";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const TEST_DIR = import.meta.dir;
 const CHILD = join(TEST_DIR, "fixtures", "transport-v1", "expose13", "child.ts");
-const TEST_TIMEOUT_MS = 120_000;
+const TEST_TIMEOUT_MS = testTimeout(120_000);
 
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";

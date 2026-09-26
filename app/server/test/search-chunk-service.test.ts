@@ -25,6 +25,7 @@ import {
 } from "../src/publication/search-chunk";
 import { ContractError } from "../src/contracts/errors";
 import { PublicationError } from "../src/publication/errors";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const pad = (seed: string) => `${seed}${"0".repeat(Math.max(0, 21 - seed.length))}`.slice(0, 21);
 
@@ -157,7 +158,7 @@ describe("preflight: the required surface", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 120_000);
+  }, testTimeout(120_000));
 });
 
 describe("real persistence: search chunks inside the real gate", () => {
@@ -285,7 +286,7 @@ describe("real persistence: search chunks inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("F5: listSearchChunks is scoped to one embedding_profile, not merged across all of them", async () => {
     // #30 R7: the closed registry refuses any request naming a non-active
@@ -355,7 +356,7 @@ describe("real persistence: search chunks inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("F8: a snapshot with two reserved-type assignments is stored corruption, not a silent last-match pick", async () => {
     const fixture = await createFixture([ALPHA]);
@@ -401,7 +402,7 @@ describe("real persistence: search chunks inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("F2: the readback is scoped to the requesting workspace, not id alone", async () => {
     // Two workspaces, same fixture, with the SAME revision id forced in
@@ -441,7 +442,7 @@ describe("real persistence: search chunks inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("reconcile reports a missing revision and none for an indexed one", async () => {
     const fixture = await createFixture([ALPHA]);
@@ -473,7 +474,7 @@ describe("real persistence: search chunks inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("an unresolvable node or revision is invalid_reference, at the right pointer", async () => {
     const fixture = await createFixture([ALPHA]);
@@ -495,5 +496,5 @@ describe("real persistence: search chunks inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });

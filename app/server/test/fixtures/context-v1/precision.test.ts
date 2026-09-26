@@ -41,10 +41,12 @@ import { createTaxonomyFixture, type TaxonomyFixture } from "../../helpers/taxon
 // lanes read through the audit:read operator view, which is what they always
 // measured; the membership boundary itself is pinned in context-read-boundary.
 import { OPERATOR } from "../../helpers/read-boundary-fixture";
+import { scaledMs } from "../../helpers/timing.scaledMs";
+import { testTimeout } from "../../helpers/timing.testTimeout";
 
 const CHILD = new URL("./precision/seed-child.ts", import.meta.url).pathname;
-const SEED_DEADLINE_MS = 300_000;
-const TEST_TIMEOUT_MS = 600_000;
+const SEED_DEADLINE_MS = scaledMs(300_000);
+const TEST_TIMEOUT_MS = testTimeout(600_000);
 
 /** Contract §6 and §4, restated here rather than imported. */
 const RESPONSE_BUDGET_BYTES = 16 * 1024 * 1024;

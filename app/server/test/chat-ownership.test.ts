@@ -57,10 +57,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createContextFixture } from "./helpers/context-fixture";
 import { runGated, spawnGatedChild } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const TEST_DIR = import.meta.dir;
 const CHILD = join(TEST_DIR, "fixtures", "chat-v1", "ownership", "chat-child.ts");
-const TEST_TIMEOUT_MS = 180_000;
+const TEST_TIMEOUT_MS = testTimeout(180_000);
 const ALPHA = "alpha-workspace";
 
 /** §1, re-derived independently, not copied from the coordinator's message. */

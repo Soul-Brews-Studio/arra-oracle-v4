@@ -24,6 +24,7 @@ import { PublicationError } from "../src/publication/errors";
 import { parseCreateSessionLink, SESSION_RELATIONS } from "../src/publication/session-link";
 import { canonicalize, obj } from "../src/contracts/jcs";
 import { normalizeTarget } from "../src/contracts/evidence-v1";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 describe("preflight: the required surface", () => {
   test("the pure module exists and exports its grammar", async () => {
@@ -211,7 +212,7 @@ describe("real persistence: session links inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a legal DAG diamond is accepted, not mistaken for a cycle", async () => {
     // X->Y, X->Z, Y->W, Z->W (all `continues`): W is reached twice, once via
@@ -260,7 +261,7 @@ describe("real persistence: session links inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   // The mixed continues/forked_from cycle-refusal cases (#28 Unit B) live in
   // `session-link-cycle.test.ts`, split out to stay under the 500-line cap;
@@ -311,7 +312,7 @@ describe("real persistence: session links inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a WIDE node refuses rather than silently walking an arbitrary subset", async () => {
     // sess-wide has more `continues` out-edges than the walk's bound. The
@@ -358,7 +359,7 @@ describe("real persistence: session links inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a nonexistent workspace reports /workspace_name, not /to_session_name", async () => {
     // A PLAIN, non-self-link request (distinct endpoints) against a
@@ -384,7 +385,7 @@ describe("real persistence: session links inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a non-null evidence_ref round-trips through the accepted target codec", async () => {
     const evidenceRef = { target_kind: "session" as const, target: { session_name: "sess-a" } };
@@ -431,5 +432,5 @@ describe("real persistence: session links inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });

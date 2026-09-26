@@ -28,6 +28,7 @@ import {
 } from "./helpers/publication-fixture";
 import { openContextReader } from "../src/publication/service";
 import { PublicationError } from "../src/publication/errors";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/lifecycle-v1/core/gated-lifecycle.ts", import.meta.url).pathname;
 const ALPHA = "alpha-workspace";
@@ -92,7 +93,7 @@ describe("#29 slice B fix round: validity window is a genuinely HALF-OPEN [valid
     } finally {
       await fixture.cleanup();
     }
-  }, 180_000);
+  }, testTimeout(180_000));
 
   test("valid_to: 1ms before is eligible, AT the instant is expired", async () => {
     const NODE = idOf("boundaryTo");
@@ -134,7 +135,7 @@ describe("#29 slice B fix round: validity window is a genuinely HALF-OPEN [valid
     } finally {
       await fixture.cleanup();
     }
-  }, 180_000);
+  }, testTimeout(180_000));
 
   test("a non-finite as_of is refused as invalid_request, never silently read as eligible (fix round)", async () => {
     const NODE = idOf("boundaryNaN");
@@ -171,5 +172,5 @@ describe("#29 slice B fix round: validity window is a genuinely HALF-OPEN [valid
     } finally {
       await fixture.cleanup();
     }
-  }, 180_000);
+  }, testTimeout(180_000));
 });

@@ -39,6 +39,7 @@ import {
   writeReadPolicy,
 } from "./helpers/migration-fixture";
 import { runGated } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const LAB = "oracle-lab";
 const SIDE = "side-bank";
@@ -107,7 +108,7 @@ beforeAll(async () => {
   before = hashTree(source);
   migration = await runCopyMigration({ source, candidate, work, intakeAt: INTAKE_AT });
   after = hashTree(source);
-}, 240_000);
+}, testTimeout(240_000));
 
 afterAll(async () => {
   if (parent) await rm(parent, { recursive: true, force: true });
@@ -222,7 +223,7 @@ describe("copy migration: the candidate is target-19 and the TS kernel reads it"
     } finally {
       await server.stop();
     }
-  }, 120_000);
+  }, testTimeout(120_000));
 
   test("the kernel accepts the migrated flat taxonomy: a dropped legacy parent is not corruption", async () => {
     // Before the fix the legacy parent was stored in a flat vocabulary, and
@@ -246,7 +247,7 @@ describe("copy migration: the candidate is target-19 and the TS kernel reads it"
     const parsed = JSON.parse(result.stdout.trim().split("\n").filter(Boolean).at(-1)!);
     expect(parsed.op0).toEqual({ ok: true, value: expect.objectContaining({ outcome: "already_satisfied" }) });
     expect(parsed.op1).toEqual({ ok: true, value: expect.objectContaining({ outcome: "already_satisfied" }) });
-  }, 120_000);
+  }, testTimeout(120_000));
 
   test("projections rebuild to the same meaning: emptied derived tables reconcile back to identical rows", async () => {
     // Revision snapshots are authoritative; node_revision_terms and
@@ -273,7 +274,7 @@ describe("copy migration: the candidate is target-19 and the TS kernel reads it"
       expect(original.length).toBeGreaterThan(0);
       expect(await tableText(rebuilt, name)).toEqual(original);
     }
-  }, 120_000);
+  }, testTimeout(120_000));
 });
 
 describe("copy migration: rollback", () => {
@@ -285,5 +286,5 @@ describe("copy migration: rollback", () => {
       await server.stop();
     }
     expect(migration.report!.cutover).toContain("none");
-  }, 120_000);
+  }, testTimeout(120_000));
 });
