@@ -13,6 +13,18 @@
 //   * the wire: the REAL `createApp` + `createKnowledgeAccess` + MCP adapter
 //     refuse the same four for a `content:write` principal, over HTTP and MCP.
 //
+// And the two ways around the seal an independent verifier found in the
+// first cut, both reachable by any `content:write` caller:
+//
+//   * B1: `createVocabulary` with `term_policy: sealed`. Nobody but the
+//     operator can add a term to it, so a sealed AND required one made every
+//     later publish in the workspace fail, with no transport able to undo it.
+//     Ordinary callers can no longer create a sealed vocabulary at all.
+//   * B2: `seedReservedVocabularies` naming a NEW id for a reserved name that
+//     a rename had freed. The seed appended a sixth term to the sealed `type`
+//     vocabulary. A seed may no longer append a term to a sealed vocabulary
+//     that already exists, except under trusted operator configuration.
+//
 // It also pins the refusal PRECEDENCE recorded in taxonomy-write-v1.md's R6
 // amendment, so a later reordering shows up here rather than in production.
 //
@@ -76,12 +88,17 @@ async function drive(root: string, mode: string): Promise<Events> {
 
 /** One child run per mode, shared by the tests that read it: each run is a
  *  fresh dataset and a gated process, and several tests only read different
- *  lines of the same run. */
+ *  lines of the same run. The operator first creates the sealed
+ *  `house-rules` vocabulary, since an ordinary caller no longer can (B1). */
 const runs = new Map<string, Promise<Events>>();
 const shared = (mode: string): Promise<Events> => {
   let run = runs.get(mode);
   if (run === undefined) {
-    run = freshDataset().then((root) => drive(root, mode));
+    run = freshDataset().then(async (root) => {
+      const setup = await drive(root, "operator-rules");
+      expect(setup.get("setup:rules")?.value?.outcome).toBe("created");
+      return drive(root, mode);
+    });
     runs.set(mode, run);
   }
   return run;
@@ -92,8 +109,10 @@ const at = (events: Events, label: string) => {
   return events.get(label);
 };
 
-/** The one seal refusal: fixed code, fixed message, and the pointer R6 names. */
-const SEALED = (path: "/vocabulary_id" | "/term_id") => ({
+/** The one seal refusal: fixed code, fixed message, and the pointer R6 names:
+ *  `/vocabulary_id` or `/term_id` for the four term mutators, `/term_policy`
+ *  for createVocabulary, and the manifest pointer for the seed. */
+const SEALED = (path: string) => ({
   version: "arra-taxonomy-error/v1",
   code: "invalid_request",
   path,
@@ -130,9 +149,8 @@ describe("kernel: an ordinary writer cannot change a sealed vocabulary", () => {
       refused(events, "retire:reserved", SEALED("/term_id"));
       refused(events, "reparent:reserved", SEALED("/term_id"));
 
-      // term_policy is the rule, not the reserved names: a caller-created
-      // sealed vocabulary is sealed as well.
-      outcome(events, "sealed:vocabulary", "created");
+      // term_policy is the rule, not the reserved names: the operator's
+      // `house-rules` vocabulary is sealed as well.
       refused(events, "sealed:create", SEALED("/vocabulary_id"));
 
       // Nothing moved: names, activity and the vocabulary policy are as seeded.
@@ -140,6 +158,19 @@ describe("kernel: an ordinary writer cannot change a sealed vocabulary", () => {
       expect(at(events, "get:note").value).toMatchObject({ name: "note", is_active: true });
       expect(at(events, "get:learning").value).toMatchObject({ name: "learning", is_active: true, parent_id: null });
       expect(at(events, "get:type-vocabulary").value).toMatchObject({ name: "type", term_policy: "sealed" });
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  runIt(
+    "B1: an ordinary caller cannot create a sealed vocabulary, required or not, so it cannot wedge publication",
+    async () => {
+      const events = await shared("kernel");
+      refused(events, "sealed:vocabulary", SEALED("/term_policy"));
+      refused(events, "sealed:vocabulary-optional", SEALED("/term_policy"));
+      expect(at(events, "get:gate")).toEqual({ ok: true, value: null });
+      // An open vocabulary is still the caller's to create (the control below).
+      outcome(events, "open:vocabulary", "created");
     },
     TEST_TIMEOUT_MS,
   );
@@ -189,6 +220,15 @@ describe("kernel: an ordinary writer cannot change a sealed vocabulary", () => {
       refused(events, "precedence:rename-collision", SEALED("/term_id"));
       refused(events, "precedence:rename-stale", SEALED("/term_id"));
       refused(events, "precedence:rename-satisfied", SEALED("/term_id"));
+      // createVocabulary: request validity (a reserved name is refused by the
+      // parser) and the workspace outrank the seal; the seal outranks both
+      // collisions and the already_satisfied replay of an operator-made
+      // sealed vocabulary.
+      refused(events, "precedence:vocabulary-reserved", SEALED("/name"));
+      refused(events, "precedence:vocabulary-workspace", taxonomyError("invalid_reference", "/workspace_name"));
+      refused(events, "precedence:vocabulary-id-collision", SEALED("/term_policy"));
+      refused(events, "precedence:vocabulary-name-collision", SEALED("/term_policy"));
+      refused(events, "precedence:vocabulary-replay", SEALED("/term_policy"));
     },
     TEST_TIMEOUT_MS,
   );
@@ -247,7 +287,6 @@ describe("transport: HTTP and MCP refuse a content:write principal", () => {
       expect(at(events, "http:rename:reserved")).toEqual({ status: 400, body: SEALED("/term_id") });
       expect(at(events, "http:retire:reserved")).toEqual({ status: 400, body: SEALED("/term_id") });
       expect(at(events, "http:reparent:reserved")).toEqual({ status: 400, body: SEALED("/term_id") });
-      expect(at(events, "http:sealed:vocabulary")).toMatchObject({ status: 200, body: { outcome: "created" } });
       expect(at(events, "http:sealed:create")).toEqual({ status: 400, body: SEALED("/vocabulary_id") });
       expect(at(events, "http:get:invented")).toEqual({ status: 200, body: null });
       expect(at(events, "http:get:discussion").body).toMatchObject({ name: "discussion", is_active: true });
@@ -261,6 +300,7 @@ describe("transport: HTTP and MCP refuse a content:write principal", () => {
         ["mcp:retire:reserved", "/term_id"],
         ["mcp:reparent:reserved", "/term_id"],
         ["mcp:sealed:create", "/vocabulary_id"],
+        ["mcp:sealed:vocabulary", "/term_policy"],
       ] as const) {
         expect({ label, event: at(events, label) }).toEqual({
           label,
@@ -283,6 +323,19 @@ describe("transport: HTTP and MCP refuse a content:write principal", () => {
         memory_horizon: ["long_term", "short_term"],
         rules: [],
       });
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  runIt(
+    "B1 over the wire: a sealed+required vocabulary is refused and the workspace stays publishable",
+    async () => {
+      const events = await shared("transport");
+      expect(at(events, "http:publish:before")).toMatchObject({ status: 200, body: { outcome: "accepted" } });
+      expect(at(events, "http:sealed:vocabulary")).toEqual({ status: 400, body: SEALED("/term_policy") });
+      expect(at(events, "http:get:gate")).toEqual({ status: 200, body: null });
+      // The verifier's S3: this was 400 invalid_request once the gate existed.
+      expect(at(events, "http:publish:after")).toMatchObject({ status: 200, body: { outcome: "accepted" } });
     },
     TEST_TIMEOUT_MS,
   );
@@ -312,6 +365,48 @@ describe("transport: HTTP and MCP refuse a content:write principal", () => {
         status: 409,
         body: { version: "arra-taxonomy-error/v1", code: "conflict" },
       });
+    },
+    TEST_TIMEOUT_MS,
+  );
+});
+
+// ── B2: the seed cannot append to a sealed vocabulary that already exists ────
+
+describe("seed: a renamed reserved name cannot be re-seeded under a new id", () => {
+  runIt(
+    "refused on the kernel, HTTP and MCP; the seed's own conflicts come first; the operator can still resume",
+    async () => {
+      const root = await freshDataset();
+      const setup = await drive(root, "operator-rename");
+      outcome(setup, "seed", "created");
+      outcome(setup, "rename:learning", "updated");
+
+      // Kernel: the new id for `learning` would be a sixth `type` term.
+      const kernel = await drive(root, "reseed-kernel");
+      refused(kernel, "reseed:new-id", SEALED("/type/terms/learning"));
+      expect(at(kernel, "reseed:get")).toEqual({ ok: true, value: null });
+      // Precedence inside the seed: every manifest conflict outranks the seal,
+      // even one listed after the row the seal would refuse.
+      refused(kernel, "reseed:original", taxonomyError("conflict", "/type/terms/learning"));
+      refused(kernel, "reseed:conflict-first", taxonomyError("conflict", "/type/terms/correction"));
+
+      // The wire: the verifier's T2..T4, now refused with nothing persisted.
+      const wire = await drive(root, "reseed-transport");
+      expect(at(wire, "http:reseed")).toEqual({ status: 400, body: SEALED("/type/terms/learning") });
+      expect(at(wire, "mcp:reseed")).toEqual({ status: 200, isError: true, value: SEALED("/type/terms/learning") });
+      expect(at(wire, "http:get:new-learning")).toEqual({ status: 200, body: null });
+      // A typed revision naming the refused id has nothing to resolve against.
+      expect(at(wire, "http:publish:new-learning")).toMatchObject({ status: 400, body: { code: "invalid_reference" } });
+      expect(at(wire, "raw:terms")).toEqual({
+        type: ["conclusion", "correction", "discussion", "lesson", "note"],
+        memory_horizon: ["long_term", "short_term"],
+        rules: [],
+      });
+
+      // The frozen resume clause survives for trusted configuration only.
+      const operator = await drive(root, "operator-reseed");
+      outcome(operator, "reseed:new-id", "created");
+      expect(at(operator, "reseed:get").value).toMatchObject({ name: "learning", is_active: true, vocabulary_id: expect.any(String) });
     },
     TEST_TIMEOUT_MS,
   );

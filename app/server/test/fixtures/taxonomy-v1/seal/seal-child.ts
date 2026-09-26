@@ -5,6 +5,9 @@
 // exporter. It never asserts: it prints one `EVENT <label> <json>` line per
 // step, and `taxonomy-seal.test.ts` owns every expectation. Modes:
 //
+//   operator-rules
+//               trusted setup: the operator creates the sealed `house-rules`
+//               vocabulary, which an ordinary caller can no longer create.
 //   kernel      the ordinary writer factory, opened with NO operator
 //               configuration: every refusal, its precedence, and the open
 //               vocabulary controls that prove the owner stays usable.
@@ -16,19 +19,17 @@
 //   opener:*    each writer factory refuses by DEFAULT (one process each).
 //   transport   the REAL `createApp` + `createKnowledgeAccess` + MCP adapter,
 //               driven only through `Request` objects, HTTP and MCP both.
+//   operator-rename, reseed-kernel, reseed-transport, operator-reseed
+//               the re-seed hole: once a reserved term is renamed, its
+//               literal name is free, and a seed naming a NEW id for it would
+//               append a sixth term to the sealed `type` vocabulary.
 //
 // See docs/overnight/DECISIONS.md R6 and taxonomy-write-v1.md's R6 amendment.
 
-import { createHash } from "node:crypto";
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { connect } from "@lancedb/lancedb";
-import { createApp } from "../../../../src/app";
-import { createOperationService, type StoreDependencies } from "../../../../src/auth/service";
-import { createKnowledgeAccess } from "../../../../src/knowledge/transport";
-import { configureKnowledgeAccess, createMcpAdapter } from "../../../../src/mcp";
 import { openContextWriter, openEvidenceWriter, openKnowledgeWriter } from "../../../../src/publication/service";
 import { encodeRequest, seedManifest, termRequest, vocabularyRequest } from "../../../helpers/taxonomy-fixture";
+import { openSealWire } from "./openSealWire";
 
 const [, , mode, root, workDir] = process.argv as [string, string, string, string, string];
 
@@ -45,6 +46,8 @@ const IDS = {
   discussion: pad("tdisc"),
   rules: pad("rulesvoc"),
   open: pad("openvoc"),
+  gate: pad("gatevoc"),
+  newLearning: pad("newlearn"),
 };
 
 const say = (label: string, value: unknown) => console.log(`EVENT ${label} ${JSON.stringify(value)}`);
@@ -71,6 +74,18 @@ const userSealedVocabulary = vocabularyRequest(WORKSPACE, {
   term_policy: "sealed",
   hierarchy: "tree",
 });
+// The verifier's B1 shape: sealed AND required. Created by an ordinary caller
+// it could never hold a term, so every later publish in the workspace would
+// fail its required-vocabulary check.
+const gateVocabulary = vocabularyRequest(WORKSPACE, {
+  vocabulary_id: IDS.gate,
+  name: "gate",
+  label: "Gate",
+  kind: "categories",
+  term_policy: "sealed",
+  cardinality: "one",
+  required: true,
+});
 const openVocabulary = vocabularyRequest(WORKSPACE, { vocabulary_id: IDS.open, name: "topics", hierarchy: "tree" });
 const rename = (termId: string, expected: string, name: string) => ({
   workspace_name: WORKSPACE,
@@ -85,18 +100,87 @@ const reparent = (termId: string, expected: string | null, parent: string | null
   parent_id: parent,
 });
 const byId = (termId: string) => ({ workspace_name: WORKSPACE, term_id: termId });
+const vocabularyById = (vocabularyId: string) => ({ workspace_name: WORKSPACE, vocabulary_id: vocabularyId });
+// The re-seed hole: the literal manifest, except `learning` under a new id.
+const reseedManifest = (ids: Record<string, string> = {}) => seedManifest(WORKSPACE, { learning: IDS.newLearning, ...ids });
+
+// A minimal typed revision: exactly one `type` term, nothing else.
+const typed = (termId: string, name: string) => ({
+  term_id: termId,
+  vocabulary_id: IDS.type,
+  vocabulary_name_snapshot: "type",
+  term_name_snapshot: name,
+  label_snapshot: null,
+  position: "0",
+});
+const publish = (slug: string, terms: unknown[]) => ({
+  operation_id: pad(`op${slug}`),
+  content: {
+    workspace_name: WORKSPACE,
+    node_id: pad(`node${slug}`),
+    base_revision_id: null,
+    title: "t",
+    body: "b",
+    body_format: "markdown",
+    fields: "{}",
+    author_peer_name: null,
+    observer_peer_name: null,
+    subject_peer_name: null,
+    session_name: null,
+    is_active: true,
+    valid_from: null,
+    valid_to: null,
+    change_reason: null,
+    schema_version: "1",
+    canonical_version: "arra-revision/v1",
+    term_snapshot_json: JSON.stringify(terms),
+    link_snapshot_json: "[]",
+    h_metadata: null,
+    internal_metadata: null,
+  },
+});
 
 const baseOptions = { newRevisionId: () => "r".repeat(21), clock: () => CLOCK_MS };
+const operatorOptions = { ...baseOptions, taxonomyOperator: true };
 
 type Taxonomy = Awaited<ReturnType<typeof openKnowledgeWriter>>["taxonomy"];
 type TaxonomyMethod = keyof Taxonomy;
 const call = (taxonomy: Taxonomy, method: TaxonomyMethod, body: unknown) =>
   (taxonomy[method] as (bytes: Uint8Array) => Promise<unknown>)(encodeRequest(body));
 
-if (mode === "kernel") {
-  const bundle = await openKnowledgeWriter(root, baseOptions);
-  const t = bundle.taxonomy;
+/** One owner per process: a closed owner releases the gate descriptor with
+ *  it, so a same-process reopen is refused by design. */
+async function withOwner(options: Parameters<typeof openKnowledgeWriter>[1], steps: (t: Taxonomy) => Promise<void>): Promise<void> {
+  const bundle = await openKnowledgeWriter(root, options);
   try {
+    await steps(bundle.taxonomy);
+  } finally {
+    await bundle.close();
+  }
+}
+
+/** Independent of the service: what the terms table physically holds. */
+async function rawTerms(): Promise<Record<string, string[]>> {
+  const table = await (await connect(root)).openTable("terms");
+  const rows = await table.query().where(`workspace_name = '${WORKSPACE}'`).toArray();
+  const namesIn = (vocabularyId: string) =>
+    rows
+      .filter((row) => row.vocabulary_id === vocabularyId)
+      .map((row) => `${row.name}${row.is_active === true ? "" : " (retired)"}`)
+      .sort();
+  return { type: namesIn(IDS.type), memory_horizon: namesIn(IDS.horizon), rules: namesIn(IDS.rules) };
+}
+
+if (mode === "operator-rules") {
+  // Trusted setup only. R6 closes sealed-vocabulary creation to ordinary
+  // callers, so the caller-policy cases below need the operator to make one.
+  await withOwner(operatorOptions, async (t) => {
+    await settle("setup:rules", call(t, "createVocabulary", userSealedVocabulary));
+  });
+}
+
+if (mode === "kernel") {
+  await withOwner(baseOptions, async (t) => {
     await settle("seed", call(t, "seedReservedVocabularies", seedManifest(WORKSPACE)));
 
     // The four refused operations on the two reserved sealed vocabularies.
@@ -107,8 +191,15 @@ if (mode === "kernel") {
     await settle("retire:reserved", call(t, "retireTerm", byId(IDS.note)));
     await settle("reparent:reserved", call(t, "reparentTerm", reparent(IDS.learning, null, null)));
 
-    // A caller-created sealed vocabulary is sealed the same way.
-    await settle("sealed:vocabulary", call(t, "createVocabulary", userSealedVocabulary));
+    // B1: an ordinary caller cannot create a sealed vocabulary at all,
+    // required or not. It could never hold a term.
+    await settle("sealed:vocabulary", call(t, "createVocabulary", gateVocabulary));
+    await settle(
+      "sealed:vocabulary-optional",
+      call(t, "createVocabulary", { ...gateVocabulary, vocabulary_id: pad("optvoc"), name: "optional", required: false }),
+    );
+    await settle("get:gate", call(t, "getVocabulary", vocabularyById(IDS.gate)));
+    // The operator-made `house-rules` is sealed the same way as `type`.
     await settle(
       "sealed:create",
       call(t, "createTerm", termRequest(WORKSPACE, { term_id: pad("rule1"), vocabulary_id: IDS.rules, name: "rule-1" })),
@@ -131,12 +222,23 @@ if (mode === "kernel") {
     await settle("precedence:rename-satisfied", call(t, "renameTerm", rename(IDS.discussion, "x", "discussion")));
     await settle("precedence:retire-absent", call(t, "retireTerm", byId(pad("ghost"))));
     await settle("precedence:reparent-flat-parent", call(t, "reparentTerm", reparent(IDS.learning, null, IDS.note)));
+    // createVocabulary: request validity (a reserved name) and the workspace
+    // outrank the seal; the seal outranks every collision and the
+    // already_satisfied replay of the operator's own sealed vocabulary.
+    await settle("precedence:vocabulary-reserved", call(t, "createVocabulary", { ...gateVocabulary, name: "type" }));
+    await settle(
+      "precedence:vocabulary-workspace",
+      call(t, "createVocabulary", { ...gateVocabulary, workspace_name: "no-such-workspace" }),
+    );
+    await settle("precedence:vocabulary-id-collision", call(t, "createVocabulary", { ...gateVocabulary, vocabulary_id: IDS.type }));
+    await settle("precedence:vocabulary-name-collision", call(t, "createVocabulary", { ...gateVocabulary, name: "house-rules" }));
+    await settle("precedence:vocabulary-replay", call(t, "createVocabulary", userSealedVocabulary));
 
     // Nothing moved.
     await settle("get:discussion", call(t, "getTerm", byId(IDS.discussion)));
     await settle("get:note", call(t, "getTerm", byId(IDS.note)));
     await settle("get:learning", call(t, "getTerm", byId(IDS.learning)));
-    await settle("get:type-vocabulary", call(t, "getVocabulary", { workspace_name: WORKSPACE, vocabulary_id: IDS.type }));
+    await settle("get:type-vocabulary", call(t, "getVocabulary", vocabularyById(IDS.type)));
 
     // Controls: an OPEN vocabulary still takes all four, on the same owner
     // that just refused everything above (a pre-write refusal never poisons).
@@ -152,17 +254,13 @@ if (mode === "kernel") {
     await settle("open:rename", call(t, "renameTerm", rename(pad("opena"), "a", "a2")));
     await settle("open:reparent", call(t, "reparentTerm", reparent(pad("openb"), null, pad("opena"))));
     await settle("open:retire", call(t, "retireTerm", byId(pad("openb"))));
-  } finally {
-    await bundle.close();
-  }
+  });
 }
 
 if (mode === "operator") {
   // Trusted in-process configuration, never request bytes: the operator path
   // taxonomy-write-v1.md describes stays available here, and only here.
-  const bundle = await openKnowledgeWriter(root, { ...baseOptions, taxonomyOperator: true });
-  const t = bundle.taxonomy;
-  try {
+  await withOwner(operatorOptions, async (t) => {
     await settle("seed", call(t, "seedReservedVocabularies", seedManifest(WORKSPACE)));
     await settle("create:type", call(t, "createTerm", invented("invented")));
     await settle("rename:reserved", call(t, "renameTerm", rename(IDS.discussion, "discussion", "debate")));
@@ -176,28 +274,20 @@ if (mode === "operator") {
       call(t, "createTerm", termRequest(WORKSPACE, { term_id: pad("rule2"), vocabulary_id: IDS.rules, name: "rule-2" })),
     );
     await settle("sealed:reparent", call(t, "reparentTerm", reparent(pad("rule2"), null, pad("rule1"))));
-  } finally {
-    await bundle.close();
-  }
+  });
 }
 
 if (mode === "ordinary-after-operator") {
-  const bundle = await openKnowledgeWriter(root, baseOptions);
-  const t = bundle.taxonomy;
-  try {
+  await withOwner(baseOptions, async (t) => {
     await settle("rename:operator-term", call(t, "renameTerm", rename(pad("invented"), "invented_type", "x")));
     await settle("retire:operator-term", call(t, "retireTerm", byId(pad("invented"))));
     await settle("reparent:sealed-tree", call(t, "reparentTerm", reparent(pad("rule2"), pad("rule1"), null)));
     await settle("retire:sealed-tree", call(t, "retireTerm", byId(pad("rule1"))));
     await settle("get:rule2", call(t, "getTerm", byId(pad("rule2"))));
-  } finally {
-    await bundle.close();
-  }
+  });
 }
 
-// One factory per process: a closed owner releases the gate descriptor with
-// it, so a same-process reopen is refused by design (the ownership lanes pin
-// "reopen:after-close writer_unavailable"). The parent runs each of these on
+// One factory per process (see withOwner). The parent runs each of these on
 // one dataset in turn; the seed is idempotent, so each can repeat it.
 const OPENERS: Record<string, () => Promise<{ taxonomy: Taxonomy; close(): Promise<void> }>> = {
   "opener:knowledge": () => openKnowledgeWriter(root, baseOptions),
@@ -222,112 +312,21 @@ if (opener !== undefined) {
 
 // ── transport: real HTTP + MCP through createApp ────────────────────────────
 
-const ORIGIN = "http://127.0.0.1:3939";
-const HOST = "127.0.0.1:3939";
-const WRITER_TOKEN = "a".repeat(64);
-const READER_TOKEN = "b".repeat(64);
-const sha256 = (token: string) => createHash("sha256").update(token, "ascii").digest("hex");
-
-function writePolicy(): string {
-  const policyPath = join(workDir, "policy.json");
-  const credential = (id: string, principal: string, token: string) => ({
-    id,
-    principal_id: principal,
-    sha256: sha256(token),
-    not_before: "2020-01-01T00:00:00.000Z",
-    expires_at: "2099-01-01T00:00:00.000Z",
-    revoked: false,
-  });
-  writeFileSync(
-    policyPath,
-    JSON.stringify({
-      version: "arra-auth/v1",
-      principals: [
-        {
-          id: "writer",
-          disabled: false,
-          workspaces: [{ name: WORKSPACE, actions: ["content:read", "content:write"] }],
-          global_actions: [],
-        },
-        { id: "reader", disabled: false, workspaces: [{ name: WORKSPACE, actions: ["content:read"] }], global_actions: [] },
-      ],
-      credentials: [credential("cred-writer", "writer", WRITER_TOKEN), credential("cred-reader", "reader", READER_TOKEN)],
-    }),
-    { encoding: "utf-8", mode: 0o600 },
-  );
-  return policyPath;
-}
-
 if (mode === "transport") {
-  const policyPath = writePolicy();
-  const access = createKnowledgeAccess({ datasetRoot: root, env: process.env });
-  configureKnowledgeAccess(access);
-  // The legacy memory store is never reached by a kb_ tool; only the audit
-  // append runs, and it is recorded here rather than written anywhere.
-  const unused = async (): Promise<never> => {
-    throw new Error("legacy store is not used by kb_ tools");
-  };
-  const audits: Record<string, unknown>[] = [];
-  const deps: StoreDependencies = {
-    insert: unused,
-    list: unused,
-    searchText: unused,
-    searchVector: unused,
-    getById: unused,
-    stats: unused,
-    backfill: unused,
-    ensureFtsIndex: unused,
-    embedHealth: unused,
-    recentCalls: unused,
-    aggregateCalls: unused,
-    logCall: async (record) => {
-      audits.push(record);
-    },
-  };
-  const service = createOperationService({ policyPath }, deps);
-  const app = createApp({ origin: ORIGIN }, service, createMcpAdapter(service), { knowledge: { policyPath, access } });
-
-  const headers = (token: string | null): Record<string, string> => ({
-    host: HOST,
-    "content-type": "application/json",
-    ...(token === null ? {} : { authorization: `Bearer ${token}` }),
-  });
-  const http = async (method: string, body: unknown, token: string | null = WRITER_TOKEN) => {
-    const res = await app.handle(
-      new Request(`${ORIGIN}/api/knowledge/${WORKSPACE}/${method}`, {
-        method: "POST",
-        headers: headers(token),
-        body: JSON.stringify(body),
-      }),
-    );
-    return { status: res.status, body: await res.json().catch(() => null) };
-  };
-  const mcp = async (tool: string, payload: unknown, token: string | null = WRITER_TOKEN) => {
-    const res = await app.handle(
-      new Request(`${ORIGIN}/mcp/${WORKSPACE}`, {
-        method: "POST",
-        headers: headers(token),
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: tool, arguments: { payload } } }),
-      }),
-    );
-    const wire = (await res.json().catch(() => null)) as { result?: { isError?: boolean; content?: { text?: string }[] } } | null;
-    const text = wire?.result?.content?.[0]?.text;
-    let value: unknown = text ?? null;
-    try {
-      value = text === undefined ? null : JSON.parse(text);
-    } catch {
-      // A plain-text tool error stays text.
-    }
-    return { status: res.status, isError: wire?.result?.isError === true, value };
-  };
+  const { http, mcp, audits, readerToken } = openSealWire(root, workDir, WORKSPACE);
 
   say("http:seed", await http("seedReservedVocabularies", seedManifest(WORKSPACE)));
+  say("http:publish:before", await http("publishRevision", publish("before", [typed(IDS.note, "note")])));
   say("http:create:type", await http("createTerm", invented("httpinvented")));
   say("http:create:horizon", await http("createTerm", midTerm("httpmidterm")));
   say("http:rename:reserved", await http("renameTerm", rename(IDS.discussion, "discussion", "debate")));
   say("http:retire:reserved", await http("retireTerm", byId(IDS.note)));
   say("http:reparent:reserved", await http("reparentTerm", reparent(IDS.learning, null, null)));
-  say("http:sealed:vocabulary", await http("createVocabulary", userSealedVocabulary));
+  // B1 over the wire: the sealed+required vocabulary is refused, so the
+  // workspace stays publishable.
+  say("http:sealed:vocabulary", await http("createVocabulary", gateVocabulary));
+  say("http:get:gate", await http("getVocabulary", vocabularyById(IDS.gate)));
+  say("http:publish:after", await http("publishRevision", publish("after", [typed(IDS.note, "note")])));
   say(
     "http:sealed:create",
     await http("createTerm", termRequest(WORKSPACE, { term_id: pad("httprule"), vocabulary_id: IDS.rules, name: "rule-1" })),
@@ -339,7 +338,7 @@ if (mode === "transport") {
   // Precedence at the wire: authentication and authorization outrank the
   // seal, and request bytes can never select the operator path.
   say("http:anonymous:create:type", await http("createTerm", invented("httpanon"), null));
-  say("http:reader:create:type", await http("createTerm", invented("httpreader"), READER_TOKEN));
+  say("http:reader:create:type", await http("createTerm", invented("httpreader"), readerToken));
   say("http:request-selects-operator", await http("createTerm", { ...invented("httpflag"), taxonomyOperator: true }));
 
   // The literal bootstrap stays reachable, and cannot extend: a replay is
@@ -358,26 +357,62 @@ if (mode === "transport") {
   say("mcp:rename:reserved", await mcp("kb_renameTerm", rename(IDS.discussion, "discussion", "debate")));
   say("mcp:retire:reserved", await mcp("kb_retireTerm", byId(IDS.note)));
   say("mcp:reparent:reserved", await mcp("kb_reparentTerm", reparent(IDS.learning, null, null)));
+  say("mcp:sealed:vocabulary", await mcp("kb_createVocabulary", gateVocabulary));
   say(
     "mcp:sealed:create",
     await mcp("kb_createTerm", termRequest(WORKSPACE, { term_id: pad("mcprule"), vocabulary_id: IDS.rules, name: "rule-1" })),
   );
-  say("mcp:reader:create:type", await mcp("kb_createTerm", invented("mcpreader"), READER_TOKEN));
+  say("mcp:reader:create:type", await mcp("kb_createTerm", invented("mcpreader"), readerToken));
   say(
     "mcp:open:create",
     await mcp("kb_createTerm", termRequest(WORKSPACE, { term_id: pad("mcpopen"), vocabulary_id: IDS.open, name: "m" })),
   );
 
-  // Independent of the service: what the terms table physically holds.
-  const table = await (await connect(root)).openTable("terms");
-  const rows = await table.query().where(`workspace_name = '${WORKSPACE}'`).toArray();
-  const namesIn = (vocabularyId: string) =>
-    rows
-      .filter((row) => row.vocabulary_id === vocabularyId)
-      .map((row) => `${row.name}${row.is_active === true ? "" : " (retired)"}`)
-      .sort();
-  say("raw:terms", { type: namesIn(IDS.type), memory_horizon: namesIn(IDS.horizon), rules: namesIn(IDS.rules) });
+  say("raw:terms", await rawTerms());
   say("audit:tools", audits.map((a) => `${a.tool} ${a.status}`));
+}
+
+// ── the re-seed hole (B2) ───────────────────────────────────────────────────
+
+if (mode === "operator-rename") {
+  // The rename is operator-only now; a dataset written before R6 can hold the
+  // same state, since ordinary writers could rename reserved terms then.
+  await withOwner(operatorOptions, async (t) => {
+    await settle("seed", call(t, "seedReservedVocabularies", seedManifest(WORKSPACE)));
+    await settle("rename:learning", call(t, "renameTerm", rename(IDS.learning, "learning", "lesson")));
+  });
+}
+
+if (mode === "reseed-kernel") {
+  await withOwner(baseOptions, async (t) => {
+    await settle("reseed:new-id", call(t, "seedReservedVocabularies", reseedManifest()));
+    await settle("reseed:get", call(t, "getTerm", byId(IDS.newLearning)));
+    // The seed's own conflicts outrank the seal: the literal manifest meets
+    // the renamed row, and a later-listed occupied name still conflicts.
+    await settle("reseed:original", call(t, "seedReservedVocabularies", seedManifest(WORKSPACE)));
+    await settle(
+      "reseed:conflict-first",
+      call(t, "seedReservedVocabularies", reseedManifest({ correction: pad("othercorr") })),
+    );
+  });
+}
+
+if (mode === "reseed-transport") {
+  const { http, mcp } = openSealWire(root, workDir, WORKSPACE);
+  say("http:reseed", await http("seedReservedVocabularies", reseedManifest()));
+  say("mcp:reseed", await mcp("kb_seedReservedVocabularies", reseedManifest()));
+  say("http:get:new-learning", await http("getTerm", byId(IDS.newLearning)));
+  say("http:publish:new-learning", await http("publishRevision", publish("relearn", [typed(IDS.newLearning, "learning")])));
+  say("raw:terms", await rawTerms());
+}
+
+if (mode === "operator-reseed") {
+  // The frozen resume clause ("a matching vocabulary present with some
+  // expected terms absent") still holds, for trusted configuration only.
+  await withOwner(operatorOptions, async (t) => {
+    await settle("reseed:new-id", call(t, "seedReservedVocabularies", reseedManifest()));
+    await settle("reseed:get", call(t, "getTerm", byId(IDS.newLearning)));
+  });
 }
 
 say("done", null);
