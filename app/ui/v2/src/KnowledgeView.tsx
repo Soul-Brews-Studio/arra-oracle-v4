@@ -13,7 +13,7 @@ import { TaxonomySetup } from "./components/TaxonomySetup";
 import { TermCloud } from "./components/TermCloud";
 import { TermCloudEmpty } from "./components/TermCloudEmpty";
 import { TypeBadge } from "./components/TypeBadge";
-import { compareRevisionNo } from "./state/revisionDiff";
+import { compareRevisionNo } from "./state/compareRevisionNo";
 import { useKnowledge } from "./state/useKnowledge";
 
 /** The knowledge half: nodes, immutable revisions, type and tags.

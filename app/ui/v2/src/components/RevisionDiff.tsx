@@ -1,6 +1,7 @@
 import { type ReactNode, useMemo } from "react";
 import type { RevisionRow } from "../api/knowledge";
-import { type FieldChange, pairDiffLines, revisionDiff } from "../state/revisionDiff";
+import { pairDiffLines } from "../state/pairDiffLines";
+import { type FieldChange, revisionDiff } from "../state/revisionDiff";
 
 const ROW_CLASS: Record<"equal" | "changed" | "added" | "removed", string> = {
   equal: "",

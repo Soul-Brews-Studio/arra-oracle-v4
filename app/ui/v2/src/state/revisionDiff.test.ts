@@ -7,7 +7,9 @@
  */
 import { describe, expect, test } from "bun:test";
 import type { RevisionRow, TermSnapshot } from "../api/knowledge";
-import { compareRevisionNo, MAX_DIFF_CELLS, pairDiffLines, revisionDiff, type RevisionDiffResult } from "./revisionDiff";
+import { compareRevisionNo } from "./compareRevisionNo";
+import { pairDiffLines } from "./pairDiffLines";
+import { MAX_DIFF_CELLS, revisionDiff, type RevisionDiffResult } from "./revisionDiff";
 
 /** `body` is a discriminated union (too-large bodies carry no `lines`); every
  *  test below builds SHORT bodies, so this just unwraps the `tooLarge:false`

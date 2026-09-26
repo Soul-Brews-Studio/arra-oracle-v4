@@ -202,54 +202,6 @@ function diffLinks(from: RevisionRow, to: RevisionRow): LinkChange[] {
   return changes;
 }
 
-/** `revision_no` is Int64 wire text (see `api/knowledge.ts` note 2) -- it can
- *  exceed `Number.MAX_SAFE_INTEGER` in principle, so a picker sorting
- *  revisions for the diff view compares via `BigInt`, not `Number(...)`,
- *  the same precision rule `RevisionHistory`'s neighbours already follow.
- *  Descending, newest first -- what a "pick two revisions to compare" list
- *  wants to show on top. */
-export function compareRevisionNo(a: string, b: string): number {
-  const x = BigInt(a);
-  const y = BigInt(b);
-  if (x === y) return 0;
-  return x > y ? -1 : 1;
-}
-
-export type PairedLine = {
-  kind: "equal" | "changed" | "added" | "removed";
-  left: string | null;
-  right: string | null;
-};
-
-/** `bodyLines` is a flat op stream (LCS order); `RevisionDiff.tsx` renders a
- *  SIDE-BY-SIDE table, which needs two lines per row, not one op per row. An
- *  adjacent removed-then-added run is exactly what a single edited line
- *  produces (see `diffLines`'s tie-break), so it collapses to one "changed"
- *  row instead of a removed row stacked over an unrelated added row -- the
- *  pairing a reader's eye already expects from "this line became that one". */
-export function pairDiffLines(ops: LineDiffOp[]): PairedLine[] {
-  const rows: PairedLine[] = [];
-  let i = 0;
-  while (i < ops.length) {
-    const op = ops[i]!;
-    const next = ops[i + 1];
-    if (op.op === "equal") {
-      rows.push({ kind: "equal", left: op.text, right: op.text });
-      i++;
-    } else if (op.op === "removed" && next?.op === "added") {
-      rows.push({ kind: "changed", left: op.text, right: next.text });
-      i += 2;
-    } else if (op.op === "removed") {
-      rows.push({ kind: "removed", left: op.text, right: null });
-      i++;
-    } else {
-      rows.push({ kind: "added", left: null, right: op.text });
-      i++;
-    }
-  }
-  return rows;
-}
-
 /** `from` and `to` are ANY two revisions of the same node -- caller decides
  *  which is base and which is compare; this function does not assume `to`
  *  is newer, so it works equally for "diff against the previous revision"
