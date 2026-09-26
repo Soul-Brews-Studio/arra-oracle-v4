@@ -13,6 +13,13 @@ install:
 dev-stack:
     @{{root}}/just/dev-stack.sh
 
+# The one-command overnight capstone demo (#22/#31/#32/#30): fresh mktemp
+# stack, real CLI + real MCP (v3-compatible) loop, real local Ollama if
+# reachable (else honest STEP_SKIPPED lines) -- always stops the server and
+# removes the stack. See docs/overnight/DEMO.md for a captured transcript.
+demo:
+    @{{root}}/just/demo.sh
+
 start:
     cd {{srv}} && bun run src/index.ts
 

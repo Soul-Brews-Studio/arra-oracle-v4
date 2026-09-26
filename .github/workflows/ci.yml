@@ -96,6 +96,19 @@ jobs:
           TEST_TIMEOUT_MS: 60000
         run: bun run test:parallel
 
+      # Keeps the overnight capstone demo (app/just/demo.sh, docs/overnight/
+      # DEMO.md) honest with no GPU and no real Ollama: the test itself
+      # stands up a `Bun.serve` stub for the three Ollama endpoints the
+      # server ever calls, runs the REAL script against it (a real fresh
+      # mktemp dataset, a real gated server, real CLI + MCP calls), and
+      # asserts every step's success marker. Independent of the sharded
+      # suite above -- it imports no server kernel module directly, so it is
+      # not part of test.census.tsv/test.order.txt (see test.order.ts's own
+      # header: it only scans app/server/test).
+      - name: Test — demo.sh, stubbed Ollama (app/just/demo.test.ts)
+        working-directory: app
+        run: bun test just/demo.test.ts
+
       # app/migrate-py has no pytest.ini/pyproject [tool.pytest] section and no
       # pytest package in its lockfile (measured: `python -m pytest --version`
       # -> "No module named pytest"). The real, documented command is
