@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ChatAnswer } from "../api/memory";
+import { ChatError } from "./ChatError";
 import { CoverageBadge } from "./CoverageBadge";
 import { ExcludedList } from "./ExcludedList";
 import { ModelNote } from "./ModelNote";
@@ -76,7 +77,7 @@ export function DialecticPanel({
         </button>
       </div>
 
-      {error && <p className="text-[11px] text-rose-300">{error}</p>}
+      <ChatError code={error} />
 
       {answer && (
         <div className="flex flex-col gap-3 rounded border border-edge bg-panel p-3">
