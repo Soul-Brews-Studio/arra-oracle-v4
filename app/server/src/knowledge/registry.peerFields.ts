@@ -56,6 +56,8 @@ export const PEER_FIELDS: Readonly<Record<string, readonly PeerFieldPath[]>> = O
   // reviewed: these assert no acting peer (lookups, taxonomy, evidence, audit)
   getTrace: [],
   listTraceHits: [],
+  // K5 (#31 overnight R18): a filtered listing, names no acting peer.
+  listTraces: [],
   listSessionLinks: [],
   getRecallEligibility: [],
   listLifecycleHistory: [],

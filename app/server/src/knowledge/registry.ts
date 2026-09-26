@@ -281,6 +281,10 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
     scopePath: [],
     call: (b, x) => writer(b).context.createTrace(x),
   },
+  // K5 (docs/overnight/V3-PARITY.md §5): newest-first listing, the v3
+  // adapter's oracle_trace_list and the upgraded oracle_trace_chain
+  // forward/oracle_trace_get children.
+  listTraces: { action: "content:read", scopePath: [], call: (b, x) => b.context.listTraces(x) },
 
   // ── node lifecycle (#29) ─────────────────────────────────────────────────
   getRecallEligibility: {

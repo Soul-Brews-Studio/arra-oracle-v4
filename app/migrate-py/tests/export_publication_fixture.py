@@ -290,7 +290,14 @@ def _seed_workspace(workspace: str, message_id: int) -> tuple[dict, dict]:
                 parent_id=None,
                 prev_id=None,
                 depth=0,
-                status="raw",
+                # V3-PARITY.md §5 K5 found this: the TS kernel's closed set is
+                # `open | complete | abandoned` (`trace.types.ts`); "raw" is a
+                # LEGACY v3 status this fixture used to write, never valid
+                # here. Nothing decoded this row's `status` before K5's
+                # `listTraces` did an unfiltered scan of the table -- every
+                # other reader here only cites `trace_id` as an opaque
+                # evidence-link target, never round-trips the row itself.
+                status="complete",
                 h_metadata=None,
                 internal_metadata=None,
                 created_at=SEED_EPOCH_MS,

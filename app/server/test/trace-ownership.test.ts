@@ -54,22 +54,24 @@ const RUNTIME_EXPORTS = [
   "openPublicationReader",
   "openPublicationWriter",
 ].join(",");
-/** §1: twenty-two on every context WRITER facade, eleven on every context
+/** §1: twenty-three on every context WRITER facade, twelve on every context
  *  READER facade — derived from `service.ts`'s actual returned method sets
- *  across all five integrated kernels (createTrace/getTrace/listTraceHits and
- *  indexRevisionChunks/listSearchChunks/reconcileSearchChunks included),
- *  independently confirmed by reading the source, not handed a count. */
+ *  across all five integrated kernels (createTrace/getTrace/listTraceHits/
+ *  listTraces and indexRevisionChunks/listSearchChunks/
+ *  reconcileSearchChunks included), independently confirmed by reading the
+ *  source, not handed a count. `listTraces` is K5 (docs/overnight/
+ *  V3-PARITY.md §5, overnight R18), added the same slice as `oracle_trace`. */
 const CONTEXT_WRITE_METHODS =
   "advanceReadCursor,appendMessages,createSessionLink,createTrace,getContext," +
   "getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
   "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessions,listTraceHits," +
-  "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
+  "listTraces,reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
   "writeChunkEmbedding";
 const CONTEXT_READ_METHODS =
   "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
   "listConnections,listLifecycleHistory,listMcpCalls,listMessages,listPeers," +
-  "listSearchChunks,listSessionLinks,listSessions,listTraceHits";
+  "listSearchChunks,listSessionLinks,listSessions,listTraceHits,listTraces";
 const CONTEXT_WRITER_KEYS = "close,context,publication,taxonomy";
 const EVIDENCE_WRITER_KEYS = "close,context,evidence,publication,taxonomy";
 const CONTEXT_READER_KEYS = "context,publication,taxonomy";
@@ -241,7 +243,7 @@ afterAll(async () => {
 
 describe("context facades across all four factories", () => {
   test(
-    "each writer facade carries twenty-two methods and each reader facade eleven, with exports unchanged",
+    "each writer facade carries twenty-three methods and each reader facade twelve, with exports unchanged",
     async () => {
       const root = await freshDataset("facades");
       for (const [factory, keys] of [

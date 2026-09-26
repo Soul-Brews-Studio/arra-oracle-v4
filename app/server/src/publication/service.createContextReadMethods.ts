@@ -14,6 +14,7 @@ import { listSearchChunks } from "./service.listSearchChunks";
 import { listSessions } from "./service.listSessions";
 import { listSessionLinks } from "./service.listSessionLinks";
 import { listTraceHits } from "./service.listTraceHits";
+import { listTraces } from "./service.listTraces";
 import { type RequestAuthority } from "./context";
 import { type DatasetAdapter } from "./service.types";
 
@@ -32,6 +33,7 @@ export function createContextReadMethods(reader: DatasetAdapter) {
     listLifecycleHistory: (requestBytes: Uint8Array) => listLifecycleHistory(reader, requestBytes),
     getTrace: (requestBytes: Uint8Array) => getTrace(reader, requestBytes),
     listTraceHits: (requestBytes: Uint8Array) => listTraceHits(reader, requestBytes),
+    listTraces: (requestBytes: Uint8Array) => listTraces(reader, requestBytes),
     listSearchChunks: (requestBytes: Uint8Array) => listSearchChunks(reader, requestBytes),
     getContext: (requestBytes: Uint8Array) => getContext(reader, requestBytes),
     listMcpCalls: (requestBytes: Uint8Array) => listMcpCalls(reader, requestBytes),
