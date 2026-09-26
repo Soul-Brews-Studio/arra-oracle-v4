@@ -4,7 +4,7 @@ import { MAX_RECONCILE_REVISIONS, parseReconcileSearch } from "./search-chunk";
 import { quote } from "./storage";
 import { SEARCH_CHUNKS } from "./service.constants";
 import { contextScope } from "./service.contextScope";
-import { terminalEventsFor } from "./service.evaluateEligibility";
+import { terminalEventsFor } from "./service.terminalEventsFor";
 import { requireContextWorkspaceRow } from "./service.requireContextWorkspaceRow";
 import { selectAcceptedRevision } from "./service.selectAcceptedRevision";
 import { type Clock, type DatasetAdapter, type OwnerCore } from "./service.types";

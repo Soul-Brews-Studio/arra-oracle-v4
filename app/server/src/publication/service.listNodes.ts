@@ -4,7 +4,7 @@ import { quote } from "./storage";
 import { contextOne } from "./service.contextOne";
 import { NODE_REVISIONS, NODES, SUPERSEDE_LOG, scopeOf } from "./service.constants";
 import { deriveNodeType } from "./service.deriveNodeType";
-import { terminalEventsFor } from "./service.evaluateEligibility";
+import { terminalEventsFor } from "./service.terminalEventsFor";
 import { parseListNodes } from "./service.parseListNodes";
 import { requireWorkspace } from "./service.requireWorkspace";
 import { type DatasetAdapter } from "./service.types";

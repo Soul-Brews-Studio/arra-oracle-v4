@@ -5,7 +5,7 @@ import { quote } from "./storage";
 import { RESERVED_TYPE_VOCABULARY, SEARCH_CHUNKS } from "./service.constants";
 import { contextOne } from "./service.contextOne";
 import { contextScope } from "./service.contextScope";
-import { terminalEventsFor } from "./service.evaluateEligibility";
+import { terminalEventsFor } from "./service.terminalEventsFor";
 import { findNode } from "./service.findNode";
 import { mutateContextWrite } from "./service.mutateContextWrite";
 import { parseSnapshotArray } from "./service.parseSnapshotArray";

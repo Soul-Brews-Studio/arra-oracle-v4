@@ -1,7 +1,7 @@
 import { failPublication } from "./errors";
 import { parseReadRequest } from "./service.parseReadRequest";
 import { readHeadAndAncestry } from "./service.readHeadAndAncestry";
-import { terminalEventsFor } from "./service.evaluateEligibility";
+import { terminalEventsFor } from "./service.terminalEventsFor";
 import { type DatasetAdapter } from "./service.types";
 
 /**

@@ -1,6 +1,6 @@
 import { parseReadRequest } from "./service.parseReadRequest";
 import { readHeadAndAncestry } from "./service.readHeadAndAncestry";
-import { terminalEventsFor } from "./service.evaluateEligibility";
+import { terminalEventsFor } from "./service.terminalEventsFor";
 import { type DatasetAdapter } from "./service.types";
 
 /** #29 slice B: `lifecycle` is additive, same rationale as `getAcceptedHead`. */

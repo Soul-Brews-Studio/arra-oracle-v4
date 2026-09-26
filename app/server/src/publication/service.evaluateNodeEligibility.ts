@@ -1,10 +1,10 @@
 import { failPublication } from "./errors";
-import { encodeSupersedeLogRow } from "./lifecycle";
 import { encodeNodeRow, encodeRevisionRow } from "./rows";
 import { quote } from "./storage";
-import { NODES, NODE_REVISIONS, SUPERSEDE_LOG } from "./service.constants";
+import { NODES, NODE_REVISIONS } from "./service.constants";
 import { contextOne } from "./service.contextOne";
 import { contextScope } from "./service.contextScope";
+import { terminalEventsFor, type LifecycleLabel } from "./service.terminalEventsFor";
 import { type DatasetAdapter } from "./service.types";
 
 /**
@@ -14,29 +14,17 @@ import { type DatasetAdapter } from "./service.types";
  * ignoring `is_active` and the validity window entirely (measured in
  * `.tmp/understand/analysis-29.json`, eligibility-rule.test.ts op3-op5).
  *
- * Both exports here are write-free (AC4): neither calls `refresh` on
- * anything but the two read-only tables it queries, and nothing in this
- * file ever appends, updates or deletes a row.
+ * Split out of the former `service.evaluateEligibility.ts` in the fix round
+ * that followed this slice's first review (see `service.terminalEventsFor.ts`
+ * for the batch helper this builds on): that file exported two functions,
+ * neither matching its own name, breaking the "one exported function per
+ * file, named after the file" rule the rest of `publication/service.*.ts`
+ * follows.
+ *
+ * Write-free (AC4): the only tables this file ever touches are `nodes` and
+ * `node_revisions`, both read-only here, plus `terminalEventsFor`'s own
+ * read-only `supersede_log` query.
  */
-
-export type LifecycleKind = "retired" | "superseded";
-
-/** One node's own terminal event, decoded. */
-export type LifecycleEvent = {
-  event_id: string;
-  kind: LifecycleKind;
-  /** Both null for a retirement; both a nanoid21 for a supersession --
-   *  `encodeSupersedeLogRow` has already proven the pair agrees. */
-  new_id: string | null;
-  new_revision_id: string | null;
-  reason: string;
-  superseded_at: string;
-};
-
-/** Additive label for a node's own terminal event, or null when it has
- *  none. Shared by `evaluateNodeEligibility`, `getAcceptedHead` and
- *  `listAcceptedHistory` -- one shape, one place it is built. */
-export type LifecycleLabel = LifecycleEvent | null;
 
 export type EligibilityReason = "retired" | "superseded" | "inactive" | "not_yet_valid" | "expired";
 
@@ -46,57 +34,6 @@ export type EligibilityResult = {
   head_revision_id: string;
   lifecycle: LifecycleLabel;
 };
-
-function labelFromRow(encoded: Record<string, unknown>): LifecycleEvent {
-  const newId = encoded.new_id as string | null;
-  return {
-    event_id: encoded.id as string,
-    kind: newId === null ? "retired" : "superseded",
-    new_id: newId,
-    new_revision_id: encoded.new_revision_id as string | null,
-    reason: encoded.reason as string,
-    superseded_at: encoded.superseded_at as string,
-  };
-}
-
-/**
- * One `supersede_log` query for a whole PAGE of node ids -- `old_id IN
- * (...)`, never one query per node (#29 slice B, fix plan B1). Returns a Map
- * keyed by node id, present only for a node that actually carries a
- * terminal event. Also the single-node lookup: callers with exactly one id
- * (`evaluateNodeEligibility`, `getAcceptedHead`, `supersedeNode`'s successor
- * check) call this the same way, with a one-element array.
- *
- * `old_id` is scoped-unique per the writer's own append-only rule
- * (`writeLifecycleEventFresh`'s `already_terminal` check), so a duplicate
- * hit for one id here is stored corruption, not a caller mistake -- the same
- * `integrity_failure` `getRecallEligibility` already raised for its own
- * `limit 2` lookup before this slice.
- */
-export async function terminalEventsFor(
-  reader: DatasetAdapter,
-  workspace: string,
-  ids: readonly string[],
-): Promise<Map<string, LifecycleEvent>> {
-  const out = new Map<string, LifecycleEvent>();
-  if (ids.length === 0) return out;
-  await reader.refresh(SUPERSEDE_LOG);
-  const list = ids.map((id) => quote(id)).join(", ");
-  const rows = await reader.query(
-    SUPERSEDE_LOG,
-    `${contextScope(workspace)} AND old_id IN (${list})`,
-    ids.length,
-  );
-  const seen = new Set<string>();
-  for (const row of rows) {
-    const encoded = encodeSupersedeLogRow(row);
-    const oldId = encoded.old_id as string;
-    if (seen.has(oldId)) failPublication("integrity_failure", "");
-    seen.add(oldId);
-    out.set(oldId, labelFromRow(encoded));
-  }
-  return out;
-}
 
 /**
  * DESIGN.md §9's five recall-eligibility predicates, centralized:
@@ -119,8 +56,21 @@ export async function terminalEventsFor(
  * `options.clock()`'s sampled value on the write side, never sampled here.
  * The overnight R7 ruling has the TRANSPORT (`knowledge/registry.ts`, the
  * one dispatch point both HTTP and MCP call through) supply real request
- * time; nothing in this file, or in `service.getRecallEligibility.ts`, ever
- * calls `Date.now()`.
+ * time; THIS file never calls `Date.now()` itself, on any path. Fix round
+ * correction: an earlier version of this comment (and one in `registry.ts`)
+ * claimed `service.getRecallEligibility.ts` never does either, which is
+ * false -- its own `requestTimeMs ?? Date.now()` fallback does, for every
+ * caller that omits the parameter. That fallback exists only for a handful
+ * of pre-existing in-process test harnesses that call every context method
+ * with a single argument, and is documented at its own definition; every
+ * LIVE call still goes through the registry's explicit `Date.now()`, never
+ * through this fallback.
+ *
+ * A non-finite `asOf` (fix round: a mutation test found `NaN` silently made
+ * every window comparison below false, reading as eligible) is refused as
+ * `invalid_request` at root -- the same treatment `writeLifecycleEventFresh`
+ * gives an invalid sampled clock value, since `asOf` is operator/transport
+ * configuration, not a caller-controlled request field.
  */
 export async function evaluateNodeEligibility(
   reader: DatasetAdapter,
@@ -128,6 +78,8 @@ export async function evaluateNodeEligibility(
   nodeId: string,
   asOf: number,
 ): Promise<EligibilityResult> {
+  if (typeof asOf !== "number" || !Number.isFinite(asOf)) failPublication("invalid_request", "");
+
   await reader.refresh(NODES);
   const node = await contextOne(reader, NODES, `${contextScope(workspace)} AND id = ${quote(nodeId)}`);
   if (node === null) failPublication("invalid_reference", "/node_id");
