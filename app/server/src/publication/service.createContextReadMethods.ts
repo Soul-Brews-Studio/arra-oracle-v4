@@ -3,6 +3,7 @@ import { getMessage } from "./service.getMessage";
 import { getPeer } from "./service.getPeer";
 import { getReadCursor } from "./service.getReadCursor";
 import { getRecallEligibility } from "./service.getRecallEligibility";
+import { getSearchFreshness } from "./service.getSearchFreshness";
 import { getSession } from "./service.getSession";
 import { getTrace } from "./service.getTrace";
 import { listConnections } from "./service.listConnections";
@@ -33,6 +34,7 @@ export function createContextReadMethods(reader: DatasetAdapter) {
     getTrace: (requestBytes: Uint8Array) => getTrace(reader, requestBytes),
     listTraceHits: (requestBytes: Uint8Array) => listTraceHits(reader, requestBytes),
     listSearchChunks: (requestBytes: Uint8Array) => listSearchChunks(reader, requestBytes),
+    getSearchFreshness: (requestBytes: Uint8Array) => getSearchFreshness(reader, requestBytes),
     getContext: (requestBytes: Uint8Array) => getContext(reader, requestBytes),
     listMcpCalls: (requestBytes: Uint8Array) => listMcpCalls(reader, requestBytes),
     listConnections: (requestBytes: Uint8Array) => listConnections(reader, requestBytes),

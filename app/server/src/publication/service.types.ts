@@ -1,4 +1,5 @@
 import { type ChatModelFn } from "./chat";
+import { type EmbedFn } from "./search-chunk.types";
 import { type BoundaryHook, type ContextBoundary, type ContextBoundaryHook, type EvidenceBoundary, type EvidenceBoundaryHook, type PublicationBoundary, type TaxonomyBoundary, type TaxonomyBoundaryHook } from "./service.boundaries";
 import { type createContextReadMethods } from "./service.createContextReadMethods";
 import { type createContextWriterService } from "./service.createContextWriterService";
@@ -94,6 +95,16 @@ export type DatasetAdapter = {
    * mutate authoritative rows this kernel does not intend to expose that way.
    */
   updateSearchChunkEmbedding(row: Record<string, unknown>): Promise<number>;
+  /**
+   * Row counts behind the one lexical (FTS/INVERTED) index on `column`, or
+   * `null` when no such index exists yet -- distinct from a real zero, which
+   * means the index exists and every row is indexed (#30's `getSearchFreshness`:
+   * "unknown, not zero"). Scans `listIndices()` for an FTS/INVERTED index
+   * naming `column` (the same filter `fts.ensureFtsIndexOn.ts` uses) and reads
+   * its `indexStats`, never assuming a fixed index name: the index itself is
+   * built by a different slice, under whatever name LanceDB defaults it to.
+   */
+  textIndexStats(table: string, column: string): Promise<{ indexedRows: number; unindexedRows: number } | null>;
   release(): void;
 };
 
@@ -280,6 +291,11 @@ export type ContextOptions = KnowledgeOptions & {
    *  `answerChat` is unavailable (mapped through `mapModelFailure` on first
    *  use); never a network call this module makes on its own. */
   model?: ChatModelFn;
+  /** #30 R8's embed worker call, injected the same way. Absent means
+   *  `embedPendingChunks` transitions every chunk it cannot satisfy by
+   *  content-hash reuse straight to `failed`/`embedder_unavailable` rather
+   *  than attempting a network call this module makes on its own. */
+  embedder?: EmbedFn;
 };
 
 export type SetAction = "unchanged" | "filled" | "rebuilt";

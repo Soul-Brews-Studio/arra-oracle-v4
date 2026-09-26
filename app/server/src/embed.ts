@@ -11,12 +11,13 @@ export const DIMS = Number(process.env.EMBEDDING_DIMENSIONS ?? 384);
 
 export type EmbedHealth = { ok: boolean; model: string; dims: number; detail: string };
 
-export async function embed(texts: string[]): Promise<number[][]> {
+export async function embed(texts: string[], signal?: AbortSignal): Promise<number[][]> {
   if (texts.length === 0) return [];
   const res = await fetch(`${OLLAMA_URL}/api/embed`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ model: MODEL, input: texts }),
+    signal,
   });
   if (!res.ok) throw new Error(`embed failed: ${res.status} ${await res.text()}`);
   const json = (await res.json()) as { embeddings?: unknown };

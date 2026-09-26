@@ -193,6 +193,16 @@ const harness: Record<string, (request: any) => Promise<unknown>> = {
       return { admitted: false, refusal: { name: shaped.name ?? null, message: String(shaped.message ?? error) } };
     }
   },
+  /** Delete one `search_chunks_v1` row by id -- used by the #30 R7 reconcile
+   *  tests to reach an INCOMPLETE chunk set (a revision partially indexed),
+   *  a state `indexRevisionChunks` itself can never produce (it either
+   *  writes every expected chunk or none, per its own already_satisfied
+   *  check). */
+  async deleteChunkById(request: { id: string }) {
+    const tbl = await harnessTable("search_chunks_v1");
+    const result = (await tbl.delete(`id = '${request.id}'`)) as unknown as { numDeletedRows?: number };
+    return { numDeletedRows: result?.numDeletedRows ?? null };
+  },
 };
 
 const trace: string[] = [];

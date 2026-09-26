@@ -63,7 +63,13 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { connect } from "@lancedb/lancedb";
 import { PYTHON, createFixture, revisionEnvelope, runOwnedChild } from "./helpers/publication-fixture";
-import { CHUNKER_VERSION, MAX_RECONCILE_REVISIONS, deriveChunkId, deriveContentHash } from "../src/publication/search-chunk";
+import {
+  CHUNKER_VERSION,
+  MAX_RECONCILE_REVISIONS,
+  activeEmbeddingProfileId,
+  deriveChunkId,
+  deriveContentHash,
+} from "../src/publication/search-chunk";
 
 // ── dependencies ────────────────────────────────────────────────────────────
 
@@ -129,7 +135,9 @@ afterAll(async () => {
 
 const ALPHA = "alpha-workspace";
 const CLOCK_MS = 1_790_400_000_000;
-const PROFILE = { name: "recovery-profile", dims: 384 };
+// #30 R7: `indexRevisionChunks` now refuses any `embedding_profile` name
+// outside the closed registry.
+const PROFILE = { name: activeEmbeddingProfileId(), dims: 384 };
 const pad = (seed: string) => `${seed}${"0".repeat(Math.max(0, 21 - seed.length))}`.slice(0, 21);
 
 // ── child harness ───────────────────────────────────────────────────────────
@@ -881,8 +889,19 @@ recoveryTest(
       // WAS indexed -- not `nodeFirst`, which was published first but sorts
       // after it and was never visited by this limit-1 call.
       missing: 0,
+      incomplete: 0,
+      hash_mismatch: 0,
       missing_revisions: [],
       stale: 0,
+      ineligible: 0,
+      // Global (workspace/chunker/active-profile) counts, not bounded to the
+      // one visited node: `nodeSecond`'s one chunk is `pending` (never
+      // embedded), and it IS the visited node's own head, so it is neither
+      // stale nor off-sweep.
+      missing_source: 0,
+      pending: 1,
+      ready: 0,
+      failed: 0,
       exhausted: false,
     });
 

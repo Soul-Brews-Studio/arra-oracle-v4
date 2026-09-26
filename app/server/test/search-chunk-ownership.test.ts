@@ -25,7 +25,12 @@ import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { PYTHON, createFixture, revisionEnvelope, runGated, runOwnedChild, spawnGatedChild } from "./helpers/publication-fixture";
-import { CHUNKER_VERSION, deriveChunkId, deriveContentHash } from "../src/publication/search-chunk";
+import {
+  CHUNKER_VERSION,
+  activeEmbeddingProfileId,
+  deriveChunkId,
+  deriveContentHash,
+} from "../src/publication/search-chunk";
 
 const TEST_DIR = import.meta.dir;
 const SERVER_DIR = resolve(TEST_DIR, "..");
@@ -34,7 +39,9 @@ const TEST_TIMEOUT_MS = 180_000;
 const ALPHA = "alpha-workspace";
 const CLOCK_MS = 1_790_300_000_000;
 const CLOCK_TEXT = new Date(CLOCK_MS).toISOString();
-const PROFILE = { name: "test-profile", dims: 384 };
+// #30 R7: `indexRevisionChunks` now refuses any `embedding_profile` name
+// outside the closed registry.
+const PROFILE = { name: activeEmbeddingProfileId(), dims: 384 };
 
 const pad = (seed: string) => `${seed}${"0".repeat(Math.max(0, 21 - seed.length))}`.slice(0, 21);
 const NODE_A = pad("ownNodeA");
@@ -57,15 +64,19 @@ const RUNTIME_EXPORTS = [
  *  five integrated kernels, independently confirmed by reading the source
  *  (grep for `indexRevisionChunks` / `listSearchChunks` / `reconcileSearchChunks`
  *  in `createContextWriterService`'s returned object), never handed a count. */
+// #30 overnight R7/R8: `getSearchFreshness` (read) and `embedPendingChunks`
+// (write-only) join the context facade -- both lists below grew accordingly.
 const CONTEXT_WRITE_METHODS =
-  "advanceReadCursor,answerChat,appendMessages,createSessionLink,createTrace,getContext," +
-  "getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
+  "advanceReadCursor,answerChat,appendMessages,createSessionLink,createTrace," +
+  "embedPendingChunks,getContext,getMessage,getPeer,getReadCursor,getRecallEligibility," +
+  "getSearchFreshness,getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
   "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessions,listTraceHits," +
   "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
   "writeChunkEmbedding";
 const CONTEXT_READ_METHODS =
-  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
+  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
+  "getSession,getTrace," +
   "listConnections,listLifecycleHistory,listMcpCalls,listMessages,listPeers," +
   "listSearchChunks,listSessionLinks,listSessions,listTraceHits";
 const CONTEXT_WRITER_KEYS = "close,context,publication,taxonomy";
@@ -245,7 +256,7 @@ afterAll(async () => {
 
 describe("context facades across all four factories", () => {
   test(
-    "each writer facade carries twenty-two methods and each reader facade eleven, with exports unchanged",
+    "each writer facade carries twenty-four methods and each reader facade twelve, with exports unchanged",
     async () => {
       const { datasetRoot: root } = await seededDataset("facades");
       for (const [factory, keys] of [

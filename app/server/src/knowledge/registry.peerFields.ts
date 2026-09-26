@@ -69,4 +69,17 @@ export const PEER_FIELDS: Readonly<Record<string, readonly PeerFieldPath[]>> = O
   getRevisionAssociations: [],
   scanDependents: [],
   reconcileRevisionAssociations: [],
+  // #30: none of these five take a peer-shaped field (workspace_name plus
+  // revision/chunker/profile/limit/id fields only). `listSearchChunks`,
+  // `indexRevisionChunks`, `writeChunkEmbedding` and `reconcileSearchChunks`
+  // were already registered before this file's own "EXHAUSTIVE" comment was
+  // last satisfied (the expose-13 slice added the registry entries without
+  // updating this file) -- closed here alongside this slice's own two new
+  // entries since all five share the identical, unambiguous answer.
+  listSearchChunks: [],
+  indexRevisionChunks: [],
+  writeChunkEmbedding: [],
+  reconcileSearchChunks: [],
+  getSearchFreshness: [],
+  embedPendingChunks: [],
 });

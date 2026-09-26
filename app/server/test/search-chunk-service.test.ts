@@ -17,6 +17,7 @@ import {
 } from "./helpers/publication-fixture";
 import {
   CHUNKER_VERSION,
+  activeEmbeddingProfileId,
   chunkText,
   deriveChunkId,
   encodeSearchChunkRow,
@@ -64,7 +65,7 @@ describe("F3: chunker_version is a closed grammar, not free text", () => {
     node_id: pad("node1"),
     revision_id: pad("rev1"),
     chunker_version: CHUNKER_VERSION,
-    embedding_profile: { name: "profile-a", dims: 384 },
+    embedding_profile: { name: activeEmbeddingProfileId(), dims: 384 },
     ...overrides,
   });
 
@@ -168,7 +169,9 @@ describe("real persistence: search chunks inside the real gate", () => {
   const REV_A1 = pad("revA1");
   const REV_B1 = pad("revB1");
   const CHUNKER_VERSION = "chunker/v1";
-  const PROFILE = { name: "test-profile", dims: 384 };
+  // #30 R7: `indexRevisionChunks`/`listSearchChunks` refuse any
+  // `embedding_profile` name outside the closed registry.
+  const PROFILE = { name: activeEmbeddingProfileId(), dims: 384 };
 
   const drive = async (
     root: string,
@@ -286,6 +289,23 @@ describe("real persistence: search chunks inside the real gate", () => {
   }, 300_000);
 
   test("F5: listSearchChunks is scoped to one embedding_profile, not merged across all of them", async () => {
+    // #30 overnight R7 amendment: the closed embedding-profile registry
+    // (`search-chunk.profiles.ts`) refuses any request -- write OR list --
+    // naming a profile other than the current active one, so this test can
+    // no longer INDEX two rows under two different caller-chosen profile
+    // names the way the pre-registry version did. R7 itself is a statement
+    // about the PHYSICAL SCHEMA, not the registry: "one table holds several
+    // embedding profiles, as built" -- rows from a retired or otherwise
+    // non-active profile are never deleted and stay physically present, only
+    // a REQUEST naming them is refused. This test reaches that state the
+    // same way F8 reaches its own unreachable-through-the-API stored state:
+    // by planting the second profile's row directly (`insertLegacyProfileChunk`),
+    // simulating a row written before the registry existed (or by a
+    // deployment that has since moved its active profile on). The scoping
+    // property under test -- `listSearchChunks` never merges rows from a
+    // profile it was not asked for -- is exactly as real either way.
+    const LEGACY_PROFILE = "ollama/all-minilm@legacy000000/384/none";
+    const LEGACY_CHUNK_ID = "1".repeat(64);
     const fixture = await createFixture([ALPHA]);
     try {
       const seeded = fixture.workspaces[ALPHA]!;
@@ -293,19 +313,27 @@ describe("real persistence: search chunks inside the real gate", () => {
         fixture.datasetRoot,
         [
           publish(seeded, NODE_A, "op-pub-a1"),
-          ctx("indexRevisionChunks", {
-            ...indexRequest(NODE_A, REV_A1),
-            embedding_profile: { name: "profile-a", dims: 384 },
-          }),
-          ctx("indexRevisionChunks", {
-            ...indexRequest(NODE_A, REV_A1),
-            embedding_profile: { name: "profile-b", dims: 384 },
+          ctx("indexRevisionChunks", indexRequest(NODE_A, REV_A1)),
+          hx("insertLegacyProfileChunk", {
+            id: LEGACY_CHUNK_ID,
+            workspace_name: ALPHA,
+            node_id: NODE_A,
+            revision_id: REV_A1,
+            chunk_index: "0",
+            embedding_profile: LEGACY_PROFILE,
+            type_term_id: seeded.term_ids.type.note.id,
           }),
           ctx("listSearchChunks", {
             workspace_name: ALPHA,
             revision_id: REV_A1,
             chunker_version: CHUNKER_VERSION,
-            embedding_profile: "profile-a",
+            embedding_profile: PROFILE.name,
+          }),
+          ctx("listSearchChunks", {
+            workspace_name: ALPHA,
+            revision_id: REV_A1,
+            chunker_version: CHUNKER_VERSION,
+            embedding_profile: LEGACY_PROFILE,
           }),
         ],
         { revisionIds: [REV_A1] },
@@ -314,17 +342,27 @@ describe("real persistence: search chunks inside the real gate", () => {
       expect(parsed.op1.ok, JSON.stringify(parsed.op1)).toBe(true);
       expect(parsed.op2.ok, JSON.stringify(parsed.op2)).toBe(true);
 
-      // Both indexing runs produced a real row under their OWN profile.
+      // The active-profile index produced its own real row, distinct from
+      // the legacy row planted directly.
       expect(parsed.op1.value.rows).toHaveLength(1);
-      expect(parsed.op2.value.rows).toHaveLength(1);
-      expect(parsed.op1.value.rows[0].id).not.toBe(parsed.op2.value.rows[0].id);
+      expect(parsed.op1.value.rows[0].id).not.toBe(LEGACY_CHUNK_ID);
 
-      // The list, scoped to profile-a, returns ONLY profile-a's row -- not
-      // both profiles merged under one non-unique chunk_index.
+      // The list, scoped to the active profile, returns ONLY the active
+      // row -- not both profiles merged under one non-unique chunk_index,
+      // even though a second profile's row genuinely exists in the same
+      // table for the same (workspace, revision, chunker_version).
       const listed = parsed.op3;
+      expect(listed.ok, JSON.stringify(listed)).toBe(true);
       expect(listed.value).toHaveLength(1);
-      expect(listed.value[0].embedding_profile).toBe("profile-a");
+      expect(listed.value[0].embedding_profile).toBe(PROFILE.name);
       expect(listed.value[0].id).toBe(parsed.op1.value.rows[0].id);
+
+      // A list request naming the legacy (non-active) profile is refused
+      // outright, per the same closed registry `indexRevisionChunks` enforces
+      // -- it is not merely "zero rows", the request itself is invalid_value.
+      const legacyListed = parsed.op4;
+      expect(legacyListed.ok).toBe(false);
+      expect(legacyListed).toMatchObject({ code: "invalid_value", path: "/embedding_profile" });
     } finally {
       await fixture.cleanup();
     }

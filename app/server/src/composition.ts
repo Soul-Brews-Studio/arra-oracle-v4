@@ -190,6 +190,11 @@ export function composeKnowledgeAccess(env: NodeJS.ProcessEnv = process.env): Kn
   return createKnowledgeAccess({
     datasetRoot: typeof datasetRoot === "string" && datasetRoot.trim() ? datasetRoot : undefined,
     env,
+    // #30 R8: the default embed worker embedder, the same Ollama call
+    // `composeService`'s legacy `embedHealth` uses -- lazily imported so
+    // merely composing knowledge access cannot trigger `embed.ts`'s own
+    // import-time environment reads (this module's own header rule).
+    embedder: (texts, signal) => import("./embed").then((mod) => mod.embed(texts, signal)),
   });
 }
 
@@ -205,4 +210,13 @@ export async function runStartupIndexWork(): Promise<void> {
   // An index whose live details differ from the shared trigram config (an older
   // deployment's icu) is rebuilt here once, before listen (R14, #10).
   await store.ensureFtsIndex(false);
+
+  // #30 R7: best-effort model-digest probe, recorded so `search-chunk.profiles`'s
+  // active embedding profile carries a REAL measured identity instead of the
+  // "unmeasured" default whenever Ollama happens to be up at startup. Never
+  // blocks or fails startup: `fetchOllamaModelDigest` itself never throws, and
+  // an unreachable Ollama simply leaves the digest unmeasured -- the same way
+  // `embed.ts`'s embedder treats a down model as data, not a crash.
+  const profiles = await import("./publication/search-chunk.profiles");
+  profiles.configureActiveEmbeddingModelDigest(await profiles.fetchOllamaModelDigest());
 }

@@ -27,6 +27,7 @@
 import { describe, expect, test } from "bun:test";
 import { createFixture, revisionEnvelope, runGated, type SeededWorkspace } from "./helpers/publication-fixture";
 import {
+  activeEmbeddingProfileId,
   CHUNKER_VERSION,
   deriveChunkId,
   parseIndexRevision,
@@ -41,7 +42,12 @@ const ALPHA = "alpha-workspace";
 const CLOCK = Date.parse("2026-09-21T00:00:00.000Z");
 const TEST_TIMEOUT_MS = 600_000;
 const INT64_CEILING = 9223372036854775807n; // 2^63 - 1
-const PROFILE = { name: "test-profile", dims: 384 };
+// #30 R7: `indexRevisionChunks`/`listSearchChunks` now refuse any
+// `embedding_profile` name outside the closed registry -- this file plants
+// raw rows directly (never through `indexRevisionChunks`), so a raw row's
+// `embedding_profile` still needs to equal the active id for the
+// `listSearchChunks` reads in this file to find it.
+const PROFILE = { name: activeEmbeddingProfileId(), dims: 384 };
 
 const pad = (seed: string) => `${seed}${"0".repeat(Math.max(0, 21 - seed.length))}`.slice(0, 21);
 
@@ -112,7 +118,10 @@ describe("embedding_profile.dims is frozen at 384, refused at the request bounda
     node_id: pad("node1"),
     revision_id: pad("rev1"),
     chunker_version: CHUNKER_VERSION,
-    embedding_profile: { name: "profile-a", dims },
+    // The active id, not an arbitrary name: the name check now runs BEFORE
+    // the dims check (`search-chunk.embeddingProfile.ts`), so this dims-only
+    // test needs a registered name or it would fail on the wrong field.
+    embedding_profile: { name: PROFILE.name, dims },
   });
 
   test("384 is accepted; 383 and 385 are refused at /embedding_profile/dims", () => {

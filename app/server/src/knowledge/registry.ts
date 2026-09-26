@@ -230,15 +230,20 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
   },
 
   // ── search chunks (#30) ──────────────────────────────────────────────────
-  // `indexRevisionChunks`, `writeChunkEmbedding` and `reconcileSearchChunks`
-  // are `content:write` per R8 (docs/overnight/DECISIONS.md), not internal:
-  // an external embed worker runs the index-first/embed-later backfill Nat
-  // asked for by calling these three directly, the same way any other
-  // `content:write` caller reaches this table.
+  // `indexRevisionChunks`, `writeChunkEmbedding`, `reconcileSearchChunks` and
+  // `embedPendingChunks` are `content:write` per R8 (docs/overnight/DECISIONS.md),
+  // not internal: an external embed worker runs the index-first/embed-later
+  // backfill Nat asked for by calling these four directly, the same way any
+  // other `content:write` caller reaches this table.
   listSearchChunks: {
     action: "content:read",
     scopePath: [],
     call: (b, x) => b.context.listSearchChunks(x),
+  },
+  getSearchFreshness: {
+    action: "content:read",
+    scopePath: [],
+    call: (b, x) => b.context.getSearchFreshness(x),
   },
   indexRevisionChunks: {
     action: "content:write",
@@ -254,6 +259,17 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
     action: "content:write",
     scopePath: [],
     call: (b, x) => writer(b).context.reconcileSearchChunks(x),
+  },
+  // #30 R8: the embed worker itself, exposed so HTTP, MCP and CLI `kb` all
+  // reach the same backfill loop ("index first, embed later"). It writes
+  // ONLY search_chunks_v1 rows `indexRevisionChunks` already created --
+  // never node/revision content -- but it is still a real, durable write, so
+  // it goes through the same `writer()` gate as every other content:write
+  // method here.
+  embedPendingChunks: {
+    action: "content:write",
+    scopePath: [],
+    call: (b, x) => writer(b).context.embedPendingChunks(x),
   },
 
   // ── evidence ─────────────────────────────────────────────────────────

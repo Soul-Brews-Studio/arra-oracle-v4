@@ -35,6 +35,7 @@ import {
   parseSupersedeNode,
 } from "../src/publication/lifecycle";
 import {
+  activeEmbeddingProfileId,
   parseIndexRevision,
   parseListChunks,
   parseReconcileSearch,
@@ -173,14 +174,14 @@ const REQUESTS: Readonly<Record<string, Record<string, unknown>>> = Object.freez
     workspace_name: ALPHA,
     revision_id: pad("rev1"),
     chunker_version: "chunker/v1",
-    embedding_profile: "all-minilm",
+    embedding_profile: activeEmbeddingProfileId(),
   },
   indexRevisionChunks: {
     workspace_name: ALPHA,
     node_id: pad("node1"),
     revision_id: pad("rev1"),
     chunker_version: "chunker/v1",
-    embedding_profile: { name: "all-minilm", dims: 384 },
+    embedding_profile: { name: activeEmbeddingProfileId(), dims: 384 },
   },
   writeChunkEmbedding: {
     workspace_name: ALPHA,

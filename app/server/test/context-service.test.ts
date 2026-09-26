@@ -536,8 +536,9 @@ describe("real persistence: registration, shapes and reads", () => {
       // (`{ ...reads, ...writeOnly }`), so this is that union, not just the
       // eleven write-only methods.
       expect(parsed.contextMethods).toEqual([
-        "advanceReadCursor", "answerChat", "appendMessages", "createSessionLink", "createTrace", "getContext",
-        "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
+        "advanceReadCursor", "answerChat", "appendMessages", "createSessionLink", "createTrace",
+        "embedPendingChunks", "getContext",
+        "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSearchFreshness", "getSession", "getTrace",
         "indexRevisionChunks", "joinSession", "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks",
         "listSessionLinks", "listSessions", "listTraceHits", "reconcileSearchChunks", "registerPeer", "registerSession",
         "retireNode", "supersedeNode", "writeChunkEmbedding",
@@ -1097,9 +1098,10 @@ describe("core: the sourced path and the reader bundle", () => {
         { freshReader: true },
       );
       expect(parsed.readerKeys).toEqual(["context", "publication", "taxonomy"]);
-      // Exactly the fourteen READ methods; no mutator reachable from a reader.
+      // Exactly the fifteen READ methods (#30 R7/R8 added getSearchFreshness);
+      // no mutator reachable from a reader.
       expect(parsed.readerContextMethods).toEqual([
-        "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
+        "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSearchFreshness", "getSession", "getTrace",
         "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks", "listSessionLinks", "listSessions",
         "listTraceHits",
       ]);

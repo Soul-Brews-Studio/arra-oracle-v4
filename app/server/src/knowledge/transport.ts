@@ -48,6 +48,7 @@ import {
 import { ContractError } from "../contracts/errors";
 import { parseStrictBytes, type JcsObject, type JcsValue } from "../contracts/jcs";
 import { openEvidenceReader, openEvidenceWriter } from "../publication/service";
+import { type EmbedFn } from "../publication/search-chunk.types";
 import { KNOWLEDGE_METHODS, type KnowledgeAction, type KnowledgeBundle, type RequestAuthority } from "./registry";
 import { KnowledgeAuthDenied, admitKnowledgeAction, type KnowledgeAuthFailure } from "./transport.admitKnowledgeAction";
 import { requireBoundPeers } from "./transport.requireBoundPeers";
@@ -232,6 +233,14 @@ function randomNanoid21(): string {
 export type KnowledgeDatasetConfig = {
   readonly datasetRoot: string | undefined;
   readonly env?: NodeJS.ProcessEnv;
+  /** #30 R8's embed worker call (`embedPendingChunks`), wired by
+   *  `composition.ts`'s `composeKnowledgeAccess` from `embed.ts`'s default
+   *  Ollama embedder. Absent (e.g. every existing test's fake config) means
+   *  `embedPendingChunks` still runs -- content-hash reuse needs no
+   *  embedder at all -- but any chunk it cannot satisfy that way fails
+   *  closed with `embedder_unavailable` rather than making a network call
+   *  this transport was never told about. */
+  readonly embedder?: EmbedFn;
 };
 
 /**
@@ -286,6 +295,7 @@ export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
     // exposes local intake only. A namespaced source feed is a future
     // deployment decision, not something a caller's bytes can select.
     sourceNamespace: null,
+    embedder: config.embedder,
   });
 
   return {

@@ -257,3 +257,101 @@ own real parsers), and `app/server/test/knowledge-expose13-live.test.ts`
 round-tripped over both HTTP and MCP against a real writer-gated target-19 dataset, using two
 distinct indexed nodes — one over each transport — since a `pending` chunk row cannot be
 re-embedded, so an idempotent replay is not the right proof for `writeChunkEmbedding`).
+
+## 12. Amendment 2026-09-26 (overnight R7 (#30 part) + R8)
+
+Slices A (embedding-profile registry), B (`reconcileSearchChunks` correctness +
+`getSearchFreshness`) and C (`embedPendingChunks`, the embed worker), per
+`docs/overnight/DECISIONS.md` R7 and R8. This corrects §1's and §9's "not-yet-implemented"
+language about the embed step — a real, injectable embedder now exists and is wired in
+`composition.ts` — and supersedes §6's description of `reconcileSearchChunks` with the
+behaviour below; §6 is left unedited as a historical record of the pre-amendment sweep.
+
+**A — the closed embedding-profile registry** (`search-chunk.profiles.ts`, new). Every
+`embedding_profile` a request may write OR list is now checked against ONE active profile,
+not accepted as free text: `activeEmbeddingProfile()` returns `{profile_id, provider: "ollama",
+model: "all-minilm", dims: 384, normalization: "none", document_prefix: "", query_prefix: "",
+input_rule: "chunker/v1:title\n\nbody"}`, and `profile_id` — the string stored as
+`embedding_profile` — is `ollama/all-minilm@<digest12>/384/none`. A name outside the registry
+is `invalid_value` at `/embedding_profile/name`, checked in BOTH `embeddingProfile()` (the
+`indexRevisionChunks` request object) and `parseListChunks` (its bare string field), before
+the frozen-384 `dims` check that already existed. R7's own text — "one table holds several
+embedding profiles, as built" — is a statement about the physical schema, not this registry:
+a row written under a retired or pre-registry profile id is never deleted and stays physically
+present; only a REQUEST naming a non-active profile is refused (`search-chunk-service.test.ts`'s
+F5 test proves this precisely, by planting such a row directly and confirming
+`listSearchChunks` still excludes it).
+
+The model digest is measured at real server startup (`composition.ts`'s
+`runStartupIndexWork`, best-effort, never blocking) and recorded via
+`configureActiveEmbeddingModelDigest`; absent a measurement (Ollama down, or in every test),
+the id carries the literal segment `unmeasured` rather than a fabricated digest. **Measured
+correction to the brief**: the brief said to read the digest from `POST /api/show` — measured
+2026-09-26 on m5 against a real local Ollama serving `all-minilm`, that endpoint's response
+has NO `digest` field at all (top-level keys: `license`, `modelfile`, `parameters`,
+`template`, `details`, `model_info`, `capabilities`, `modified_at`). `GET /api/tags` does
+carry one, per installed model, in `models[].digest` — measured-on-m5 that day:
+`all-minilm`'s was `1b226e2802dbb772b5fc32a58f103ca1804ef7501331012de126ab22f67475ef`.
+`fetchOllamaModelDigest` reads `/api/tags`, not `/api/show`, for exactly this reason.
+
+**B — `reconcileSearchChunks` correctness.** Presence is now recomputed from the head
+revision's own title/body (`chunkText`/`deriveChunkId`/`deriveContentHash`, the identical
+derivation `indexRevisionChunks` uses) rather than trusted from row COUNT alone, and scoped to
+`(revision_id, CHUNKER_VERSION, active profile)` — a revision indexed only under a non-active
+profile now correctly counts as missing for the active one. The response gains `incomplete`
+(a partial expected set; the revision still lands in `missing_revisions`), `hash_mismatch` (a
+present row whose `content_hash` no longer matches the recomputed one), `ineligible` (a
+retired-or-superseded node, `getRecallEligibility`'s own `supersede_log` check — excluded from
+missing/incomplete/hash_mismatch/stale accounting entirely, since its content is not expected
+to be currently indexed), `missing_source` (a chunk row belonging to no visited node, or whose
+`revision_id` is not any visited node's accepted head — global, bounded by the node sweep) and
+`pending`/`ready`/`failed` (global counts for the active profile, matching
+`getSearchFreshness`'s own vector counts). The `stale` probe — chunk rows surviving under a
+node for a revision that is no longer its accepted head — now runs UNCONDITIONALLY for every
+visited, eligible node: the earlier version's `continue` on a missing head skipped it exactly
+when a superseding publish made the head itself unindexed (measured, analysis-30's op8),
+under-counting `stale` in precisely that case. `missing`/`missing_revisions`/`stale`/`visited`/
+`exhausted` keep their existing meaning and shape.
+
+**B — `getSearchFreshness`** (new, `content:read`). Three stages, each answered from a
+different measurement, with unknown kept distinct from a real zero: `content.nodes`/
+`content.revisions` (plain counts, always knowable, so 0 is a real zero); `text_index.
+indexed_rows`/`unindexed_rows` (from `DatasetAdapter.textIndexStats`, `null` when no lexical
+index has been built yet on `search_chunks_v1.text` — this slice does not build that index,
+so "not yet built" reads as unknown, never as zero); `vectors.pending`/`ready`/`failed` (global
+counts for the active profile) plus `vectors.last_attempt_at` (the latest attempt across those
+rows, `null` when none has ever happened).
+
+**C — `embedPendingChunks`** (new, `content:write`, exposed per R8 so an external
+backfill worker reaches it over HTTP, MCP and CLI `kb` identically). Reads `pending` rows, and
+`failed` rows under `MAX_EMBED_ATTEMPTS` (5, matching `db.ts`'s legacy `MAX_SYNC_ATTEMPTS`),
+for the active profile; tries content-hash reuse first (copying an existing `ready` row's
+vector for the same workspace/chunker/active-profile/`content_hash`, costing zero embedder
+calls); calls the injected embedder for the rest, OUTSIDE `core.serial` and bounded by
+`Promise.race` against a timeout (`ARRA_EMBED_TIMEOUT_MS`, default 30s) that fires regardless
+of whether the embedder itself honors its `AbortSignal`; then writes every outcome back
+through ONE `core.serial` turn, reusing `writeChunkEmbedding`'s own update-then-verify-readback
+shape. Failure is a real, closed `error_code` (`embedder_unavailable` — no embedder
+configured; `embedder_timeout`; `embedder_bad_response`), with `attempts` incremented and
+`status: "failed"` — `"failed"` and `error_code` are no longer merely reserved vocabulary
+(§1), this is the writer that produces them. §9's claim "no code path in this kernel ever
+populates `embedding` with a real vector" is superseded: `embedPendingChunks` is that path,
+though `indexRevisionChunks` itself still never embeds (§1's "embedding is deliberately off
+the authoritative write path" still holds). `composition.ts` wires the default embedder from
+`embed.ts` (`embed()`, extended with an optional `AbortSignal` parameter, backward compatible
+with its existing `db.ts` caller).
+
+Proof: `app/server/test/search-chunk-reconcile.test.ts` (incomplete, hash_mismatch,
+ineligible, missing_source, status counts, `getSearchFreshness`'s three stages) and
+`app/server/test/search-chunk-embed-worker.test.ts` (the hang/timeout proof that a concurrent
+`publishRevision` is never blocked, retry-to-convergence, content-hash reuse, no-embedder
+failing closed, the `MAX_EMBED_ATTEMPTS` retry cap, and the full `publishRevision` →
+`indexRevisionChunks` → `embedPendingChunks` → `getSearchFreshness` loop Nat asked for —
+"index first, embed later, like backfill"). Every existing search-chunk test that indexed
+under an arbitrary free-text profile name was updated to use the active profile id
+(`activeEmbeddingProfileId()`); this is a mechanical fixture change, not a behavior change to
+those tests' own subject matter.
+
+Not in this amendment: retrieval (`searchChunks`, `searchChunkText`/`searchChunkVector`, the
+FTS index on `search_chunks_v1.text`) — a concurrently-developed slice's file ownership, per
+the overnight brief.

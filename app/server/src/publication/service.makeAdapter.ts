@@ -279,6 +279,19 @@ export function makeAdapter(connection: Connection, onRelease: () => void): Data
       await tbl.mergeInsert(["id"]).whenMatchedUpdateAll().execute(new ArrowTable(vecs as never) as never);
       return tbl.version();
     },
+    async textIndexStats(table, column) {
+      const tbl = await handle(table);
+      await tbl.checkoutLatest();
+      const indices = await tbl.listIndices();
+      const match = indices.find(
+        (index) =>
+          ["FTS", "INVERTED"].includes(index.indexType.toUpperCase()) && index.columns.includes(column),
+      );
+      if (match === undefined) return null;
+      const stats = await tbl.indexStats(match.name);
+      if (stats === undefined) return null;
+      return { indexedRows: stats.numIndexedRows, unindexedRows: stats.numUnindexedRows };
+    },
     async updateWhere(table, predicate, assignments) {
       const tbl = await handle(table);
       await tbl.checkoutLatest();
