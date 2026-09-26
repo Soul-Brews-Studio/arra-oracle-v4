@@ -46,7 +46,23 @@ export const PEER_FIELDS: Readonly<Record<string, readonly PeerFieldPath[]>> = O
     ["content", "author_peer_name"],
     ["content", "observer_peer_name"],
   ],
+  // actor of a trace, a session link, or a lifecycle event (#28 / #29, exposed
+  // by the expose-13 slice; classified at the overnight merge, which is what
+  // the exhaustiveness test below exists to force)
+  createTrace: [["peer_name"]],
+  createSessionLink: [["created_by_peer_name"]],
+  retireNode: [["peer_name"]],
+  supersedeNode: [["peer_name"]],
   // reviewed: these assert no acting peer (lookups, taxonomy, evidence, audit)
+  getTrace: [],
+  listTraceHits: [],
+  listSessionLinks: [],
+  getRecallEligibility: [],
+  listLifecycleHistory: [],
+  indexRevisionChunks: [],
+  reconcileSearchChunks: [],
+  listSearchChunks: [],
+  writeChunkEmbedding: [],
   getAcceptedHead: [],
   listAcceptedHistory: [],
   listNodes: [],

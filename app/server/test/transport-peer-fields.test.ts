@@ -61,3 +61,29 @@ describe("requireBoundPeers: an unclassified method fails closed under a binding
     );
   });
 });
+
+// The 13 methods expose-13 put on the transports: the four that name an actor
+// are checked against a binding like every other asserted peer, and the rest
+// are reviewed as asserting none. Before the overnight merge classified them,
+// a bound grant was refused all 13 outright (fail-closed, see above).
+describe("expose-13 actors are bound like every other asserted peer", () => {
+  const bound = { operator: false, peers: ["peer-a"] };
+  const cases: [string, Record<string, unknown>, string][] = [
+    ["createTrace", { workspace_name: "w", peer_name: "peer-b" }, "/peer_name"],
+    ["createSessionLink", { workspace_name: "w", created_by_peer_name: "peer-b" }, "/created_by_peer_name"],
+    ["retireNode", { workspace_name: "w", peer_name: "peer-b" }, "/peer_name"],
+    ["supersedeNode", { workspace_name: "w", peer_name: "peer-b" }, "/peer_name"],
+  ];
+  for (const [method, body, path] of cases) {
+    test(`${method}: an unbound actor is refused at ${path}; the bound one passes`, () => {
+      expect(codeOf(() => requireBoundPeers(method, bytes(body), bound))).toEqual({ code: "forbidden", path });
+      const own = Object.fromEntries(Object.entries(body).map(([k, v]) => [k, v === "peer-b" ? "peer-a" : v]));
+      expect(codeOf(() => requireBoundPeers(method, bytes(own), bound))).toBe("NO_THROW");
+    });
+  }
+  test("a trace read asserts no peer, so any body passes the binding", () => {
+    expect(codeOf(() => requireBoundPeers("getTrace", bytes({ workspace_name: "w", peer_name: "peer-b" }), bound))).toBe(
+      "NO_THROW",
+    );
+  });
+});
