@@ -325,3 +325,6 @@ are part of done.
   found "ผ่าดิสก์: อย่าหลงลืม snapshot ก่อนซ้อมย้ายข้อมูล"; gemma3:4b answered "คุณต้องทำการ snapshot ดิสก์ก่อนซ้อมย้ายข้อมูลทุกครั้ง
   [rbfyvYtW8I6urzvR72599]" with coverage full; the superseded node is hidden by default and shown with `--history`; oracle_learn → oracle_search →
   oracle_thread → oracle_thread_read over MCP. A stubbed-model `demo.test.ts` keeps it honest in CI.
+- 04:37 **FIRST GREEN GITHUB ACTIONS RUN** on this repo: https://github.com/Soul-Brews-Studio/arra-oracle-v4/actions/runs/36271049858
+  (v4/on-ci-green `f7aafb0`): typecheck, build, the sharded full suite, the 3 Python suites and the UI v2 build all passed. The ci-green slice is confirming
+  with a second run before it hands back. R22 and style-split are in fix rounds; final-docs is in its second verification.
