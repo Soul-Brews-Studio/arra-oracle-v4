@@ -214,3 +214,7 @@ are part of done.
   kernel-import guard failed 22 subtests, because the chat and ops-root verifiers ran TS suites only. All 8 new importers were
   reviewed as read-side and listed with reasons (`9452c52`). Python: 182 OK. The gate script (`.tmp/gate.sh`) now runs typecheck,
   the sharded TS suite, all 4 Python suites and the live probe, and the wave scripts now require the Python guard.
+- 23:46 **GATE 4 on `9452c52`: typecheck OK · TS 1382 pass / 0 fail (86/86 files, 187s) · Python 182 OK + both fixture suites +
+  benchmarks OK · probe: 45 methods, HTTP 45 / MCP 45 / CLI 45, isolation 0.** #32 chat checks now PASS: a live model answer with
+  citations, with authorization applied before the model sees anything. Remaining: FAIL #29 ×2 (lifecycle slice), #30 (search-query
+  slice); GAP getChatSettings (probe fixture), #29 recall (needs the search surface), #33 browser.
