@@ -158,7 +158,11 @@ describe("answerChat is a read: it takes the reader bundle and never opens a wri
 
   test("the real access exposes getBundle alone, and the registry marks answerChat a content:read method", () => {
     // Nothing a request can call opens and closes a writer of its own.
-    expect(Object.keys(createKnowledgeAccess({ datasetRoot: undefined }))).toEqual(["getBundle"]);
+    // FUNCTIONS only: the v3 adapter (R18) later added two plain DATA fields
+    // (`datasetConfigured`, `indexProfile`) that no request can call. What this
+    // pins is that no callable besides getBundle exists to open a writer.
+    const access = createKnowledgeAccess({ datasetRoot: undefined }) as Record<string, unknown>;
+    expect(Object.keys(access).filter((k) => typeof access[k] === "function")).toEqual(["getBundle"]);
     expect(KNOWLEDGE_METHODS.answerChat!.action).toBe("content:read");
     expect(KNOWLEDGE_METHODS.getChatSettings!.action).toBe("content:read");
     for (const [name, entry] of Object.entries(KNOWLEDGE_METHODS)) {
