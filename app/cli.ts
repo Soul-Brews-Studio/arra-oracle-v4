@@ -6,6 +6,7 @@ import { kbHelpText } from "./cli/kb.help";
 import { parseFlags, type CliOptions } from "./cli/parseFlags";
 import { positiveInt } from "./cli/positiveInt";
 import { readKbRequestBody } from "./cli/kb.readRequestBody";
+import { searchKnowledgeRequest } from "./cli/searchKnowledgeRequest";
 
 type Json = Record<string, unknown>;
 
@@ -26,6 +27,11 @@ Friendly aliases (thin sugar over kb; --bank is required on all of these):
   nodes list --bank NAME [--after ID] [--limit N] [--include-total] [--type TERM]
   context get --bank NAME --peer NAME --session NAME [--max-items N]
   chat ask --bank NAME --peer NAME --session NAME --question TEXT [--max-items N]
+  search --bank NAME --query TEXT [--mode keyword|semantic] [--limit N] [--profile NAME]
+      knowledge-tier recall (#30): keyword = searchKnowledgeKeyword, semantic =
+      searchKnowledgeSemantic (--profile: stored embedding profile, semantic only).
+      Answers are nodes at their current head, retired/superseded excluded;
+      keyword says match "ngram" or "substring_scan"; the two are never fused.
 
 Legacy commands (13; kept for compatibility, not removed — prefer kb/aliases for new work):
   remember --content TEXT [--name NAME] [--type TYPE] [--session NAME] [--peer NAME] [--subject NAME]
@@ -33,11 +39,13 @@ Legacy commands (13; kept for compatibility, not removed — prefer kb/aliases f
   get-memory --id ID
   list-memories [--type TYPE] [--session NAME] [--peer NAME] [--subject NAME] [--active true|false] [--sync-state pending|synced|failed] [--limit N]
   bank-info | call-log [--limit N] [--status ok|error] | call-stats | status
-  health | list [--limit N] | search --query TEXT [--mode text|vector] [--limit N]
+  health | list [--limit N] | search --query TEXT --mode text|vector [--limit N]
+  NOTE: search reaches the legacy memories store only with --mode text|vector;
+        without it, search is the knowledge-tier search above.
   backfill [--batch N] | reindex
   NOTE: backfill/reindex are GLOBAL maintenance operations, not bank-scoped.
 
-recall and search answer {mode, match, count, rows}. Text mode is a substring
+recall and search --mode text|vector answer {mode, match, count, rows}. Text mode is a substring
 match: match is "ngram" (character-trigram index, each hit re-checked to contain
 the query, case-insensitive) or "substring_scan" (a query under 3 characters,
 scanned instead). Vector mode has no match field.
@@ -56,7 +64,7 @@ const commandFlags: Record<string, string[]> = {
   recall: ["query", "mode", "limit"], "get-memory": ["id"],
   "list-memories": ["type", "session", "peer", "subject", "active", "sync-state", "limit"],
   "bank-info": [], "call-log": ["limit", "status"], "call-stats": [], status: [],
-  health: [], list: ["limit"], search: ["query", "mode", "limit"],
+  health: [], list: ["limit"], search: ["query", "mode", "limit", "profile"],
   backfill: ["batch"], reindex: [],
 };
 const isObject = (v: unknown): v is Json => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -210,7 +218,21 @@ try {
         case "status": result = await mcp("status"); break;
         case "health": result = await request("/health"); break;
         case "list": result = await request(`/api/memories?bank=${encodeURIComponent(bank)}&limit=${integer("limit", 50)}`); break;
-        case "search": result = await request(`/api/search?bank=${encodeURIComponent(bank)}&q=${encodeURIComponent(required("query"))}&mode=${choice("mode", ["text", "vector"], "text")}&limit=${integer("limit", 10)}`); break;
+        case "search": {
+          // #30: keyword|semantic (the default) is the knowledge tier over kb;
+          // text|vector stays the legacy memories route, unchanged.
+          const mode = choice("mode", ["keyword", "semantic", "text", "vector"], "keyword")!;
+          if (mode === "keyword" || mode === "semantic") {
+            const target = searchKnowledgeRequest(options, bank, mode);
+            const { ok, body } = await postKnowledge(target.method, new TextEncoder().encode(JSON.stringify(target.body)));
+            result = body;
+            if (!ok) nonzeroExit = true;
+            break;
+          }
+          if (options.profile !== undefined) throw new Error("--profile applies to --mode semantic only");
+          result = await request(`/api/search?bank=${encodeURIComponent(bank)}&q=${encodeURIComponent(required("query"))}&mode=${mode}&limit=${integer("limit", 10)}`);
+          break;
+        }
         case "backfill": {
           const batch = integer("batch", 32);
           console.error("Global backfill: --bank does not scope this operation.");
