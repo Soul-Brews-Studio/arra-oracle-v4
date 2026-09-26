@@ -13,8 +13,13 @@ What this proves:
     memories and memory_terms included, with a per-record entry for each;
   - the candidate is exactly the reviewed target-19 physical shape;
   - memories became nodes with an accepted first revision (Thai text intact),
-    legacy types follow R11, memory_terms became node_revision_terms, supersede
-    rows follow R17, distilled_at lands in internal metadata, not captured_at;
+    legacy types follow R11 (a type too long to be a term name rejects that
+    memory alone), memory_terms became node_revision_terms, supersede rows
+    follow R17 (a missing log row is synthesized), distilled_at lands in
+    internal metadata, not captured_at, raw traces are open, and messages carry
+    the frozen intake time;
+  - R17 flat vocabularies hold NO parent (the kernel reads one as corruption):
+    a legacy parent is dropped and recorded, and a cross-row check catches one;
   - the TS kernel reads every migrated node back and every stored row passes
     the TS stored-row codecs;
   - the inherited release gates #7/#8/#10 are named as EXCLUDED, never green.
@@ -24,8 +29,6 @@ What it does not prove: production cutover, R2, or recall quality.
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import json
 import shutil
 import sys
@@ -41,6 +44,10 @@ from arra_migrate.target_v1.schema import describe_schema
 # The fixture builder is a sibling script, importable under both
 # `unittest discover -s tests` and `python -m unittest tests.test_copy_migration`.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from copy_migration_support import legacy_node_id, records
+from copy_migration_support import rows as _rows
+from copy_migration_support import run as _run
+from copy_migration_support import tree as _tree
 from export_legacy_fixture import (
     LAB,
     MS0,
@@ -49,28 +56,8 @@ from export_legacy_fixture import (
     legacy_rows,
 )
 
-INTAKE_AT = "2026-09-26T14:00:00.000Z"
-
-
-def _tree(root: Path) -> dict[str, str]:
-    return {
-        str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
-        for p in sorted(root.rglob("*")) if p.is_file()
-    }
-
-
-def _run(parent: Path, name: str):
-    from arra_migrate.copy_migration import run_copy_migration
-
-    candidate = parent / f"{name}-candidate"
-    work = parent / f"{name}-work"
-    candidate.mkdir()
-    report = run_copy_migration(parent / "source", candidate, work, intake_at=INTAKE_AT)
-    return report, candidate, work
-
-
-def _rows(root: Path, table: str) -> list[dict]:
-    return lancedb.connect(str(root)).open_table(table).to_arrow().to_pylist()
+#: Rejected before planning: a sub-ms created_at, and a type R11 cannot keep.
+REJECTED_MEMORIES = ("m_muigr3dd_subms", "m_muigr6gg_longtype")
 
 
 class CopyMigrationTests(unittest.TestCase):
@@ -116,7 +103,7 @@ class CopyMigrationTests(unittest.TestCase):
         self.assertEqual(by_key[("memories", "m_muigr3dd_subms")]["outcome"], "rejected")
         self.assertEqual(by_key[("memories", "m_muigr3dd_subms")]["code"], "sub_millisecond_timestamp")
         migrated = [k for (t, k), r in by_key.items() if t == "memories" and r["outcome"] == "migrated"]
-        self.assertEqual(len(migrated), 7)
+        self.assertEqual(len(migrated), 9)
         mt = {k: r for (t, k), r in by_key.items() if t == "memory_terms"}
         self.assertEqual(mt["m_muigr1bb_retro|term-orphan"]["outcome"], "unresolved")
         self.assertEqual(mt["m_muigr3dd_subms|term-oracle"]["outcome"], "rejected")
@@ -132,10 +119,27 @@ class CopyMigrationTests(unittest.TestCase):
         self.assertNotIn("timestamp written by a microsecond clock", contents)
         self.assertIn("ingested_at=migration_intake;original_ingestion_unknown", self.report["assumptions"])
 
+    def test_messages_are_stamped_with_the_frozen_intake_time_never_created_at(self):
+        """source-ingestion-v1 amendment: ingested_at is --intake-at, for every row."""
+
+        messages = _rows(self.candidate, "messages")
+        self.assertEqual(len(messages), 4)
+        for row in messages:
+            with self.subTest(message=row["content"]):
+                ingested = row["ingested_at"].replace(tzinfo=None)
+                self.assertEqual(ingested.isoformat(timespec="milliseconds"), "2026-09-26T14:00:00.000")
+                self.assertNotEqual(ingested, row["created_at"].replace(tzinfo=None))
+        self.assertEqual(self.report["intake_at"], "2026-09-26T14:00:00.000Z")
+
     def test_trace_hit_kind_outside_target_kinds_is_rejected_with_a_record(self):
-        record = next(r for r in self._records() if r["table"] == "trace_hits")
+        record = next(r for r in self._records() if r["table"] == "trace_hits" and r["legacy_key"] == "trace-001|0")
         self.assertEqual((record["outcome"], record["code"]), ("rejected", "kind_outside_target_kinds"))
         self.assertEqual(_rows(self.candidate, "trace_hits"), [])
+
+    def test_trace_hit_kind_inside_target_kinds_is_unresolved_not_invented(self):
+        record = next(r for r in self._records() if r["table"] == "trace_hits" and r["legacy_key"] == "trace-003|0")
+        self.assertEqual((record["outcome"], record["code"]), ("unresolved", "locator_unmappable"))
+        self.assertIn("https://example.com/keys", record["detail"])
 
     def test_orphan_term_is_a_record_not_a_crash(self):
         record = next(r for r in self._records() if r["table"] == "terms" and r["legacy_key"] == "term-orphan")
@@ -172,13 +176,9 @@ class CopyMigrationTests(unittest.TestCase):
     def test_node_ids_use_the_r18_d1_legacy_node_derivation_byte_for_byte(self):
         """The v3-compat resolver finds a migrated memory by this exact formula."""
 
-        def legacy_node_id(ws, legacy_id):
-            digest = hashlib.sha256(f"arra-legacy-node/v1\n{ws}\n{legacy_id}".encode()).digest()
-            return base64.urlsafe_b64encode(digest).decode("ascii")[:21]
-
         revisions = {r["node_id"]: r for r in _rows(self.candidate, "node_revisions")}
         for row in legacy_rows()["memories"]:
-            if row["id"] == "m_muigr3dd_subms":
+            if row["id"] in REJECTED_MEMORIES:
                 continue
             with self.subTest(memory=row["id"]):
                 node_id = legacy_node_id(row["workspace_name"], row["id"])
@@ -188,7 +188,7 @@ class CopyMigrationTests(unittest.TestCase):
     def test_memories_become_nodes_with_an_accepted_first_revision(self):
         nodes = _rows(self.candidate, "nodes")
         revisions = {r["id"]: r for r in _rows(self.candidate, "node_revisions")}
-        self.assertEqual(len(nodes), 7)
+        self.assertEqual(len(nodes), 9)
         for node in nodes:
             head = revisions[node["current_revision_id"]]
             self.assertEqual(head["revision_no"], 1)
@@ -223,6 +223,21 @@ class CopyMigrationTests(unittest.TestCase):
                      if v["name"] == "legacy_type" and v["workspace_name"] == LAB)
         self.assertEqual((vocab["cardinality"], vocab["required"], vocab["hierarchy"]), ("many", False, "flat"))
 
+    def test_r11_type_too_long_for_a_term_name_rejects_that_memory_alone(self):
+        """One unrepresentable type is ONE record, never a whole workspace."""
+
+        by_key = {r["legacy_key"]: r for r in self._records() if r["table"] == "memories"}
+        record = by_key["m_muigr6gg_longtype"]
+        self.assertEqual((record["outcome"], record["code"], record["pointer"]),
+                         ("rejected", "legacy_type_unrepresentable", "/type"))
+        self.assertIn("256", record["detail"])
+        lab = {k for k, r in by_key.items() if r["workspace"] == LAB and r["outcome"] == "migrated"}
+        self.assertEqual(len(lab), 6, "every other oracle-lab memory still migrated")
+        self.assertEqual([t for t in self.report["readback"]["taxonomy"] if t["outcome"] == "error"], [])
+        tags = {t["name"] for t in _rows(self.candidate, "terms") if t["workspace_name"] == LAB}
+        self.assertTrue({"retro", "Decision Log"} <= tags)
+        self.assertTrue(all(len(name.encode()) <= 256 for name in tags))
+
     def test_memory_terms_become_node_revision_terms(self):
         revisions = {r["id"]: r["title"] for r in _rows(self.candidate, "node_revisions")}
         projected = {(revisions[r["revision_id"]], r["term_name_snapshot"])
@@ -231,6 +246,7 @@ class CopyMigrationTests(unittest.TestCase):
         self.assertIn(("forgot-keys", "ภาษาไทย"), projected)
         self.assertIn(("keys-by-the-door", "oracle"), projected)
         self.assertIn(("side-correction", "v4"), projected)
+        self.assertIn(("keys-by-the-door", "keys"), projected, "a term whose legacy parent was dropped still tags")
 
     def test_r17_legacy_vocabularies_are_many_optional_flat(self):
         topic = next(v for v in _rows(self.candidate, "vocabularies") if v["name"] == "topic")
@@ -238,16 +254,74 @@ class CopyMigrationTests(unittest.TestCase):
         clash = next(r for r in self._records() if r["table"] == "vocabularies" and r["legacy_key"] == "vocab-legacy-type")
         self.assertEqual((clash["outcome"], clash["code"]), ("rejected", "reserved_vocabulary_name"))
 
+    def test_r17_flat_vocabulary_drops_a_legacy_parent_and_reports_it(self):
+        """The kernel reads a stored parent in a flat vocabulary as corruption
+        (service.reparentTerm.ts, taxonomy-write-v1 reparentTerm), so the flat
+        policy cannot keep one: parent_id is NULL and the legacy value is a record."""
+
+        terms = {t["name"]: t for t in _rows(self.candidate, "terms")}
+        vocabularies = {v["id"]: v for v in _rows(self.candidate, "vocabularies")}
+        for term in terms.values():
+            with self.subTest(term=term["name"]):
+                if vocabularies[term["vocabulary_id"]]["hierarchy"] != "tree":
+                    self.assertIsNone(term["parent_id"])
+        pointer = next(r for r in self._records() if r["table"] == "terms.parent_id" and r["legacy_key"] == "term-keys")
+        self.assertEqual((pointer["outcome"], pointer["code"]), ("unresolved", "parent_dropped_flat_hierarchy"))
+        self.assertIn("term-oracle", pointer["detail"])
+        self.assertIn(terms["oracle"]["id"], pointer["detail"])
+        self.assertEqual(self.report["policies"]["term_parent_dropped"], 1)
+        self.assertEqual(self.report["candidate"]["taxonomy_problems"], [])
+
+    def test_the_taxonomy_check_catches_a_parent_planted_in_a_flat_vocabulary(self):
+        """The per-row codecs cannot see this cross-row invariant; verify.py must."""
+
+        from arra_migrate.copy_migration.verify import taxonomy_problems
+
+        planted = Path(tempfile.mkdtemp(prefix="arra-copy-planted-"))
+        self.addCleanup(shutil.rmtree, planted, ignore_errors=True)
+        copy = planted / "candidate"
+        shutil.copytree(self.candidate, copy)
+        self.assertEqual(taxonomy_problems(copy), [])
+        terms = {t["name"]: t for t in _rows(copy, "terms")}
+        lancedb.connect(str(copy)).open_table("terms").update(
+            where=f"id = '{terms['keys']['id']}'", values={"parent_id": terms["oracle"]["id"]})
+        problems = taxonomy_problems(copy)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("flat", problems[0])
+
+    def test_a_term_name_over_the_kernel_limit_is_rejected_not_written(self):
+        record = next(r for r in self._records() if r["table"] == "terms" and r["legacy_key"] == "term-toolong")
+        self.assertEqual((record["outcome"], record["code"], record["pointer"]), ("rejected", "limit_exceeded", "/name"))
+        self.assertNotIn("ก" * 90, {t["name"] for t in _rows(self.candidate, "terms")})
+
+    def test_r18_d2_adapter_vocabulary_with_a_different_policy_is_flagged(self):
+        record = next(r for r in self._records() if r["table"] == "vocabularies" and r["legacy_key"] == "vocab-project")
+        self.assertEqual(record["outcome"], "migrated")
+        self.assertIn("R18 D2", record["detail"])
+        self.assertEqual(self.report["policies"]["adapter_vocabulary_policy_mismatch"], 1)
+
     def test_r17_null_supersede_reason_is_backfilled_and_counted(self):
         log = _rows(self.candidate, "supersede_log")
         reasons = sorted(r["reason"] for r in log)
         self.assertEqual(reasons, sorted(["moved the keys", "legacy: reason not recorded",
-                                          "superseded by the ngram ruling"]))
+                                          "superseded by the ngram ruling", "legacy: reason not recorded"]))
         self.assertEqual(self.report["policies"]["null_reason_backfilled"], 1)
         missing = next(r for r in self._records() if r["table"] == "supersede_log" and r["legacy_key"] == "4")
         self.assertEqual(missing["outcome"], "unresolved")
         retire = next(r for r in log if r["reason"] == "superseded by the ngram ruling")
         self.assertIsNone(retire["new_id"])
+
+    def test_superseded_by_without_a_log_row_synthesizes_one_counted_event(self):
+        old, new = legacy_node_id(SIDE, "m_side001_old"), legacy_node_id(SIDE, "m_side002_new")
+        events = [r for r in _rows(self.candidate, "supersede_log") if r["old_id"] == old]
+        self.assertEqual(len(events), 1)
+        self.assertEqual((events[0]["new_id"], events[0]["reason"], events[0]["workspace_name"]),
+                         (new, "legacy: reason not recorded", SIDE))
+        self.assertEqual(events[0]["superseded_at"].isoformat(timespec="milliseconds"), "2026-09-20T09:30:00.123")
+        self.assertEqual(self.report["policies"]["missing_log_row_backfilled"], 1)
+        pointer = next(r for r in self._records()
+                       if r["table"] == "memories.superseded_by" and r["legacy_key"] == "m_side001_old")
+        self.assertEqual(pointer["outcome"], "resolved")
 
     def test_distilled_to_becomes_trace_link_and_distilled_at_stays_internal(self):
         revisions = {r["title"]: r for r in _rows(self.candidate, "node_revisions")}
@@ -266,22 +340,38 @@ class CopyMigrationTests(unittest.TestCase):
 
     def test_legacy_trace_status_is_mapped_into_the_kernel_closed_set_and_reported(self):
         statuses = {r["name"]: r["status"] for r in _rows(self.candidate, "traces")}
-        self.assertEqual(statuses, {"0900_keys-hunt": "complete", "0910_keys-followup": "complete"})
+        self.assertEqual(statuses, {"0900_keys-hunt": "complete", "0910_keys-followup": "complete",
+                                    "0920_raw-open": "open"})
         record = next(r for r in self._records() if r["table"] == "traces" and r["legacy_key"] == "trace-001")
         self.assertEqual(record["detail"], "status distilled -> complete")
-        self.assertEqual(self.report["policies"]["trace_status_mapped"], 2)
+        self.assertEqual(self.report["policies"]["trace_status_mapped"], 3)
+
+    def test_ruled_raw_trace_status_maps_to_open(self):
+        """R17 (corrected 22:00): the RULED leg of the status map, not the extension."""
+
+        raw = next(r for r in _rows(self.candidate, "traces") if r["name"] == "0920_raw-open")
+        self.assertEqual(raw["status"], "open")
+        record = next(r for r in self._records() if r["table"] == "traces" and r["legacy_key"] == "trace-003")
+        self.assertEqual((record["outcome"], record["detail"]), ("migrated", "status raw -> open"))
 
     # -- the TS kernel reads it back ----------------------------------------
 
     def test_ts_kernel_reads_every_migrated_node_back(self):
         readback = self.report["readback"]
-        self.assertEqual(readback["listed_nodes"], {LAB: 6, SIDE: 1})
-        self.assertEqual(readback["heads_ok"], 7)
+        # listNodes' DEFAULT may exclude superseded/retired nodes once #29 lands
+        # (R18 D3), so the listing is bounded, not pinned: every live node at
+        # least, every migrated node at most. getAcceptedHead is the exact check.
+        live, migrated = {LAB: 3, SIDE: 2}, {LAB: 6, SIDE: 3}
+        self.assertEqual(set(readback["listed_nodes"]), {LAB, SIDE})
+        for ws, listed in readback["listed_nodes"].items():
+            self.assertTrue(live[ws] <= listed <= migrated[ws], (ws, listed))
+        self.assertEqual(readback["heads_ok"], 9)
+        self.assertEqual(readback["heads_failed"], [])
         self.assertEqual(readback["codec_failures"], {})
         self.assertTrue(readback["target_dataset_ok"])
         self.assertEqual(readback["projection_failures"], [])
-        self.assertEqual(readback["codec_rows"]["node_revision_terms"], 13)
-        self.assertEqual(readback["codec_rows"]["search_chunks_v1"], 7, "pending chunks: vectors rebuilt, never reused")
+        self.assertEqual(readback["codec_rows"]["node_revision_terms"], 16)
+        self.assertEqual(readback["codec_rows"]["search_chunks_v1"], 9, "pending chunks: vectors rebuilt, never reused")
         self.assertTrue(self.report["verified"])
 
     # -- the report must never look green on inherited gates ---------------
@@ -306,62 +396,7 @@ class CopyMigrationTests(unittest.TestCase):
         self.assertEqual(report2["tables"], self.report["tables"])
 
     def _records(self) -> list[dict]:
-        return [json.loads(line) for line in (self.work / "records.jsonl").read_text().splitlines()]
-
-
-class RefusalTests(unittest.TestCase):
-    def setUp(self):
-        self.parent = Path(tempfile.mkdtemp(prefix="arra-copy-refusal-"))
-        self.addCleanup(shutil.rmtree, self.parent, ignore_errors=True)
-        build_legacy_fixture(self.parent / "source")
-
-    def test_refuses_a_non_empty_candidate_before_any_write(self):
-        from arra_migrate.copy_migration import CopyMigrationRefused, run_copy_migration
-
-        candidate = self.parent / "candidate"
-        candidate.mkdir()
-        (candidate / "keep.txt").write_text("operator data")
-        before = _tree(candidate)
-        with self.assertRaises(CopyMigrationRefused) as ctx:
-            run_copy_migration(self.parent / "source", candidate, self.parent / "work", intake_at=INTAKE_AT)
-        self.assertEqual(ctx.exception.code, "candidate_not_empty")
-        self.assertEqual(_tree(candidate), before)
-        self.assertFalse((self.parent / "work").exists(), "nothing written anywhere")
-
-    def test_refuses_remote_roots(self):
-        from arra_migrate.copy_migration import CopyMigrationRefused, run_copy_migration
-
-        candidate = self.parent / "candidate"
-        candidate.mkdir()
-        for source, cand in (("s3://bucket/legacy", candidate), (self.parent / "source", "s3://bucket/c")):
-            with self.subTest(source=str(source), candidate=str(cand)):
-                with self.assertRaises(CopyMigrationRefused) as ctx:
-                    run_copy_migration(source, cand, self.parent / "work", intake_at=INTAKE_AT)
-                self.assertEqual(ctx.exception.code, "remote_root")
-        self.assertEqual(list(candidate.iterdir()), [])
-
-    def test_a_worker_fault_fails_loud_and_leaves_the_source_untouched(self):
-        from arra_migrate.copy_migration import CopyMigrationFailed, run_copy_migration
-
-        candidate = self.parent / "candidate"
-        candidate.mkdir()
-        before = _tree(self.parent / "source")
-        # `false` stands in for a Bun worker that dies: exit 1, no lines.
-        with self.assertRaises(CopyMigrationFailed):
-            run_copy_migration(self.parent / "source", candidate, self.parent / "work",
-                               intake_at=INTAKE_AT, bun=shutil.which("false"))
-        self.assertEqual(_tree(self.parent / "source"), before)
-        self.assertFalse((self.parent / "work" / "report.json").exists(), "no report that could read as success")
-
-    def test_refuses_a_sub_millisecond_intake_time(self):
-        from arra_migrate.copy_migration import CopyMigrationRefused, run_copy_migration
-
-        candidate = self.parent / "candidate"
-        candidate.mkdir()
-        with self.assertRaises(CopyMigrationRefused) as ctx:
-            run_copy_migration(self.parent / "source", candidate, self.parent / "work",
-                               intake_at="2026-09-26T14:00:00.000123Z")
-        self.assertEqual(ctx.exception.code, "invalid_intake_at")
+        return records(self.work)
 
 
 if __name__ == "__main__":

@@ -10,15 +10,22 @@ rather than silently drop:
 
   - Thai and English memories; one already carries a legacy vector.
   - legacy ``type`` values that are reserved terms (kept) and free text
-    (R11: become ``note`` + a tag term holding the original string).
+    (R11: become ``note`` + a tag term holding the original string), and one
+    free-text type too long to be a term name (rejected alone, not its workspace).
   - tags through ``memory_terms``, including an orphan term whose vocabulary
-    does not exist and a legacy vocabulary that collides with reserved ``type``.
-  - supersede rows with and without a reason (R17 backfill), a retirement, and
-    a log row whose old memory does not exist.
+    does not exist, a legacy vocabulary that collides with reserved ``type``, a
+    term with a legacy PARENT (R17 flat: the parent is dropped and reported),
+    a term name over the kernel's 256-byte limit, and a sealed ``project``
+    vocabulary (R18 D2 names it an adapter vocabulary).
+  - supersede rows with and without a reason (R17 backfill), a retirement, a
+    log row whose old memory does not exist, and a ``superseded_by`` with NO
+    log row (one event is synthesized and counted).
   - messages with non-nanoid legacy public ids, a reply chain, a dangling reply
     and one SUB-MILLISECOND ``created_at`` that must be rejected with a report
     entry instead of rounded.
-  - traces with ``distilled_to`` pointing at a real and at a missing memory.
+  - traces with ``distilled_to`` pointing at a real and at a missing memory,
+    and a ``raw`` trace (R17: ``raw -> open``) carrying a ``url`` hit whose kind
+    is inside ``TARGET_KINDS`` (unresolved: no structured locator is invented).
 
 Every timestamp except the deliberate sub-ms ones is millisecond-exact.
 
@@ -55,6 +62,9 @@ SUB_MS = datetime(2026, 9, 20, 9, 0, 0, 123456)  # noqa: DTZ001 -- .123456: NOT 
 VECTOR = [0.125] * 384
 SIDE_WORKSPACE_ID = "Sd0bAnkWorkspace00001"      # already nanoid21: kept as-is
 SIDE_NANOID_PUBLIC_ID = "RePlyNan0id0000000001"  # already nanoid21: kept as-is
+#: A free-text type someone filled with prose: 316 UTF-8 bytes, over the
+#: kernel's 256-byte term-name limit (taxonomy.requireName.ts).
+LONG_TYPE = "บันทึกการประชุมเรื่องกุญแจ " * 4
 
 
 def _memory(mid: str, name: str, content: str, type_: str, minutes: int, **extra: Any) -> dict[str, Any]:
@@ -150,6 +160,16 @@ def legacy_rows() -> dict[str, list[dict[str, Any]]]:
                     "conclusion", 35),
             {**_memory("m_side000_correct", "side-correction", "side bank correction", "correction", 36),
              "workspace_name": SIDE, "peer_name": "ghost"},
+            # R11 cannot keep this type as a tag term: THIS memory is rejected,
+            # every other oracle-lab memory still migrates.
+            _memory("m_muigr6gg_longtype", "stuffed-type", "a type field someone filled with prose",
+                    LONG_TYPE, 37),
+            # superseded_by with NO supersede_log row: one event is synthesized.
+            {**_memory("m_side001_old", "side-old-plan", "Old plan for the side bank.", "learning", 38,
+                       superseded_by="m_side002_new", superseded_at=at(60), is_active=False),
+             "workspace_name": SIDE, "peer_name": "ghost"},
+            {**_memory("m_side002_new", "side-new-plan", "New plan for the side bank.", "learning", 39),
+             "workspace_name": SIDE, "peer_name": "ghost"},
         ],
         "vocabularies": [
             {"id": "vocab-topic", "name": "topic", "workspace_name": LAB, "label": "Topic",
@@ -176,6 +196,13 @@ def legacy_rows() -> dict[str, list[dict[str, Any]]]:
              "description": None, "parent_id": None, "weight": 0.0, "h_metadata": None, "created_at": at(6)},
             {"id": "term-side", "vocabulary_id": "vocab-project", "name": "v4", "description": None,
              "parent_id": None, "weight": 0.0, "h_metadata": None, "created_at": at(6)},
+            # A legacy PARENT inside a vocabulary R17 backfills as flat: the
+            # kernel treats a stored parent there as corruption, so it is dropped.
+            {"id": "term-keys", "vocabulary_id": "vocab-topic", "name": "keys", "description": None,
+             "parent_id": "term-oracle", "weight": 1.5, "h_metadata": None, "created_at": at(7)},
+            # Over the kernel's 256-byte name limit: rejected, never written.
+            {"id": "term-toolong", "vocabulary_id": "vocab-topic", "name": "ก" * 90, "description": None,
+             "parent_id": None, "weight": 0.0, "h_metadata": None, "created_at": at(7)},
         ],
         "memory_terms": [
             {"memory_id": "m_muigqmxf_qchtyc", "term_id": "term-oracle"},
@@ -185,6 +212,7 @@ def legacy_rows() -> dict[str, list[dict[str, Any]]]:
             {"memory_id": "m_muigr3dd_subms", "term_id": "term-oracle"},     # memory rejected
             {"memory_id": "m_does_not_exist", "term_id": "term-oracle"},     # memory missing
             {"memory_id": "m_side000_correct", "term_id": "term-side"},
+            {"memory_id": "m_muigr0aa_second", "term_id": "term-keys"},      # parent dropped, tag kept
         ],
         "supersede_log": [
             {"id": 1, "workspace_name": LAB, "old_id": "m_muigqmxf_qchtyc", "old_title": "forgot-keys",
@@ -221,10 +249,20 @@ def legacy_rows() -> dict[str, list[dict[str, Any]]]:
              "friction_score": None, "confidence": None, "parent_id": "trace-001", "prev_id": None,
              "depth": 1, "status": "distilled", "distilled_to": "m_vanished", "distilled_at": ms(37),
              "h_metadata": None, "internal_metadata": None, "created_at": ms(10), "updated_at": ms(37)},
+            # status raw: R17 (corrected 22:00) maps it to the kernel's `open`.
+            {"id": "trace-003", "name": "0920_raw-open", "workspace_name": LAB,
+             "session_name": None, "peer_name": "nat", "query": "is the drawer checked", "mode": None,
+             "session_id": None, "session_from_ts": None, "session_to_ts": None,
+             "friction_score": None, "confidence": None, "parent_id": None, "prev_id": None,
+             "depth": 0, "status": "raw", "distilled_to": None, "distilled_at": None,
+             "h_metadata": None, "internal_metadata": None, "created_at": ms(20), "updated_at": ms(20)},
         ],
         "trace_hits": [
             {"trace_id": "trace-001", "kind": "file", "ref": "src/db.ts:24-26", "line_start": 24,
              "line_end": 26, "note": "the table-missing error", "position": 0},
+            # Kind INSIDE TARGET_KINDS: unresolved, no structured target invented.
+            {"trace_id": "trace-003", "kind": "url", "ref": "https://example.com/keys", "line_start": None,
+             "line_end": None, "note": None, "position": 0},
         ],
         "mcp_calls": [
             {"id": "c_mfq1_abc123", "workspace_name": LAB, "session_name": "session-alpha",
