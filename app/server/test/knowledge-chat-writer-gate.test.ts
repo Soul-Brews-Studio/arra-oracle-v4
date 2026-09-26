@@ -1,42 +1,22 @@
-// #33 fix: `answerChat` must never pin the exclusive dataset writer.
+// #32 slice A (overnight ruling R9, docs/overnight/DECISIONS.md): `answerChat`
+// never opens a writer at all.
 //
-// THE BUG THIS FILE CATCHES: `answerChat` is declared `action: "content:write"`
-// (it is defined only on the writer facade, which alone carries the injected
-// `model`) but persists nothing. Before this fix, `handleKnowledgeRequest`
-// (knowledge/transport.ts) dispatched it through the SAME
-// `ctx.access.getBundle("content:write")` a genuinely persisting write
-// (`registerPeer`, `appendMessages`, `publishRevision`, ...) shares. That path
-// caches a SUCCESSFUL open for the rest of the process (see
-// `createKnowledgeAccess`'s own comment) and never releases it from a request
-// path -- so the first `answerChat` call, even one that goes on to fail with
-// `invalid_reference` for a nonexistent session, would seize the exclusive
-// `OWNERS` gate in `publication/service.ts` and hold it forever. The fix adds
-// an `ephemeralWrite` method flag and a `getEphemeralWriter` that opens its
-// own, uncached writer and is closed in a `finally` block once the single
-// request ends.
+// HISTORY: `answerChat` used to live on the writer facade, only because the
+// injected model travelled in writer options. #33 then routed it through an
+// "ephemeral" per-request writer so it would not pin the cached one -- but in
+// a real gated process that ephemeral writer contended for the one `OWNERS`
+// slot (chat after any write answered `writer_unavailable`) and its close
+// released the process's only inherited fd-42 gate (every write after the
+// first chat answered `writer_unavailable`). `chat-gate-coexistence.test.ts`
+// proves both against the real gate.
 //
-// WHY THIS IS A SPY TEST, NOT A REAL DATASET: the real gate additionally
-// requires an externally-held fd-42 descriptor and matching
-// `ARRA_WRITER_FD`/`ARRA_WRITER_ROOT` env vars (`publication/storage.ts`'s
-// `assertInheritedGate`, checked BEFORE the in-process `OWNERS` map ever
-// runs) -- infrastructure only a real launcher script provides. Standing that
-// up needs a spawned child with a specific inherited-fd `stdio` array (see
-// `publication-ownership.test.ts`'s `WRITER_TS`/`OWNERS_TS` children); doing
-// that here was judged out of scope for a gate-selection regression test.
-// This test instead asserts the exact call this bug and its fix are about --
-// WHICH `KnowledgeAccess` method the transport invokes, and that whatever it
-// opens for `answerChat` is closed exactly once, unconditionally -- via a
-// spy `KnowledgeAccess`, not a fake dataset. `OWNERS` itself belongs to a
-// dataset-level ownership suite (`publication-ownership.test.ts`), not to a
-// transport-routing test.
-//
-// BITE-TESTED BY HAND before this file was committed: with the ephemeral
-// branch in `handleKnowledgeRequest` removed (i.e. `answerChat` routed back
-// through `ctx.access.getBundle(entry.action)` unconditionally, as it was
-// before this fix), "answerChat never touches the cached getBundle path"
-// below FAILS -- `getBundleCalls` records `["content:write"]` instead of
-// `[]`. With the fix restored it passes. See the commit message for the
-// exact one-line revert used to check this.
+// THE FIX THIS FILE PINS at the routing seam: `answerChat` is a READ. The
+// model is composed onto the READER bundle's `chat` facade, the method is
+// admitted under `content:read`, and the transport asks `getBundle` for the
+// reader -- the same path every other read takes. There is no ephemeral
+// writer left to open. This is a spy `KnowledgeAccess`, not a dataset: it
+// asserts WHICH bundle the transport asks for; the real-gate proof lives in
+// the coexistence test.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
@@ -44,8 +24,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/app";
-import type { KnowledgeAccess } from "../src/knowledge/transport";
-import type { KnowledgeBundle } from "../src/knowledge/registry";
+import { createKnowledgeAccess, type KnowledgeAccess } from "../src/knowledge/transport";
+import { KNOWLEDGE_METHODS, type KnowledgeBundle } from "../src/knowledge/registry";
 import { parseAnswerChat } from "../src/publication/chat";
 import { parseJoinSession } from "../src/publication/context";
 import type { OperationService } from "../src/auth/service";
@@ -102,18 +82,34 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-/** One fake writer bundle whose `close` is instrumented. `publication` carries
- *  the `publishRevision` probe `registry.ts`'s `isWriterBundle` keys on, the
- *  same shape `knowledge-chat-transport.test.ts` already uses. */
-function fakeWriterBundle(closeCalls: number[], id: number) {
+/** A reader bundle with the `chat` facade `createKnowledgeAccess` composes. */
+function fakeReaderBundle(chatCalls: string[]) {
+  return {
+    publication: {} as never,
+    taxonomy: {} as never,
+    context: {} as never,
+    evidence: {} as never,
+    chat: {
+      async answerChat(bytes: Uint8Array) {
+        parseAnswerChat(bytes); // real governed parser, same discipline as elsewhere
+        chatCalls.push("answerChat");
+        return { answer: "stub", coverage: "full", excluded: [], excluded_omitted: 0, items_used: [] };
+      },
+      async getChatSettings() {
+        chatCalls.push("getChatSettings");
+        return { model: null };
+      },
+    },
+  };
+}
+
+/** A writer bundle whose `close` is instrumented; `publication.publishRevision`
+ *  is the probe `registry.ts`'s `isWriterBundle` keys on. */
+function fakeWriterBundle(closeCalls: number[]) {
   return {
     publication: { publishRevision: (async () => { throw new Error("unused"); }) as never } as never,
     taxonomy: {} as never,
     context: {
-      async answerChat(bytes: Uint8Array) {
-        parseAnswerChat(bytes); // real governed parser, same discipline as elsewhere
-        return { answer: "stub", coverage: "full", excluded: [], excluded_omitted: 0, items_used: [] };
-      },
       async joinSession(bytes: Uint8Array) {
         parseJoinSession(bytes); // real governed parser
         return null;
@@ -121,7 +117,7 @@ function fakeWriterBundle(closeCalls: number[], id: number) {
     } as never,
     evidence: {} as never,
     close: async () => {
-      closeCalls.push(id);
+      closeCalls.push(1);
     },
   };
 }
@@ -130,59 +126,53 @@ const mcpHandleStub = (() => {
   throw new Error("unused in this test");
 }) as unknown as ReturnType<typeof createMcpAdapter>;
 
-describe("answerChat opens the ephemeral writer, never the cached one", () => {
-  test("answerChat never touches the cached getBundle path, and closes what it opened exactly once", async () => {
+const askBody = JSON.stringify({
+  workspace_name: WORKSPACE,
+  peer_name: "nat",
+  session_name: "s1",
+  question: "does this open a writer?",
+  max_items: 5,
+});
+
+describe("answerChat is a read: it takes the reader bundle and never opens a writer", () => {
+  test("answerChat asks getBundle for content:read only, and runs on the reader's chat facade", async () => {
     const getBundleCalls: string[] = [];
+    const chatCalls: string[] = [];
     const closeCalls: number[] = [];
-    let ephemeralOpens = 0;
     const access: KnowledgeAccess = {
       getBundle: async (action) => {
         getBundleCalls.push(action);
-        // Never reached by this test if the fix holds; present only so a
-        // regression that DOES call it gets a real (if wrong) bundle rather
-        // than a crash that could be mistaken for the assertion below.
-        return fakeWriterBundle(closeCalls, -1) as unknown as KnowledgeBundle;
-      },
-      getEphemeralWriter: async () => {
-        ephemeralOpens += 1;
-        return fakeWriterBundle(closeCalls, ephemeralOpens) as never;
+        return (action === "content:write" ? fakeWriterBundle(closeCalls) : fakeReaderBundle(chatCalls)) as unknown as KnowledgeBundle;
       },
     };
     const app = createApp({ origin: ORIGIN }, {} as unknown as OperationService, mcpHandleStub, {
       knowledge: { policyPath, access },
     });
 
-    const body = JSON.stringify({
-      workspace_name: WORKSPACE,
-      peer_name: "nat",
-      session_name: "s1",
-      question: "does this leak the writer?",
-      max_items: 5,
-    });
-    const res = await app.handle(request(`/api/knowledge/${WORKSPACE}/answerChat`, authedJson(body)));
+    const res = await app.handle(request(`/api/knowledge/${WORKSPACE}/answerChat`, authedJson(askBody)));
     expect(res.status).toBe(200);
-
-    // THE ASSERTION THIS BUG NEEDED: the cached, never-released `getBundle`
-    // path was NEVER invoked for this method.
-    expect(getBundleCalls).toEqual([]);
-    // The ephemeral writer WAS opened exactly once, and closed exactly once
-    // -- not left open for a later request to find still held.
-    expect(ephemeralOpens).toBe(1);
-    expect(closeCalls).toEqual([1]);
+    expect(getBundleCalls).toEqual(["content:read"]);
+    expect(chatCalls).toEqual(["answerChat"]);
+    expect(closeCalls).toEqual([]);
   });
 
-  test("an ordinary content:write method is UNCHANGED: it still uses the cached getBundle path, never the ephemeral one", async () => {
+  test("the real access exposes getBundle alone, and the registry marks answerChat a content:read method", () => {
+    // Nothing a request can call opens and closes a writer of its own.
+    expect(Object.keys(createKnowledgeAccess({ datasetRoot: undefined }))).toEqual(["getBundle"]);
+    expect(KNOWLEDGE_METHODS.answerChat!.action).toBe("content:read");
+    expect(KNOWLEDGE_METHODS.getChatSettings!.action).toBe("content:read");
+    for (const [name, entry] of Object.entries(KNOWLEDGE_METHODS)) {
+      expect(Object.hasOwn(entry, "ephemeralWrite"), name).toBe(false);
+    }
+  });
+
+  test("an ordinary content:write method is UNCHANGED: it still uses the cached getBundle writer, never closed by a request", async () => {
     const getBundleCalls: string[] = [];
     const closeCalls: number[] = [];
-    let ephemeralOpens = 0;
     const access: KnowledgeAccess = {
       getBundle: async (action) => {
         getBundleCalls.push(action);
-        return fakeWriterBundle(closeCalls, -1) as unknown as KnowledgeBundle;
-      },
-      getEphemeralWriter: async () => {
-        ephemeralOpens += 1;
-        return fakeWriterBundle(closeCalls, ephemeralOpens) as never;
+        return fakeWriterBundle(closeCalls) as unknown as KnowledgeBundle;
       },
     };
     const app = createApp({ origin: ORIGIN }, {} as unknown as OperationService, mcpHandleStub, {
@@ -192,53 +182,30 @@ describe("answerChat opens the ephemeral writer, never the cached one", () => {
     const body = JSON.stringify({ workspace_name: WORKSPACE, session_name: "s1", peer_name: "nat" });
     const res = await app.handle(request(`/api/knowledge/${WORKSPACE}/joinSession`, authedJson(body)));
     expect(res.status).toBe(200);
-
     expect(getBundleCalls).toEqual(["content:write"]);
-    expect(ephemeralOpens).toBe(0);
-    // The cached bundle's `close` is NEVER called from a request path (see
-    // `createKnowledgeAccess`'s file-header discipline) -- this transport
-    // only closes what `getEphemeralWriter` opened.
     expect(closeCalls).toEqual([]);
   });
 
-  test("a thrown error from answerChat still closes the ephemeral writer (finally, not just the happy path)", async () => {
-    const closeCalls: number[] = [];
-    let ephemeralOpens = 0;
+  test("a thrown error from the chat facade is a 500 on the reader path, and still no writer was asked for", async () => {
+    const getBundleCalls: string[] = [];
     const access: KnowledgeAccess = {
-      getBundle: async () => {
-        throw new Error("unused in this test");
-      },
-      getEphemeralWriter: async () => {
-        ephemeralOpens += 1;
-        const id = ephemeralOpens;
+      getBundle: async (action) => {
+        getBundleCalls.push(action);
         return {
-          publication: { publishRevision: (async () => { throw new Error("unused"); }) as never } as never,
-          taxonomy: {} as never,
-          context: {
+          ...fakeReaderBundle([]),
+          chat: {
             async answerChat() {
               throw new Error("model exploded");
             },
-          } as never,
-          evidence: {} as never,
-          close: async () => {
-            closeCalls.push(id);
           },
-        } as never;
+        } as unknown as KnowledgeBundle;
       },
     };
     const app = createApp({ origin: ORIGIN }, {} as unknown as OperationService, mcpHandleStub, {
       knowledge: { policyPath, access },
     });
-
-    const body = JSON.stringify({
-      workspace_name: WORKSPACE,
-      peer_name: "nat",
-      session_name: "s1",
-      question: "boom",
-      max_items: 5,
-    });
-    const res = await app.handle(request(`/api/knowledge/${WORKSPACE}/answerChat`, authedJson(body)));
+    const res = await app.handle(request(`/api/knowledge/${WORKSPACE}/answerChat`, authedJson(askBody)));
     expect(res.status).toBe(500);
-    expect(closeCalls).toEqual([1]);
+    expect(getBundleCalls).toEqual(["content:read"]);
   });
 });
