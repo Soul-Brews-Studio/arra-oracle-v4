@@ -1,4 +1,4 @@
-import { containsFolded } from "../fts/fts";
+import { containsFolded, countFolded } from "../fts/fts";
 import { failPublication } from "./errors";
 import { encodeNodeRow } from "./rows";
 import { chunkSourceText, type HitHead, type RankedChunk } from "./search-chunk";
@@ -16,8 +16,10 @@ const batches = (ids: readonly string[]) =>
   Array.from({ length: Math.ceil(ids.length / ID_BATCH) }, (_, i) => ids.slice(i * ID_BATCH, (i + 1) * ID_BATCH));
 const unique = (ids: readonly string[]) => [...new Set(ids)];
 
-/** What one request learned about a head revision. */
-type HeadRevision = { title: string; text: string | undefined; matches: boolean };
+/** What one request learned about a head revision. With a query, a matching
+ *  head also carries overnight R22's ordering keys: its occurrence count and
+ *  its acceptance instant. */
+type HeadRevision = { title: string; text: string | undefined; matches: boolean; occurrences?: number; accepted_at?: bigint };
 
 /**
  * Keep only candidate chunks that ARE a current answer (#30 acceptance: "stale
@@ -44,7 +46,10 @@ type HeadRevision = { title: string; text: string | undefined; matches: boolean 
  *
  * Returns a filter for ONE search request: each call takes that round's
  * candidates and answers the survivors plus, for each surviving node, its head
- * `{revision_id, title}` (and `text`, with a query). What it learns about a
+ * `{revision_id, title}` -- and, with a query, `text` plus overnight R22's
+ * ordering keys, read from the same head row: `occurrences` (`countFolded`
+ * over that text) and `accepted_at` (the row's raw `created_at` microseconds,
+ * the instant `publishRevision` accepted it). What it learns about a
  * node (head, text match, eligibility, title) is remembered across the
  * request's overfetch rounds, so nothing is looked up twice. A duplicated node
  * or head row is `integrity_failure`, never a pick.
@@ -64,7 +69,7 @@ export function currentEligibleChunks(
     /** node id -> recall-eligible (the #29 seam's answer). */
     eligible: new Map<string, boolean>(),
   };
-  const columns = query === null ? ["id", "node_id", "title"] : ["id", "node_id", "title", "body"];
+  const columns = query === null ? ["id", "node_id", "title"] : ["id", "node_id", "title", "body", "created_at"];
 
   return async (chunks) => {
     const unknownNodes = unique(chunks.map((chunk) => chunk.node_id)).filter((id) => !memo.heads.has(id));
@@ -90,13 +95,20 @@ export function currentEligibleChunks(
       );
       for (const row of rows) {
         if (typeof row.id !== "string" || typeof row.title !== "string") failPublication("integrity_failure", "");
-        if (query !== null && typeof row.body !== "string") failPublication("integrity_failure", "");
+        // `created_at` is timestamp[us] NOT NULL, decoded raw as a bigint.
+        if (query !== null && (typeof row.body !== "string" || typeof row.created_at !== "bigint")) failPublication("integrity_failure", "");
         // A head row that belongs to another node, or appears twice, is corrupt.
         if (memo.revisions.has(row.id) || memo.heads.get(row.node_id as string) !== row.id) failPublication("integrity_failure", "");
         const text = query === null ? undefined : chunkSourceText(row.title, row.body as string);
         const matches = text === undefined || containsFolded(text, query!);
-        // Only a matching head's text is kept: it is the hit's snippet source.
-        memo.revisions.set(row.id, { title: row.title, text: matches ? text : undefined, matches });
+        // Only a matching head's text is kept: it is the hit's snippet source,
+        // and (with its acceptance instant) what the hit is ordered by.
+        memo.revisions.set(row.id, {
+          title: row.title,
+          text: matches ? text : undefined,
+          matches,
+          ...(text !== undefined && matches ? { occurrences: countFolded(text, query!), accepted_at: row.created_at as bigint } : {}),
+        });
       }
       for (const id of batch) if (!memo.revisions.has(id)) failPublication("integrity_failure", "");
     }
@@ -114,6 +126,7 @@ export function currentEligibleChunks(
         revision_id: chunk.revision_id,
         title: revision.title,
         ...(revision.text === undefined ? {} : { text: revision.text }),
+        ...(revision.occurrences === undefined ? {} : { occurrences: revision.occurrences, accepted_at: revision.accepted_at! }),
       });
     }
     return { chunks: current, heads };

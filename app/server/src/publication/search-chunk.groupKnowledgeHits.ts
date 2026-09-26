@@ -5,9 +5,11 @@ import { searchSnippet } from "./search-chunk.searchSnippet";
  * A node's captured head, as a hit reports it. `text` is the head's whole
  * chunk source text (`chunkSourceText`) when the caller read it -- keyword
  * search does, to re-check the hit -- and the snippet is then cut from it, so
- * an occurrence split across two chunks still shows whole.
+ * an occurrence split across two chunks still shows whole. Keyword search
+ * also reads overnight R22's ordering keys with it (`KeywordOrderKey`):
+ * `occurrences` of the query in `text`, and the head's `accepted_at`.
  */
-export type HitHead = { revision_id: string; title: string; text?: string };
+export type HitHead = { revision_id: string; title: string; text?: string; occurrences?: number; accepted_at?: bigint };
 
 export type KnowledgeHit = {
   node_id: string;
@@ -33,7 +35,8 @@ const byIndexThenId = (a: RankedChunk, b: RankedChunk) =>
  * (`ascending`); a ranked chunk beats an unranked one. That chunk is the
  * snippet's source, unless the head carries its whole text. Order is total and
  * stable: ranked hits by rank, then every unranked hit (the scans), each tie
- * broken by node id.
+ * broken by node id. Keyword search passes no rank at all and re-sorts the
+ * hits by `keywordHitOrder` (overnight R22); semantic search keeps this order.
  */
 export function groupKnowledgeHits(
   chunks: readonly RankedChunk[],

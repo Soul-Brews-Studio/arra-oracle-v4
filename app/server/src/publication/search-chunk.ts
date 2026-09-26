@@ -60,6 +60,7 @@ export { seamPredicate } from "./search-chunk.seamPredicate";
 export { keywordScanPredicate } from "./search-chunk.keywordScanPredicate";
 export { type RankedChunk, rankedChunk } from "./search-chunk.rankedChunk";
 export { type HitHead, type KnowledgeHit, groupKnowledgeHits } from "./search-chunk.groupKnowledgeHits";
+export { type KeywordOrderKey, keywordHitOrder } from "./search-chunk.keywordHitOrder";
 // #30 closed embedding-profile registry (overnight R7 + R20). It replaces the
 // retrieval slice's `DEFAULT_EMBEDDING_PROFILE` seam: the active profile id
 // is the one name every index, list, embed and default semantic search uses.
