@@ -15,6 +15,7 @@ on the third publish -- a revision row appended, its head not yet published.
 
 from __future__ import annotations
 
+import importlib
 import shutil
 import stat
 import sys
@@ -107,7 +108,8 @@ class FailedRunTests(unittest.TestCase):
         report = run_copy_migration(self.parent / "source", self.candidate, self.parent / "rerun-work",
                                     intake_at=INTAKE_AT)
         self.assertTrue(report["verified"])
-        self.assertEqual(len(_rows(self.candidate, "nodes")), 9)
+        # 11 legacy memories, one rejected for a sub-millisecond clock.
+        self.assertEqual(len(_rows(self.candidate, "nodes")), 10)
         self.assertEqual(tree(self.parent / "source"), self.before)
 
     def test_a_worker_that_dies_at_once_fails_loud_and_leaves_no_tables(self):
@@ -134,7 +136,12 @@ class FailedRunTests(unittest.TestCase):
 class KernelRefusedTagTests(unittest.TestCase):
     """Defence in depth for R11: if a legacy type string passes the Python
     bound but the kernel refuses it as a term name, only the memories carrying
-    that tag are rejected -- the workspace's other memories still publish."""
+    that tag are rejected -- the workspace's other memories still publish.
+
+    Asymmetric on purpose: a string Python KNOWS cannot be a term name is
+    policy (still `note`, no tag, one record -- test_copy_migration). A kernel
+    refusal Python did not predict is unexplained, so the carrying memory
+    fails closed instead of being published without its tag."""
 
     @classmethod
     def setUpClass(cls):
@@ -166,6 +173,52 @@ class KernelRefusedTagTests(unittest.TestCase):
         self.assertEqual(failed[0]["step"], f"legacy_type_term:{LONG_TYPE}")
         tags = {t["name"] for t in _rows(self.candidate, "terms") if t["workspace_name"] == LAB}
         self.assertTrue({"retro", "Decision Log"} <= tags, "the other R11 tags were still created")
+
+
+class VerifiedGateTests(unittest.TestCase):
+    """`verified` is the conjunction of EVERY independent Python-side check.
+
+    A check whose problems the report prints but `verified` ignores is worse
+    than no check: the run still reads green. Each candidate check is made to
+    report one planted problem in turn, on its own fresh candidate, with
+    everything else green; `verified` must go false and the planted problem
+    must be on the report. (Measured before this test existed: deleting
+    `and not taxonomy` from run.py left every test green.)
+    """
+
+    #: run.py name -> report key under "candidate".
+    CHECKS = (
+        ("candidate_schema_problems", "schema_problems"),
+        ("body_mismatches", "body_problems"),
+        ("taxonomy_problems", "taxonomy_problems"),
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        cls.parent = Path(tempfile.mkdtemp(prefix="arra-copy-verified-"))
+        build_legacy_fixture(cls.parent / "source")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.parent, ignore_errors=True)
+
+    def test_each_candidate_check_gates_verified(self):
+        run_module = importlib.import_module("arra_migrate.copy_migration.run")
+        for function, key in self.CHECKS:
+            with self.subTest(check=function):
+                planted = [f"planted by the test: {function}"]
+                with mock.patch.object(run_module, function, return_value=planted):
+                    report, _, _ = _run(self.parent, function)
+                self.assertEqual(report["candidate"][key], planted)
+                for _, other in self.CHECKS:
+                    if other != key:
+                        self.assertEqual(report["candidate"][other], [], other)
+                readback = report["readback"]
+                self.assertTrue(report["conservation_ok"] and report["source"]["untouched"])
+                self.assertTrue(readback["worker_completed"] and readback["target_dataset_ok"])
+                self.assertEqual((readback["codec_failures"], readback["heads_failed"],
+                                  readback["projection_failures"]), ({}, [], []))
+                self.assertFalse(report["verified"], f"{key} is on the report but does not gate verified")
 
 
 if __name__ == "__main__":

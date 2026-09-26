@@ -13,13 +13,15 @@ What this proves:
     memories and memory_terms included, with a per-record entry for each;
   - the candidate is exactly the reviewed target-19 physical shape;
   - memories became nodes with an accepted first revision (Thai text intact),
-    legacy types follow R11 (a type too long to be a term name rejects that
-    memory alone), memory_terms became node_revision_terms, supersede rows
+    legacy types follow R11 (a type too long to be a term name still migrates
+    as ``note``; only its tag is a record), memory_terms became
+    node_revision_terms, supersede rows
     follow R17 (a missing log row is synthesized), distilled_at lands in
     internal metadata, not captured_at, raw traces are open, and messages carry
     the frozen intake time;
   - R17 flat vocabularies hold NO parent (the kernel reads one as corruption):
     a legacy parent is dropped and recorded, and a cross-row check catches one;
+    vocabulary and term names over the kernel's 256-BYTE bound are rejected;
   - the TS kernel reads every migrated node back and every stored row passes
     the TS stored-row codecs;
   - the inherited release gates #7/#8/#10 are named as EXCLUDED, never green.
@@ -50,14 +52,15 @@ from copy_migration_support import run as _run
 from copy_migration_support import tree as _tree
 from export_legacy_fixture import (
     LAB,
+    LONG_TYPE,
     MS0,
     SIDE,
     build_legacy_fixture,
     legacy_rows,
 )
 
-#: Rejected before planning: a sub-ms created_at, and a type R11 cannot keep.
-REJECTED_MEMORIES = ("m_muigr3dd_subms", "m_muigr6gg_longtype")
+#: Rejected before planning: a sub-ms created_at.
+REJECTED_MEMORIES = ("m_muigr3dd_subms",)
 
 
 class CopyMigrationTests(unittest.TestCase):
@@ -103,7 +106,7 @@ class CopyMigrationTests(unittest.TestCase):
         self.assertEqual(by_key[("memories", "m_muigr3dd_subms")]["outcome"], "rejected")
         self.assertEqual(by_key[("memories", "m_muigr3dd_subms")]["code"], "sub_millisecond_timestamp")
         migrated = [k for (t, k), r in by_key.items() if t == "memories" and r["outcome"] == "migrated"]
-        self.assertEqual(len(migrated), 9)
+        self.assertEqual(len(migrated), 10)
         mt = {k: r for (t, k), r in by_key.items() if t == "memory_terms"}
         self.assertEqual(mt["m_muigr1bb_retro|term-orphan"]["outcome"], "unresolved")
         self.assertEqual(mt["m_muigr3dd_subms|term-oracle"]["outcome"], "rejected")
@@ -188,7 +191,7 @@ class CopyMigrationTests(unittest.TestCase):
     def test_memories_become_nodes_with_an_accepted_first_revision(self):
         nodes = _rows(self.candidate, "nodes")
         revisions = {r["id"]: r for r in _rows(self.candidate, "node_revisions")}
-        self.assertEqual(len(nodes), 9)
+        self.assertEqual(len(nodes), 10)
         for node in nodes:
             head = revisions[node["current_revision_id"]]
             self.assertEqual(head["revision_no"], 1)
@@ -223,16 +226,30 @@ class CopyMigrationTests(unittest.TestCase):
                      if v["name"] == "legacy_type" and v["workspace_name"] == LAB)
         self.assertEqual((vocab["cardinality"], vocab["required"], vocab["hierarchy"]), ("many", False, "flat"))
 
-    def test_r11_type_too_long_for_a_term_name_rejects_that_memory_alone(self):
-        """One unrepresentable type is ONE record, never a whole workspace."""
+    def test_r11_type_too_long_for_a_term_name_still_becomes_note(self):
+        """R11: anything not reserved becomes `note`, so nothing is lost.
+
+        A type over the 256-byte term-name bound cannot ALSO be a tag term. The
+        memory still migrates as `note` with the full string in
+        internal_metadata.legacy_type; only the missing tag is a record.
+        """
 
         by_key = {r["legacy_key"]: r for r in self._records() if r["table"] == "memories"}
-        record = by_key["m_muigr6gg_longtype"]
-        self.assertEqual((record["outcome"], record["code"], record["pointer"]),
-                         ("rejected", "legacy_type_unrepresentable", "/type"))
-        self.assertIn("256", record["detail"])
+        self.assertEqual(by_key["m_muigr6gg_longtype"]["outcome"], "migrated")
+        tag = next(r for r in self._records()
+                   if r["table"] == "memories.type" and r["legacy_key"] == "m_muigr6gg_longtype")
+        self.assertEqual((tag["outcome"], tag["code"]), ("unresolved", "legacy_type_tag_unrepresentable"))
+        self.assertIn(str(len(LONG_TYPE.encode())), tag["detail"])
+        self.assertIn("256", tag["detail"])
+        self.assertEqual(self.report["policies"]["r11_type_tag_unrepresentable"], 1)
+        head = next(r for r in _rows(self.candidate, "node_revisions") if r["title"] == "stuffed-type")
+        self.assertEqual({(t["vocabulary_name_snapshot"], t["term_name_snapshot"])
+                          for t in json.loads(head["term_snapshot_json"])}, {("type", "note")})
+        meta = json.loads(head["internal_metadata"])
+        self.assertEqual(meta["legacy_type"], LONG_TYPE, "the original string is kept whole")
+        self.assertIn("type", meta["unresolved_references"])
         lab = {k for k, r in by_key.items() if r["workspace"] == LAB and r["outcome"] == "migrated"}
-        self.assertEqual(len(lab), 6, "every other oracle-lab memory still migrated")
+        self.assertEqual(len(lab), 7, "every oracle-lab memory with a millisecond clock migrated")
         self.assertEqual([t for t in self.report["readback"]["taxonomy"] if t["outcome"] == "error"], [])
         tags = {t["name"] for t in _rows(self.candidate, "terms") if t["workspace_name"] == LAB}
         self.assertTrue({"retro", "Decision Log"} <= tags)
@@ -288,6 +305,16 @@ class CopyMigrationTests(unittest.TestCase):
         problems = taxonomy_problems(copy)
         self.assertEqual(len(problems), 1)
         self.assertIn("flat", problems[0])
+
+    def test_a_vocabulary_name_over_the_kernel_limit_is_rejected_not_written(self):
+        """BYTES, not characters: 90 Thai characters are 270 UTF-8 bytes."""
+
+        record = next(r for r in self._records()
+                      if r["table"] == "vocabularies" and r["legacy_key"] == "vocab-toolong")
+        self.assertEqual((record["outcome"], record["code"], record["pointer"]), ("rejected", "limit_exceeded", "/name"))
+        self.assertIn("270", record["detail"])
+        self.assertNotIn("ข" * 90, {v["name"] for v in _rows(self.candidate, "vocabularies")})
+        self.assertEqual(self.report["candidate"]["taxonomy_problems"], [])
 
     def test_a_term_name_over_the_kernel_limit_is_rejected_not_written(self):
         record = next(r for r in self._records() if r["table"] == "terms" and r["legacy_key"] == "term-toolong")
@@ -361,17 +388,17 @@ class CopyMigrationTests(unittest.TestCase):
         # listNodes' DEFAULT may exclude superseded/retired nodes once #29 lands
         # (R18 D3), so the listing is bounded, not pinned: every live node at
         # least, every migrated node at most. getAcceptedHead is the exact check.
-        live, migrated = {LAB: 3, SIDE: 2}, {LAB: 6, SIDE: 3}
+        live, migrated = {LAB: 4, SIDE: 2}, {LAB: 7, SIDE: 3}
         self.assertEqual(set(readback["listed_nodes"]), {LAB, SIDE})
         for ws, listed in readback["listed_nodes"].items():
             self.assertTrue(live[ws] <= listed <= migrated[ws], (ws, listed))
-        self.assertEqual(readback["heads_ok"], 9)
+        self.assertEqual(readback["heads_ok"], 10)
         self.assertEqual(readback["heads_failed"], [])
         self.assertEqual(readback["codec_failures"], {})
         self.assertTrue(readback["target_dataset_ok"])
         self.assertEqual(readback["projection_failures"], [])
-        self.assertEqual(readback["codec_rows"]["node_revision_terms"], 16)
-        self.assertEqual(readback["codec_rows"]["search_chunks_v1"], 9, "pending chunks: vectors rebuilt, never reused")
+        self.assertEqual(readback["codec_rows"]["node_revision_terms"], 17)
+        self.assertEqual(readback["codec_rows"]["search_chunks_v1"], 10, "pending chunks: vectors rebuilt, never reused")
         self.assertTrue(self.report["verified"])
 
     # -- the report must never look green on inherited gates ---------------

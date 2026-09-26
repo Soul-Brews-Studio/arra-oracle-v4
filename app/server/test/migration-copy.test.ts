@@ -205,6 +205,14 @@ describe("copy migration: the candidate is target-19 and the TS kernel reads it"
       expect(thai.status).toBe(200);
       expect(JSON.stringify(thai.body)).toContain("ลืมกุญแจไว้ที่บ้าน");
 
+      // R11: a type too long to be a tag term still migrates as `note`, and
+      // the kernel reads it like any other node.
+      const stuffed = await server.knowledge(LAB, "getAcceptedHead", {
+        workspace_name: LAB, node_id: legacyNodeId(LAB, "m_muigr6gg_longtype"),
+      });
+      expect(stuffed.status).toBe(200);
+      expect(JSON.stringify(stuffed.body)).toContain("a type field someone filled with prose");
+
       // Workspace isolation holds on migrated data: side-bank sees only its own.
       const side = await server.knowledge(SIDE, "listNodes", {
         workspace_name: SIDE, after_id: null, limit: 100, include_total: true, type_term: null,
@@ -257,7 +265,8 @@ describe("copy migration: the candidate is target-19 and the TS kernel reads it"
     expect(result.code).toBe(0);
     const { outcomes } = JSON.parse(result.stdout.trim().split("\n").filter(Boolean).at(-1)!);
     const values = Object.values(outcomes) as Array<{ outcome: string }>;
-    expect(values).toHaveLength(9);
+    // 11 legacy memories, one rejected for a sub-millisecond clock.
+    expect(values).toHaveLength(10);
     expect(values.every((o) => o.outcome === "reconciled")).toBe(true);
     for (const name of DERIVED) {
       const original = await tableText(candidate, name);

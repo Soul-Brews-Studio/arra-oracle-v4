@@ -160,8 +160,9 @@ def legacy_rows() -> dict[str, list[dict[str, Any]]]:
                     "conclusion", 35),
             {**_memory("m_side000_correct", "side-correction", "side bank correction", "correction", 36),
              "workspace_name": SIDE, "peer_name": "ghost"},
-            # R11 cannot keep this type as a tag term: THIS memory is rejected,
-            # every other oracle-lab memory still migrates.
+            # R11: not reserved, so it becomes `note`. It is too long to ALSO be
+            # a tag term (256-byte name bound), so the memory still migrates
+            # and the missing tag is one pointer record.
             _memory("m_muigr6gg_longtype", "stuffed-type", "a type field someone filled with prose",
                     LONG_TYPE, 37),
             # superseded_by with NO supersede_log row: one event is synthesized.
@@ -181,6 +182,12 @@ def legacy_rows() -> dict[str, list[dict[str, Any]]]:
              "internal_metadata": None, "created_at": at(5)},
             {"id": "vocab-project", "name": "project", "workspace_name": SIDE, "label": "Project",
              "description": None, "kind": "categories", "term_policy": "sealed", "h_metadata": None,
+             "internal_metadata": None, "created_at": at(5)},
+            # Over the kernel's 256-byte name bound: rejected, never written.
+            # 90 Thai characters are 270 UTF-8 bytes, so a CHARACTER count
+            # would let it through.
+            {"id": "vocab-toolong", "name": "ข" * 90, "workspace_name": LAB, "label": "Too long",
+             "description": None, "kind": "tags", "term_policy": "open", "h_metadata": None,
              "internal_metadata": None, "created_at": at(5)},
         ],
         "terms": [
