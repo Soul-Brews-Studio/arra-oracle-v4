@@ -183,6 +183,58 @@ describe("#29 slice B: listNodes default excludes retired and superseded nodes",
   }, 180_000);
 });
 
+describe("#29 fix round: include_inactive is OPTIONAL on the wire, default false", () => {
+  test("a listNodes request that OMITS include_inactive entirely still excludes a retired node -- the exact shape the daily-loop `nodes list` CLI alias sends without --history", async () => {
+    const NODE_E = idOf("eligNodeE");
+    const NODE_F = idOf("eligNodeF");
+    const REV_E1 = idOf("eligRevE1");
+    const REV_F1 = idOf("eligRevF1");
+
+    const fixture = await createFixture([ALPHA]);
+    try {
+      const alpha = fixture.workspaces[ALPHA]!;
+      const parsed = await drive(
+        fixture,
+        [
+          pub("publishRevision", { operation_id: "op-e", content: revisionEnvelope(ALPHA, alpha, NODE_E) }),
+          pub("publishRevision", { operation_id: "op-f", content: revisionEnvelope(ALPHA, alpha, NODE_F) }),
+          ctx("retireNode", {
+            workspace_name: ALPHA,
+            node_id: NODE_E,
+            expected_revision_id: REV_E1,
+            reason: "fix round: retire E, then list with include_inactive omitted",
+            peer_name: null,
+            operation_id: "op-retire-e",
+          }),
+          // No `include_inactive` key at all -- a required-closed key would
+          // fail this `invalid_request`. It must behave exactly like an
+          // explicit `include_inactive: false`.
+          pub("listNodes", {
+            workspace_name: ALPHA,
+            after_id: null,
+            limit: 100,
+            include_total: true,
+            type_term: null,
+          }),
+        ],
+        [REV_E1, REV_F1],
+      );
+
+      expect(ok(parsed.op0, "publish E").outcome).toBe("accepted");
+      expect(ok(parsed.op1, "publish F").outcome).toBe("accepted");
+      expect(ok(parsed.op2, "retire E").outcome).toBe("accepted");
+
+      const page = ok(parsed.op3, "listNodes with include_inactive omitted");
+      const ids = page.rows.map((r: any) => r.id);
+      expect(ids).not.toContain(NODE_E);
+      expect(ids).toContain(NODE_F);
+      expect(page.total).toBe("1");
+    } finally {
+      await fixture.cleanup();
+    }
+  }, 180_000);
+});
+
 describe("#29 slice B: listNodes total matches the filtered set across pages", () => {
   test("a small page size still reports the TRUE filtered total, not the native unfiltered one", async () => {
     const nodes = ["totalP", "totalQ", "totalR", "totalS", "totalT"].map((s) => idOf(`elig${s}`));

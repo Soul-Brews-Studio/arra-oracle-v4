@@ -106,6 +106,41 @@ describe("listNodes: base cases", () => {
   }, 180_000);
 });
 
+describe("listNodes: include_inactive is OPTIONAL (#29 fix round: unblocks the `nodes list` CLI alias)", () => {
+  test("a request with no `include_inactive` key at all parses fine, defaulting to false -- the exact wire shape `app/cli/kb.aliases.ts`'s `nodes list` alias sends without --history", async () => {
+    const reader = await openPublicationReader(fixture.datasetRoot);
+    const page = (await reader.listNodes(
+      encodeRequest({ workspace_name: BETA, after_id: null, limit: 10, include_total: true, type_term: null }),
+    )) as ListNodesPage;
+    // BETA only ever receives active nodes in this file; a defaulted-false
+    // request must behave identically to an explicit `include_inactive: false`
+    // one -- same empty-workspace shape as the very first test above.
+    expect(page.rows).toEqual([]);
+    expect(page.total).toBe("0");
+  });
+
+  test("an explicit `include_inactive: null` is still refused invalid_request -- closed-typed (boolean only), not merely optional", async () => {
+    const reader = await openPublicationReader(fixture.datasetRoot);
+    let caught: any = null;
+    try {
+      await reader.listNodes(
+        encodeRequest({
+          workspace_name: BETA,
+          after_id: null,
+          limit: 10,
+          include_total: false,
+          type_term: null,
+          include_inactive: null,
+        }),
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught?.code).toBe("invalid_request");
+    expect(caught?.path).toBe("/include_inactive");
+  });
+});
+
 describe("listNodes: keyset pagination", () => {
   test("limit-1 pagination returns a real next_after_id, and the following page exhausts it to null", async () => {
     const n1 = nodeId("limit1pageA");

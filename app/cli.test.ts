@@ -452,12 +452,22 @@ describe("CLI kb friendly aliases (#31 R8)", () => {
     expect(body.items[0].public_id).toMatch(/^[A-Za-z0-9_-]{21}$/);
   });
 
-  test("nodes list forwards paging flags with explicit nulls for the rest", async () => {
+  test("nodes list forwards paging flags with explicit nulls for the rest, and OMITS include_inactive -- the #29 fix round: this is the daily-loop alias the ordinary README example uses (`nodes list --bank example --limit 20`), byte-for-byte unchanged from before include_inactive existed on the server", async () => {
     const r = await run("nodes", "list", "--bank", "test-bank", "--limit", "5", "--include-total");
     expect(r.code).toBe(0);
     expect(requests[0]?.path).toBe("/api/knowledge/test-bank/listNodes");
     expect(requests[0]?.body).toEqual({
       workspace_name: "test-bank", after_id: null, limit: 5, include_total: true, type_term: null,
+    });
+  });
+
+  test("nodes list --history maps to include_inactive: true, the ONLY way this alias sends that key", async () => {
+    const r = await run("nodes", "list", "--bank", "test-bank", "--limit", "5", "--history");
+    expect(r.code).toBe(0);
+    expect(requests[0]?.path).toBe("/api/knowledge/test-bank/listNodes");
+    expect(requests[0]?.body).toEqual({
+      workspace_name: "test-bank", after_id: null, limit: 5, include_total: false, type_term: null,
+      include_inactive: true,
     });
   });
 
