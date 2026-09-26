@@ -17,7 +17,9 @@ return mutateContextWrite(core, async () => {
             name: request.name,
             workspace_name: request.workspace_name,
             is_active: true,
-            h_metadata: null,
+            // K12a (overnight R18): the canonical {title} text, or null. A
+            // replay keeps the ORIGINAL row (registerNamed), title included.
+            h_metadata: request.h_metadata,
             internal_metadata: null,
             configuration: null,
             created_at,

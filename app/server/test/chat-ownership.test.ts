@@ -77,12 +77,13 @@ const RUNTIME_EXPORTS = [
 ].join(",");
 // #30 overnight R7/R8: `getSearchFreshness` (read) and `embedPendingChunks`
 // (write-only) join the context facade -- the list below grew accordingly.
+// Overnight R18: + closeSession (K9, D7) on every writer, + listSessionMembers (K10) on both.
 const CONTEXT_WRITE_METHODS =
-  "advanceReadCursor,appendMessages,createSessionLink,createTrace,embedPendingChunks," +
+  "advanceReadCursor,appendMessages,closeSession,createSessionLink,createTrace,embedPendingChunks," +
   "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
   "getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
-  "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessions,listTraceHits," +
+  "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits," +
   "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
   "writeChunkEmbedding";
 const CONTEXT_WRITER_KEYS = "close,context,publication,taxonomy";

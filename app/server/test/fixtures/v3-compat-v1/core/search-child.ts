@@ -42,7 +42,14 @@ const payload = JSON.parse(payloadJson ?? "{}") as { banks: { a: string; b: stri
 const { a: BANK_A, b: BANK_B } = payload.banks;
 
 const DIMS = 384;
-const PROFILE = "all-minilm";
+// EMBEDDING_MODEL is cleared BEFORE the kernel loads, so the one active
+// profile of the #30 registry (R7, search-chunk.profiles.ts) is the stub's,
+// `ollama/all-minilm/384/none`. The registry refuses any other name -- the
+// bare "all-minilm" this fixture used to send predates that registry and
+// matched no indexed row (the search-embed merge left it behind).
+delete process.env.EMBEDDING_MODEL;
+const { activeEmbeddingProfileId } = await import("../../../../src/publication/search-chunk");
+const PROFILE = activeEmbeddingProfileId();
 /** Deterministic trigram-hash vector, unit length: similar text, near vectors. */
 function stubVector(text: string): number[] {
   const v = new Array<number>(DIMS).fill(0);
@@ -91,8 +98,7 @@ writeFileSync(
 
 const { createKnowledgeAccess } = await import("../../../../src/knowledge/transport");
 // The process env carries the inherited writer gate (ARRA_WRITER_FD/ROOT);
-// EMBEDDING_MODEL is cleared so the index profile is the stub's, all-minilm.
-delete process.env.EMBEDDING_MODEL;
+// EMBEDDING_MODEL was cleared above, so the index profile is the stub's.
 const access = createKnowledgeAccess({ datasetRoot: datasetRoot!, env: process.env, embedder });
 const composition = await import("../../../../src/composition");
 const { configureKnowledgeAccess, createMcpAdapter } = await import("../../../../src/mcp");

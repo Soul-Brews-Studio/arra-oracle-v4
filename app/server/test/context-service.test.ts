@@ -93,7 +93,8 @@ describe("request grammar is closed, and keeps the GOVERNED envelope", () => {
     const peer = { workspace_name: WS, peer_id: id("p1"), name: "peer-a" };
     expect(parseRegisterPeer(bytes(peer))).toEqual(peer);
     const session = { workspace_name: WS, session_id: id("s1"), name: "sess-a" };
-    expect(parseRegisterSession(bytes(session))).toEqual(session);
+    // K12a (overnight R18): the omitted optional title reads back as an explicit null.
+    expect(parseRegisterSession(bytes(session))).toEqual({ ...session, h_metadata: null });
   });
 
   test("shape failures keep arra-error/v1, not a context envelope", () => {
@@ -175,7 +176,9 @@ describe("request grammar is closed, and keeps the GOVERNED envelope", () => {
   test("listPeers/listSessions: limit is 1..100, after_name is a nullable NAME (not Int64), include_total is a required boolean", () => {
     for (const parse of [parseListPeers, parseListSessions] as const) {
       const ok = { workspace_name: WS, after_name: null, limit: 50, include_total: false };
-      expect(parse(bytes(ok))).toEqual(ok);
+      // K10 (overnight R18): listSessions' omitted optional filters read back as explicit nulls.
+      const filters: Record<string, unknown> = parse === parseListSessions ? { is_active: null, member_peer_name: null } : {};
+      expect(parse(bytes(ok)) as Record<string, unknown>).toEqual({ ...ok, ...filters });
       expect(parse(bytes({ ...ok, after_name: "peer-a" })).after_name).toBe("peer-a");
       expect(parse(bytes({ ...ok, include_total: true })).include_total).toBe(true);
       for (const bad of [0, 101, 1.5, "10"]) {
@@ -534,12 +537,12 @@ describe("real persistence: registration, shapes and reads", () => {
       expect(parsed.writerKeys).toEqual(["close", "context", "publication", "taxonomy"]);
       // The writer's context facade spreads the full read-method set in
       // (`{ ...reads, ...writeOnly }`), so this is that union, not just the
-      // eleven write-only methods.
+      // fourteen write-only methods (overnight R18 added closeSession, K9).
       expect(parsed.contextMethods).toEqual([
-        "advanceReadCursor", "appendMessages", "createSessionLink", "createTrace", "embedPendingChunks", "getContext",
+        "advanceReadCursor", "appendMessages", "closeSession", "createSessionLink", "createTrace", "embedPendingChunks", "getContext",
         "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSearchFreshness", "getSession", "getTrace",
         "indexRevisionChunks", "joinSession", "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks",
-        "listSessionLinks", "listSessions", "listTraceHits", "reconcileSearchChunks", "registerPeer", "registerSession",
+        "listSessionLinks", "listSessionMembers", "listSessions", "listTraceHits", "reconcileSearchChunks", "registerPeer", "registerSession",
         "retireNode", "supersedeNode", "writeChunkEmbedding",
       ]);
       // Only the BUNDLE closes the owner.
@@ -1088,7 +1091,7 @@ describe("core: the sourced path and the reader bundle", () => {
     }
   }, 300_000);
 
-  test("the READER bundle has exactly three facades and nineteen context methods", async () => {
+  test("the READER bundle has exactly three facades and twenty context methods", async () => {
     const fixture = await createContextFixture([ALPHA]);
     try {
       const parsed = await drive(
@@ -1097,12 +1100,13 @@ describe("core: the sourced path and the reader bundle", () => {
         { freshReader: true },
       );
       expect(parsed.readerKeys).toEqual(["context", "publication", "taxonomy"]);
-      // Exactly the nineteen READ methods (#30's two searches and, from
-      // search-embed R7/R8, getSearchFreshness included); no mutator --
-      // embedPendingChunks included -- reachable from a reader.
+      // Exactly the twenty READ methods (#30's two searches and, from
+      // search-embed R7/R8, getSearchFreshness included; overnight R18's
+      // listSessionMembers too); no mutator -- embedPendingChunks and
+      // closeSession included -- reachable from a reader.
       expect(parsed.readerContextMethods).toEqual([
         "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSearchFreshness", "getSession", "getTrace",
-        "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks", "listSessionLinks", "listSessions",
+        "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks", "listSessionLinks", "listSessionMembers", "listSessions",
         "listTraceHits", "searchKnowledgeKeyword", "searchKnowledgeSemantic",
       ]);
       // A gateless reader works AFTER the writer released its gate.

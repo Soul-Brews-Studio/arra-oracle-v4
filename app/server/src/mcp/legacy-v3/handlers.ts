@@ -19,6 +19,10 @@ import { oracle_search } from "./tools/oracle_search";
 import { oracle_search_chain } from "./tools/oracle_search_chain";
 import { oracle_supersede } from "./tools/oracle_supersede";
 import { oracle_verify } from "./tools/oracle_verify";
+import { oracle_thread } from "./tools/oracle_thread";
+import { oracle_thread_read } from "./tools/oracle_thread_read";
+import { oracle_thread_update } from "./tools/oracle_thread_update";
+import { oracle_threads } from "./tools/oracle_threads";
 
 export type V3ToolContext = {
   readonly tool: string;
@@ -47,4 +51,9 @@ export const V3_HANDLERS: Readonly<Record<string, V3Handler>> = Object.freeze({
   oracle_read,
   oracle_supersede,
   oracle_verify,
+  // V4 + V10 forum over sessions and messages (V3-PARITY.md §4.2-§4.4).
+  oracle_thread,
+  oracle_threads,
+  oracle_thread_read,
+  oracle_thread_update,
 });

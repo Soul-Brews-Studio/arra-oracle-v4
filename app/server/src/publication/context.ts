@@ -44,3 +44,9 @@ export { type ListMcpCallsRequest, parseListMcpCalls } from "./context.parseList
 export { MCP_CALL_FIELDS, encodeMcpCallRow } from "./context.encodeMcpCallRow";
 export { type ListConnectionsRequest, parseListConnections } from "./context.parseListConnections";
 export { CONNECTION_FIELDS, encodeConnectionRow } from "./context.encodeConnectionRow";
+// Overnight R18 (K9 closeSession, K10 listSessionMembers): see the 2026-09-26
+// R18 amendment of context-ingestion-v1.md.
+export { type CloseSessionRequest, parseCloseSession } from "./context.parseCloseSession";
+export { type CloseRecord, readCloseRecord } from "./context.readCloseRecord";
+export { closedInternalMetadata } from "./context.closedInternalMetadata";
+export { type ListSessionMembersRequest, parseListSessionMembers } from "./context.parseListSessionMembers";

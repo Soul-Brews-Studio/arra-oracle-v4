@@ -12,6 +12,7 @@ import { listMcpCalls } from "./service.listMcpCalls";
 import { listMessages } from "./service.listMessages";
 import { listPeers } from "./service.listPeers";
 import { listSearchChunks } from "./service.listSearchChunks";
+import { listSessionMembers } from "./service.listSessionMembers";
 import { listSessions } from "./service.listSessions";
 import { listSessionLinks } from "./service.listSessionLinks";
 import { listTraceHits } from "./service.listTraceHits";
@@ -29,6 +30,9 @@ export function createContextReadMethods(reader: DatasetAdapter, datasetRoot: st
     listMessages: (requestBytes: Uint8Array, authority: RequestAuthority) => listMessages(reader, requestBytes, authority),
     listPeers: (requestBytes: Uint8Array) => listPeers(reader, requestBytes),
     listSessions: (requestBytes: Uint8Array) => listSessions(reader, requestBytes),
+    // K10 (overnight R18): the first read of session_peers, behind the same
+    // R3 boundary as the two message reads, so it takes the authority too.
+    listSessionMembers: (requestBytes: Uint8Array, authority: RequestAuthority) => listSessionMembers(reader, requestBytes, authority),
     getReadCursor: (requestBytes: Uint8Array) => getReadCursor(reader, requestBytes),
     listSessionLinks: (requestBytes: Uint8Array) => listSessionLinks(reader, requestBytes),
     // #29 slice B: `requestTimeMs` is the validity-window `as_of`, supplied

@@ -29,11 +29,16 @@ const REQUESTER_PATH = "/requester_peer_name";
  * `forbidden`); its CURRENT membership is then checked against storage by the
  * caller, with the same `requireCurrentMembership` getContext uses.
  *
+ * The overnight R18 amendment applies the same rule to K10
+ * `listSessionMembers` (who belongs to a session is behind the same boundary
+ * as what they said) and to K9 `closeSession`'s `peer_name`, at `path`: a
+ * close that names no member is the operator path, so it needs `audit:read`.
+ *
  * A missing or malformed authority is a wiring fault, not a request fault: it
  * throws a plain TypeError and reads nothing, so a transport that forgets to
  * build one fails closed and loudly rather than defaulting to any view.
  */
-export function requireMessageReadAuthority(requester: string | null, authority: unknown): void {
+export function requireMessageReadAuthority(requester: string | null, authority: unknown, path: string = REQUESTER_PATH): void {
   if (typeof authority !== "object" || authority === null) {
     throw new TypeError("message reads require the transport-built RequestAuthority");
   }
@@ -43,8 +48,8 @@ export function requireMessageReadAuthority(requester: string | null, authority:
     throw new TypeError("RequestAuthority.peers must be null or an array of peer names");
   }
   if (requester === null) {
-    if (!operator) failPublication("forbidden", REQUESTER_PATH);
+    if (!operator) failPublication("forbidden", path);
     return;
   }
-  if (peers !== null && !peers.includes(requester)) failPublication("forbidden", REQUESTER_PATH);
+  if (peers !== null && !peers.includes(requester)) failPublication("forbidden", path);
 }

@@ -1,6 +1,7 @@
 import { type DigestProbeFn, type EmbedFn } from "./search-chunk.types";
 import { advanceReadCursor } from "./service.advanceReadCursor";
 import { appendMessages } from "./service.appendMessages";
+import { closeSession } from "./service.closeSession";
 import { createContextReadMethods } from "./service.createContextReadMethods";
 import { createSessionLink } from "./service.createSessionLink";
 import { createTrace } from "./service.createTrace";
@@ -13,6 +14,7 @@ import { registerSession } from "./service.registerSession";
 import { retireNode } from "./service.retireNode";
 import { supersedeNode } from "./service.supersedeNode";
 import { writeChunkEmbedding } from "./service.writeChunkEmbedding";
+import { type RequestAuthority } from "./context";
 import { type Clock, type DatasetAdapter, type OwnerCore } from "./service.types";
 
 export function createContextWriterService(
@@ -49,6 +51,10 @@ export function createContextWriterService(
     registerSession: (requestBytes: Uint8Array) => registerSession(writer, core, options, requestBytes),
     joinSession: (requestBytes: Uint8Array) => joinSession(writer, core, options, requestBytes),
     appendMessages: (requestBytes: Uint8Array) => appendMessages(writer, core, options, requestBytes),
+    // K9 (overnight R18 D7): the one-way close, recorded in internal_metadata.
+    // K9 takes the transport-built authority: a close naming no peer is the
+    // audit:read operator path (R3 terms, overnight R18 fix round).
+    closeSession: (requestBytes: Uint8Array, authority: RequestAuthority) => closeSession(writer, core, options, requestBytes, authority),
     // No `answerChat` here any more (#32 slice A, R9): it persists nothing, so
     // it is composed over the READER (service.createChatService.ts) and never
     // needs, holds or releases this writer.
