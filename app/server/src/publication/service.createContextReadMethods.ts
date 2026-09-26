@@ -28,7 +28,11 @@ export function createContextReadMethods(reader: DatasetAdapter) {
     listSessions: (requestBytes: Uint8Array) => listSessions(reader, requestBytes),
     getReadCursor: (requestBytes: Uint8Array) => getReadCursor(reader, requestBytes),
     listSessionLinks: (requestBytes: Uint8Array) => listSessionLinks(reader, requestBytes),
-    getRecallEligibility: (requestBytes: Uint8Array) => getRecallEligibility(reader, requestBytes),
+    // #29 slice B: `requestTimeMs` is the validity-window `as_of`, supplied
+    // by the transport (`knowledge/registry.ts`) as real request time --
+    // see `service.getRecallEligibility.ts` for why it stays optional here.
+    getRecallEligibility: (requestBytes: Uint8Array, requestTimeMs?: number) =>
+      getRecallEligibility(reader, requestBytes, requestTimeMs),
     listLifecycleHistory: (requestBytes: Uint8Array) => listLifecycleHistory(reader, requestBytes),
     getTrace: (requestBytes: Uint8Array) => getTrace(reader, requestBytes),
     listTraceHits: (requestBytes: Uint8Array) => listTraceHits(reader, requestBytes),

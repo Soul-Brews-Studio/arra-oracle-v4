@@ -212,10 +212,15 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
   },
 
   // ── node lifecycle (#29) ─────────────────────────────────────────────────
+  // #29 slice B (overnight R7): "the validity-window as_of is supplied by
+  // the transport at request time, so the kernel still takes no clock" --
+  // this registry table is that transport, shared by HTTP and MCP alike, so
+  // `Date.now()` here (never inside `service.getRecallEligibility.ts`) is
+  // the one place real request time enters. See lifecycle-v1.md's amendment.
   getRecallEligibility: {
     action: "content:read",
     scopePath: [],
-    call: (b, x) => b.context.getRecallEligibility(x),
+    call: (b, x) => b.context.getRecallEligibility(x, Date.now()),
   },
   listLifecycleHistory: {
     action: "content:read",

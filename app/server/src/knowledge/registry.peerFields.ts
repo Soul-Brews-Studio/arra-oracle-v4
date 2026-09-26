@@ -46,10 +46,17 @@ export const PEER_FIELDS: Readonly<Record<string, readonly PeerFieldPath[]>> = O
     ["content", "author_peer_name"],
     ["content", "observer_peer_name"],
   ],
+  // the actor performing the lifecycle event (#29 slice B; lifecycle-v1.md's
+  // 2026-09-26 peer-reference amendment gave this field the SAME workspace-
+  // scoped resolution rule every other entry in this list already gets)
+  retireNode: [["peer_name"]],
+  supersedeNode: [["peer_name"]],
   // reviewed: these assert no acting peer (lookups, taxonomy, evidence, audit)
   getAcceptedHead: [],
   listAcceptedHistory: [],
   listNodes: [],
+  getRecallEligibility: [],
+  listLifecycleHistory: [],
   getVocabulary: [],
   getTerm: [],
   createVocabulary: [],

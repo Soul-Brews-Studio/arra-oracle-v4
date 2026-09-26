@@ -7,6 +7,7 @@ import { classifyLifecycleReplay } from "./service.classifyLifecycleReplay";
 import { NODES, NODE_REVISIONS } from "./service.constants";
 import { contextOne } from "./service.contextOne";
 import { contextScope } from "./service.contextScope";
+import { terminalEventsFor } from "./service.evaluateEligibility";
 import { mutateContextWrite } from "./service.mutateContextWrite";
 import { requireContextWorkspaceRow } from "./service.requireContextWorkspaceRow";
 import { type Clock, type DatasetAdapter, type LifecycleEventInput, type LifecycleWriteOutcome, type OwnerCore } from "./service.types";
@@ -54,6 +55,22 @@ const request = parseSupersedeNode(requestBytes);
         const encodedSuccessorNode = encodeNodeRow(successorNode);
         if (encodedSuccessorNode.current_revision_id !== request.new_revision_id) {
           failPublication("invalid_reference", "/new_revision_id");
+        }
+
+        // #29 slice B (overnight R7): superseding INTO a successor that
+        // already carries its own terminal event (retired, or itself already
+        // superseded) is refused. A returned conflict, like every other
+        // lifecycle-state classification in this file -- the reference
+        // itself resolved fine; its STATE is what is refused. Checked once
+        // the successor reference has resolved, before the (unaffected)
+        // revision lookup below, and after classification (§2) already ran,
+        // so a byte-identical replay of a request accepted before the
+        // successor became terminal still returns `idempotent`.
+        const successorTerminal = (
+          await terminalEventsFor(writer, request.workspace_name, [request.new_node_id])
+        ).get(request.new_node_id);
+        if (successorTerminal !== undefined) {
+          return { outcome: "conflict", reason: "successor_terminal", row: null };
         }
 
         await writer.refresh(NODE_REVISIONS);

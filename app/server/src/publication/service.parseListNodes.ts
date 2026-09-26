@@ -27,11 +27,21 @@ export type ListNodesRequest = {
   include_total: boolean;
   /** Nullable term NAME from the reserved `type` vocabulary (e.g. "conclusion"). */
   type_term: string | null;
+  /**
+   * #29 slice B (overnight R7): closed, required, like every other key here
+   * -- never an optional default. `false` (the ordinary "current" view)
+   * excludes a node with its own terminal `supersede_log` event (retired or
+   * superseded); `true` is history mode and includes it, labelled. See
+   * `service.listNodes.ts` for the exact filter and `lifecycle-v1.md`'s
+   * amendment for why `is_active`/the validity window are NOT part of this
+   * filter (only DESIGN.md §9's "replaced or retired" predicate is).
+   */
+  include_inactive: boolean;
 };
 
 export function parseListNodes(requestBytes: Uint8Array): ListNodesRequest {
   const o = parseRequest(requestBytes);
-  closedKeys(o, ["workspace_name", "after_id", "limit", "include_total", "type_term"], "");
+  closedKeys(o, ["workspace_name", "after_id", "limit", "include_total", "type_term", "include_inactive"], "");
 
   const workspace_name = requireWorkspaceName(o.get("workspace_name"), "/workspace_name");
 
@@ -47,6 +57,9 @@ export function parseListNodes(requestBytes: Uint8Array): ListNodesRequest {
   const rawIncludeTotal = o.get("include_total");
   if (typeof rawIncludeTotal !== "boolean") failPublication("invalid_request", "/include_total");
 
+  const rawIncludeInactive = o.get("include_inactive");
+  if (typeof rawIncludeInactive !== "boolean") failPublication("invalid_request", "/include_inactive");
+
   const rawTypeTerm = o.get("type_term");
   let type_term: string | null = null;
   if (rawTypeTerm !== null && rawTypeTerm !== undefined) {
@@ -55,5 +68,12 @@ export function parseListNodes(requestBytes: Uint8Array): ListNodesRequest {
     type_term = rawTypeTerm;
   }
 
-  return { workspace_name, after_id, limit: rawLimit, include_total: rawIncludeTotal, type_term };
+  return {
+    workspace_name,
+    after_id,
+    limit: rawLimit,
+    include_total: rawIncludeTotal,
+    type_term,
+    include_inactive: rawIncludeInactive,
+  };
 }

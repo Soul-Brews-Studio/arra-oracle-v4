@@ -5,6 +5,7 @@ import { quote } from "./storage";
 import { RESERVED_TYPE_VOCABULARY, SEARCH_CHUNKS } from "./service.constants";
 import { contextOne } from "./service.contextOne";
 import { contextScope } from "./service.contextScope";
+import { terminalEventsFor } from "./service.evaluateEligibility";
 import { findNode } from "./service.findNode";
 import { mutateContextWrite } from "./service.mutateContextWrite";
 import { parseSnapshotArray } from "./service.parseSnapshotArray";
@@ -20,6 +21,20 @@ const request = parseIndexRevision(requestBytes);
         await writer.refresh("nodes");
         const node = await findNode(writer, request.workspace_name, request.node_id);
         if (node === null) failPublication("invalid_reference", "/node_id");
+
+        // #29 slice B (overnight R7, fix plan B5): a retired or superseded
+        // node is refused here as a returned outcome -- the same shape this
+        // method already uses for "already_satisfied"/"indexed", never a
+        // thrown reference fault, since the reference itself is valid and
+        // only its lifecycle STATE is refused. Indexing it anyway would let
+        // stale vectors present superseded content as current truth
+        // (DESIGN.md:1119); #30 additionally filters retrieval at query time.
+        const terminal = (
+          await terminalEventsFor(writer, request.workspace_name, [request.node_id])
+        ).get(request.node_id);
+        if (terminal !== undefined) {
+          return { outcome: "ineligible" as const, reason: terminal.kind };
+        }
 
         await writer.refresh("node_revisions");
         const resolved = await selectAcceptedRevision(
