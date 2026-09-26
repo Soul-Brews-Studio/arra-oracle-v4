@@ -498,3 +498,11 @@ refresh keeps unindexed rows below indexed ones),
 occurrence found on both, cross-workspace credential refused, beta's identical text never in
 alpha's answer), and `app/server/test/cli-search.test.ts` (bare `search` stays legacy;
 `--mode keyword|semantic` reaches the registry route).
+
+## 14. Amendment 2026-09-26 (overnight R18 (V5) + R7 + R14)
+
+v3-search slice (Claude Opus 5.5, AI); rulings in `docs/overnight/DECISIONS.md` R18 (V5, D3), R7, R14. Section 13 stands; this adds its first adapter consumer.
+
+- The v3-compatible tools `oracle_search`, `oracle_ask` and `oracle_search_chain` (`app/server/src/mcp/legacy-v3/`) reach `searchKnowledgeKeyword`/`searchKnowledgeSemantic` through the same registry entries, parser and eligibility as HTTP and `kb_*`. They consume answer ORDER only, never a `score` or `distance` value as v3's relevance, so a change to the keyword `score` field does not change their contract. `authorization-integration-v1.md` (amendment "R18 (V5) + R7 + R14") has their semantics.
+- The registry marks both searches `readerOnly: true` (with `answerChat`/`getChatSettings`). It records section 13's rule that no writer facade carries them, for callers that pin one bundle per call: the adapter's `kb()` then opens the reader for them, even inside a `content:write` tool. The transports' routing is unchanged.
+- The v3 adapter does not route recall to the legacy `memories` path: `oracle_learn` writes the target-19 tier, and splitting one fact across two writable stores is what V3-PARITY §4.4 forbids.
