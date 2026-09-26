@@ -26,7 +26,9 @@ const EMPTY = "ws-v6-empty";
 const PRINCIPLE_NODE_ID = `${"k3reflectprinciple"}${"0".repeat(21)}`.slice(0, 21);
 /** Enough repeated draws that BOTH the `learning` and `principle` pools show
  *  up at least once with overwhelming probability (each is a 50/50 coin
- *  flip when both pools are nonempty; P(missing one for 12 draws) < 0.03%). */
+ *  flip when both pools are nonempty; P(either pool missing across 12 draws)
+ *  = 2 x 2^-12, about 0.049% -- corrected in the R18 D3 fix round, this
+ *  previously claimed < 0.03%). */
 const REFLECT_REPEATS = 12;
 
 const HEAD = (label: string, bank = FRESH) => ({

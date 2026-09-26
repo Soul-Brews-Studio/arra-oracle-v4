@@ -258,9 +258,10 @@ describe("listNodes: order (K4)", () => {
   });
 
   // `LIST_NODES_ORDERS` is the closed set `parseListNodes` validates `order`
-  // against; pinning it here (rather than leaving it an unreferenced export)
-  // means a change to the set is caught at the SAME place this file already
-  // asserts each individual value's behaviour.
+  // against -- since the R18 D3 fix round literally (`.includes`), not by a
+  // second hardcoded pair of literals, which made this test a tautology (a
+  // verifier finding). Pinning it here means a change to the set is caught
+  // at the SAME place this file already asserts each value's behaviour.
   test("LIST_NODES_ORDERS is exactly the two orders this grammar accepts", () => {
     expect(LIST_NODES_ORDERS).toEqual(["id_asc", "updated_desc"]);
   });

@@ -25,7 +25,8 @@
  * level (the term/type filters in that file only apply AFTER the ordered
  * fetch, so they cannot isolate this test's rows from that file's own).
  *
- * `listNodes`'s 3rd argument (`scanWindowForTests`) narrows
+ * `listNodes`'s 4th argument (`scanWindowForTests`; the 3rd is R18 D3's
+ * `requestTimeMs`, unused without `eligible_only`) narrows
  * `MAX_SCANNED_NODES` so the boundary is reachable with 5 published nodes
  * instead of 1000+ -- the same shape the verifier's own scratch repro used
  * ("MAX_SCANNED_NODES lowered to 3"), just as a documented test seam instead
@@ -118,6 +119,27 @@ afterAll(async () => {
 });
 
 describe("listNodes: updated_desc tie AT the scan-window edge (K4 fix round)", () => {
+  // Verifier note (R18 D3 round): the walk below only discriminates while the
+  // `scanWindowForTests` seam actually narrows the window -- with the full
+  // 1000-row window every row fits in one fetch and the bug cannot show. This
+  // pins the seam itself: a page asking for MORE rows than the narrowed
+  // window holds must stop at the window and report a continuation.
+  test("the test-only scan window is live: a limit-5 page stops at 3 rows with a continuation cursor", async () => {
+    const connection = await openPrivateConnection(fixture.datasetRoot);
+    const adapter = makeAdapter(connection, () => {});
+    const page = (await rawListNodes(
+      adapter,
+      encodeRequest({
+        workspace_name: WS, after_id: null, limit: 5, include_total: false, include_inactive: false,
+        type_term: null, order: "updated_desc", after_updated_at: null,
+      }),
+      undefined,
+      SCAN_WINDOW,
+    )) as ListNodesPage;
+    expect(page.rows.length).toBe(SCAN_WINDOW);
+    expect(page.next_after_id).not.toBeNull();
+  });
+
   test("two newer rows plus a 3-way tie, walked with a page size equal to the scan window: every row comes back exactly once", async () => {
     const connection = await openPrivateConnection(fixture.datasetRoot);
     const adapter = makeAdapter(connection, () => {});
@@ -141,6 +163,7 @@ describe("listNodes: updated_desc tie AT the scan-window edge (K4 fix round)", (
           order: "updated_desc",
           after_updated_at: afterUpdatedAt,
         }),
+        undefined,
         SCAN_WINDOW,
       )) as ListNodesPage;
       seen.push(...page.rows.map((r) => r.id as string));
