@@ -94,6 +94,13 @@ jobs:
           # box (shards took 914-1036 s in run 36253113031), and two gated tests
           # crossed 5 s there.
           TEST_TIMEOUT_MS: 60000
+          # R13: multiplies every wall-clock window and explicit timeout that
+          # goes through test/helpers/timing.{scaledMs,testTimeout}.ts. Measured:
+          # 4902 s of per-file test time on the runner against 1069 s in
+          # test.census.tsv for the same files (runs 36260049043, 36265042727,
+          # 36265462602), about 4.6x. Ordering claims never depend on it; they
+          # are proven with handshakes.
+          TEST_TIME_SCALE: 5
         run: bun run test:parallel
 
       # app/migrate-py has no pytest.ini/pyproject [tool.pytest] section and no
@@ -102,7 +109,9 @@ jobs:
       # unittest discover (app/docs/contracts/v1-codecs.md:59-62), which this
       # slice ran clean: 139 tests, 1 skipped, OK, ~8s.
       - name: Upload shard logs when the suite fails
-        if: failure()
+        # cancelled() too: a job that hits timeout-minutes is cancelled, not
+        # failed, and its logs are exactly the ones needed.
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: test-parallel-shard-logs
