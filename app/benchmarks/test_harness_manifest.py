@@ -32,6 +32,7 @@ def full_manifest(**overrides):
             "dims": None,
             "distance": None,
             "normalization": None,
+            "request_options": None,
         },
         "artifact_sha256": {"corpus": "a" * 64, "queries": "b" * 64, "qrels": "c" * 64, "vectors": None},
         "rrf": {"k": 60, "tie_rule": "utf16_code_unit"},
@@ -64,6 +65,14 @@ class ManifestValidationTests(unittest.TestCase):
     def test_missing_embedding_subkey_is_refused(self):
         manifest = full_manifest()
         del manifest["embedding"]["normalization"]
+        with self.assertRaises(ManifestInputError):
+            validate_manifest(manifest)
+
+    def test_missing_embedding_request_options_subkey_is_refused(self):
+        # A1(c) (analysis-7) lists request options (e.g. truncate/keep_alive)
+        # among the embedding facts a manifest must carry.
+        manifest = full_manifest()
+        del manifest["embedding"]["request_options"]
         with self.assertRaises(ManifestInputError):
             validate_manifest(manifest)
 

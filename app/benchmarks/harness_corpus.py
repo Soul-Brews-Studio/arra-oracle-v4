@@ -11,8 +11,16 @@ forget or mislabel (R16/A2):
   payload -- it is stamped by which loader function was called
   (`load_synthetic_corpus` ignores any "origin" the payload tries to supply,
   and there is no function that lets a caller choose the origin directly).
-  The only way to produce a `CorpusProvenance`/`QrelsProvenance` at all is
-  through one of the named loaders below.
+  Every loader below is the intended, honest path to a `CorpusProvenance`/
+  `QrelsProvenance`. `Corpus`/`Qrels`/`*Provenance` are still ordinary public
+  dataclasses, though, so a caller COULD construct one directly instead of
+  calling a loader -- that is on the caller, exactly like choosing to lie
+  about a fact is always on the person stating it (see
+  `load_user_derived_corpus`'s docstring). `run_benchmark`
+  (`harness_runner.py`) is the structural backstop: it refuses to run at all
+  if `corpus.provenance.origin`/`qrels.provenance.origin` is not one of
+  `CORPUS_ORIGINS`/`QRELS_ORIGINS`, whether or not the object went through a
+  loader.
 * `held_out` (a qrels can be built from queries that never saw the corpus
   during authoring) is orthogonal to who judged relevance, so it is a
   separate, explicitly required keyword on the qrels loaders -- there is no
@@ -53,6 +61,7 @@ __all__ = [
     "Qrels",
     "CORPUS_ORIGINS",
     "QRELS_ORIGINS",
+    "QUERY_LANGS",
     "load_synthetic_corpus",
     "load_agent_authored_corpus",
     "load_user_derived_corpus",
@@ -63,6 +72,12 @@ __all__ = [
 
 CORPUS_ORIGINS = ("synthetic", "agent_authored", "user_derived")
 QRELS_ORIGINS = ("agent_authored", "independently_judged")
+# Matches harness_runner.LANGUAGE_GROUPS minus "all" exactly -- a query lang
+# outside this set would otherwise count in the "all" macro group but never
+# in "en" or "th", silently under-reporting whichever group it was meant for
+# (not imported from harness_runner to avoid a circular import; harness_runner
+# already imports from this module).
+QUERY_LANGS = ("en", "th")
 
 
 class CorpusInputError(ValueError):
@@ -155,7 +170,12 @@ def _read(payload) -> dict:
 
 
 def _build_corpus_provenance(origin: str, payload: dict) -> CorpusProvenance:
-    assert origin in CORPUS_ORIGINS  # internal misuse, not a caller-input error
+    # A `raise`, not an `assert`: this still only fires on internal misuse
+    # (every call site below passes a hard-coded literal), but `assert` is
+    # stripped entirely under `python -O`, which would silently turn this
+    # into no check at all.
+    if origin not in CORPUS_ORIGINS:
+        raise CorpusInputError(f"internal misuse: origin must be one of {CORPUS_ORIGINS}, got {origin!r}")
     # "origin" in the payload, if present, is IGNORED -- it can never override
     # which loader function the caller chose to call.
     return CorpusProvenance(
@@ -167,7 +187,13 @@ def _build_corpus_provenance(origin: str, payload: dict) -> CorpusProvenance:
 
 
 def _build_qrels_provenance(origin: str, held_out: bool, payload: dict) -> QrelsProvenance:
-    assert origin in QRELS_ORIGINS  # internal misuse, not a caller-input error
+    if origin not in QRELS_ORIGINS:  # internal misuse; see _build_corpus_provenance
+        raise CorpusInputError(f"internal misuse: origin must be one of {QRELS_ORIGINS}, got {origin!r}")
+    # Unlike `origin` above, `held_out` DOES come straight from a caller's
+    # keyword argument -- `held_out="no"` is truthy in Python, so without
+    # this check it would be stored, and later read as "held out: yes".
+    if not isinstance(held_out, bool):
+        raise CorpusInputError(f"held_out must be a bool, got {held_out!r}")
     # "origin"/"held_out" in the payload, if present, are IGNORED -- neither
     # can override the loader function or the required keyword the caller
     # explicitly passed.
@@ -223,11 +249,13 @@ def _build_qrels(origin: str, held_out: bool, payload) -> Qrels:
             raise CorpusInputError(f"query {query_id}: relevant_ids must be non-empty")
         lang = fields.get("lang")
         purpose = fields.get("purpose")
+        if lang is not None and lang not in QUERY_LANGS:
+            raise CorpusInputError(f"query {query_id}: lang must be one of {QUERY_LANGS} or absent, got {lang!r}")
         queries.append(
             Query(
                 id=query_id,
                 relevant_ids=frozenset(relevant),
-                lang=_text(lang, "qrels.queries[].lang") if lang is not None else None,
+                lang=lang,
                 purpose=_text(purpose, "qrels.queries[].purpose") if purpose is not None else None,
             )
         )

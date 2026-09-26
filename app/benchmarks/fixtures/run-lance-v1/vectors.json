@@ -5,6 +5,7 @@
   "distance": "l2",
   "normalization": "none",
   "ollama_digest": "sha256:stub-0000000000000000000000000000000000000000000000000000000000",
+  "request_options": {"truncate": false, "keep_alive": "5m"},
   "corpus": {
     "r1": [0.10, 0.20, 0.30],
     "r2": [0.40, 0.10, 0.20],

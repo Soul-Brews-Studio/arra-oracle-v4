@@ -86,12 +86,54 @@ describe("manifest readback", () => {
   test("tokenizers.icu and tokenizers.ngram3 reflect the REAL index readback, not the requested options", async () => {
     const { manifest } = await runLanceBenchmark({ corpusPath: CORPUS_PATH, queriesPath: QUERIES_PATH });
 
-    const icu = manifest.tokenizers as Record<string, Record<string, unknown>>;
-    // Measured (LANCEDB-FACTS.md / analysis-7): icu's un-requested options
-    // default to English stemming and stop-word removal ON.
-    expect(icu.icu).toMatchObject({ base_tokenizer: "icu", language: "English", stem: true, remove_stop_words: true });
-    // ngram3 explicitly disables both, per R14.
-    expect(icu.ngram3).toMatchObject({ base_tokenizer: "ngram", min_ngram_length: 3, max_ngram_length: 3, stem: false, remove_stop_words: false });
+    const tokenizers = manifest.tokenizers as Record<string, Record<string, unknown>>;
+    // Full equality, not a `toMatchObject` subset -- measured once against a
+    // real index (see .tmp/probe in this slice's session) and pinned in
+    // full, including fields no test previously asserted
+    // (ascii_folding/lower_case/with_position/etc), so a hard-coded partial
+    // dict standing in for the real `listIndices()` readback fails here.
+    expect(tokenizers.icu).toEqual({
+      ascii_folding: true,
+      base_tokenizer: "icu",
+      block_size: 128,
+      custom_stop_words: null,
+      index_operators: false,
+      lance_tokenizer: "text",
+      language: "English",
+      lower_case: true,
+      max_ngram_length: 3,
+      max_token_length: 40,
+      min_ngram_length: 3,
+      prefix_only: false,
+      preserve_original: false,
+      remove_stop_words: true,
+      split_identifiers: false,
+      split_on_numerics: false,
+      stem: true,
+      with_position: false,
+    });
+    // ngram3 explicitly disables stemming and stop-word removal, per R14 --
+    // every other field still comes from LanceDB's own default readback.
+    expect(tokenizers.ngram3).toEqual({
+      ascii_folding: true,
+      base_tokenizer: "ngram",
+      block_size: 128,
+      custom_stop_words: null,
+      index_operators: false,
+      lance_tokenizer: "text",
+      language: "English",
+      lower_case: true,
+      max_ngram_length: 3,
+      max_token_length: 40,
+      min_ngram_length: 3,
+      prefix_only: false,
+      preserve_original: false,
+      remove_stop_words: false,
+      split_identifiers: false,
+      split_on_numerics: false,
+      stem: false,
+      with_position: false,
+    });
   });
 
   test("engine versions are read from app/server/node_modules, not hand-typed", async () => {
@@ -151,7 +193,7 @@ describe("vector profile: not_run without frozen vectors, no model call ever", (
 
       expect(runs.methods.vector).toMatchObject({ status: "not_run" });
       expect((runs.methods.vector as { reason: string }).reason).toContain("no frozen vectors");
-      expect(manifest.embedding).toMatchObject({ status: "not_run", model: null, ollama_digest: null, dims: null });
+      expect(manifest.embedding).toMatchObject({ status: "not_run", model: null, ollama_digest: null, dims: null, request_options: null });
       expect(fetchCalls).toHaveLength(0);
     } finally {
       if (previousOllamaUrl === undefined) delete process.env.OLLAMA_URL;
@@ -167,9 +209,163 @@ describe("vector profile: not_run without frozen vectors, no model call ever", (
     });
 
     expect(Object.keys(runs.methods.vector)).toEqual(["q_lum", "q_title", "q_grocery"]);
-    expect(ranking(runs.methods.vector, "q_lum")).toEqual(expect.arrayContaining(["r1", "r2", "r3"]));
-    expect(manifest.embedding).toMatchObject({ status: "frozen", model: "stub-test-model", dims: 3, distance: "l2" });
+    // Exact order, hand-computed L2 distance from fixtures/run-lance-v1/vectors.json
+    // (not `arrayContaining`, which every permutation of a 3-row corpus at
+    // limit 3 satisfies and pins nothing): q_lum is nearest r1, then r2, then
+    // r3; q_title is nearest r2; q_grocery is nearest r3. Reversing the
+    // ranking, or searching with the same constant vector for every query
+    // instead of each query's own vector, changes at least one of these three.
+    expect(ranking(runs.methods.vector, "q_lum")).toEqual(["r1", "r2", "r3"]);
+    expect(ranking(runs.methods.vector, "q_title")).toEqual(["r2", "r1", "r3"]);
+    expect(ranking(runs.methods.vector, "q_grocery")).toEqual(["r3", "r2", "r1"]);
+    expect(manifest.embedding).toMatchObject({
+      status: "frozen",
+      model: "stub-test-model",
+      dims: 3,
+      distance: "l2",
+      request_options: { truncate: false, keep_alive: "5m" }, // A1(c): echoed from vectors.json, not invented
+    });
     expect(fetchCalls).toHaveLength(0);
+  });
+
+  test("distanceType is actually applied, not silently defaulted to L2: cosine flips q_lum's ranking", async () => {
+    // Same corpus vectors as fixtures/run-lance-v1/vectors.json, but labelled
+    // "cosine" instead of "l2". Hand-computed cosine distance for q_lum
+    // against r1/r2/r3 orders r3 ahead of r2 -- the OPPOSITE of the L2 order
+    // asserted above -- so this fails unless run_lance actually calls
+    // `.distanceType("cosine")` rather than always running LanceDB's L2
+    // default and just relabelling the manifest.
+    const scratchDir = mkdtempSync(join(tmpdir(), "arra-bench-test-fixture-"));
+    try {
+      const cosineVectors = { ...JSON.parse(readFileSync(VECTORS_PATH, "utf8")), distance: "cosine" };
+      const cosineVectorsPath = join(scratchDir, "vectors-cosine.json");
+      writeFileSync(cosineVectorsPath, JSON.stringify(cosineVectors));
+
+      const { runs, manifest } = await runLanceBenchmark({
+        corpusPath: CORPUS_PATH,
+        queriesPath: QUERIES_PATH,
+        vectorsPath: cosineVectorsPath,
+      });
+
+      expect(manifest.embedding).toMatchObject({ distance: "cosine", dims: 3 });
+      expect(ranking(runs.methods.vector, "q_lum")).toEqual(["r1", "r3", "r2"]);
+    } finally {
+      rmSync(scratchDir, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses a vectors file whose declared dims does not match the actual corpus vector length", async () => {
+    // The exact shape of the adversarial repro that found this bug: only
+    // `dims` is changed (999, a lie), the real corpus/query vectors stay
+    // 3-wide. A manifest that echoed dims:999 here would be false.
+    const scratchDir = mkdtempSync(join(tmpdir(), "arra-bench-test-fixture-"));
+    try {
+      const lyingVectors = { ...JSON.parse(readFileSync(VECTORS_PATH, "utf8")), dims: 999 };
+      const lyingVectorsPath = join(scratchDir, "vectors-lying-dims.json");
+      writeFileSync(lyingVectorsPath, JSON.stringify(lyingVectors));
+
+      await expect(
+        runLanceBenchmark({ corpusPath: CORPUS_PATH, queriesPath: QUERIES_PATH, vectorsPath: lyingVectorsPath }),
+      ).rejects.toThrow(/dims/);
+    } finally {
+      rmSync(scratchDir, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses an unsupported distance value instead of silently running LanceDB's default", async () => {
+    const scratchDir = mkdtempSync(join(tmpdir(), "arra-bench-test-fixture-"));
+    try {
+      const badVectors = { ...JSON.parse(readFileSync(VECTORS_PATH, "utf8")), distance: "manhattan" };
+      const badVectorsPath = join(scratchDir, "vectors-bad-distance.json");
+      writeFileSync(badVectorsPath, JSON.stringify(badVectors));
+
+      await expect(
+        runLanceBenchmark({ corpusPath: CORPUS_PATH, queriesPath: QUERIES_PATH, vectorsPath: badVectorsPath }),
+      ).rejects.toThrow(/distance/);
+    } finally {
+      rmSync(scratchDir, { recursive: true, force: true });
+    }
+  });
+
+  test("a single wrong-dim query vector errors for that query only -- the rest of the method still runs", async () => {
+    const scratchDir = mkdtempSync(join(tmpdir(), "arra-bench-test-fixture-"));
+    try {
+      const raw = JSON.parse(readFileSync(VECTORS_PATH, "utf8"));
+      raw.queries.q_lum = [0.1, 0.2]; // 2 floats, not 3 -- everything else stays valid
+      const badQueryVectorPath = join(scratchDir, "vectors-bad-query-dims.json");
+      writeFileSync(badQueryVectorPath, JSON.stringify(raw));
+
+      const { runs } = await runLanceBenchmark({
+        corpusPath: CORPUS_PATH,
+        queriesPath: QUERIES_PATH,
+        vectorsPath: badQueryVectorPath,
+      });
+
+      const vectorRun = runs.methods.vector as Record<string, unknown>;
+      expect(vectorRun.q_lum).toMatchObject({ status: "error" });
+      // q_title and q_grocery are untouched by q_lum's bad vector.
+      expect(ranking(runs.methods.vector, "q_title")).toEqual(["r2", "r1", "r3"]);
+      expect(ranking(runs.methods.vector, "q_grocery")).toEqual(["r3", "r2", "r1"]);
+    } finally {
+      rmSync(scratchDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("literal_includes vs ngram3 diverge on tokenized-but-not-substring hits (measured, matches LANCEDB-FACTS.md #3)", () => {
+  // A dedicated scratch corpus/queries, kept separate from fixtures/run-lance-v1
+  // so it never perturbs that fixture's other assertions (candidate_limit,
+  // artifact_sha256, etc). Measured directly against a real LanceDB before
+  // writing these expectations (see .tmp/probe in this slice's session).
+  let scratchDir: string;
+  let corpusPath: string;
+  let queriesPath: string;
+
+  beforeEach(() => {
+    scratchDir = mkdtempSync(join(tmpdir(), "arra-bench-test-fixture-"));
+    corpusPath = join(scratchDir, "corpus.json");
+    queriesPath = join(scratchDir, "queries.json");
+    writeFileSync(
+      corpusPath,
+      JSON.stringify({
+        documents: [
+          { id: "th1", title: "เรื่องเก่า", type: "note", body: "ฉันหลงลืมเรื่องนี้ไปนานแล้ว", lang: "th" },
+          { id: "milk_exact", title: "pantry note", type: "note", body: "milk and eggs are on the list", lang: "en" },
+          { id: "milk_tokens", title: "smoothie note", type: "note", body: "almond milk pairs well, and oat milk too", lang: "en" },
+          { id: "unrelated", title: "clouds", type: "note", body: "a completely unrelated sentence about clouds", lang: "en" },
+        ],
+      }),
+    );
+    writeFileSync(
+      queriesPath,
+      JSON.stringify({
+        queries: [
+          { id: "q_partial_thai", text: "ลื", lang: "th", purpose: "literal" },
+          { id: "q_milk_and", text: "milk and", lang: "en", purpose: "literal" },
+        ],
+      }),
+    );
+  });
+
+  afterEach(() => {
+    rmSync(scratchDir, { recursive: true, force: true });
+  });
+
+  test("a query shorter than one ngram(3,3) token: literal finds the substring, ngram3 finds nothing", async () => {
+    const { runs } = await runLanceBenchmark({ corpusPath, queriesPath });
+    expect(ranking(runs.methods.literal_includes, "q_partial_thai")).toEqual(["th1"]);
+    expect(ranking(runs.methods.ngram3, "q_partial_thai")).toEqual([]);
+  });
+
+  test("literal_includes returns ONLY the exact substring match; ngram3 also returns a document that merely shares trigrams", async () => {
+    const { runs } = await runLanceBenchmark({ corpusPath, queriesPath });
+    const literal = ranking(runs.methods.literal_includes, "q_milk_and");
+    const ngram3 = ranking(runs.methods.ngram3, "q_milk_and");
+
+    expect(literal).toEqual(["milk_exact"]);
+    expect(literal).not.toContain("milk_tokens");
+    expect(ngram3).toContain("milk_tokens"); // shares "mil"/"ilk"/"and" trigrams without the contiguous phrase
+    expect(ngram3).not.toEqual(literal); // the two profiles must not collapse into the same engine
   });
 });
 
@@ -189,6 +385,25 @@ describe("input validation", () => {
     writeFileSync(empty, JSON.stringify({ documents: [] }));
     try {
       await expect(runLanceBenchmark({ corpusPath: empty, queriesPath: QUERIES_PATH })).rejects.toThrow(/non-empty/);
+    } finally {
+      rmSync(scratchDir, { recursive: true, force: true });
+    }
+  });
+
+  test("a duplicate query id is refused rather than silently overwriting the earlier query's result", async () => {
+    const scratchDir = mkdtempSync(join(tmpdir(), "arra-bench-test-fixture-"));
+    const dupQueries = join(scratchDir, "dup-queries.json");
+    writeFileSync(
+      dupQueries,
+      JSON.stringify({
+        queries: [
+          { id: "q1", text: "milk", lang: "en", purpose: "semantic" },
+          { id: "q1", text: "grocery", lang: "en", purpose: "semantic" },
+        ],
+      }),
+    );
+    try {
+      await expect(runLanceBenchmark({ corpusPath: CORPUS_PATH, queriesPath: dupQueries })).rejects.toThrow(/duplicate/);
     } finally {
       rmSync(scratchDir, { recursive: true, force: true });
     }

@@ -208,7 +208,7 @@ comparable:
 | `icu` | Exactly the product's CURRENT FTS config (`Index.fts({baseTokenizer:"icu"})`, mirroring `app/server/src/db.ts:112`). Duplicated locally with a `TODO(#30)` to import once `db.ts` exports it as a shared constant. |
 | `ngram3` | `ngram(3,3)`, no stemming, no stop-word removal, per ruling R14. Duplicated locally with a `TODO(fts-ngram slice)` -- no shared `FTS_INDEX_OPTIONS` module exists on this base (`rg FTS_INDEX_OPTIONS app/server/src` finds nothing). |
 | `literal_includes` | Exact case-folded substring scan. Labelled `literal`, **never** `trigram` -- LanceDB's `ngram` profile is still tokenized BM25 (measured in `LANCEDB-FACTS.md`), not a literal substring engine. |
-| `vector` | `tbl.vectorSearch(...)` over PRECOMPUTED, FROZEN vectors read from a file. **No model call, ever** -- with no vectors file the profile reports `not_run` with a reason, and the manifest's `embedding.status` is `"not_run"`. Tests always stub the vectors file (`fixtures/run-lance-v1/vectors.json`); nothing in this repo's tests calls Ollama. |
+| `vector` | `tbl.vectorSearch(...).distanceType(vectors.distance)` over PRECOMPUTED, FROZEN vectors read from a file. **No model call, ever** -- with no vectors file the profile reports `not_run` with a reason, and the manifest's `embedding.status` is `"not_run"`. Tests always stub the vectors file (`fixtures/run-lance-v1/vectors.json`); nothing in this repo's tests calls Ollama. |
 
 The indexed text is `${title}\n\n${body}` (`INDEXED_TEXT_COMPOSITION`),
 mirroring `app/server/src/publication/service.indexRevisionChunks.ts:62`
@@ -221,6 +221,19 @@ script requested -- LanceDB fills in defaults the request left unset
 (measured: `stem`/`removeStopWords`/`asciiFolding` default `true` even for
 profiles that didn't ask for them). Every corpus/queries/qrels/vectors file
 this run consumed is sha256-hashed into `manifest.artifact_sha256`.
+
+The vectors file's `distance` (`l2`/`cosine`/`dot`, the only values LanceDB's
+`.distanceType()` accepts) is passed straight through to the search -- never
+left to silently default to L2 while the manifest echoes whatever the file
+said. `dims` is likewise checked against every corpus vector's real length
+(a whole-run refusal: a corpus vector that disagrees with the declared
+`dims` means the file itself is internally inconsistent) and every query
+vector's real length (a per-query `error`, so one bad query doesn't take
+down the rest of the method) before any search runs, so `embedding.dims`/
+`embedding.distance` in the manifest can never assert something the search
+didn't actually do. `embedding.request_options` echoes the vectors file's
+own optional `request_options` (e.g. `truncate`/`keep_alive`), or `null`
+when the file doesn't carry one.
 
 Input file shapes:
 
@@ -239,6 +252,7 @@ Input file shapes:
 {
   "model": "all-minilm", "dims": 384, "distance": "l2", "normalization": "none",
   "ollama_digest": "sha256:...",
+  "request_options": {"truncate": false, "keep_alive": "5m"},
   "corpus": {"c1": [0.1, 0.2, "... 384 floats"]},
   "queries": {"q1": [0.1, 0.2, "... 384 floats"]}
 }
@@ -255,8 +269,11 @@ bun run app/benchmarks/run_lance.ts \
   --out-runs runs.json --out-manifest manifest.json
 ```
 
-`--vectors` is optional; omit it (or the file) and `vector` reports
-`not_run` instead of failing the run. Typecheck this directory on its own
+`--vectors` is optional: omit the FLAG ENTIRELY and `vector` reports
+`not_run` instead of failing the run. Pointing `--vectors` at a path that
+doesn't exist is NOT the same as omitting it -- that's a plain `ENOENT`,
+because a typo'd path is an input error worth surfacing, not something to
+read as "no vectors supplied". Typecheck this directory on its own
 (it is outside `app/server`'s `tsconfig.json`):
 
 ```

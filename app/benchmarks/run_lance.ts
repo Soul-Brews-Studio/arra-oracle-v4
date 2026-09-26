@@ -32,6 +32,14 @@
 //                   NO model call and imports no embedder: with no vectors
 //                   file, the profile reports `not_run` with a reason,
 //                   never a silent zero. Tests always stub the vectors file.
+//                   The vectors file's OWN `distance` is passed to
+//                   `.distanceType()` (never left to LanceDB's L2 default)
+//                   and every corpus/query vector length is checked against
+//                   the file's declared `dims` before any search runs --
+//                   otherwise the manifest could echo a distance/dims that
+//                   the search never actually used (found by adversarial
+//                   review: relabelling `dims` in a copy of a fixture, with
+//                   the real vectors left unchanged, passed silently).
 //
 // Every corpus/query/qrels/vectors file this run consumed is sha256-hashed
 // into the manifest, and every FTS profile's ACTUAL index configuration is
@@ -130,8 +138,45 @@ export interface VectorsFile {
   distance: string;
   normalization: string;
   ollama_digest: string;
+  request_options?: Record<string, unknown> | null;
   corpus: Record<string, number[]>;
   queries: Record<string, number[]>;
+}
+
+/** The only distance metrics LanceDB's `VectorQuery.distanceType()` accepts
+ * (`app/server/node_modules/@lancedb/lancedb/dist/indices.d.ts`). A vectors
+ * file naming anything else is refused rather than silently searched with
+ * LanceDB's L2 default while the manifest echoes the requested-but-unused
+ * value -- exactly the gap an adversarial review found here (manifest said
+ * `distance:"cosine"`, the search ran L2 because nothing ever called
+ * `.distanceType()`). */
+export const SUPPORTED_DISTANCES = ["l2", "cosine", "dot"] as const;
+export type SupportedDistance = (typeof SUPPORTED_DISTANCES)[number];
+
+function isSupportedDistance(value: string): value is SupportedDistance {
+  return (SUPPORTED_DISTANCES as readonly string[]).includes(value);
+}
+
+/**
+ * Refuses two ways the manifest's `embedding.dims`/`embedding.distance` can
+ * lie about what the search actually did: an unsupported/unused distance
+ * name, and a corpus vector whose real length doesn't match the declared
+ * `dims` (the file's OWN internal contradiction -- reproduced by an
+ * adversarial review that left the vectors unchanged but relabelled
+ * `dims: 999`). Query vectors are checked per query in `runLanceBenchmark`
+ * instead of here, so one bad query vector errors only that query.
+ */
+function validateFrozenVectors(vectors: VectorsFile, documents: CorpusDocument[]): SupportedDistance {
+  if (!isSupportedDistance(vectors.distance)) {
+    throw new Error(`run_lance: vectors.distance must be one of ${SUPPORTED_DISTANCES.join(", ")}, got ${JSON.stringify(vectors.distance)}`);
+  }
+  for (const doc of documents) {
+    const vector = vectors.corpus[doc.id];
+    if (vector && vector.length !== vectors.dims) {
+      throw new Error(`run_lance: vectors.corpus[${doc.id}] has length ${vector.length}, but vectors.dims says ${vectors.dims}`);
+    }
+  }
+  return vectors.distance;
 }
 
 /** One method's report for one query: a ranking (complete) or an error. */
@@ -209,6 +254,8 @@ function validateQueries(raw: unknown): QueriesFile {
       purpose: q.purpose,
     };
   });
+  const ids = new Set(queries.map((q) => q.id));
+  if (ids.size !== queries.length) throw new Error("run_lance: queries.queries[].id must not contain duplicates");
   return { queries };
 }
 
@@ -259,9 +306,10 @@ async function ftsSearchIds(table: Table, column: string, query: string, limit: 
   return rows.map((row: Record<string, unknown>) => row.id as string);
 }
 
-async function vectorSearchIds(table: Table, vector: number[], limit: number): Promise<string[]> {
+async function vectorSearchIds(table: Table, vector: number[], limit: number, distance: SupportedDistance): Promise<string[]> {
   const rows = await table
     .vectorSearch(vector)
+    .distanceType(distance)
     .where(`workspace_name = '${WORKSPACE_NAME}'`)
     .limit(limit)
     .toArray();
@@ -325,25 +373,42 @@ export async function runLanceBenchmark(options: RunLanceOptions): Promise<RunLa
 
     let embeddingManifest: Record<string, unknown>;
     if (vectors) {
+      // Refuses BEFORE any search runs: an unsupported distance name, or a
+      // corpus vector whose real length contradicts the declared `dims`.
+      // Both would otherwise let `embeddingManifest` below assert something
+      // the search never actually did.
+      const distance = validateFrozenVectors(vectors, corpus.documents);
       methods.vector = await perQuery(queries.queries, (q) => {
         const queryVector = vectors.queries[q.id];
         if (!queryVector) throw new Error(`run_lance: vectors file has no query entry for query id ${q.id}`);
-        return vectorSearchIds(table, queryVector, candidateLimit);
+        if (queryVector.length !== vectors.dims) {
+          throw new Error(`run_lance: query ${q.id}'s vector has length ${queryVector.length}, but vectors.dims says ${vectors.dims}`);
+        }
+        return vectorSearchIds(table, queryVector, candidateLimit, distance);
       });
       embeddingManifest = {
         status: "frozen",
         model: vectors.model,
         ollama_digest: vectors.ollama_digest,
         dims: vectors.dims,
-        distance: vectors.distance,
+        distance,
         normalization: vectors.normalization,
+        request_options: vectors.request_options ?? null,
       };
     } else {
       methods.vector = {
         status: "not_run",
         reason: "no frozen vectors supplied -- see README.md Phase B (freeze_vectors is operator-invoked; tests stub vectors, no Ollama call)",
       };
-      embeddingManifest = { status: "not_run", model: null, ollama_digest: null, dims: null, distance: null, normalization: null };
+      embeddingManifest = {
+        status: "not_run",
+        model: null,
+        ollama_digest: null,
+        dims: null,
+        distance: null,
+        normalization: null,
+        request_options: null,
+      };
     }
 
     const manifest = {

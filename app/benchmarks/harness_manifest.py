@@ -34,7 +34,7 @@ REQUIRED_MANIFEST_KEYS = (
 )
 
 REQUIRED_ENGINE_KEYS = ("@lancedb/lancedb", "apache-arrow")
-REQUIRED_EMBEDDING_KEYS = ("status", "model", "ollama_digest", "dims", "distance", "normalization")
+REQUIRED_EMBEDDING_KEYS = ("status", "model", "ollama_digest", "dims", "distance", "normalization", "request_options")
 REQUIRED_ARTIFACT_SHA256_KEYS = ("corpus", "queries", "qrels", "vectors")
 REQUIRED_RRF_KEYS = ("k", "tie_rule")
 

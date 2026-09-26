@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import hashlib
 
-from harness_corpus import Corpus, Qrels
+from harness_corpus import CORPUS_ORIGINS, QRELS_ORIGINS, Corpus, Qrels
 from harness_manifest import validate_manifest
 from harness_metrics import fuse_rrf, macro_mean, score_query
 
@@ -116,7 +116,13 @@ def _entry_for(raw_method, query_id: str):
 
 
 def _is_semantic(query) -> bool:
-    return (query.purpose or "semantic") == "semantic"
+    """Matches README.md's documented rule exactly: every macro group (en/th/
+    all) covers `purpose != "literal"`, not only `purpose == "semantic"`.
+    A query with no purpose at all is treated as semantic (the harness's
+    original, pre-R16 default). Before this, any OTHER purpose value (e.g.
+    "known_item") was silently dropped from every macro group instead of
+    being scored -- the code and the documented contract disagreed."""
+    return query.purpose != "literal"
 
 
 def _empty_group_summary(cutoffs) -> dict:
@@ -230,8 +236,20 @@ def run_benchmark(corpus: Corpus, qrels: Qrels, methods: dict, manifest: dict, f
     Requires `corpus` and `qrels` to already be `bind_qrels`-checked (same
     provenance origin as the report will claim, every relevant id present
     in the corpus); this function does not re-validate that pairing.
+
+    `corpus.provenance.origin` and `qrels.provenance.origin` ARE checked
+    against `CORPUS_ORIGINS`/`QRELS_ORIGINS` here, even though `bind_qrels`
+    checks them too -- `Corpus`/`Qrels`/`*Provenance` are public dataclasses,
+    so a caller can build one directly instead of going through a loader,
+    bypassing `bind_qrels` entirely. This is the last place a forged or
+    mistyped origin can be refused before it reaches a report.
     """
     validate_manifest(manifest)
+
+    if corpus.provenance.origin not in CORPUS_ORIGINS:
+        raise RunnerInputError(f"corpus.provenance.origin must be one of {CORPUS_ORIGINS}, got {corpus.provenance.origin!r}")
+    if qrels.provenance.origin not in QRELS_ORIGINS:
+        raise RunnerInputError(f"qrels.provenance.origin must be one of {QRELS_ORIGINS}, got {qrels.provenance.origin!r}")
 
     if not methods:
         raise RunnerInputError("run_benchmark requires at least one method")

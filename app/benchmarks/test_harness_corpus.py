@@ -158,6 +158,24 @@ class QrelsValidationTests(unittest.TestCase):
         with self.assertRaises(CorpusInputError):
             load_agent_authored_qrels(qrels_payload(queries=[{"id": "q1", "relevant_ids": []}]), held_out=True)
 
+    def test_query_lang_other_than_en_or_th_is_rejected(self):
+        # harness_runner's language groups are exactly en/th/all -- an
+        # unrecognized casing or value (e.g. "TH") used to count only in
+        # "all" and never in "th", silently under-reporting the th group.
+        with self.assertRaises(CorpusInputError):
+            load_agent_authored_qrels(qrels_payload(queries=[{"id": "q1", "relevant_ids": ["c1"], "lang": "TH"}]), held_out=True)
+
+    def test_query_with_no_lang_is_still_accepted(self):
+        qrels = load_agent_authored_qrels(qrels_payload(queries=[{"id": "q1", "relevant_ids": ["c1"]}]), held_out=True)
+        self.assertIsNone(qrels.queries[0].lang)
+
+    def test_held_out_must_be_a_bool_not_a_truthy_string(self):
+        # held_out="no" is truthy in Python -- silently storing it as the
+        # literal string "no" would make `if qrels.provenance.held_out:`
+        # evaluate True for a caller who typed the word "no".
+        with self.assertRaises(CorpusInputError):
+            load_agent_authored_qrels(qrels_payload(), held_out="no")
+
 
 class BindQrelsTests(unittest.TestCase):
     def test_matching_origin_and_ids_binds_cleanly(self):

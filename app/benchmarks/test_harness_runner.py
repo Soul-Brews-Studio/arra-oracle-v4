@@ -25,7 +25,17 @@ import unittest
 from fractions import Fraction
 from pathlib import Path
 
-from harness_corpus import bind_qrels, load_agent_authored_corpus, load_agent_authored_qrels
+from harness_corpus import (
+    Corpus,
+    CorpusProvenance,
+    Document,
+    Qrels,
+    QrelsProvenance,
+    Query,
+    bind_qrels,
+    load_agent_authored_corpus,
+    load_agent_authored_qrels,
+)
 from harness_manifest import ManifestInputError
 from harness_runner import NULL_METHOD_NAME, RunnerInputError, null_ranking, run_benchmark
 
@@ -75,7 +85,10 @@ def full_manifest(**overrides):
         "indexed_text_composition": "${title}\n\n${body}",
         "candidate_limit": 5,
         "eligibility_filter": "none (single-workspace fixture)",
-        "embedding": {"status": "not_run", "model": None, "ollama_digest": None, "dims": None, "distance": None, "normalization": None},
+        "embedding": {
+            "status": "not_run", "model": None, "ollama_digest": None,
+            "dims": None, "distance": None, "normalization": None, "request_options": None,
+        },
         "artifact_sha256": {"corpus": "a" * 64, "queries": "b" * 64, "qrels": "c" * 64, "vectors": None},
         "rrf": {"k": 60, "tie_rule": "utf16_code_unit"},
     }
@@ -171,6 +184,38 @@ class RunBenchmarkStructureTests(unittest.TestCase):
         self.assertLess(rrf_mrr, fts_mrr)
 
 
+class ThaiSemanticGroupTests(unittest.TestCase):
+    """Every other test in this file that supplies a `lang` uses only "en" --
+    `bilingual_qrels` is bilingual in name only. A runner that always reports
+    the `th` group empty (mutation M3, per the fix-round review) survives
+    every one of them. This test is the one place a `th`-labelled SEMANTIC
+    query is actually scored, so a hard-coded/always-empty `th` group fails
+    here with a concrete, non-None value."""
+
+    def test_th_group_is_scored_and_matches_the_hand_computed_mrr(self):
+        qrels = toy_qrels([
+            {"id": "q1", "relevant_ids": ["c1"], "lang": "en", "purpose": "semantic"},
+            {"id": "qth", "relevant_ids": ["c3"], "lang": "th", "purpose": "semantic"},
+        ])
+        methods = {
+            # c3 is th's only relevant id here, ranked first -- th's MRR must be 1.0.
+            "fts": {"q1": ["c1", "c2", "c3", "c4", "c5"], "qth": ["c3", "c4", "c5", "c1", "c2"]},
+        }
+        report = run_benchmark(toy_corpus(), qrels, methods, full_manifest())
+        th_summary = report["methods"]["fts"]["summary"]["th"]
+
+        self.assertEqual(th_summary["queries"], 1)
+        self.assertEqual(th_summary["scored"], 1)
+        self.assertEqual(th_summary["mrr"], 1.0)  # NOT None, and NOT the always-empty-group shape
+        self.assertEqual(th_summary["recall_at_k"][1], 1.0)
+
+        # "all" must count both languages, not just en (a th-blind grouping
+        # bug could also under-count "all").
+        all_summary = report["methods"]["fts"]["summary"]["all"]
+        self.assertEqual(all_summary["queries"], 2)
+        self.assertEqual(all_summary["scored"], 2)
+
+
 class LiteralProbeExclusionTests(unittest.TestCase):
     def test_literal_probe_excluded_from_every_group_but_kept_per_query(self):
         qrels = toy_qrels([
@@ -245,6 +290,48 @@ class RunBenchmarkGuardTests(unittest.TestCase):
     def test_no_methods_is_refused(self):
         with self.assertRaises(RunnerInputError):
             run_benchmark(toy_corpus(), bilingual_qrels(), {}, full_manifest())
+
+    def test_forged_corpus_provenance_origin_is_refused(self):
+        # harness_corpus.Corpus/CorpusProvenance are public dataclasses, so a
+        # caller CAN build one directly instead of going through a loader --
+        # bypassing the loaders' "origin is only ever what the function
+        # stamped" guarantee. run_benchmark is the last place that guarantee
+        # can still be enforced before a report is produced.
+        forged = Corpus(
+            provenance=CorpusProvenance(origin="bogus", label="x", source="y", created="z"),
+            documents=(Document(id="c1", title="t", type="note", body="b", lang="en"),),
+        )
+        qrels = Qrels(
+            provenance=QrelsProvenance(origin="agent_authored", held_out=False, label="x", source="y", created="z"),
+            queries=(Query(id="q1", relevant_ids=frozenset({"c1"}), lang="en", purpose="semantic"),),
+        )
+        with self.assertRaises(RunnerInputError):
+            run_benchmark(forged, qrels, {"fts": {"q1": ["c1"]}}, full_manifest())
+
+    def test_forged_qrels_provenance_origin_is_refused(self):
+        corpus = toy_corpus()
+        forged_qrels = Qrels(
+            provenance=QrelsProvenance(origin="bogus", held_out=False, label="x", source="y", created="z"),
+            queries=(Query(id="q1", relevant_ids=frozenset({"c1"}), lang="en", purpose="semantic"),),
+        )
+        with self.assertRaises(RunnerInputError):
+            run_benchmark(corpus, forged_qrels, {"fts": {"q1": ["c1"]}}, full_manifest())
+
+
+class PurposeGroupingMatchesReadmeTests(unittest.TestCase):
+    """README.md documents the macro groups as `purpose != "literal"`, but
+    `_is_semantic` used to accept only `purpose in (None, "semantic")` --
+    silently dropping any other purpose value (e.g. "known_item") from every
+    macro group instead of scoring it. This pins the documented rule."""
+
+    def test_a_purpose_that_is_neither_semantic_nor_literal_is_still_counted(self):
+        qrels = toy_qrels([
+            {"id": "q1", "relevant_ids": ["c1"], "lang": "en", "purpose": "known_item"},
+        ])
+        report = run_benchmark(toy_corpus(), qrels, {"fts": {"q1": ["c1"]}}, full_manifest())
+        summary = report["methods"]["fts"]["summary"]["all"]
+        self.assertEqual(summary["queries"], 1)
+        self.assertEqual(summary["mrr"], 1.0)
 
 
 class SyntheticFixtureEndToEndTest(unittest.TestCase):
