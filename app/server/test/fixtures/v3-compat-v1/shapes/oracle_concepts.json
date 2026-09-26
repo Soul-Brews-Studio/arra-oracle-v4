@@ -1,0 +1,16 @@
+{
+  "tool": "oracle_concepts",
+  "v3Source": {
+    "handler": "arra-oracle-v3 src/tools/concepts.ts:64-95 (listConcepts)",
+    "commit": "61e5f8b6"
+  },
+  "topLevel": {
+    "concepts": { "type": "array", "items": "conceptRow" },
+    "total_unique": { "type": "number" },
+    "filter_type": { "type": "string" }
+  },
+  "conceptRow": {
+    "name": { "type": "string" },
+    "count": { "type": "number" }
+  }
+}

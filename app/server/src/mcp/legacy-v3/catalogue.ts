@@ -187,8 +187,13 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
   spec({
     name: "oracle_stats",
     action: "content:read",
-    uses: ["listNodes", "knowledgeStats"],
-    requires: ["listNodes"],
+    // K7 (docs/overnight/V3-PARITY.md §5, DECISIONS.md R18 (K6+K7+V8)):
+    // `knowledgeStats` carries total_documents/by_type/fts_indexed/
+    // last_indexed/vector_status; `unique_concepts` needs one more hop
+    // through the `concepts` vocabulary (K6 `listTermUsage`), same as
+    // `oracle_concepts` below.
+    uses: ["listNodes", "knowledgeStats", "listTermUsage", ...TAXONOMY_READS],
+    requires: ["listNodes", "knowledgeStats"],
     description: "Counts for this bank. Fields v4 cannot count yet are null and named in compat_warnings.",
     inputSchema: obj({}),
   }),
@@ -197,7 +202,9 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
     action: "content:read",
     uses: ["listTermUsage", ...TAXONOMY_READS],
     requires: ["listTermUsage"],
-    description: "Concept tags in use in this bank, with counts over current entries.",
+    description:
+      "Concept tags in use in this bank, with counts over current entries." +
+      " type filters on v4's own type vocabulary (learning, note, conclusion, discussion, correction), not v3's principle/pattern/retro.",
     inputSchema: obj({ type: str(""), limit: int("") }),
   }),
   spec({
