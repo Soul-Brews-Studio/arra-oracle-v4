@@ -375,9 +375,13 @@ describe("#30 knowledge retrieval on a real gated dataset", () => {
     expect(ok("kw_limit_one").hits[0].node_id).toBe(ok("kw_inside_word").hits[0].node_id);
     // R21: rank is this answer's own 1-based position -- the ordering
     // guarantee (score then node id) is stable but no longer observable as a
-    // number, only as position.
+    // number, only as position. `rank == index + 1` alone is the shape the
+    // code always produces, so it cannot fail on its own; the explicit
+    // node-id order below is what actually pins BM25 order (a mutant that
+    // reverses or drops score ordering changes THIS, not the rank shape).
     const hits = ok("kw_inside_word").hits as Hit[];
     expect(hits.map((hit) => hit.rank)).toEqual(hits.map((_, index) => index + 1));
+    expect(hits.map((hit) => hit.node_id)).toEqual([N.thai, N.pending]);
     expect(nodes("kw_english_case")).toEqual([N.fox]);
     expect(failed("kw_limit_over")).toMatchObject({ code: "invalid_value", path: "/limit" });
     expect(failed("kw_unknown_workspace")).toMatchObject({ code: "invalid_reference", path: "/workspace_name" });

@@ -207,6 +207,10 @@ runIt(
     expect(out.sem_embedder_down_http.status).toBe(503);
     expect(out.sem_embedder_down_http.body).toMatchObject({ code: "model_unavailable" });
     expect(out.sem_embedder_down_mcp.isError).toBe(true);
+    // The MCP envelope carries the same closed code, not just an error flag
+    // (`auth/service.ts`'s `runMcp` puts the PublicationError's `.toJSON()` in
+    // `message`).
+    expect(JSON.parse(out.sem_embedder_down_mcp.message)).toMatchObject({ code: "model_unavailable" });
 
     // ── isolation ─────────────────────────────────────────────────────────
     expect(out.kw_beta_http.status).toBe(200);
