@@ -315,9 +315,12 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
   spec({
     name: "oracle_trace_get",
     action: "content:read",
-    uses: ["getTrace", "listTraceHits", "scanDependents", "getAcceptedHead"],
+    // K5 (V7): child_trace_ids and next_trace_id are filled from listTraces,
+    // in this same build -- not gated in `requires` because getTrace,
+    // listTraceHits and scanDependents alone already make the tool useful.
+    uses: ["getTrace", "listTraceHits", "scanDependents", "getAcceptedHead", "listTraces"],
     requires: ["getTrace", "listTraceHits", "scanDependents"],
-    description: "Read one trace. status is derived: distilled when an entry was derived from it.",
+    description: "Read one trace. status is derived: distilled when an entry was derived from it. child_trace_ids and next_trace_id are filled from trace listing.",
     inputSchema: obj({ traceId: str("Required."), includeChain: { type: "boolean" } }, ["traceId"]),
   }),
   spec({
@@ -339,8 +342,11 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
   spec({
     name: "oracle_trace_distill",
     action: "content:write",
-    uses: ["getTrace", ...PUBLISH],
-    requires: ["getTrace", ...PUBLISH_REQUIRES],
+    // reconcileRevisionAssociations materializes the derived_from link right
+    // after publish, so K5's derived_from_count (has_awakening, status) sees
+    // it without waiting for a separate backfill.
+    uses: ["getTrace", ...PUBLISH, "reconcileRevisionAssociations"],
+    requires: ["getTrace", ...PUBLISH_REQUIRES, "reconcileRevisionAssociations"],
     description:
       "Distill a trace into a new entry derived from it (learning when promoted, else conclusion). The trace itself is never rewritten;" +
       " distilling again adds a second entry.",

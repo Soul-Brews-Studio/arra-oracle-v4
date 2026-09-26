@@ -610,7 +610,7 @@
       "method": "tools/call",
       "tool": "oracle_trace_list",
       "arguments": {
-        "query": "digital-twin OTA flasher",
+        "query": "digital-twin",
         "limit": 20
       },
       "provenance": [

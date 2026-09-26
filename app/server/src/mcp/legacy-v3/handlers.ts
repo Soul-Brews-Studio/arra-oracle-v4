@@ -13,6 +13,11 @@ import { guide } from "./guide";
 import { oracle_handoff } from "./tools/oracle_handoff";
 import { oracle_learn } from "./tools/oracle_learn";
 import { oracle_research_note } from "./tools/oracle_research_note";
+import { oracle_trace } from "./tools/oracle_trace";
+import { oracle_trace_chain } from "./tools/oracle_trace_chain";
+import { oracle_trace_distill } from "./tools/oracle_trace_distill";
+import { oracle_trace_get } from "./tools/oracle_trace_get";
+import { oracle_trace_list } from "./tools/oracle_trace_list";
 
 export type V3ToolContext = {
   readonly tool: string;
@@ -33,4 +38,10 @@ export const V3_HANDLERS: Readonly<Record<string, V3Handler>> = Object.freeze({
   oracle_learn,
   oracle_research_note,
   oracle_handoff,
+  // V3 trace + V7 upgrades (V3-PARITY.md §4.2-4.3, K5).
+  oracle_trace,
+  oracle_trace_get,
+  oracle_trace_chain,
+  oracle_trace_distill,
+  oracle_trace_list,
 });

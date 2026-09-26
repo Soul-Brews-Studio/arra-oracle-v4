@@ -15,6 +15,14 @@ export type PublishInput = {
   sessionName: string | null;
   changeReason: string | null;
   idempotencyKey: unknown;
+  /** V3 slice, K5: reconcile `revision_links`/`node_revision_terms` for this
+   *  ONE revision right after the publish, so a reader that depends on the
+   *  MATERIALIZED projection (K5's `listTraces.derived_from_count`) sees it
+   *  immediately, the same way indexing below makes it searchable at once.
+   *  Default false: only `oracle_trace_distill` writes a link a later reader
+   *  needs this fast; `oracle_learn`/`oracle_handoff`/`oracle_research_note`
+   *  write no links at all, so reconciling for them would be a no-op cost. */
+  reconcile?: boolean;
 };
 
 export type Published = {
@@ -98,6 +106,15 @@ export async function publish(context: V3ToolContext, input: PublishInput): Prom
   } catch (error) {
     published.embedding = "failed";
     published.embeddingError = error instanceof Error ? error.message : String(error);
+  }
+  if (input.reconcile === true) {
+    // Best-effort, like indexing above: a reconciliation fault never
+    // unwinds an already-accepted publish. Unlike indexing, no caller-visible
+    // field reports failure here -- `reconcileRevisionAssociations` is
+    // idempotent and safe to retry later (`kb_reconcileRevisionAssociations`
+    // or a future backfill), so there is nothing for this adapter to surface
+    // that a retry would not equally fix.
+    await kb("reconcileRevisionAssociations", { node_id: published.node_id, revision_id: published.revision_id }).catch(() => {});
   }
   return published;
 }
