@@ -89,6 +89,8 @@ export interface CallRecord {
   peer_name?: string | null;
   session_name?: string | null;
   client_label?: string | null;
+  /** D6 (R18): the `arra_*` alias the caller used; `tool` is then its canonical name. */
+  requested_as?: string | null;
   /** Present for admitted operations; absent only for legacy internal writes. */
   auth?: AuditAttribution | null;
 }
@@ -131,6 +133,8 @@ export async function logCall(rec: CallRecord): Promise<void> {
         h_metadata: JSON.stringify({
           input: truncate(rec.input),
           result: truncate(rec.result),
+          // v3 adapter (R18 D6): the alias the caller actually named, e.g. arra_search.
+          ...(rec.requested_as ? { requested_as: rec.requested_as } : {}),
           ...(rec.auth
             ? {
                 auth: {

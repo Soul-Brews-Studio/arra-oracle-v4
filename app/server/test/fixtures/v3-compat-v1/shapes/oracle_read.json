@@ -1,0 +1,68 @@
+{
+  "tool": "oracle_read",
+  "v3Source": {
+    "found": "arra-oracle-v3 src/tools/read.ts:196-208 (resolved on disk)",
+    "ftsFallback": "arra-oracle-v3 src/tools/read.ts:210-227 (fts_cache fallback)",
+    "notFound": "arra-oracle-v3 src/tools/read.ts:231-238 (isError:true)",
+    "commit": "61e5f8b6"
+  },
+  "found": {
+    "content": {
+      "type": "string"
+    },
+    "source_file": {
+      "type": "string",
+      "note": "v4 has no server file (§4.2: source_file:null). V3-PARITY.md §2.5: a v3 field v4 cannot fill is PRESENT as null and named in compat_warnings ({code, field, detail}); the matcher (test/helpers/v3-compat-shapes.ts) accepts null for a non-nullable field only then."
+    },
+    "resolved_path": {
+      "type": "string",
+      "note": "v4 has no server file (§4.2: resolved_path:null). V3-PARITY.md §2.5: a v3 field v4 cannot fill is PRESENT as null and named in compat_warnings ({code, field, detail}); the matcher (test/helpers/v3-compat-shapes.ts) accepts null for a non-nullable field only then."
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "file",
+        "fts_cache",
+        "node"
+      ],
+      "note": "v3: 'file' (read.ts:196-208) or 'fts_cache' (:210-227). v4 reads a node, so V3-PARITY.md §4.2 specifies 'node', a new member of the same enum."
+    },
+    "project": {
+      "type": "string",
+      "optional": true
+    }
+  },
+  "ftsFallback": {
+    "content": {
+      "type": "string"
+    },
+    "source_file": {
+      "type": "string"
+    },
+    "resolved_path": {
+      "type": "null"
+    },
+    "source": {
+      "type": "string",
+      "const": "fts_cache"
+    },
+    "project": {
+      "type": "string",
+      "optional": true
+    }
+  },
+  "notFound": {
+    "error": {
+      "type": "string"
+    },
+    "source_file": {
+      "type": "string",
+      "optional": true
+    },
+    "project": {
+      "type": "string",
+      "optional": true
+    }
+  },
+  "notes": "v3 has NO `title` field on this tool. V3-PARITY.md §4.2 documents v4 adding `title` and `v4:{node_id,revision_id,revision_no}` as new fields, not v3 carry-overs. `source` in v3 is 'file' | 'fts_cache', never 'node' -- v4's 'node' value (§4.2) is a new enum member for the v4-native path."
+}

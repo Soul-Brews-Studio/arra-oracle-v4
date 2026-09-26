@@ -1,0 +1,54 @@
+{
+  "tool": "oracle_list",
+  "v3Source": {
+    "handler": "arra-oracle-v3 src/tools/list.ts:129-133",
+    "documentShape": "arra-oracle-v3 src/tools/list.ts:118-126 (documents.map)",
+    "commit": "61e5f8b6"
+  },
+  "topLevel": {
+    "documents": {
+      "type": "array",
+      "items": "document"
+    },
+    "total": {
+      "type": "number",
+      "note": "v3 exact count. V3-PARITY.md §4.3: null with a partial warning whenever not exact. V3-PARITY.md §2.5: a v3 field v4 cannot fill is PRESENT as null and named in compat_warnings ({code, field, detail}); the matcher (test/helpers/v3-compat-shapes.ts) accepts null for a non-nullable field only then."
+    },
+    "limit": {
+      "type": "number"
+    },
+    "offset": {
+      "type": "number"
+    },
+    "type": {
+      "type": "string"
+    }
+  },
+  "document": {
+    "id": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string",
+      "note": "content.split('\\n')[0].substring(0,80), list.ts:120"
+    },
+    "content": {
+      "type": "string",
+      "note": "content.substring(0,500), list.ts:121"
+    },
+    "source_file": {
+      "type": "string"
+    },
+    "concepts": {
+      "type": "array",
+      "items": "string"
+    },
+    "indexed_at": {
+      "type": "number",
+      "note": "epoch ms, list.ts:125"
+    }
+  }
+}

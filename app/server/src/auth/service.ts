@@ -17,7 +17,14 @@ import { loadPolicy } from "./loader";
 import { peerBinding } from "./policy.peerBinding";
 import { isBoundAuthor } from "./service.isBoundAuthor";
 import { TOOL_NAMES } from "../mcp/tools";
-import { KNOWLEDGE_METHODS, type RequestAuthority } from "../knowledge/registry";
+import { V3_TOOL_NAMES } from "../mcp/legacy-v3/catalogue";
+import type { RequestAuthority } from "../knowledge/registry";
+import { bindToolOperations } from "./service.bindToolOperations";
+import { resolveToolName } from "./service.resolveToolName";
+import { toolAction } from "./service.toolAction";
+import type { McpEnvelope, McpResult, StoreDependencies, TextSearchResult, ToolOperations } from "./service.types";
+
+export type { McpEnvelope, McpResult, StoreDependencies, TextSearchResult, ToolOperations } from "./service.types";
 
 export type AuthFailure = "unauthenticated" | "forbidden" | "policy_unavailable" | "invalid_request";
 
@@ -116,81 +123,15 @@ const MCP_ACTION_ORDER: readonly WorkspaceAction[] = [
   "diagnostics:read",
 ];
 
-/**
- * The authoritative tool -> action map.
- *
- * Owned HERE, not supplied by a caller: letting an adapter choose which action
- * a tool required would let it pick the cheapest grant it happened to hold.
- */
-const MEMORY_TOOL_ACTION: Readonly<Record<string, WorkspaceAction>> = {
-  remember: "content:write",
-  recall: "content:read",
-  get_memory: "content:read",
-  list_memories: "content:read",
-  bank_info: "diagnostics:read",
-  status: "diagnostics:read",
-  call_log: "audit:read",
-  call_stats: "audit:read",
+// The tool -> action map lives in `service.toolAction.ts`: owned by this
+// service, derived from each family's data table, never chosen by an adapter.
+
+export type ServiceConfig = {
+  readonly policyPath: string;
+  /** R18 D10: `ARRA_MCP_V3_COMPAT`, trusted operator configuration. Absent = off. */
+  readonly v3Compat?: boolean;
 };
-
-/** #31: `kb_<method>` -> the same action `knowledge/registry.ts` declares.
- *  Data-driven so a new registry entry is admitted/listed automatically. */
-const KNOWLEDGE_TOOL_ACTION: Readonly<Record<string, WorkspaceAction>> = Object.fromEntries(
-  Object.entries(KNOWLEDGE_METHODS).map(([method, entry]) => [`kb_${method}`, entry.action]),
-);
-
-const TOOL_ACTION: Readonly<Record<string, WorkspaceAction>> = Object.freeze({
-  ...MEMORY_TOOL_ACTION,
-  ...KNOWLEDGE_TOOL_ACTION,
-});
-
-/**
- * A keyword search answer: the rows, and how they were found (R14). `ngram` is
- * the trigram index; `substring_scan` is the bounded scan a query under 3 code
- * points falls back to. Declared here, structurally, so the facade does not
- * import the store module; composition's assignment checks the two agree.
- */
-export type TextSearchResult = { match: "ngram" | "substring_scan"; rows: unknown[] };
-
-export type StoreDependencies = {
-  insert(row: {
-    workspace_name: string;
-    name: string;
-    content: string;
-    type?: string;
-    session_name?: string;
-    peer_name?: string;
-    subject_peer_name?: string;
-  }): Promise<{ id: string; embedded: boolean }>;
-  list(bank: string, limit: number, filters?: Record<string, unknown>): Promise<unknown[]>;
-  searchText(q: string, bank: string, limit: number): Promise<TextSearchResult>;
-  searchVector(q: string, bank: string, limit: number): Promise<unknown[]>;
-  getById(bank: string, id: string): Promise<unknown>;
-  stats(bank: string): Promise<Record<string, unknown>>;
-  backfill(batch: number): Promise<unknown>;
-  ensureFtsIndex(replace?: boolean): Promise<string[]>;
-  embedHealth(): Promise<{ ok: boolean; model: string; dims: number; detail: string }>;
-  recentCalls(bank: string, limit: number, status?: string): Promise<unknown[]>;
-  aggregateCalls(bank: string): Promise<unknown>;
-  logCall(record: Record<string, unknown>): Promise<void>;
-};
-
-export type ServiceConfig = { readonly policyPath: string };
 export type Clock = () => number;
-
-/** What an MCP adapter may ask the service to do, once projection succeeded. */
-export type McpEnvelope = {
-  readonly method: string;
-  readonly id: string | number | null;
-  readonly params: Record<string, unknown>;
-};
-
-export type McpResult =
-  | { readonly kind: "ok"; readonly value: unknown }
-  | { readonly kind: "tool_error"; readonly message: string }
-  | { readonly kind: "denied"; readonly code: AuthFailure }
-  | { readonly kind: "tools"; readonly names: readonly string[] }
-  | { readonly kind: "method_not_found" };
 
 /**
  * The public service. Every entrypoint takes CREDENTIALS plus the request
@@ -254,6 +195,10 @@ export function createOperationService(
       duration_ms: number;
       session_name?: string | null;
       client_label?: string | null;
+      /** A7/D8: the speaker the connection asserted (X-Arra-Peer), bound by R3. */
+      peer_name?: string | null;
+      /** D6: the alias the caller used, when `tool` is its canonical name. */
+      requested_as?: string | null;
     },
   ): Promise<void> {
     const record = CONTEXTS.get(context as object);
@@ -379,7 +324,13 @@ export function createOperationService(
       readEnvelope: () => Promise<McpEnvelope | null>,
       dispatch: (tool: string, args: Record<string, unknown>, ops: ToolOperations) => Promise<unknown>,
       userAgent = "",
+      headerPeer: string | null = null,
     ): Promise<McpResult> {
+      const v3Compat = config.v3Compat === true;
+      // A7/D8 (R18): the speaker assertion belongs to the v3 family. With the
+      // flag off it is dropped here as well as in app.ts, so no binding check,
+      // no ops.assertedPeer and no audit peer_name: base behavior.
+      const assertedPeer = v3Compat ? headerPeer : null;
       // One snapshot and one clock value for the entire projection.
       //
       // snapshot() throws on a missing or malformed policy. Letting that escape
@@ -422,6 +373,12 @@ export function createOperationService(
       } catch {
         return { kind: "denied", code: "policy_unavailable" };
       }
+      // A7/D8 (R18): X-Arra-Peer is a caller ASSERTION about who speaks on this
+      // connection. Under a `peers` binding it must be listed, from the same
+      // snapshot; refused like any other forbidden request, before the body.
+      if (assertedPeer !== null && authority.peers !== null && !authority.peers.includes(assertedPeer)) {
+        return { kind: "denied", code: "forbidden" };
+      }
 
       // Only now is the body read: an unadmitted caller never gets this far.
       const envelope = await readEnvelope();
@@ -429,19 +386,22 @@ export function createOperationService(
 
       if (envelope.method === "tools/list") {
         const names: string[] = [];
-        for (const tool of TOOL_NAMES) {
-          const action = TOOL_ACTION[tool];
+        for (const tool of v3Compat ? [...TOOL_NAMES, ...V3_TOOL_NAMES] : TOOL_NAMES) {
+          const action = toolAction(tool, v3Compat);
           if (action !== undefined && granted.has(action)) names.push(tool);
         }
         return { kind: "tools", names };
       }
       if (envelope.method !== "tools/call") return { kind: "method_not_found" };
 
-      const name = envelope.params.name;
-      if (typeof name !== "string" || !name.trim()) {
+      const requested = envelope.params.name;
+      if (typeof requested !== "string" || !requested.trim()) {
         return { kind: "tool_error", message: "name must be a non-blank string" };
       }
-      const action = TOOL_ACTION[name];
+      // D6: an `arra_*` alias becomes its canonical name BEFORE the action
+      // lookup, so it runs under that tool's own action and is audited as it.
+      const { canonical: name, requestedAs } = resolveToolName(requested, v3Compat);
+      const action = toolAction(name, v3Compat);
       const context = action === undefined ? undefined : granted.get(action);
       // Unknown tool and unpermitted tool are indistinguishable, and neither
       // echoes the caller-supplied name back.
@@ -463,6 +423,8 @@ export function createOperationService(
           duration_ms: clock() - started,
           session_name: null,
           client_label: userAgent || null,
+          peer_name: assertedPeer,
+          requested_as: requestedAs,
         });
         return { kind: "tool_error", message };
       }
@@ -481,49 +443,7 @@ export function createOperationService(
         if (!live) deny("invalid_request");
         recordFor(context, { action: needed, workspace });
       };
-      const ops: ToolOperations = Object.freeze({
-        bank,
-        authority,
-        insert: (row) => {
-          requires("content:write");
-          // #87 / R3: `remember`'s author is bound like HTTP's, before the store.
-          if (!isBoundAuthor(row, authority.peers)) deny("forbidden");
-          return deps.insert({ ...row, workspace_name: bank });
-        },
-        list: (limit, filters) => {
-          requires("content:read");
-          return deps.list(bank, limit, filters);
-        },
-        searchText: (q, limit) => {
-          requires("content:read");
-          return deps.searchText(q, bank, limit);
-        },
-        searchVector: (q, limit) => {
-          requires("content:read");
-          return deps.searchVector(q, bank, limit);
-        },
-        getById: (id) => {
-          requires("content:read");
-          return deps.getById(bank, id);
-        },
-        stats: () => {
-          requires("diagnostics:read");
-          return deps.stats(bank);
-        },
-        embedReadiness: async () => {
-          requires("diagnostics:read");
-          const health = await deps.embedHealth();
-          return { ok: health.ok, dims: health.dims };
-        },
-        recentCalls: (limit, status) => {
-          requires("audit:read");
-          return deps.recentCalls(bank, limit, status);
-        },
-        aggregateCalls: () => {
-          requires("audit:read");
-          return deps.aggregateCalls(bank);
-        },
-      });
+      const ops: ToolOperations = bindToolOperations({ bank, authority, assertedPeer, deps, requires, deny });
 
       try {
         const value = await dispatch(name, args, ops);
@@ -535,6 +455,8 @@ export function createOperationService(
           duration_ms: clock() - started,
           session_name: typeof args.session_name === "string" ? args.session_name : null,
           client_label: userAgent || null,
+          peer_name: assertedPeer,
+          requested_as: requestedAs,
         });
         return { kind: "ok", value };
       } catch (error) {
@@ -561,6 +483,8 @@ export function createOperationService(
           duration_ms: clock() - started,
           session_name: typeof args.session_name === "string" ? args.session_name : null,
           client_label: userAgent || null,
+          peer_name: assertedPeer,
+          requested_as: requestedAs,
         });
         return { kind: "tool_error", message };
       } finally {
@@ -570,33 +494,3 @@ export function createOperationService(
     },
   });
 }
-
-/**
- * Scope-bound operations handed to a tool dispatcher.
- *
- * These ARE authority — a callable operation can reach the store. It is bounded
- * two ways: each method re-checks the admitted action, and the whole set is
- * invalidated when the request that produced it ends.
- */
-export type ToolOperations = {
-  readonly bank: string;
-  /** #87 / R3: data, not a capability -- what the admitted caller may do
-   *  beyond each tool's action, for the knowledge dispatcher to pass on. */
-  readonly authority: RequestAuthority;
-  insert(row: {
-    name: string;
-    content: string;
-    type?: string;
-    session_name?: string;
-    peer_name?: string;
-    subject_peer_name?: string;
-  }): Promise<{ id: string; embedded: boolean }>;
-  list(limit: number, filters: Record<string, unknown>): Promise<unknown[]>;
-  searchText(q: string, limit: number): Promise<TextSearchResult>;
-  searchVector(q: string, limit: number): Promise<unknown[]>;
-  getById(id: string): Promise<unknown>;
-  stats(): Promise<Record<string, unknown>>;
-  embedReadiness(): Promise<{ ok: boolean; dims: number }>;
-  recentCalls(limit: number, status?: string): Promise<unknown[]>;
-  aggregateCalls(): Promise<unknown>;
-};

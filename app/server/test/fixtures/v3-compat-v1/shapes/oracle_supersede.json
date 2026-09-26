@@ -1,0 +1,30 @@
+{
+  "tool": "oracle_supersede",
+  "v3Source": {
+    "unchanged": "arra-oracle-v3 src/tools/supersede.ts:135-145",
+    "success": "arra-oracle-v3 src/tools/supersede.ts:177-186",
+    "alreadySuperseded": "arra-oracle-v3 src/tools/supersede.ts:148-154 (isError:true)",
+    "commit": "61e5f8b6"
+  },
+  "success": {
+    "success": { "type": "boolean", "const": true },
+    "old_id": { "type": "string" },
+    "old_type": { "type": "string" },
+    "new_id": { "type": "string" },
+    "new_type": { "type": "string" },
+    "reason": { "type": "string", "nullable": true },
+    "superseded_at": { "type": "string", "note": "ISO 8601, new Date(now).toISOString(), supersede.ts:184" },
+    "message": { "type": "string" }
+  },
+  "unchanged": {
+    "success": { "type": "boolean", "const": true },
+    "unchanged": { "type": "boolean", "const": true },
+    "old_id": { "type": "string" },
+    "old_type": { "type": "string" },
+    "new_id": { "type": "string" },
+    "new_type": { "type": "string" },
+    "reason": { "type": "string", "nullable": true },
+    "superseded_at": { "type": "string", "nullable": true },
+    "message": { "type": "string" }
+  }
+}

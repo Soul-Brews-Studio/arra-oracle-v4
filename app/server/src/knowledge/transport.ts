@@ -60,6 +60,7 @@ import { createChatService } from "../publication/service.createChatService";
 import { KNOWLEDGE_METHODS, type KnowledgeAction, type KnowledgeBundle, type KnowledgeReaderBundle, type RequestAuthority } from "./registry";
 import { KnowledgeAuthDenied, admitKnowledgeAction, type KnowledgeAuthFailure } from "./transport.admitKnowledgeAction";
 import { requireBoundPeers } from "./transport.requireBoundPeers";
+import { indexProfile, type IndexProfile } from "./transport.indexProfile";
 
 /** Matches the governed kernel's own request cap exactly (publication/service.ts). */
 export const MAX_KNOWLEDGE_REQUEST_BYTES = 1024 * 1024;
@@ -296,6 +297,11 @@ export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
   });
 
   return {
+    /** Advertising only (#31): false hides kb_* and the v3 family from tools/list. */
+    datasetConfigured: config.datasetRoot !== undefined,
+    /** Server-chosen chunk-index settings for adapter writes (R18 V1). */
+    indexProfile: indexProfile(config.env ?? process.env),
+
     async getBundle(action: KnowledgeAction): Promise<KnowledgeBundle> {
       // Every action except `content:write` is a READ (#94 widened
       // `KnowledgeAction` to add `audit:read`): branching on `!== "content:write"`
@@ -330,6 +336,10 @@ export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
  * is deliberately no second, per-request writer here any more (#32 / R9).
  */
 export type KnowledgeAccess = {
+  /** False only when no dataset root is configured; see `transport.isDatasetConfigured.ts`. */
+  readonly datasetConfigured?: boolean;
+  /** Absent on test fakes; `mcp/legacy-v3/dispatchLegacyV3.ts` then uses the defaults. */
+  readonly indexProfile?: IndexProfile;
   getBundle(action: KnowledgeAction): Promise<KnowledgeBundle>;
 };
 

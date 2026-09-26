@@ -168,6 +168,16 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
   // ── taxonomy ─────────────────────────────────────────────────────────
   getVocabulary: { action: "content:read", scopePath: [], call: (b, x) => b.taxonomy.getVocabulary(x) },
   getTerm: { action: "content:read", scopePath: [], call: (b, x) => b.taxonomy.getTerm(x) },
+  // K2 (docs/overnight/V3-PARITY.md §5, R18): by-name reads. The v3 adapter
+  // needs them to find `type`, `concepts` or a concept term another writer
+  // already created under its own id; before this, `createTerm` answered
+  // `conflict /name` with no id and the caller was stuck.
+  lookupVocabularyByName: {
+    action: "content:read",
+    scopePath: [],
+    call: (b, x) => b.taxonomy.lookupVocabularyByName(x),
+  },
+  lookupTermByName: { action: "content:read", scopePath: [], call: (b, x) => b.taxonomy.lookupTermByName(x) },
   createVocabulary: {
     action: "content:write",
     scopePath: [],

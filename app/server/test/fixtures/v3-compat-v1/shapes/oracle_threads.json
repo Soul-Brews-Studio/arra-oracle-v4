@@ -1,0 +1,50 @@
+{
+  "tool": "oracle_threads",
+  "v3Source": {
+    "handler": "arra-oracle-v3 src/tools/forum.ts:209-236 (handleThreads)",
+    "commit": "61e5f8b6"
+  },
+  "topLevel": {
+    "threads": {
+      "type": "array",
+      "items": "thread"
+    },
+    "total": {
+      "type": "number",
+      "note": "listThreads total, forum.ts:234"
+    }
+  },
+  "thread": {
+    "id": {
+      "type": [
+        "number",
+        "string"
+      ],
+      "note": "v3 integer thread id; v4 the session name (§3 A3)"
+    },
+    "title": {
+      "type": "string",
+      "nullable": true
+    },
+    "status": {
+      "type": "string"
+    },
+    "message_count": {
+      "type": "number",
+      "note": "v4: null + field_unavailable until K10 (§4.2)"
+    },
+    "last_message": {
+      "type": "string",
+      "note": "content.substring(0,100), forum.ts:226; v4 null until K10"
+    },
+    "created_at": {
+      "type": "string",
+      "note": "ISO 8601, forum.ts:227"
+    },
+    "issue_url": {
+      "type": "string",
+      "nullable": true
+    }
+  },
+  "v4Output": "V3-PARITY.md §4.2 oracle_threads: {threads:[{id: name, title, status, message_count:null, last_message:null, created_at, issue_url:null}], total, next_cursor}"
+}

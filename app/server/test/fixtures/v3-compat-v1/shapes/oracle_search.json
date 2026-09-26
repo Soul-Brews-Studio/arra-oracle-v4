@@ -1,0 +1,37 @@
+{
+  "tool": "oracle_search",
+  "v3Source": {
+    "handler": "arra-oracle-v3 src/tools/search/handler.ts:171-176 (handleSearch return)",
+    "resultShape": "arra-oracle-v3 src/tools/search/types.ts:11-58 (FtsResult/VectorResult/CombinedSearchResult)",
+    "evidenceAttach": "arra-oracle-v3 src/tools/search/helpers.ts:170-176 (attachSearchEvidence)",
+    "commit": "61e5f8b6"
+  },
+  "topLevel": {
+    "results": { "type": "array", "items": "result" },
+    "total": { "type": "number", "note": "results.length after slicing, handler.ts:172" },
+    "query": { "type": "string" },
+    "metadata": { "type": "object", "shape": "metadata" }
+  },
+  "result": {
+    "id": { "type": "string" },
+    "type": { "type": "string" },
+    "content": { "type": "string" },
+    "source_file": { "type": "string" },
+    "concepts": { "type": "array", "items": "string" },
+    "score": { "type": "number" },
+    "source": { "type": "string", "enum": ["fts", "vector", "pointer", "hybrid"] },
+    "confidence": { "type": "object", "optional": true, "shape": { "level": "string", "score": "number", "signals": "string[]" } },
+    "provenance": { "type": "object", "optional": true },
+    "superseded_by": { "type": "string", "optional": true }
+  },
+  "metadata": {
+    "mode": { "type": "string" },
+    "limit": { "type": "number" },
+    "offset": { "type": "number" },
+    "total": { "type": "number" },
+    "sources": { "type": "object", "shape": { "fts": "number", "vector": "number", "hybrid": "number" } },
+    "searchTime": { "type": "number" },
+    "vectorAvailable": { "type": "boolean", "optional": true, "note": "only when requestedMode !== 'fts', handler.ts:144" },
+    "warning": { "type": "string", "optional": true }
+  }
+}

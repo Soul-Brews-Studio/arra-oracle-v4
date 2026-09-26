@@ -1,0 +1,34 @@
+{
+  "tool": "oracle_trace_distill",
+  "v3Source": {
+    "handler": "arra-oracle-v3 src/trace/distill.ts:123-129 (distillTraceAwakening success), type DistillTraceResult :13-20",
+    "tool": "arra-oracle-v3 src/tools/oracle.ts:20-38 (input), :75-76 (handler)",
+    "commit": "61e5f8b6"
+  },
+  "success": {
+    "success": {
+      "type": "boolean",
+      "const": true
+    },
+    "status": {
+      "type": "string",
+      "const": "distilled"
+    },
+    "learningId": {
+      "type": "string",
+      "optional": true,
+      "note": "only when promoted to a learning, distill.ts:126"
+    },
+    "origin": {
+      "type": "string",
+      "optional": true,
+      "note": "only with learningId, distill.ts:127"
+    },
+    "concepts": {
+      "type": "array",
+      "optional": true,
+      "note": "only with learningId, distill.ts:128"
+    }
+  },
+  "v4Output": "V3-PARITY.md §4.3 oracle_trace_distill: {success:true, status:'distilled', learningId (only when promoted), origin, concepts}"
+}

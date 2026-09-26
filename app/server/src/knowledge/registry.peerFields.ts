@@ -68,6 +68,8 @@ export const PEER_FIELDS: Readonly<Record<string, readonly PeerFieldPath[]>> = O
   listNodes: [],
   getVocabulary: [],
   getTerm: [],
+  lookupVocabularyByName: [],
+  lookupTermByName: [],
   createVocabulary: [],
   createTerm: [],
   renameTerm: [],

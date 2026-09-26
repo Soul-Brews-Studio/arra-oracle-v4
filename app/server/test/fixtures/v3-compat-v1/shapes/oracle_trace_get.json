@@ -1,0 +1,37 @@
+{
+  "tool": "oracle_trace_get",
+  "v3Source": {
+    "handler": "arra-oracle-v3 src/tools/trace.ts:239-278 (handleTraceGet)",
+    "notFound": "trace.ts:227-231 (getTrace(...) null -> throw, before the isError:true branch used by the missing-field guard at 217-226)",
+    "commit": "61e5f8b6"
+  },
+  "success": {
+    "trace_id": { "type": "string" },
+    "query": { "type": "string" },
+    "query_type": { "type": "string", "nullable": true },
+    "scope": { "type": "string", "nullable": true },
+    "depth": { "type": "number" },
+    "status": { "type": "string" },
+    "found_files": { "type": "array" },
+    "found_commits": { "type": "array" },
+    "found_issues": { "type": "array" },
+    "found_retrospectives": { "type": "array" },
+    "found_learnings": { "type": "array" },
+    "found_resonance": { "type": "array" },
+    "file_count": { "type": "number" },
+    "commit_count": { "type": "number" },
+    "issue_count": { "type": "number" },
+    "parent_trace_id": { "type": "string", "nullable": true },
+    "child_trace_ids": { "type": "array", "nullable": true },
+    "prev_trace_id": { "type": "string", "nullable": true },
+    "next_trace_id": { "type": "string", "nullable": true },
+    "project": { "type": "string", "nullable": true },
+    "agent_count": { "type": "number", "nullable": true },
+    "duration_ms": { "type": "number", "nullable": true },
+    "awakening": { "type": "string", "nullable": true },
+    "distilled_to_id": { "type": "string", "nullable": true, "note": "SINGULAR in v3, trace.ts:270. v4's distilled_to_ids[] (V3-PARITY.md §4.2) is a plural addition; distilled_to_id there is that array's first entry, not this v3 field." },
+    "created_at": { "type": "string", "note": "ISO 8601, trace.ts:271" },
+    "updated_at": { "type": "string", "note": "ISO 8601, trace.ts:272" },
+    "chain": { "type": "object", "optional": true, "shape": { "traces": "array", "total_depth": "number", "has_awakening": "boolean", "awakening_trace_id": "string|null" } }
+  }
+}

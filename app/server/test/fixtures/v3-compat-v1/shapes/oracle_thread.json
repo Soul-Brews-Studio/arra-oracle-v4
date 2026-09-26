@@ -1,0 +1,40 @@
+{
+  "tool": "oracle_thread",
+  "v3Source": {
+    "handler": "arra-oracle-v3 src/tools/forum.ts:194-207 (handleThread success)",
+    "closedGate": "arra-oracle-v3 src/tools/forum.ts:161-171 (isError:true when threadId is closed and reopen is not true)",
+    "commit": "61e5f8b6"
+  },
+  "success": {
+    "thread_id": {
+      "type": [
+        "number",
+        "string"
+      ],
+      "note": "v3: an auto-increment integer (forum.ts OracleThreadInput.threadId?: number). v4: the session NAME, a string (V3-PARITY.md §3 A3; §8 step 18 asserts a string). Both are accepted here; the step asserts the v4 string."
+    },
+    "message_id": {
+      "type": [
+        "number",
+        "string"
+      ],
+      "note": "v3 integer; v4 the message public_id (§3 A3)."
+    },
+    "status": {
+      "type": "string"
+    },
+    "oracle_response": {
+      "type": "object",
+      "nullable": true,
+      "shape": {
+        "content": "string",
+        "principles_found": "number",
+        "patterns_found": "number"
+      }
+    },
+    "issue_url": {
+      "type": "string",
+      "nullable": true
+    }
+  }
+}

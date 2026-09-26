@@ -14,6 +14,7 @@ import {
   checkSupportedRuntime,
   composeKnowledgeAccess,
   composeService,
+  composeV3Compat,
   GLOBAL_BODY_BACKSTOP,
   readConfig,
   runStartupIndexWork,
@@ -21,15 +22,23 @@ import {
 import { loadPolicy } from "./auth/loader";
 
 /** Build a fully wired app from explicit configuration. */
-export async function buildApp(config: { policyPath: string; origin: string; assets?: string }) {
-  const service = await composeService({ policyPath: config.policyPath, origin: config.origin, port: 0 });
+export async function buildApp(config: { policyPath: string; origin: string; assets?: string; v3Compat?: boolean }) {
+  // R18 D10: explicit configuration wins; otherwise the operator's env. Read
+  // once, so the service and the X-Arra-Peer header read agree.
+  const v3Compat = config.v3Compat ?? composeV3Compat();
+  const service = await composeService({
+    policyPath: config.policyPath,
+    origin: config.origin,
+    port: 0,
+    v3Compat,
+  });
   // #31: the same process is the sole knowledge writer (see
   // knowledge/transport.ts's file header). Opened once here and shared by
   // both the HTTP route and the MCP `kb_*` tools below. The chat model (#32 /
   // R9) is composed inside it, from the same env.
   const access = await composeKnowledgeAccess();
   configureKnowledgeAccess(access);
-  return createApp({ origin: config.origin }, service, createMcpAdapter(service), {
+  return createApp({ origin: config.origin, v3Compat }, service, createMcpAdapter(service), {
     assets: config.assets,
     knowledge: { policyPath: config.policyPath, access },
   });
