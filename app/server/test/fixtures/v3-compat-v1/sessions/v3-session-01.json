@@ -422,6 +422,7 @@
     },
     {
       "step": 13,
+      "ref": "search-apfs-after-supersede",
       "slice": "V5",
       "as": "rw",
       "method": "tools/call",
@@ -430,6 +431,16 @@
         "query": "APFS snapshot tmutil disk management",
         "limit": 5
       },
+      "gate": [
+        {
+          "as": "rw",
+          "tool": "oracle_search"
+        },
+        {
+          "as": "rw",
+          "tool": "oracle_supersede"
+        }
+      ],
       "provenance": [],
       "assert": {
         "kind": "listed_and_ok",
@@ -437,7 +448,7 @@
         "excludesCaptured": [
           "L1"
         ],
-        "notes": "V3-PARITY.md §8 step 10 (search half): the superseded step-3 node no longer returns (D3 recall-eligibility)."
+        "notes": "V3-PARITY.md §8 step 10 (search half): the superseded step-3 node no longer returns (D3 recall-eligibility). Gated on oracle_supersede as well (R18 V5, 2026-09-27): the absence this step asserts is only meaningful once step 10's supersede ran, the harness's own rule for absence steps; with V2 unbuilt the step is GAP, never a false FAIL."
       }
     },
     {
@@ -684,6 +695,16 @@
         "query": "OTA flasher lives with the firmware repo",
         "limit": 5
       },
+      "gate": [
+        {
+          "as": "rw",
+          "tool": "oracle_search"
+        },
+        {
+          "as": "rw",
+          "tool": "oracle_trace_distill"
+        }
+      ],
       "provenance": [
         {
           "sessionId": "1367b426-bd8b-4631-a8a5-38032baace47",
@@ -699,7 +720,7 @@
         "includesCaptured": [
           "D1"
         ],
-        "notes": "V3-PARITY.md §8 step 15 (search half): oracle_search finds the learning the distill just published."
+        "notes": "V3-PARITY.md §8 step 15 (search half): oracle_search finds the learning the distill just published. Gated on oracle_trace_distill as well (R18 V5, 2026-09-27): D1 is captured from step 19, so without V3's distill the step has nothing to find and is GAP, never a false FAIL."
       }
     },
     {
@@ -1001,8 +1022,8 @@
         "kind": "alias_matches",
         "aliasOf": "oracle_search",
         "neverListed": true,
-        "notes": "V3-PARITY.md §8 step 22 and §2.4 (D6): `arra_search` resolves to `oracle_search`'s action and result set, and is never advertised. No indexed real `arra_search` call was found on this machine within the current lookback window -- §2.4 [run] dates the last one at 2026-05-18, from the era when v3 briefly *listed* arra_* names (rebrand commit 8b0b0373). This step is therefore modelled on §2.4's own citation plus step 7's real oracle_search shape, not on a freshly re-found transcript.",
-        "compareToStepRef": "search-apfs"
+        "notes": "V3-PARITY.md §8 step 22 and §2.4 (D6): `arra_search` resolves to `oracle_search`'s action and result set, and is never advertised. No indexed real `arra_search` call was found on this machine within the current lookback window -- §2.4 [run] dates the last one at 2026-05-18, from the era when v3 briefly *listed* arra_* names (rebrand commit 8b0b0373). This step is therefore modelled on §2.4's own citation plus step 7's real oracle_search shape, not on a freshly re-found transcript. Compared with step 13, the same query at the same dataset state (R18 V5, 2026-09-27): rev 2 compared with step 7, but steps 9-10 add L1B and supersede L1 in between, so no correct search could return step 7's set here.",
+        "compareToStepRef": "search-apfs-after-supersede"
       }
     },
     {
