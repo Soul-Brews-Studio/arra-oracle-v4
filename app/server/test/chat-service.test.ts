@@ -16,7 +16,9 @@
  *      not a member of never reaches `items`, `answer` or the model's own
  *      input.
  *   3. Partial coverage is reported STRUCTURALLY (a `coverage: "partial"`
- *      field plus an `excluded` entry), never a silent truncation.
+ *      field plus an `excluded` entry), never a silent truncation -- and,
+ *      since #85 / R4, for an unauthorized omission too. The full coverage
+ *      matrix lives in `chat-coverage.test.ts`.
  *   4. Both governed envelope families still work for chat's own grammar and
  *      stored-state failures.
  */
@@ -98,12 +100,15 @@ describe("real persistence: getContext and answerChat inside the real gate", () 
         const ids = result.items.map((item: { public_id: string }) => item.public_id).sort();
         expect(ids).toEqual([parsed.visibleId, parsed.visibleId2].sort());
         expect(result.items.some((item: { content: string }) => item.content.includes("secret"))).toBe(false);
-        expect(result.coverage).toBe("full");
-        expect(result.excluded).toContainEqual({
-          reason: "unauthorized",
-          session_name: "session-other",
-          public_id: parsed.secretId,
-        });
+        // #85, overnight ruling R4 (docs/overnight/DECISIONS.md, chat-v1.md
+        // amendment): this used to assert "full" -- that assertion encoded
+        // the bug. Omitted evidence is incomplete for any reason, and the
+        // unauthorized item is reported as an anonymous count, never by its
+        // public_id or session name.
+        expect(result.coverage).toBe("partial");
+        expect(result.excluded).toEqual([{ reason: "unauthorized", count: 1 }]);
+        expect(JSON.stringify(result).includes(parsed.secretId)).toBe(false);
+        expect(JSON.stringify(result).includes("session-other")).toBe(false);
         // NO model call anywhere on this path.
         expect(parsed.modelCallsAfterGetContext).toBe(0);
 
@@ -151,10 +156,9 @@ describe("real persistence: getContext and answerChat inside the real gate", () 
               e.reason === "budget_exceeded" && e.session_name === "session-main",
           ),
         ).toBe(true);
-        // The unauthorized candidate is STILL reported, distinctly.
-        expect(
-          result.excluded.some((e: { reason: string; session_name: string }) => e.reason === "unauthorized"),
-        ).toBe(true);
+        // The unauthorized candidate is STILL reported, distinctly -- as a
+        // count, with no identifiers (R4).
+        expect(result.excluded).toContainEqual({ reason: "unauthorized", count: 1 });
 
         // answerChat composed from the SAME authorized, budget-capped set:
         // the model call happened exactly once, after getContext's own
