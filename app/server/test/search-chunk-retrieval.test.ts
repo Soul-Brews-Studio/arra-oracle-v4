@@ -17,6 +17,12 @@
  * - retired / superseded / stale-revision / other-workspace / pending rows are
  *   each present in search_chunks_v1 and MUST NOT surface.
  * - semantic ranking uses stub vectors whose squared-L2 distances are known.
+ * - a node indexed ONLY under another embedding profile, sitting exactly at
+ *   the query vector, never answers the default profile's search: vector
+ *   spaces are never mixed. A reader whose embedder serves that other profile
+ *   answers it by default, since the default is the embedder's own profile.
+ * - the candidate query itself is workspace-scoped (a spying adapter records
+ *   every candidate), not only the follow-up head/eligibility reads.
  */
 
 import { afterAll, describe, expect, test } from "bun:test";
@@ -30,6 +36,7 @@ const TIMEOUT_MS = 180_000;
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
 const PROFILE = "all-minilm";
+const OTHER_PROFILE = "other-profile";
 const DIMS = 384;
 
 const MISSING: string[] = [];
@@ -63,6 +70,7 @@ const N = {
   stale: pad("srchStale"),
   pending: pad("srchPending"),
   beta: pad("srchBeta"),
+  other: pad("srchOther"),
 };
 const R = {
   thai: pad("revThai"),
@@ -74,12 +82,13 @@ const R = {
   stale1: pad("revStale1"),
   pending: pad("revPending"),
   beta: pad("revBeta"),
+  other: pad("revOther"),
   stale2: pad("revStale2"),
 };
-const REVISIONS = [R.thai, R.fox, R.mix, R.retired, R.old, R.successor, R.stale1, R.pending, R.beta, R.stale2];
-const chunk = (revisionId: string) => deriveChunkId(revisionId, CHUNKER_VERSION, PROFILE, 0n);
+const REVISIONS = [R.thai, R.fox, R.mix, R.retired, R.old, R.successor, R.stale1, R.pending, R.beta, R.other, R.stale2];
+const chunk = (revisionId: string, profile = PROFILE) => deriveChunkId(revisionId, CHUNKER_VERSION, profile, 0n);
 
-type Op = { label: string; facade: "publication" | "context" | "reader" | "harness"; method: string; request?: unknown };
+type Op = { label: string; facade: "publication" | "context" | "reader" | "reader_other" | "harness"; method: string; request?: unknown };
 
 function buildOps(fixture: Fixture): Op[] {
   const alpha = fixture.workspaces[ALPHA]!;
@@ -95,7 +104,7 @@ function buildOps(fixture: Fixture): Op[] {
         content: revisionEnvelope(workspace, seeded, node, { title, body, base_revision_id: base }),
       },
     });
-  const index = (label: string, workspace: string, node: string, revision: string) =>
+  const index = (label: string, workspace: string, node: string, revision: string, profile = PROFILE) =>
     ops.push({
       label,
       facade: "context",
@@ -105,16 +114,16 @@ function buildOps(fixture: Fixture): Op[] {
         node_id: node,
         revision_id: revision,
         chunker_version: CHUNKER_VERSION,
-        embedding_profile: { name: PROFILE, dims: DIMS },
+        embedding_profile: { name: profile, dims: DIMS },
       },
     });
-  const embed = (label: string, workspace: string, revision: string, vector: number[]) =>
-    ops.push({ label, facade: "context", method: "writeChunkEmbedding", request: { workspace_name: workspace, id: chunk(revision), embedding: vector } });
+  const embed = (label: string, workspace: string, revision: string, vector: number[], profile = PROFILE) =>
+    ops.push({ label, facade: "context", method: "writeChunkEmbedding", request: { workspace_name: workspace, id: chunk(revision, profile), embedding: vector } });
   const keyword = (label: string, query: string, extra: Record<string, unknown> = {}, workspace = ALPHA) =>
     ops.push({ label, facade: "reader", method: "searchKnowledgeKeyword", request: { workspace_name: workspace, query, ...extra } });
   const semantic = (label: string, query: string, extra: Record<string, unknown> = {}, workspace = ALPHA) =>
     ops.push({ label, facade: "reader", method: "searchKnowledgeSemantic", request: { workspace_name: workspace, query, ...extra } });
-  const harness = (label: string, method: string) => ops.push({ label, facade: "harness", method });
+  const harness = (label: string, method: string, request?: unknown) => ops.push({ label, facade: "harness", method, request });
 
   publish("pub_thai", ALPHA, alpha, N.thai, "บันทึก", "ฉันหลงลืมกุญแจไว้ที่บ้าน");
   publish("pub_fox", ALPHA, alpha, N.fox, "fox note", "the quick brown fox jumps");
@@ -125,6 +134,7 @@ function buildOps(fixture: Fixture): Op[] {
   publish("pub_stale1", ALPHA, alpha, N.stale, "stale note", "zebrafish หลงลืม");
   publish("pub_pending", ALPHA, alpha, N.pending, "pending note", "หลงลืม pending-marker");
   publish("pub_beta", BETA, beta, N.beta, "beta note", "ฉันหลงลืมกุญแจไว้ที่บ้าน beta-marker");
+  publish("pub_other", ALPHA, alpha, N.other, "profile note", "other-profile-marker");
 
   // Before any chunk index call: the reader answers, never builds an index.
   harness("indices_before", "listIndices");
@@ -142,6 +152,8 @@ function buildOps(fixture: Fixture): Op[] {
     ["idx_pending", ALPHA, N.pending, R.pending],
     ["idx_beta", BETA, N.beta, R.beta],
   ] as const) index(label, workspace, node, revision);
+  // Indexed and embedded ONLY under another profile, AT the query vector.
+  index("idx_other", ALPHA, N.other, R.other, OTHER_PROFILE);
   harness("indices_after_writer", "listIndices");
 
   embed("emb_thai", ALPHA, R.thai, E0);
@@ -152,6 +164,7 @@ function buildOps(fixture: Fixture): Op[] {
   embed("emb_successor", ALPHA, R.successor, E2);
   embed("emb_stale1", ALPHA, R.stale1, E0);
   embed("emb_beta", BETA, R.beta, E0);
+  embed("emb_other", ALPHA, R.other, E0, OTHER_PROFILE);
   // N.pending stays pending: indexed, never embedded.
 
   // Lifecycle AFTER indexing, so the ineligible nodes' chunks really exist.
@@ -196,11 +209,16 @@ function buildOps(fixture: Fixture): Op[] {
   keyword("kw_english_case", "QUICK Brown");
   keyword("kw_limit_over", "ลืม", { limit: 51 });
   keyword("kw_unknown_workspace", "ลืม", {}, "no-such-workspace");
+  keyword("kw_other_profile_text", "other-profile-marker");
+  // What the candidate query ITSELF returns, before any re-check.
+  harness("spy_ngram", "spyKeyword", { workspace_name: ALPHA, query: "ลืม" });
+  harness("spy_short", "spyKeyword", { workspace_name: ALPHA, query: "ลื" });
 
   // An index the writer did not build (dropped, then an older icu one): the
   // reader falls back to the scan and says why; only the writer repairs it.
   harness("drop", "dropIndices");
   keyword("kw_no_index", "ลืม");
+  harness("spy_no_index", "spyKeyword", { workspace_name: ALPHA, query: "ลืม" });
   harness("indices_after_no_index_read", "listIndices");
   harness("icu", "createIcuIndex");
   keyword("kw_icu_index", "ลืม");
@@ -217,6 +235,7 @@ function buildOps(fixture: Fixture): Op[] {
   semantic("sem_profile_mismatch", "q-e0", { embedding_profile: "other-profile" });
   semantic("sem_embedder_down", "q-unknown");
   semantic("sem_beta", "q-e0", {}, BETA);
+  ops.push({ label: "sem_other_default", facade: "reader_other", method: "searchKnowledgeSemantic", request: { workspace_name: ALPHA, query: "q-e0" } });
   harness("embed_calls", "embedCalls");
   return ops;
 }
@@ -265,6 +284,7 @@ describe("#30 knowledge retrieval on a real gated dataset", () => {
             ops: buildOps(fixture),
             revisionIds: REVISIONS,
             embedderProfile: PROFILE,
+            otherProfile: OTHER_PROFILE,
             queryVectors: { "q-e0": E0 },
           }),
         ],
@@ -325,6 +345,8 @@ describe("#30 knowledge retrieval on a real gated dataset", () => {
     // Beta sees only beta, even though alpha holds the same text.
     expect(nodes("kw_beta")).toEqual([N.beta]);
     expect((ok("kw_beta").hits as Hit[])[0]!.revision_id).toBe(R.beta);
+    // Chunk text is the same under every profile: keyword search is profile-blind.
+    expect(nodes("kw_other_profile_text")).toEqual([N.other]);
     for (const label of ["kw_inside_word", "kw_short"]) {
       for (const id of [N.retired, N.old, N.stale, N.beta]) expect(nodes(label)).not.toContain(id);
     }
@@ -342,6 +364,19 @@ describe("#30 knowledge retrieval on a real gated dataset", () => {
     expect(nodes("kw_english_case")).toEqual([N.fox]);
     expect(failed("kw_limit_over")).toMatchObject({ code: "invalid_value", path: "/limit" });
     expect(failed("kw_unknown_workspace")).toMatchObject({ code: "invalid_reference", path: "/workspace_name" });
+  });
+
+  runIt("keyword: the candidate query itself is workspace-scoped, on the index and on both scans", () => {
+    for (const label of ["spy_ngram", "spy_short", "spy_no_index"]) {
+      const { value, candidates } = ok(label) as { value: { match: string; hits: Hit[] }; candidates: string[] };
+      // beta holds the same Thai text; its chunk is never even a candidate.
+      expect(candidates, label).toContain(N.thai);
+      expect(candidates, label).not.toContain(N.beta);
+      expect(value.hits.map((hit) => hit.node_id).sort(), label).toEqual([N.thai, N.pending].sort());
+    }
+    expect(ok("spy_ngram").value.match).toBe("ngram");
+    expect(ok("spy_short").value.match).toBe("substring_scan");
+    expect(ok("spy_no_index").value).toMatchObject({ match: "substring_scan", scan_reason: "index_unavailable" });
   });
 
   runIt("index: the reader never creates it; the writer builds the shared ngram(3,3) index and rebuilds only on mismatch", () => {
@@ -388,8 +423,9 @@ describe("#30 knowledge retrieval on a real gated dataset", () => {
     expect(value.metric).toBe("l2_squared");
     const hits = value.hits as Hit[];
     // thai=e0 (0), mix=(e0+e1)/sqrt2 (2 - sqrt2), fox=e1 (2), successor=e2 (2):
-    // a tie at 2 is broken by node id. retired/old/stale1/beta sit AT e0 and
-    // pending has no vector: none of them may appear.
+    // a tie at 2 is broken by node id. retired/old/stale1/beta sit AT e0,
+    // pending has no vector, and `other` sits AT e0 under another profile:
+    // none of them may appear.
     expect(hits.map((hit) => hit.node_id)).toEqual([N.thai, N.mix, ...[N.fox, N.successor].sort()]);
     expect(hits[0]!.distance).toBeCloseTo(0, 5);
     expect(hits[1]!.distance).toBeCloseTo(2 - Math.SQRT2, 5);
@@ -402,12 +438,21 @@ describe("#30 knowledge retrieval on a real gated dataset", () => {
     expect(nodes("sem_beta")).toEqual([N.beta]);
   });
 
+  runIt("semantic: the default profile is the query embedder's own, and its search reads only that profile's vectors", () => {
+    const value = ok("sem_other_default");
+    expect(value.embedding_profile).toBe(OTHER_PROFILE);
+    expect(nodes("sem_other_default")).toEqual([N.other]);
+    expect(value.hits[0].chunk_ids).toEqual([chunk(R.other, OTHER_PROFILE)]);
+    expect(value.hits[0].distance).toBeCloseTo(0, 5);
+    expect(nodes("sem_nearest")).not.toContain(N.other);
+  });
+
   runIt("semantic: a profile the embedder does not serve is refused; an embedder failure is writer_unavailable", () => {
     expect(failed("sem_profile_mismatch")).toMatchObject({ code: "invalid_value", path: "/embedding_profile" });
     expect(failed("sem_embedder_down")).toMatchObject({ code: "writer_unavailable" });
     // The refused profile never reached the model; keyword search never does.
     const calls = ok("embed_calls") as string[];
-    expect(calls.filter((q) => q === "q-e0")).toHaveLength(4);
+    expect(calls.filter((q) => q === "q-e0")).toHaveLength(5);
     expect(calls).not.toContain("ลืม");
   });
 });

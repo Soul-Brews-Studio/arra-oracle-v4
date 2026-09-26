@@ -1,21 +1,29 @@
 /**
  * #30 retrieval (overnight R7 #30 part + R14) -- the PURE half: request
- * grammar of `searchKnowledgeKeyword` / `searchKnowledgeSemantic` and the
- * snippet window. No dataset; the persisted behaviour is
- * `search-chunk-retrieval.test.ts`.
+ * grammar of `searchKnowledgeKeyword` / `searchKnowledgeSemantic`, the
+ * snippet window, and the chunk-boundary helpers of the keyword path (the
+ * per-chunk pre-filter, the scan predicate, hit ordering). No dataset; the
+ * persisted behaviour is `search-chunk-retrieval*.test.ts`.
  */
 
 import { describe, expect, test } from "bun:test";
 import { ContractError } from "../src/contracts/errors";
 import {
+  CHUNK_SIZE_CHARS,
+  chunkMayHoldQuery,
+  chunkSourceText,
+  chunkText,
   DEFAULT_EMBEDDING_PROFILE,
   DEFAULT_SEARCH_LIMIT,
+  groupKnowledgeHits,
+  keywordScanPredicate,
   MAX_SEARCH_LIMIT,
   parseSearchKnowledgeKeyword,
   parseSearchKnowledgeSemantic,
   searchSnippet,
   SNIPPET_CODE_POINTS,
 } from "../src/publication/search-chunk";
+import { containsFolded } from "../src/fts/fts";
 
 const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 const refused = (run: () => unknown) => {
@@ -71,15 +79,15 @@ describe("searchKnowledgeKeyword grammar", () => {
 describe("searchKnowledgeSemantic grammar", () => {
   const parse = (request: Record<string, unknown>) => parseSearchKnowledgeSemantic(bytes(request));
 
-  test("the profile is optional and defaults to the current default profile name", () => {
+  test("the profile is optional; absent means the query embedder's own profile, resolved by the service", () => {
     expect(DEFAULT_EMBEDDING_PROFILE).toBe("all-minilm");
     expect(parse({ workspace_name: "alpha", query: "q" })).toEqual({
       workspace_name: "alpha",
       query: "q",
       limit: DEFAULT_SEARCH_LIMIT,
-      embedding_profile: DEFAULT_EMBEDDING_PROFILE,
+      embedding_profile: null,
     });
-    expect(parse({ workspace_name: "alpha", query: "q", embedding_profile: null }).embedding_profile).toBe(DEFAULT_EMBEDDING_PROFILE);
+    expect(parse({ workspace_name: "alpha", query: "q", embedding_profile: null }).embedding_profile).toBeNull();
     expect(parse({ workspace_name: "alpha", query: "q", embedding_profile: "profile-b", limit: 3 })).toMatchObject({
       embedding_profile: "profile-b",
       limit: 3,
@@ -121,5 +129,80 @@ describe("searchSnippet", () => {
   test("no occurrence (semantic) means the chunk's opening window", () => {
     expect(searchSnippet(`${"z".repeat(400)}`, null)).toBe("z".repeat(SNIPPET_CODE_POINTS));
     expect(searchSnippet(`abc${"z".repeat(400)}`, "absent")).toBe(`abc${"z".repeat(SNIPPET_CODE_POINTS - 3)}`);
+  });
+});
+
+describe("chunkMayHoldQuery: the per-chunk pre-filter is exact about every way a chunk can hold part of an occurrence", () => {
+  test("whole, cut at the end, cut at the start, or wholly inside a longer query", () => {
+    expect(chunkMayHoldQuery("ฉันหลงลืมกุญแจ", "ลืม")).toBe(true);
+    expect(chunkMayHoldQuery("aaaaหล", "หลงลืม")).toBe(true); // ends with a prefix
+    expect(chunkMayHoldQuery("งลืม tail", "หลงลืม")).toBe(true); // starts with a suffix
+    expect(chunkMayHoldQuery("cdefgh", "abcdefghij")).toBe(true); // inside
+    expect(chunkMayHoldQuery("xx QU", "quick")).toBe(true); // case-folded
+  });
+
+  test("a chunk that only shares a trigram with the query is dropped", () => {
+    expect(chunkMayHoldQuery("ฉันหลงลืมกุญแจไว้ที่บ้าน", "หลงทาง")).toBe(false);
+    expect(chunkMayHoldQuery("ทางxyq", "zหลง")).toBe(false);
+  });
+
+  test("final sigma: a chunk-local fold never hides an occurrence the whole text holds", () => {
+    // "ΟΔΟΣ" alone folds its last Σ to final ς; followed by Α it folds to σ.
+    const text = "ΟΔΟΣΑΒ";
+    expect(containsFolded(text, "σα")).toBe(true);
+    expect(chunkMayHoldQuery("ΟΔΟΣ", "σα")).toBe(true);
+    expect(chunkMayHoldQuery("ΑΒ", "σα")).toBe(true);
+  });
+
+  test("property: every chunk an occurrence spans passes, for every cut position", () => {
+    const query = "หลงลืม";
+    for (let pad = 0; pad < 12; pad++) {
+      const text = `${"x".repeat(pad)}${query}${"y".repeat(7)}`;
+      const chunks = chunkText(text, 5);
+      let at = 0;
+      const start = text.indexOf(query);
+      for (const chunk of chunks) {
+        const [from, to] = [at, at + chunk.length];
+        if (from < start + query.length && to > start) expect(chunkMayHoldQuery(chunk, query), `pad ${pad} chunk ${JSON.stringify(chunk)}`).toBe(true);
+        at = to;
+      }
+    }
+  });
+});
+
+describe("keywordScanPredicate: the scan reaches across chunk seams", () => {
+  test("a short query adds a seam clause for every split, on non-first chunks only", () => {
+    const predicate = keywordScanPredicate("หลง");
+    expect(predicate).toContain("text ILIKE '%หลง%'");
+    expect(predicate).toContain("chunk_index > 0");
+    expect(predicate).toContain("text ILIKE 'ลง%'");
+    expect(predicate).toContain("text ILIKE 'ง%'");
+    expect(keywordScanPredicate("ก")).toBe("text ILIKE '%ก%' ESCAPE '\\'");
+  });
+
+  test("a long query is cut into pieces, one more than the chunk boundaries it can cross", () => {
+    const query = "abcdefghij".repeat(110);
+    const pieces = [...keywordScanPredicate(query).matchAll(/ILIKE '%([^%']*)%'/g)].map((m) => m[1]!);
+    expect(pieces).toHaveLength(1 + Math.ceil((query.length - 1) / CHUNK_SIZE_CHARS));
+    expect(pieces.join("")).toBe(query);
+    for (const piece of pieces) expect([...piece].length).toBeGreaterThanOrEqual(3);
+  });
+
+  test("wildcards and quotes in a seam clause are escaped", () => {
+    expect(keywordScanPredicate("5%'")).toContain("text ILIKE '''%' ESCAPE");
+    expect(keywordScanPredicate("5%'")).toContain("text ILIKE '\\%''%' ESCAPE");
+  });
+
+  test("the chunk source text is the title, a blank line, and the body", () => {
+    expect(chunkSourceText("t", "body")).toBe("t\n\nbody");
+  });
+});
+
+describe("groupKnowledgeHits: unranked hits sort after every ranked one", () => {
+  const chunk = (node: string, rank: number | null) => ({ id: `c-${node}`, node_id: node, revision_id: `r-${node}`, chunk_index: 0n, text: node, rank });
+  const heads = new Map(["a", "b", "c", "d"].map((node) => [node, { revision_id: `r-${node}`, title: node }]));
+  test("scores descending, then nulls by node id -- a total order", () => {
+    const hits = groupKnowledgeHits([chunk("d", null), chunk("a", null), chunk("c", 1), chunk("b", 5)], heads, "descending", null);
+    expect(hits.map((hit) => hit.node_id)).toEqual(["b", "c", "a", "d"]);
   });
 });

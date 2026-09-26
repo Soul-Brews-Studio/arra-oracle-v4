@@ -11,20 +11,29 @@
 // Ops dispatch by facade:
 //   publication/context  -> the writer bundle (bytes in, value out)
 //   reader               -> the reader bundle's context facade
+//   reader_other         -> a second reader whose query embedder serves
+//                           `otherProfile` (the profile-default and
+//                           profile-filter cases)
 //   harness              -> test-side dataset inspection/surgery on
 //                           search_chunks_v1's indexes (never product code)
 const [, , datasetRoot, payloadJson] = Bun.argv;
 const payload = JSON.parse(payloadJson ?? "{}") as {
-  ops: Array<{ label: string; facade: "publication" | "context" | "reader" | "harness"; method: string; request?: any }>;
+  ops: Array<{ label: string; facade: "publication" | "context" | "reader" | "reader_other" | "harness"; method: string; request?: any }>;
   revisionIds: string[];
   clockMs?: number;
   embedderProfile: string;
+  otherProfile?: string;
   queryVectors: Record<string, number[]>;
 };
 
-const servicePath = new URL("../../../../src/publication/service.ts", import.meta.url).pathname;
-const { openEvidenceReader, openEvidenceWriter } = await import(servicePath);
+const src = (file: string) => new URL(`../../../../src/${file}`, import.meta.url).pathname;
+const { openEvidenceReader, openEvidenceWriter } = await import(src("publication/service.ts"));
+const { makeAdapter } = await import(src("publication/service.makeAdapter.ts"));
+const { openPrivateConnection } = await import(src("publication/service.openPrivateConnection.ts"));
+const { searchKnowledgeKeyword } = await import(src("publication/service.searchKnowledgeKeyword.ts"));
 const { connect, Index } = await import("@lancedb/lancedb");
+const { chmodSync, mkdirSync } = await import("node:fs");
+const { join } = await import("node:path");
 
 const embedCalls: string[] = [];
 const embedder = {
@@ -45,6 +54,11 @@ const writer = await openEvidenceWriter(datasetRoot!, {
   embedder,
 });
 const reader = await openEvidenceReader(datasetRoot!, { embedder });
+const readerOther = await openEvidenceReader(datasetRoot!, {
+  embedder: { profile: payload.otherProfile ?? "other-profile", embed: embedder.embed },
+});
+/** The index files of search_chunks_v1, for the build-failure surgery. */
+const indexDir = join(datasetRoot!, "search_chunks_v1.lance", "_indices");
 
 let harnessConn: Awaited<ReturnType<typeof connect>> | null = null;
 const chunkTable = async () => {
@@ -85,6 +99,46 @@ const harness: Record<string, (request: any) => Promise<unknown>> = {
   async embedCalls() {
     return [...embedCalls];
   },
+  /** Surgery: make the NEXT index build fail for real (the index directory is
+   *  not writable), while row appends -- data/, _versions/ -- still land. */
+  async lockIndexDir() {
+    mkdirSync(indexDir, { recursive: true });
+    chmodSync(indexDir, 0o555);
+    return true;
+  },
+  async unlockIndexDir() {
+    chmodSync(indexDir, 0o755);
+    return true;
+  },
+  /** How many chunk rows the text index covers, and how many it does not. */
+  async indexStats() {
+    const tbl = await chunkTable();
+    const [index] = (await tbl.listIndices()).filter((i) => i.columns.includes("text"));
+    if (index === undefined) return null;
+    const stats = await tbl.indexStats(index.name);
+    return { indexed: stats?.numIndexedRows ?? null, unindexed: stats?.numUnindexedRows ?? null };
+  },
+  /** Run searchKnowledgeKeyword over a spying adapter and report every
+   *  CANDIDATE chunk's node id -- what the candidate query itself returned,
+   *  before any head/eligibility/workspace re-check. */
+  async spyKeyword(request) {
+    const base = makeAdapter(await openPrivateConnection(datasetRoot!), () => {});
+    const candidates: string[] = [];
+    const record = (rows: Record<string, unknown>[]) => {
+      for (const row of rows) candidates.push(row.node_id as string);
+      return rows;
+    };
+    const spy = {
+      ...base,
+      fullTextSearchChunks: async (...args: unknown[]) => record(await base.fullTextSearchChunks(...args)),
+      orderedProjection: async (table: string, ...rest: unknown[]) => {
+        const rows = await base.orderedProjection(table, ...rest);
+        return table === "search_chunks_v1" ? record(rows) : rows;
+      },
+    };
+    const value = await searchKnowledgeKeyword(spy, new TextEncoder().encode(JSON.stringify(request)));
+    return { value, candidates: [...new Set(candidates)].sort() };
+  },
 };
 
 const describeError = (error: unknown): Record<string, unknown> => {
@@ -106,7 +160,8 @@ try {
         results[op.label] = { ok: true, value: await harness[op.method]!(op.request) };
         continue;
       }
-      const bundle = op.facade === "reader" ? reader.context : (writer as Record<string, any>)[op.facade];
+      const bundle =
+        op.facade === "reader" ? reader.context : op.facade === "reader_other" ? readerOther.context : (writer as Record<string, any>)[op.facade];
       const call = bundle?.[op.method];
       if (typeof call !== "function") {
         results[op.label] = { ok: false, code: "no_such_method" };

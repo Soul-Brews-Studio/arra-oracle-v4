@@ -12,6 +12,11 @@
 // Isolation on the wire: a credential granted only on beta is refused on
 // alpha; beta's copy of the same Thai text never answers an alpha search, and
 // alpha's never answers a beta one.
+//
+// Chunk seams on the wire: a node whose ทะเลสาบ is cut by the 1000-code-unit
+// chunk boundary (chunk 0 ends "ทะ", chunk 1 starts "เลสาบ") is found for
+// ทะเลสาบ through the index, and for ทะเล -- split 2+2, no whole trigram in
+// either chunk -- through the seam scan, on both transports.
 
 import { afterAll, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
@@ -40,6 +45,7 @@ const basis = (i: number) => Array.from({ length: 384 }, (_, j) => (j === i ? 1 
 const NODE_THAI = pad("liveThai");
 const NODE_FOX = pad("liveFox");
 const NODE_BETA = pad("liveBeta");
+const NODE_STRADDLE = pad("liveStraddle");
 
 type Step = {
   label: string;
@@ -101,9 +107,11 @@ runIt(
       publish("thai", "alpha", NODE_THAI, "บันทึก", THAI),
       publish("fox", "alpha", NODE_FOX, "fox note", "the quick brown fox"),
       publish("beta", "beta", NODE_BETA, "beta note", THAI),
+      publish("straddle", "alpha", NODE_STRADDLE, "t", `${"a".repeat(995)}ทะเลสาบ tail`),
       index("idx_thai", "alpha", NODE_THAI, "thai", "http"),
       index("idx_fox", "alpha", NODE_FOX, "fox", "mcp"),
       index("idx_beta", "beta", NODE_BETA, "beta", "http"),
+      index("idx_straddle", "alpha", NODE_STRADDLE, "straddle", "http"),
       embed("emb_thai", "alpha", "idx_thai", basis(0), "http"),
       embed("emb_fox", "alpha", "idx_fox", basis(1), "mcp"),
       embed("emb_beta", "beta", "idx_beta", basis(0), "http"),
@@ -114,6 +122,10 @@ runIt(
       s("kw_short_http", "http", "read", "searchKnowledgeKeyword", keyword("ลื")),
       s("kw_short_mcp", "mcp", "read", "searchKnowledgeKeyword", keyword("ลื")),
       s("kw_false_positive_http", "http", "read", "searchKnowledgeKeyword", keyword("หลงทาง")),
+      s("kw_straddle_http", "http", "read", "searchKnowledgeKeyword", keyword("ทะเลสาบ")),
+      s("kw_straddle_mcp", "mcp", "read", "searchKnowledgeKeyword", keyword("ทะเลสาบ")),
+      s("kw_seam_http", "http", "read", "searchKnowledgeKeyword", keyword("ทะเล")),
+      s("kw_seam_mcp", "mcp", "read", "searchKnowledgeKeyword", keyword("ทะเล")),
       s("sem_http", "http", "read", "searchKnowledgeSemantic", semantic("q-e0")),
       s("sem_mcp", "mcp", "read", "searchKnowledgeSemantic", semantic("q-e0")),
       s("sem_embedder_down_http", "http", "read", "searchKnowledgeSemantic", semantic("q-missing")),
@@ -140,7 +152,7 @@ runIt(
     const out: Record<string, any> = JSON.parse(result.stdout.trim().split("\n").filter(Boolean).at(-1)!);
 
     // ── setup landed on the wire ──────────────────────────────────────────
-    for (const label of ["thai", "fox", "beta", "idx_thai", "idx_beta", "emb_thai", "emb_beta"]) {
+    for (const label of ["thai", "fox", "beta", "straddle", "idx_thai", "idx_beta", "idx_straddle", "emb_thai", "emb_beta"]) {
       expect(out[label]?.status, `${label}: ${JSON.stringify(out[label])}`).toBe(200);
     }
     for (const label of ["idx_fox", "emb_fox"]) expect(out[label]?.ok, `${label}: ${JSON.stringify(out[label])}`).toBe(true);
@@ -170,6 +182,17 @@ runIt(
     expect(out.kw_short_http.body.hits.map((h: { node_id: string }) => h.node_id)).toEqual([NODE_THAI]);
     expect(out.kw_short_mcp.value).toEqual(out.kw_short_http.body);
     expect(out.kw_false_positive_http.body).toMatchObject({ match: "ngram", hits: [] });
+
+    // ── an occurrence cut by a chunk boundary, on both transports ─────────
+    expect(out.idx_straddle.body.rows).toHaveLength(2);
+    expect(out.kw_straddle_http.body.match).toBe("ngram");
+    expect(out.kw_straddle_http.body.hits.map((h: { node_id: string }) => h.node_id)).toEqual([NODE_STRADDLE]);
+    expect(out.kw_straddle_http.body.hits[0].snippet).toContain("ทะเลสาบ");
+    expect(out.kw_straddle_mcp.value).toEqual(out.kw_straddle_http.body);
+    expect(out.kw_seam_http.body.match).toBe("ngram");
+    expect(out.kw_seam_http.body.hits).toHaveLength(1);
+    expect(out.kw_seam_http.body.hits[0]).toMatchObject({ node_id: NODE_STRADDLE, match: "substring_scan", score: null });
+    expect(out.kw_seam_mcp.value).toEqual(out.kw_seam_http.body);
 
     // ── semantic: nearest first, same answer over both transports ─────────
     expect(out.sem_http.status, JSON.stringify(out.sem_http)).toBe(200);
