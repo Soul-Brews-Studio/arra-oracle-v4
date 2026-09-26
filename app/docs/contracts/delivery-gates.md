@@ -63,3 +63,17 @@ Appended; the table row "Copy migration and release" above is left as recorded. 
 **What changed.** #34 has a non-destructive rehearsal: `arra-migrate-copy` (Python orchestrator, `app/migrate-py/src/arra_migrate/copy_migration/`) plus the Bun knowledge worker (`app/server/src/migration/`). Evidence lives in `app/migrate-py/tests/test_copy_migration.py` and `app/server/test/migration-copy.test.ts` (`bun run test:migration`). The latter runs the real server on the legacy source before and after the migration: legacy MCP recall answers identically (the rollback leg: the source is never replaced), and a server mounting the candidate serves the migrated nodes through `listNodes` / `getAcceptedHead`.
 
 **Still excluded, on every report.** `release_exclusions` names #7 (relevance judgments), #8 (stock Honcho container round-trip) and #10's quality half, and `release_ready` is always `false`. R2 is out of scope: `://` roots are refused. No cutover is implied; the source remains the served dataset.
+
+**Fix round, same night.** Appended. More evidence for the "Copy migration and release" row:
+
+- **Rollback leg.** It compares the FULL legacy MCP responses (`recall` for three queries, `get_memory`, `list_memories`) as JSON, not only sorted ids. It now also restarts the server on the source ALONE after the candidate was mounted.
+- **Projection rebuild.** In a copy of the candidate, `node_revision_terms` and `revision_links` are emptied, and the kernel's `reconcileRevisionAssociations` rebuilds them to identical rows.
+- **Crash.** A deterministic SIGKILL mid-knowledge-phase, at the kernel's `after_revision_append` boundary on the third publish, leaves no table in the candidate, and a rerun converges.
+
+Still NOT covered on this slice, so #34 is not closable on it:
+
+- the rev-2 release-audit items;
+- a browser check;
+- a standalone release-audit document.
+
+The #7/#8/#10 exclusions are carried in every `report.json` and in this amendment.

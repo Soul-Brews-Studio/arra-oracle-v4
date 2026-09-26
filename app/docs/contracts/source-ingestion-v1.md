@@ -192,3 +192,5 @@ Appended, not rewritten. Rulings: [`docs/overnight/DECISIONS.md`](../../../docs/
 - Duplicate `(workspace, session, seq_in_session)` or duplicate public ids are rejected per record. The collision handling this contract held for #34 is therefore per dataset, not per row.
 
 Active-15 `messages` have no source columns, so no sourced legacy rows exist to hold; the sourced-legacy path stays unimplemented.
+
+**Fix round, same night.** Appended. The claim above that `ingested_at` is the frozen `--intake-at` and never `created_at` is now asserted per row (`test_messages_are_stamped_with_the_frozen_intake_time_never_created_at`). Before this, only the assumption string was checked, and a mutation to `created_at` still passed.
