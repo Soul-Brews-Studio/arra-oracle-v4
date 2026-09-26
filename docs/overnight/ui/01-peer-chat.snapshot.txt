@@ -1,0 +1,153 @@
+[p1 "arra-oracle-v4 — memory" | space "ui-33 proof screenshots"(84): 2 managed, 0 untracked — p1* "arra-oracle-v4 — memory", p2 "127.0.0.1:3971/health"]
+root
+  container
+    container
+      text "BANK"
+      textbox [ref=1, loc=css:input[placeholder="default"]]
+        text "default"
+    container
+      text "WORKSPACE"
+      textbox [ref=2, loc=css:input[placeholder="workspace_name"]]
+        text "default"
+    container
+      text "TOKEN"
+      textbox [ref=3, loc=css:input[placeholder="bearer…"]]
+    button [ref=30]
+      text "ping"
+  container
+    button [ref=4]
+      text "overview"
+    button [ref=5]
+      text "explore"
+    button [ref=6]
+      text "messages"
+    button [ref=7]
+      text "forum"
+    button [ref=8]
+      text "knowledge"
+  container
+    container
+      text "Workspaces"
+      text ">"
+      text "default"
+      button [ref=57]
+        text "Back"
+    container
+      container
+        text "2"
+        text "PEERS"
+      text "|"
+      container
+        text "2"
+        text "SESSIONS"
+      text "|"
+      container
+        text "2"
+        text "NODES"
+      button [ref=58]
+        text "refresh all"
+    container
+      container
+        container
+          container
+            button [ref=60]
+              text "⌄"
+            text "PEERS"
+            button [ref=61]
+              text "↻"
+          textbox [ref=62, loc=css:input[placeholder="filter loaded peers…"]]
+            text "filter loaded peers…"
+          container
+            button [ref=63]
+              text "alice"
+            button [ref=64]
+              text "bob"
+          container
+            container
+              text "showing"
+              text "2"
+              text "of 2"
+            container
+              text "page"
+              text "1"
+              text "(walked)"
+            container
+              button [ref=65]
+                text "‹ prev"
+              button [ref=66]
+                text "next ›"
+        container
+          container
+            button [ref=67]
+              text "⌄"
+            text "SESSIONS"
+            button [ref=68]
+              text "↻"
+          textbox [ref=69, loc=css:input[placeholder="filter loaded sessions…"]]
+            text "filter loaded sessions…"
+          container
+            button [ref=70]
+              text "sess-a"
+            button [ref=71]
+              text "sess-b"
+          text "showing"
+          text "2"
+          text "of 2"
+          text "page"
+          text "1"
+          text "(walked)"
+          button [ref=72]
+            text "‹ prev"
+          button [ref=73]
+            text "next ›"
+      container
+        container
+          button [ref=74]
+            text "Nodes"
+          button [ref=55]
+            text "Chat"
+          button [ref=56]
+            text "Messages"
+          button [ref=75]
+            text "Evidence"
+          button [ref=76]
+            text "Config"
+        container [ref=82]
+          container
+            heading
+              text "ASK AS PEER"
+            textbox [ref=83, loc=css:textarea[placeholder="What does this peer know about..."]]
+              text "What did we decide about the timestamp column?"
+            container
+              container
+                text "max_items"
+                spinbutton [ref=84]
+                  text "20"
+              button [ref=85]
+                text "Ask"
+            container
+              paragraph
+                text "We decided to store timestamps in [us] and truncate the seed to milliseconds (R1) [zdn_cC3L1wlQUfajl-l4K]. Alice asked about this decision [rGHv0lBNtYWL0I8O8t8HA]."
+              text "full coverage"
+              paragraph
+                text "Nothing excluded."
+              paragraph
+                text "ITEMS_USED ("
+                text "3"
+                text ")"
+              unordered_list
+                list_item
+                  text "oDAKsKfPk3Ln9uVJs5niR"
+                list_item
+                  text "zdn_cC3L1wlQUfajl-l4K"
+                list_item
+                  text "rGHv0lBNtYWL0I8O8t8HA"
+            paragraph
+              text "Answers come from a local model."
+              text "The server answers with the chat model it was started with ("
+              text "ARRA_CHAT_PROVIDER=ollama"
+              text ", default"
+              text "gemma3:4b"
+              text "), using only the evidence this peer may read. It is recorded understanding, not a live agent: nobody is contacted. If no model is configured or it is not running, Ask returns"
+              text "model_unavailable"
+              text "-- `getContext` below has no model dependency and should still answer normally."
