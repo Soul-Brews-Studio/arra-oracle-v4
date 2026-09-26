@@ -226,3 +226,34 @@ reuse `arra-publication-error/v1`'s closed code set: `invalid_request`, `invalid
 - "Reconcile for missing chunks" sounds like a predicate query; it is implemented as an
   inverted, bounded walk over nodes specifically because the natural query ("do any nodes
   lack a chunk row") cannot be expressed as a predicate over the chunk table itself.
+
+## 11. Amendment 2026-09-26 (overnight R7 (exposure part) + R8 (HTTP/MCP part))
+
+`listSearchChunks`, `indexRevisionChunks`, `writeChunkEmbedding` and `reconcileSearchChunks`
+had no transport route: `knowledge/registry.ts` deliberately excluded the search-chunk
+kernel, so all four answered HTTP 404 (measured: `.tmp/understand/issue-30/issue30.test.ts`'s
+`REPRO T0 transport-exposed chunk/search methods: []`) and no `kb_*` tool existed on
+`tools/list`. `docs/overnight/DECISIONS.md` R7 rules that kernel code no client can call is
+not #30-done, and R8 both keeps the full HTTP+MCP+CLI contract for #31 **and** rules
+explicitly that `indexRevisionChunks`, `reconcileSearchChunks` and `writeChunkEmbedding` are
+exposed under `content:write` (not internal-only), specifically so an external embed worker
+can run the index-first/embed-later backfill Nat asked for.
+
+All four are now registry entries at `scopePath: []` (`workspace_name` sits at the request
+root in every parser above) — `listSearchChunks` at `content:read`; `indexRevisionChunks`,
+`writeChunkEmbedding` and `reconcileSearchChunks` at `content:write` per R8. This amendment is
+reachability only: it does not add retrieval (`searchChunks` does not exist — section 5/#30's
+own fix plan calls that out as still-missing), does not add the embedding-profile registry,
+and does not change `reconcileSearchChunks`'s measured under-counting of `stale` or its
+missing profile-scoping (section 6, section 10). A caller reaching this kernel over a
+transport gets exactly the same partial completeness guarantees this document already
+documents when the kernel is called directly.
+
+Proof: `app/server/test/knowledge-expose13-registry.test.ts` (registry shape),
+`app/server/test/knowledge-expose13-transport.test.ts` (HTTP 404→200, the four `kb_*` tools
+on `tools/list`, read/write authorization refusals, against a fake bundle calling this file's
+own real parsers), and `app/server/test/knowledge-expose13-live.test.ts`
+(`indexRevisionChunks` → `listSearchChunks` → `writeChunkEmbedding` → `reconcileSearchChunks`
+round-tripped over both HTTP and MCP against a real writer-gated target-19 dataset, using two
+distinct indexed nodes — one over each transport — since a `pending` chunk row cannot be
+re-embedded, so an idempotent replay is not the right proof for `writeChunkEmbedding`).

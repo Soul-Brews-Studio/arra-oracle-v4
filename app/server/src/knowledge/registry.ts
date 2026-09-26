@@ -15,23 +15,17 @@
  * the HTTP route, the MCP tool list and the admission wiring all read this
  * table rather than naming methods individually.
  *
- * Deliberately excludes session-link, lifecycle, trace and search-chunk
- * kernels — NOT because they are mid-integration (as of the v4/ui-33 merge
- * of 2ce45b4+f600636, `service.ts` imports and wires all four: they carry
- * core + ownership + recovery lanes, and three of the four already have
- * frozen contract docs). The real reason is narrower and still holds:
- *   - Their WRITE surfaces (e.g. anything shaped like publishRevision's
- *     node/revision/domain-reference envelope, or a lifecycle transition)
- *     are deep enough that wiring a route for them here, untested against a
- *     real dataset, risks a transport that accepts and forwards
- *     wrong-shaped requests nobody has exercised end to end.
- *   - Their READ surfaces have no enumeration method to browse by (this
- *     transport is get-by-name/get-by-id throughout; see knowledge.html's
- *     Configuration tab for the same limitation on the kernels already
- *     exposed below), so exposing a route here would not yet enable any
- *     UI or caller to discover a valid id to call it with.
- * Revisit kernel-by-kernel once each has a route author who has verified it
- * against a real dataset, not as a batch.
+ * The session-link, trace, lifecycle and search-chunk kernels (#28/#29/#30)
+ * are exposed below, alongside publication/taxonomy/context/evidence — this
+ * table no longer excludes any facade method (#31 overnight R7/R8, tested
+ * against a real gated dataset over both HTTP and MCP: see
+ * `test/knowledge-expose13-live.test.ts`). `writeChunkEmbedding` is
+ * `content:write` rather than internal-only per R8, so an external embed
+ * worker can call it directly for the backfill loop Nat asked for. Every
+ * write method below still goes through `writer()`, so an unauthenticated or
+ * read-only caller cannot reach a real dataset write through this table —
+ * see Step 3 of the recipe in `.tmp/understand/…architecture_r.md` for the
+ * validation/auth layers a request crosses before a `call` here ever runs.
  */
 
 import type { EvidenceReaderBundle, EvidenceWriterBundle } from "../publication/service";
@@ -179,6 +173,75 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
     scopePath: [],
     ephemeralWrite: true,
     call: (b, x) => writer(b).context.answerChat(x),
+  },
+
+  // ── session links (#28) ─────────────────────────────────────────────────
+  // Every parser below carries `workspace_name` at the request root
+  // (`session-link.ts`, `trace.ts`, `lifecycle.ts`, `search-chunk.ts`), so
+  // every `scopePath` here is `[]`, same as the rest of this table.
+  listSessionLinks: {
+    action: "content:read",
+    scopePath: [],
+    call: (b, x) => b.context.listSessionLinks(x),
+  },
+  createSessionLink: {
+    action: "content:write",
+    scopePath: [],
+    call: (b, x) => writer(b).context.createSessionLink(x),
+  },
+
+  // ── traces (#28) ─────────────────────────────────────────────────────────
+  getTrace: { action: "content:read", scopePath: [], call: (b, x) => b.context.getTrace(x) },
+  listTraceHits: { action: "content:read", scopePath: [], call: (b, x) => b.context.listTraceHits(x) },
+  createTrace: {
+    action: "content:write",
+    scopePath: [],
+    call: (b, x) => writer(b).context.createTrace(x),
+  },
+
+  // ── node lifecycle (#29) ─────────────────────────────────────────────────
+  getRecallEligibility: {
+    action: "content:read",
+    scopePath: [],
+    call: (b, x) => b.context.getRecallEligibility(x),
+  },
+  listLifecycleHistory: {
+    action: "content:read",
+    scopePath: [],
+    call: (b, x) => b.context.listLifecycleHistory(x),
+  },
+  retireNode: { action: "content:write", scopePath: [], call: (b, x) => writer(b).context.retireNode(x) },
+  supersedeNode: {
+    action: "content:write",
+    scopePath: [],
+    call: (b, x) => writer(b).context.supersedeNode(x),
+  },
+
+  // ── search chunks (#30) ──────────────────────────────────────────────────
+  // `indexRevisionChunks`, `writeChunkEmbedding` and `reconcileSearchChunks`
+  // are `content:write` per R8 (docs/overnight/DECISIONS.md), not internal:
+  // an external embed worker runs the index-first/embed-later backfill Nat
+  // asked for by calling these three directly, the same way any other
+  // `content:write` caller reaches this table.
+  listSearchChunks: {
+    action: "content:read",
+    scopePath: [],
+    call: (b, x) => b.context.listSearchChunks(x),
+  },
+  indexRevisionChunks: {
+    action: "content:write",
+    scopePath: [],
+    call: (b, x) => writer(b).context.indexRevisionChunks(x),
+  },
+  writeChunkEmbedding: {
+    action: "content:write",
+    scopePath: [],
+    call: (b, x) => writer(b).context.writeChunkEmbedding(x),
+  },
+  reconcileSearchChunks: {
+    action: "content:write",
+    scopePath: [],
+    call: (b, x) => writer(b).context.reconcileSearchChunks(x),
   },
 
   // ── evidence ─────────────────────────────────────────────────────────

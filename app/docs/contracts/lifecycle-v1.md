@@ -206,3 +206,32 @@ poisons.
   rule can never actually need to page — a single node can only ever have zero or one
   lifecycle event. This is deliberate future-proofing already present in shipped code, not a
   gap.
+
+## 10. Amendment 2026-09-26 (overnight R7 (exposure part) + R8 (HTTP/MCP part))
+
+`retireNode`, `supersedeNode`, `getRecallEligibility` and `listLifecycleHistory` had no
+transport route: `knowledge/registry.ts` deliberately excluded the lifecycle kernel, so all
+four answered HTTP 404 and no `kb_retireNode`/`kb_supersedeNode`/`kb_getRecallEligibility`/
+`kb_listLifecycleHistory` tool existed on `tools/list` — measured in
+`.tmp/understand/issue-29/transport-probe.ts` (`registry: false`, `MCP tool: false` for all
+four; the sibling `listNodes` reached admission and answered 503, confirming the difference
+was the registry entry, not policy). `docs/overnight/DECISIONS.md` R7 rules that kernel code
+no client can call is not #29-done, and R8 keeps the full HTTP+MCP+CLI contract for #31.
+
+All four are now registry entries at `scopePath: []` (`workspace_name` sits at the request
+root in every parser above) — `getRecallEligibility` and `listLifecycleHistory` at
+`content:read`, `retireNode` and `supersedeNode` at `content:write`. This amendment changes
+reachability only. It does **not** change what "excluded from ordinary recall" means for
+`listNodes`, the eligibility predicate's five DESIGN §9 conditions, or the terminal-successor
+supersede question — those remain the separate, not-yet-ruled-on questions
+`docs/overnight/DECISIONS.md`'s open-issues list and the #29 reopen comment name; a retired or
+superseded node still appears, unlabelled, in `listNodes`/`getAcceptedHead` exactly as section
+2 and section 9 above already record, whether reached over a transport or called directly.
+
+Proof: `app/server/test/knowledge-expose13-registry.test.ts` (registry shape),
+`app/server/test/knowledge-expose13-transport.test.ts` (HTTP 404→200, the four `kb_*` tools on
+`tools/list`, read/write authorization refusals, against a fake bundle calling this file's own
+real parsers), and `app/server/test/knowledge-expose13-live.test.ts`
+(`supersedeNode`/`retireNode` → `listLifecycleHistory` → `getRecallEligibility` round-tripped
+over both HTTP and MCP against a real writer-gated target-19 dataset, including a
+same-payload MCP replay of each write landing `idempotent`).
