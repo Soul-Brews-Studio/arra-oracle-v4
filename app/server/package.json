@@ -21,6 +21,7 @@
     "test:context": "bun test test/context-*.test.ts test/fixtures/context-v1/*.test.ts",
     "test:contract": "bun test test/contract-*.test.ts",
     "test:evidence": "bun test test/evidence-*.test.ts",
+    "test:fts": "bun test test/fts-*.test.ts",
     "test:jcs": "bun test test/jcs-*.test.ts",
     "test:knowledge-chat": "bun test test/knowledge-chat-*.test.ts",
     "test:lifecycle": "bun test test/lifecycle-*.test.ts",

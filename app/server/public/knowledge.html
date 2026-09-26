@@ -425,7 +425,8 @@ $("runSearch").onclick = async () => {
   try {
     const b = bank() || "default";
     const r = await memoriesRequest(`/api/search?q=${encodeURIComponent(q)}&mode=${mode}&bank=${encodeURIComponent(b)}`);
-    $("searchMsg").textContent = `${r.count} hit(s) · mode=${esc(r.mode)} (explicitly chosen, never inferred) · bank ${esc(b)}`;
+    // match: "ngram" (trigram index) or "substring_scan" (a query under 3 characters) -- text mode only.
+    $("searchMsg").textContent = `${r.count} hit(s) · mode=${esc(r.mode)} (explicitly chosen, never inferred)${r.match ? ` · match=${esc(r.match)}` : ""} · bank ${esc(b)}`;
     const rows = r.rows || [];
     $("searchResult").innerHTML = rows.length
       ? `<table><thead><tr><th>name</th><th>type</th><th>content</th><th>score/dist</th></tr></thead><tbody>${

@@ -18,7 +18,8 @@ Arrow declarations                 validation / scope / writes
                 optional R2 config
                        |
                        +--> nullable embeddings (all-minilm/384 default)
-                       +--> ICU full-text index
+                       +--> trigram full-text index, ngram(3,3)
+                            (R14; was icu until 2026-09-26, #10)
 
 TARGET, NOT CURRENT PHYSICAL SCHEMA
 messages + peers + sessions -> revisionable nodes + pinned evidence

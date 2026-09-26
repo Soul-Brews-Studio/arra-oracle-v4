@@ -144,6 +144,14 @@ const TOOL_ACTION: Readonly<Record<string, WorkspaceAction>> = Object.freeze({
   ...KNOWLEDGE_TOOL_ACTION,
 });
 
+/**
+ * A keyword search answer: the rows, and how they were found (R14). `ngram` is
+ * the trigram index; `substring_scan` is the bounded scan a query under 3 code
+ * points falls back to. Declared here, structurally, so the facade does not
+ * import the store module; composition's assignment checks the two agree.
+ */
+export type TextSearchResult = { match: "ngram" | "substring_scan"; rows: unknown[] };
+
 export type StoreDependencies = {
   insert(row: {
     workspace_name: string;
@@ -155,7 +163,7 @@ export type StoreDependencies = {
     subject_peer_name?: string;
   }): Promise<{ id: string; embedded: boolean }>;
   list(bank: string, limit: number, filters?: Record<string, unknown>): Promise<unknown[]>;
-  searchText(q: string, bank: string, limit: number): Promise<unknown[]>;
+  searchText(q: string, bank: string, limit: number): Promise<TextSearchResult>;
   searchVector(q: string, bank: string, limit: number): Promise<unknown[]>;
   getById(bank: string, id: string): Promise<unknown>;
   stats(bank: string): Promise<Record<string, unknown>>;
@@ -287,12 +295,13 @@ export function createOperationService(
       mode: "text" | "vector",
       limit: number,
       afterAdmit: () => Error | null = () => null,
-    ) {
+    ): Promise<{ match?: TextSearchResult["match"]; rows: unknown[] }> {
       const context = admitWorkspace(authorization, workspace, "content:read");
       const invalid = afterAdmit();
       if (invalid !== null) throw invalid;
       const bank = scopeOf(context, "content:read");
-      return mode === "vector" ? deps.searchVector(q, bank, limit) : deps.searchText(q, bank, limit);
+      // Vector mode has no lexical match mode to report; text mode always does.
+      return mode === "vector" ? { rows: await deps.searchVector(q, bank, limit) } : deps.searchText(q, bank, limit);
     },
 
     async diagnostics(authorization: string | null, workspace: string) {
@@ -583,7 +592,7 @@ export type ToolOperations = {
     subject_peer_name?: string;
   }): Promise<{ id: string; embedded: boolean }>;
   list(limit: number, filters: Record<string, unknown>): Promise<unknown[]>;
-  searchText(q: string, limit: number): Promise<unknown[]>;
+  searchText(q: string, limit: number): Promise<TextSearchResult>;
   searchVector(q: string, limit: number): Promise<unknown[]>;
   getById(id: string): Promise<unknown>;
   stats(): Promise<Record<string, unknown>>;

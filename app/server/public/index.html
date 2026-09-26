@@ -196,7 +196,8 @@ $("go").onclick = async () => {
   try {
     const r = await request(url);
     // The response does not echo the bank back; use the one this page chose.
-    $("searchMsg").textContent = `${r.count} hit(s) · ${esc(r.mode)} · bank ${esc(bank)}`;
+    // Text mode reports how it matched: "ngram", or "substring_scan" for a query under 3 characters.
+    $("searchMsg").textContent = `${r.count} hit(s) · ${esc(r.mode)}${r.match ? ` · ${esc(r.match)}` : ""} · bank ${esc(bank)}`;
     render(r.rows, `Results — ${esc(r.mode)} — ${esc(bank)}`);
   } catch (error) { $("searchMsg").textContent = String(error); }
 };

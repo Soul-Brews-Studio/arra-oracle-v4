@@ -42,7 +42,7 @@ export const MEMORY_TOOLS = [
   {
     name: "recall",
     description:
-      "Search this bank using ICU full-text by default or explicit vector mode. Full revision/lifecycle eligibility and embedding-profile enforcement remain planned.",
+      "Search this bank. Text mode (default) is a substring match: character-trigram full-text, every hit re-checked to contain the query (case-insensitive); a query under 3 characters is a bounded substring scan instead. The answer is {mode, match, count, rows}, with match 'ngram' or 'substring_scan'. Vector mode is explicit and has no match field. Full revision/lifecycle eligibility and embedding-profile enforcement remain planned.",
     inputSchema: {
       type: "object",
       properties: {
