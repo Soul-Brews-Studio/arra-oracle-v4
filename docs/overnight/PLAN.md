@@ -260,3 +260,6 @@ are part of done.
   freshness on the reader, embedPendingChunks reachable on HTTP, MCP and CLI; the verifier measured writer owners = 0 during searches on a live gated server.
   **Full suite 1629 pass / 0 fail, 109/109 files · Python 268 OK.** Known consequence, documented: chunks indexed before this commit under the bare
   model name belong to a non-active profile and need re-indexing (none exist outside tests).
+- 02:13 **GATE 6 on `31b4f8b`: typecheck OK · TS 1629 pass / 0 fail (109/109 files, 184s) · Python 268 OK · probe 51 methods, HTTP/MCP/CLI 51 each,
+  isolation 0.** #29 lifecycle checks now PASS. What remains is the acceptor's instrument lagging behind new contracts: 7 new methods have no fixture
+  yet (GAP), and #30 still indexes under the bare model name, which the R20 profile registry refuses by design. Sent to Codex as TASK 5.
