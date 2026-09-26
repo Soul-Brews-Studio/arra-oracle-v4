@@ -15,6 +15,10 @@ import { oracle_handoff } from "./tools/oracle_handoff";
 import { oracle_ask } from "./tools/oracle_ask";
 import { oracle_learn } from "./tools/oracle_learn";
 import { oracle_read } from "./tools/oracle_read";
+import { oracle_inbox } from "./tools/oracle_inbox";
+import { oracle_list } from "./tools/oracle_list";
+import { oracle_reflect } from "./tools/oracle_reflect";
+import { oracle_recap } from "./tools/oracle_recap";
 import { oracle_research_note } from "./tools/oracle_research_note";
 import { oracle_search } from "./tools/oracle_search";
 import { oracle_search_chain } from "./tools/oracle_search_chain";
@@ -73,4 +77,9 @@ export const V3_HANDLERS: Readonly<Record<string, V3Handler>> = Object.freeze({
   oracle_trace_chain,
   oracle_trace_distill,
   oracle_trace_list,
+  // V6 knowledge reads (V3-PARITY.md §5/§7 K3+K4; overnight R18).
+  oracle_list,
+  oracle_reflect,
+  oracle_inbox,
+  oracle_recap,
 });

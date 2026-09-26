@@ -1,5 +1,6 @@
 import { failPublication } from "./errors";
 import { utf8ByteLength } from "./rows";
+import { NANOID21 } from "./service.constants";
 import { closedKeys } from "./service.closedKeys";
 import { parseRequest } from "./service.parseRequest";
 import { requireNodeId } from "./service.requireNodeId";
@@ -10,6 +11,53 @@ export const MAX_PAGE_LIMIT = 100;
 
 /** Matches `taxonomy.requireName`'s own bound; a term name is stored the same way. */
 const MAX_TYPE_TERM_BYTES = 256;
+
+/**
+ * K3 (overnight R18, `docs/overnight/V3-PARITY.md` §5/§7): a filter list of
+ * more than this many term ids is not a realistic filter, it is a caller
+ * mistake -- the same reasoning `MAX_CONTEXT_ITEMS` states for chat context.
+ * Well under `MAX_SCANNED_NODES` (`service.listNodes.ts`), so a maximal
+ * filter list is cheap to test per candidate row.
+ */
+export const MAX_FILTER_TERM_IDS = 20;
+
+/** Exactly `rows.ts`'s `timestampToMicros` wire format, duplicated the SAME
+ *  way `requireNodeId` duplicates the nanoid21 grammar here: this is a
+ *  REQUEST-side check, so a malformed cursor is the caller's `invalid_request`,
+ *  never the stored-row `integrity_failure` `timestampToMicros` itself would
+ *  raise on the very same bytes. */
+const WIRE_TIMESTAMP = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$/;
+
+function requireWireTimestamp(value: unknown, path: string): string {
+  if (typeof value !== "string" || value.length !== 24 || !WIRE_TIMESTAMP.test(value)) {
+    failPublication("invalid_request", path);
+  }
+  const millis = Date.parse(value);
+  if (!Number.isFinite(millis) || new Date(millis).toISOString() !== value) failPublication("invalid_request", path);
+  return value;
+}
+
+/** K3: a nonempty, duplicate-free array of nanoid21 term ids, at most
+ *  `MAX_FILTER_TERM_IDS` long. An empty array is refused rather than treated
+ *  as "no filter" -- that meaning is spelled by omitting the key entirely
+ *  (see each field's own doc comment below), so `[]` can only ever be a
+ *  caller mistake, never a second spelling of the same thing omission means. */
+function requireTermIdArray(value: unknown, path: string): string[] {
+  if (!Array.isArray(value) || value.length === 0) failPublication("invalid_request", path);
+  if (value.length > MAX_FILTER_TERM_IDS) failPublication("limit_exceeded", path);
+  const ids: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || !NANOID21.test(item)) failPublication("invalid_request", path);
+    if (ids.includes(item)) failPublication("invalid_request", path);
+    ids.push(item);
+  }
+  return ids;
+}
+
+/** K4: the two orders `listNodes` supports. `id_asc` is the original,
+ *  unchanged keyset order; `updated_desc` is additive (overnight R18). */
+export const LIST_NODES_ORDERS = ["id_asc", "updated_desc"] as const;
+export type ListNodesOrder = (typeof LIST_NODES_ORDERS)[number];
 
 export type ListNodesRequest = {
   workspace_name: string;
@@ -47,17 +95,72 @@ export type ListNodesRequest = {
    * DESIGN.md §9's "replaced or retired" predicate is).
    */
   include_inactive: boolean;
+  /**
+   * R18 D3 (overnight, v3-list fix round): the RECALL view. Optional, admitted
+   * only when sent -- omitted means `false`, so every caller that predates it
+   * is byte-identical. `true` narrows the default view further, to exactly
+   * the nodes `getRecallEligibility` would call eligible at the transport's
+   * request time: DESIGN.md §9's full rule (no terminal event, head
+   * `is_active`, inside `[valid_from, valid_to)`), evaluated by the SAME
+   * `service.eligibilityReasonsOf.ts` that check uses. Strictly boolean once
+   * present (the `include_inactive` rule), and `true` together with
+   * `include_inactive: true` is a contradiction, refused rather than letting
+   * one key silently win.
+   */
+  eligible_only: boolean;
+  /**
+   * K3 (overnight R18): every term id here must be assigned on the
+   * candidate's CURRENT head revision (its `term_snapshot_json`, the same
+   * source `type_term`/`deriveNodeType` already read -- never a live
+   * `node_revision_terms` join, which lags behind
+   * `reconcileRevisionAssociations`, per `service.listNodes.ts`'s own
+   * `type_term` comment). `null` omits this filter; an explicit `null` or `[]`
+   * is refused (see `requireTermIdArray` above) -- the SAME "optional changes
+   * only whether the key may be absent, never what it may hold once present"
+   * rule `include_inactive` states. Combined with `any_term_ids` and
+   * `type_term` by AND; `all_term_ids` itself is AND across its own ids.
+   */
+  all_term_ids: string[] | null;
+  /** K3: like `all_term_ids`, but OR across its own ids (at least one must be
+   *  assigned on the head revision). */
+  any_term_ids: string[] | null;
+  /**
+   * K4 (overnight R18): optional, admitted only when sent -- omitted means
+   * `"id_asc"`, the ORIGINAL keyset order, byte-identical to every caller
+   * that predates this field. `"updated_desc"` orders by `nodes.updated_at`
+   * descending, paired with `after_updated_at` as a keyset -- see that
+   * field's own doc comment for the pairing rule.
+   */
+  order: ListNodesOrder;
+  /**
+   * K4: the second half of the `updated_desc` keyset pair, alongside
+   * `after_id`. Admitted ONLY when `order` is `"updated_desc"` -- present
+   * with `order: "id_asc"` (the default) is `invalid_request`, since it would
+   * silently do nothing there. When `order` IS `"updated_desc"`, `after_id`
+   * and this field are a PAIR: both null (the first page) or both non-null
+   * (a continuation) -- one null and the other not is a half-specified
+   * cursor, refused the same way. A non-null value is the exact wire-format
+   * millisecond text `rows.ts`'s `timestampToMicros` accepts.
+   */
+  after_updated_at: string | null;
 };
 
-/** Every OTHER key on this request: required-but-nullable, closed exactly as
- *  before. `include_inactive` alone is admitted only when the caller sends it
- *  (see the field's own doc comment above). */
+/** Every REQUIRED key on this request: required-but-nullable, closed exactly
+ *  as before. Every OTHER key below is admitted only when the caller sends it
+ *  (see each field's own doc comment above). */
 const REQUIRED_KEYS = ["workspace_name", "after_id", "limit", "include_total", "type_term"] as const;
 const INCLUDE_INACTIVE_KEY = "include_inactive";
+const ALL_TERM_IDS_KEY = "all_term_ids";
+const ANY_TERM_IDS_KEY = "any_term_ids";
+const ORDER_KEY = "order";
+const AFTER_UPDATED_AT_KEY = "after_updated_at";
+const ELIGIBLE_ONLY_KEY = "eligible_only";
+const OPTIONAL_KEYS = [INCLUDE_INACTIVE_KEY, ALL_TERM_IDS_KEY, ANY_TERM_IDS_KEY, ORDER_KEY, AFTER_UPDATED_AT_KEY, ELIGIBLE_ONLY_KEY] as const;
 
 export function parseListNodes(requestBytes: Uint8Array): ListNodesRequest {
   const o = parseRequest(requestBytes);
-  closedKeys(o, o.has(INCLUDE_INACTIVE_KEY) ? [...REQUIRED_KEYS, INCLUDE_INACTIVE_KEY] : REQUIRED_KEYS, "");
+  const presentOptional = OPTIONAL_KEYS.filter((key) => o.has(key));
+  closedKeys(o, [...REQUIRED_KEYS, ...presentOptional], "");
 
   const workspace_name = requireWorkspaceName(o.get("workspace_name"), "/workspace_name");
 
@@ -84,12 +187,62 @@ export function parseListNodes(requestBytes: Uint8Array): ListNodesRequest {
     include_inactive = rawIncludeInactive;
   }
 
+  // R18 D3: optional, strictly boolean once present, and never combined with
+  // history mode -- "only eligible" and "include the inactive" cannot both
+  // hold, so the request is refused instead of one key silently winning.
+  let eligible_only = false;
+  if (o.has(ELIGIBLE_ONLY_KEY)) {
+    const rawEligibleOnly = o.get(ELIGIBLE_ONLY_KEY);
+    if (typeof rawEligibleOnly !== "boolean") failPublication("invalid_request", `/${ELIGIBLE_ONLY_KEY}`);
+    if (rawEligibleOnly && include_inactive) failPublication("invalid_request", `/${ELIGIBLE_ONLY_KEY}`);
+    eligible_only = rawEligibleOnly;
+  }
+
   const rawTypeTerm = o.get("type_term");
   let type_term: string | null = null;
   if (rawTypeTerm !== null && rawTypeTerm !== undefined) {
     if (typeof rawTypeTerm !== "string" || rawTypeTerm.length === 0) failPublication("invalid_request", "/type_term");
     if (utf8ByteLength(rawTypeTerm) > MAX_TYPE_TERM_BYTES) failPublication("invalid_request", "/type_term");
     type_term = rawTypeTerm;
+  }
+
+  // K3: optional, strictly typed once present -- an explicit `null` or `[]`
+  // is refused by `requireTermIdArray`, the same "optional changes only
+  // absence" rule `include_inactive` states above.
+  let all_term_ids: string[] | null = null;
+  if (o.has(ALL_TERM_IDS_KEY)) all_term_ids = requireTermIdArray(o.get(ALL_TERM_IDS_KEY), `/${ALL_TERM_IDS_KEY}`);
+  let any_term_ids: string[] | null = null;
+  if (o.has(ANY_TERM_IDS_KEY)) any_term_ids = requireTermIdArray(o.get(ANY_TERM_IDS_KEY), `/${ANY_TERM_IDS_KEY}`);
+
+  // K4: optional; absent means the original "id_asc" order.
+  let order: ListNodesOrder = "id_asc";
+  if (o.has(ORDER_KEY)) {
+    const rawOrder = o.get(ORDER_KEY);
+    // Validated against `LIST_NODES_ORDERS` itself, so that exported set IS
+    // the grammar rather than a second list that could drift from it.
+    if (!(LIST_NODES_ORDERS as readonly unknown[]).includes(rawOrder)) failPublication("invalid_request", `/${ORDER_KEY}`);
+    order = rawOrder as ListNodesOrder;
+  }
+
+  // K4: `after_updated_at` only means anything paired with `order:
+  // "updated_desc"` -- present under the default order is refused rather than
+  // silently ignored (this file refuses every argument that would otherwise
+  // do nothing, e.g. `include_inactive: null`).
+  let after_updated_at: string | null = null;
+  if (o.has(AFTER_UPDATED_AT_KEY)) {
+    if (order !== "updated_desc") failPublication("invalid_request", `/${AFTER_UPDATED_AT_KEY}`);
+    const rawAfterUpdatedAt = o.get(AFTER_UPDATED_AT_KEY);
+    after_updated_at =
+      rawAfterUpdatedAt === null || rawAfterUpdatedAt === undefined
+        ? null
+        : requireWireTimestamp(rawAfterUpdatedAt, `/${AFTER_UPDATED_AT_KEY}`);
+  }
+  // The two halves of the `updated_desc` keyset pair travel together: a page
+  // boundary is either "the very first page" (both null) or "resume exactly
+  // here" (both non-null). One set and the other not is a cursor missing
+  // half of itself, not a value this kernel can interpret one way or another.
+  if (order === "updated_desc" && (after_id === null) !== (after_updated_at === null)) {
+    failPublication("invalid_request", `/${AFTER_UPDATED_AT_KEY}`);
   }
 
   return {
@@ -99,5 +252,10 @@ export function parseListNodes(requestBytes: Uint8Array): ListNodesRequest {
     include_total: rawIncludeTotal,
     type_term,
     include_inactive,
+    eligible_only,
+    all_term_ids,
+    any_term_ids,
+    order,
+    after_updated_at,
   };
 }

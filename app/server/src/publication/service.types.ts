@@ -38,12 +38,25 @@ export type DatasetAdapter = {
    * Ordered output bounds JS materialization. It does NOT bound SDK engine
    * scan work or execution time, and nothing here should be read as claiming
    * otherwise.
+   *
+   * `ordering` accepts a single column OR a compound (primary, tie-break…)
+   * list, applied in array order -- the SAME `ORDER BY col1, col2` semantics
+   * SQL gives a multi-column sort. A single-column ordering makes no promise
+   * about how a tie on that one column breaks, which under a `limit` can
+   * silently drop a member of a tie group that straddles the cutoff (K4 fix
+   * round, overnight R18): the engine's arbitrary tie order decides which
+   * rows fall inside `limit` and which do not, and a caller re-sorting the
+   * OUTPUT afterward is too late -- the excluded row was never fetched. A
+   * compound ordering with a total-order tie-break column (e.g. the unique
+   * `id`) makes the row set a `limit` selects fully deterministic, with no
+   * ambiguity left for the engine to resolve arbitrarily. `service.listNodes.ts`'s
+   * `updated_desc` mode is the first caller.
    */
   orderedProjection(
     table: string,
     predicate: string,
     columns: string[],
-    ordering: { column: string; ascending: boolean },
+    ordering: { column: string; ascending: boolean } | ReadonlyArray<{ column: string; ascending: boolean }>,
     limit: number,
   ): Promise<Record<string, unknown>[]>;
   /**
@@ -195,7 +208,8 @@ export type TermSnapshotEntry = {
 export type PublicationReaderService = {
   getAcceptedHead(requestBytes: Uint8Array): Promise<unknown>;
   listAcceptedHistory(requestBytes: Uint8Array): Promise<unknown>;
-  listNodes(requestBytes: Uint8Array): Promise<unknown>;
+  /** `requestTimeMs` is the `eligible_only` view's `as_of` (R18 D3), supplied by the transport. */
+  listNodes(requestBytes: Uint8Array, requestTimeMs?: number): Promise<unknown>;
 };
 
 export type PublicationWriterService = PublicationReaderService & {

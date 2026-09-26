@@ -272,7 +272,7 @@ Appended, not rewritten. Ruling: [`docs/overnight/DECISIONS.md`](../../../docs/o
 
 **Fix round, same night.** Appended. A legacy `memories.superseded_by` with NO `supersede_log` row gets ONE synthesized supersede event at the legacy `superseded_at`, with the R17 reason `"legacy: reason not recorded"`, counted in `policies.missing_log_row_backfilled`. This path now has a fixture row and a test that pins the stored event. Before, a mutation that skipped it still passed.
 
-## 12. Amendment 2026-09-26 (overnight R7 (#29 part))
+## 13. Amendment 2026-09-26 (overnight R7 (#29 part))
 
 *(Fix round, 2026-09-26: this section was originally spliced in BEFORE §11's own closing
 "Not changed here" paragraph above, which pushed that paragraph to the end of the file, after
@@ -473,7 +473,7 @@ actually excludes retired/superseded content end-to-end, not just that parsing s
 wire body without `--history` is byte-for-byte identical to what it always sent -- this is the
 `invalid_request` regression the verifier measured on the alias's real HTTP/MCP path, now closed.
 
-## 13. Amendment 2026-09-26 (overnight R18 (V2 read/supersede/verify) + D3)
+## 14. Amendment 2026-09-26 (overnight R18 (V2 read/supersede/verify) + D3)
 
 Appended, not rewritten. Ruling: [`docs/overnight/DECISIONS.md`](../../../docs/overnight/DECISIONS.md)
 R18, `docs/overnight/V3-PARITY.md` §3 A6/A3, §4.2/§4.3 (`oracle_read`, `oracle_supersede`).
@@ -529,3 +529,207 @@ bound `X-Arra-Peer` landing in the lifecycle event's own `peer_name`. `test/mcp-
 FAIL 0/GAP 27 of 37; after this slice, PASS 15/FAIL 0/GAP 22 of 37 -- the remaining GAPs belong to
 other slices' tools, `oracle_search`/`oracle_trace*`/`oracle_thread*`/`oracle_stats`/`oracle_list`/
 `oracle_inbox`).
+
+## 15. Amendment 2026-09-26 (overnight R18 (K3 + K4 + V6 + list/reflect))
+
+Implements `docs/overnight/DECISIONS.md` R18 and `docs/overnight/V3-PARITY.md` §5's K3 ("term
+filter on `listNodes`") and K4 ("time order on `listNodes`"), dispatched to the v3-list slice.
+§§1-12 above are unchanged; this section only widens `listNodes`'s own request/response grammar
+(§12 point 4), the same section R7's `include_inactive` amendment already lives in.
+
+**Why now, together.** `oracle_list`/`oracle_reflect`/`oracle_inbox`/`oracle_recap` (the v3-compatible
+adapter's V6 slice) all need to ask for "entries carrying this tag" and "newest first" without a
+second, adapter-side full scan-and-sort of every page `listNodes` already returns -- the "applied
+after the page, within the kernel's scan window" degraded behaviour `V3-PARITY.md §4.3` originally
+designed `oracle_list`'s `type` filter and its `order_changed` warning around. K3 and K4 remove
+both: the filter and the order both happen INSIDE the kernel's own bounded scan, exactly where
+`type_term` and `include_inactive` already happen.
+
+**1. K3 -- `all_term_ids` / `any_term_ids`.** Two new keys on `parseListNodes`, next to
+`type_term`, following the SAME "optional key, admitted only when the caller sends it" idiom §12
+point 4's fix round already established for `include_inactive` -- NOT the "required-but-nullable"
+shape `V3-PARITY.md §5`'s table first sketched, which would have broken every caller that predates
+this amendment (`oracle_list`'s own V2-degraded callers included) the exact way a required
+`include_inactive` already did once. Omitted means no filter; present means a nonempty,
+duplicate-free array of at most 20 (`MAX_FILTER_TERM_IDS`) nanoid21 term ids -- an empty array or an
+explicit `null` is `invalid_request`, never a second spelling of "omitted" (the same rule
+`include_inactive: null` states).
+
+- `all_term_ids`: every listed id must be assigned on the candidate's CURRENT head revision.
+- `any_term_ids`: at least one listed id must be assigned.
+- Both read `node_revisions.term_snapshot_json` (`service.snapshotTermIds.ts`, the general form
+  `service.deriveNodeType.ts` already specializes to the reserved `type` entry) -- never a live
+  `node_revision_terms` join, for the identical reason `type_term` already avoids one: that
+  projection lags `reconcileRevisionAssociations` and would silently miss every unreconciled node.
+- Combined with each other (AND) and with `type_term` (AND); `all_term_ids` is itself AND across its
+  own ids, `any_term_ids` is itself OR.
+- `include_total` stays `null` whenever either is set, for the same reason it already does for
+  `type_term`: term assignment lives in JSON text, not an indexed column, so an exact count would
+  mean materializing and parsing every candidate revision -- the full scan this kernel already
+  refuses to run just to fake a total.
+- `PEER_FIELDS` (`knowledge/registry.peerFields.ts`) is unchanged: `listNodes` still binds no peer
+  field, so this amendment asserts none rather than adding one.
+
+**2. K4 -- `order` and `after_updated_at`.** A new optional `order` key, `"id_asc"` (the ORIGINAL,
+unchanged keyset order, and the default when omitted) or `"updated_desc"` (`nodes.updated_at`
+descending). A new optional `after_updated_at` key completes the `updated_desc` keyset PAIR
+alongside the existing `after_id`: present only when `order` is `"updated_desc"` (refused under the
+default order, since it would silently do nothing there), and the two travel together -- both
+`null` (the first page) or both non-null (a continuation); one set without the other is
+`invalid_request`, a half-specified cursor rather than a value this kernel guesses at.
+
+- A single-column SQL `ORDER BY updated_at` makes no promise about how it breaks a tie on that
+  column, so `updated_desc` always widens the scan window to `MAX_SCANNED_NODES` (like a
+  `type_term`/`all_term_ids`/`any_term_ids`/`include_inactive:false` filter already does) and then
+  re-sorts that window, in this process, to a deterministic `(updated_at desc, id asc)` order --
+  the SAME pair the keyset boundary predicate excludes by (`updated_at < X OR (updated_at = X AND id
+  > afterId)`). This is exact within one window; a tie wider than `MAX_SCANNED_NODES` (an
+  improbable number of nodes sharing one stored microsecond) is the same disclosed, bounded-scan
+  trade-off `MAX_SCANNED_NODES` already states for a rare `type_term` value.
+- The response gains an additive `next_after_updated_at: string | null`, alongside `next_after_id`:
+  the second half of the pair, `null` in `id_asc` mode and whenever the page exhausts the workspace.
+- `after_updated_at`'s wire shape is the exact same UTC-millisecond text `rows.ts`'s
+  `timestampToMicros` accepts; a malformed value is this request's OWN `invalid_request`, never the
+  stored-row `integrity_failure` the same bytes would raise read back off a row.
+
+**Not changed here.** The `id_asc` order's own predicate, page-boundary and `total` semantics
+(§12 point 4) are byte-identical to before this amendment for a caller that never sends `order`,
+`after_updated_at`, `all_term_ids` or `any_term_ids` -- every one of those keys is additive and
+optional. No new table, no schema change, no new registry entry (`listNodes` is already registered).
+
+**Evidence.** `app/server/test/list-nodes-service.test.ts`'s `"listNodes: all_term_ids / any_term_ids
+filter (K3)"` and `"listNodes: order (K4)"` describe blocks: red on this round's HEAD before this
+change (every new key was an unrecognized field, `invalid_request` from `closedKeys`), green after --
+including a real tie (two nodes published under the identical instant) walked, one row per page, to
+prove the `(updated_at desc, id asc)` tie-break is deterministic and the keyset pair skips and
+repeats nothing across a page boundary.
+
+## 16. Amendment 2026-09-26 (overnight R18 (K3 + K4 + V6 + list/reflect)) — fix round
+
+An independent Opus verifier refuted §13's K4 claim and one of its citations. Both are
+corrected here, append-only, per `docs/overnight/DECISIONS.md` R18; §13 itself is left
+exactly as written.
+
+**1. The K4 tie-break was wrong, not just under-scoped.** §13 point 2 and the code
+comment it quoted both said the only risk was "a tie wider than `MAX_SCANNED_NODES`". That
+is false. The bug was not a window too narrow for a wide tie — it was that a
+SINGLE-column `ORDER BY updated_at DESC LIMIT n` makes no promise about WHICH members of a
+tie group sitting at the `LIMIT` cutoff are the ones the engine actually returns. Re-sorting
+the already-fetched window afterward (what §13's code did) cannot recover a row that was
+never fetched at all: MEASURED on this stack, two strictly-newer rows sharing a 3-row scan
+window with a 3-way tie beneath them was already enough to permanently drop two of the
+three tied rows — a tie no "wider" than the window, combined with unrelated rows crowding
+the same window from above. Plausible on a migrated corpus, since the copy migration (#34)
+copies epoch-ms `updated_at` directly, and unrelated nodes routinely share a scan window
+with a genuine tie.
+
+**The fix**: `service.listNodes.ts`'s `updated_desc` branch now asks the storage adapter
+for a COMPOUND order, `(updated_at desc, id asc)`, instead of a single column — the same
+shape `mcp/calls.ts`'s own `(created_at desc, id desc)` order already uses for the identical
+reason. `id` is a nanoid21 primary key, so this pair is a genuine total order with no ties
+left for the engine to break arbitrarily: "the first `scanLimit` rows in this exact total
+order" is unambiguous, and `LIMIT` can only cut at a row boundary, never through a tie
+group. `DatasetAdapter.orderedProjection`'s `ordering` parameter is additive-widened to
+accept either one column or an array of them; every other caller still passes a single
+column and is byte-identical.
+
+**Evidence.** `app/server/test/list-nodes-tie-edge.test.ts` (new file): red on this fix
+round's pre-fix HEAD (a 3-way tie plus two newer rows, walked with a page size equal to a
+narrowed scan window, returns 3 of 5 rows and reports the walk as complete), green after.
+The narrowed scan window is a documented test-only 3rd argument to `listNodes`
+(`scanWindowForTests`), never sent by any production caller, so `MAX_SCANNED_NODES` itself
+is unchanged and the boundary is reachable without publishing 1000+ nodes.
+
+**2. Citation correction.** §13's Evidence paragraph names `list-nodes-service.test.ts` for
+the K3/K4 `describe` blocks it quotes; they are in `list-nodes-term-order.test.ts` (split
+out for the 500-line-per-file cap, exactly as this file's own §9-era splits were). This
+file is itself 548 lines as of §13, over the 500-line style guideline for CODE files; since
+this is a descriptive, append-only CONTRACT document rather than a source file, and the
+project rule forbids rewriting a frozen section to shrink it, splitting is left as a future
+housekeeping task rather than done here mid-fix-round.
+
+**3. V6 tool upgrades in this same round**, for completeness (`docs/overnight/V3-PARITY.md`
+§2.5, §4.3, §7):
+- `oracle_list`'s `type:"all"` (v3's own documented default value) is treated as "no
+  filter", matching an omitted `type` — it was previously looked up as a `legacy_type` NAME,
+  found none, and silently returned an empty page.
+- `oracle_list`'s `asOf` now returns `unsupported_argument`, per §4.3, instead of being
+  read nowhere.
+- `oracle_recap`'s whole tool result is now the markdown STRING itself (v3 parity, §2.5),
+  not a JSON object wrapping one; its own warnings (and `dispatchLegacyV3.ts`'s generic
+  ones, e.g. `cwd`) travel as a plain-text footer on that same string, the only channel a
+  string-shaped result has. `maxTokens` is accepted and named `argument_ignored`.
+- `oracle_reflect` now samples the K3 `legacy_type:principle` pool alongside `learning`,
+  closing the gap §7's "V6 upgrades oracle_list, oracle_reflect" line named and this round's
+  verifier found undisclosed.
+
+## 17. Amendment 2026-09-26 (overnight R18 (K3 + K4 + V6 + list/reflect) + D3)
+
+An independent Opus verifier refuted the v3-list slice: the V6 recall tools (`oracle_reflect`,
+`oracle_recap`, `oracle_inbox` and inbox's `total`) returned nodes this kernel's own
+`getRecallEligibility` calls ineligible — a head with `is_active: false`, a validity window that
+excludes request time. They listed through `listNodes`'s DEFAULT view, which (§12, R7) drops only
+nodes with a terminal `supersede_log` row. `docs/overnight/DECISIONS.md` R18 D3 adopts
+`V3-PARITY.md` A6: recall paths show only recall-eligible nodes, by `getRecallEligibility`'s rule
+(#29). §§1-14 are unchanged; this section widens `listNodes` once more and records the tool changes.
+
+**1. `listNodes` gains `eligible_only`, the recall view.** An optional key, admitted only when sent
+(the `include_inactive` idiom of §12 point 4). Omitted means `false`, so every existing caller is
+byte-identical and the default view keeps exactly its §12 meaning. Present, it is strictly boolean
+(`null` or a non-boolean is `invalid_request` at `/eligible_only`), and `eligible_only: true` with
+`include_inactive: true` is `invalid_request` at `/eligible_only`, a contradiction rather than one
+key silently winning. `true` returns exactly the nodes `getRecallEligibility` would call eligible at
+the request time: no terminal event, head `is_active`, inside `[valid_from, valid_to)`.
+
+- **One rule, two callers.** The predicates moved, unchanged, out of
+  `service.evaluateNodeEligibility.ts` into `service.eligibilityReasonsOf.ts`, a pure function over
+  the terminal label and the encoded head revision. `evaluateNodeEligibility` (behind
+  `getRecallEligibility` and search's `recallEligibleNodeIds`) and `listNodes` both call it, so a
+  listing and the eligibility check cannot disagree. `listNodes` already reads each candidate's head
+  revision, so the view costs no extra point read.
+- **Clock discipline (§4, R7).** `as_of` is the transport's request time: `knowledge/registry.ts`
+  now passes `Date.now()` to `listNodes` exactly as it does to `getRecallEligibility`.
+  `listNodes(reader, bytes, requestTimeMs?, scanWindowForTests?)` reads it only under
+  `eligible_only: true`, and refuses a missing or non-finite value with `invalid_request` instead of
+  defaulting (no pre-existing caller sends the key, so no legacy fallback is needed). §14's
+  test-only `scanWindowForTests` moves from the 3rd to the 4th parameter; still no production
+  caller passes it.
+- **`total`.** `include_total` is `null` under `eligible_only`: `is_active` and the window live in
+  `node_revisions`, with no native count — the same reason §12 stops the default count at terminal
+  events.
+
+**2. The V6 tools.** `oracle_reflect` draws, `oracle_recap` lists, and `oracle_inbox` both pages
+and counts through `eligible_only: true`, so inbox's `total` counts exactly the set `files` pages
+through. `oracle_list` stays a BROWSE path (history mode, D3): every row is kept, and each row the
+recall tools would drop carries `ineligible_reasons`, taken from one `getRecallEligibility` call per
+row — the kernel's own reasons at request time, not a copy of the rule. The three recall tools'
+descriptions now say forgotten and out-of-window entries are excluded too.
+
+**3. Smaller fixes from the same review.** `oracle_reflect` follows `next_after_id` past scan
+windows that held no match (at most 10 kernel pages each way) instead of answering `no_results` for
+a sparse pool. `oracle_recap` collapses whitespace in titles (v3's `compact()`), so a title cannot
+open a heading. Its character budget now includes its own footer, and a dispatch-level warning
+(e.g. `cwd`) extends that footer instead of adding a second `---` block. Default limits follow v3:
+`oracle_list` 10, `oracle_inbox` 10, `oracle_recap` 8; the larger maxima are kept as a superset.
+`oracle_list` refuses a non-string or blank `type`, as v3 did. `parseListNodes` validates `order`
+against `LIST_NODES_ORDERS` itself.
+
+**Known limit, stated.** Each `listNodes` call gets its own `Date.now()` at the transport. A walk of
+several calls (inbox's page walk and its count walk) therefore uses request times milliseconds
+apart. A validity boundary that falls between two of them can put one node in `files` and not in
+`total`, or the reverse. Pinning one `as_of` per tool call would need the registry to accept a
+caller-supplied time. That would be a historical-browse channel, which V3-PARITY.md §4.3 refuses
+(`asOf` is `unsupported_argument`), so it is not done.
+
+**Evidence.** Failing first, then green:
+- `app/server/test/list-nodes-eligible-only.test.ts` (kernel view, `as_of` boundary, parity with
+  `getRecallEligibility` node by node, grammar, clock refusal);
+- `app/server/test/mcp-v3-list-eligibility.test.ts` (real gate and wire: forgotten, expired and
+  not-yet-valid learnings and handoffs are absent from reflect, recap, inbox and inbox's `total`,
+  and present and flagged in `oracle_list`; a bank with only ineligible nodes gives reflect
+  `no_results`);
+- `app/server/test/mcp-v3-list-stub.test.ts` (stub `kb`: `eligible_only` on every recall request,
+  the sparse-pool walk, recap's budget and titles).
+
+`list-nodes-tie-edge.test.ts` also asserts the narrowed scan window is live, so it cannot pass
+vacuously if the seam stops being honored.

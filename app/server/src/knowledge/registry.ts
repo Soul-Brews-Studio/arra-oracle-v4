@@ -166,10 +166,14 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
     scopePath: [],
     call: (bundle, bytes) => bundle.publication.listAcceptedHistory(bytes),
   },
+  // R18 D3: `Date.now()` is the `eligible_only` recall view's `as_of`,
+  // supplied here exactly as for `getRecallEligibility` below, so the kernel
+  // takes no clock on a live call. A request without `eligible_only` never
+  // reads it.
   listNodes: {
     action: "content:read",
     scopePath: [],
-    call: (bundle, bytes) => bundle.publication.listNodes(bytes),
+    call: (bundle, bytes) => bundle.publication.listNodes(bytes, Date.now()),
   },
   // The governed revision codec owns this envelope; workspace_name lives at
   // /content/workspace_name, not at the request root.
