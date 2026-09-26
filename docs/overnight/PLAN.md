@@ -151,3 +151,18 @@ are part of done.
   the R17 `distilled_at` column error it caught is corrected.
 - 22:00 VA launched (`wf_52ab6e40-0b9`): the v3-client acceptance harness, built from REAL recorded v3 calls found
   via relic, scrubbed. It must be all red before any adapter code exists; an Opus reviewer then tries to refute it.
+- 22:40 WAVE 1 verdicts: seed-ms, expose-13, cli-kb and coverage accepted first time; membership and sealed-vocab
+  accepted after one fix round; ci refuted twice (the remaining blocker was a stale AGENTS.md tokenizer line,
+  fixed at merge). Wave 1.5: fts-ngram accepted; bench-harness accepted after a fix. ops-root, migration and
+  honcho-rt are still in fix/verify.
+- 22:40 MERGED into `v4/overnight-26sep`: seed-ms, expose-13, cli-kb, membership, coverage, sealed-vocab, fts-ngram,
+  bench-harness, ci. One conflict, in `lifecycle-v1.md` (two amendments at the same spot): both kept, and the
+  stale "no transport" sentence corrected. The README and AGENTS counts were re-measured after the merge:
+  44 registry methods, 52 MCP tools, 123 benchmark tests. CI now also runs `app/benchmarks` tests. Head `99a576d`.
+- 22:40 VA harness: build red as intended (4/28), but REFUTED by the Opus reviewer: no writer gate in the test process,
+  so writes can never succeed; shapes contradict the spec; steps missing; no GAP state. The fix is folded into the
+  v3-frame slice.
+- 22:40 WAVE 2 launched (`wf_8ed9bde9-61d`) from `99a576d`: chat (#32 A+B, Opus) · lifecycle (#29 B, Sonnet) ·
+  search-embed (#30 A–C, Sonnet) · search-query (knowledge keyword + semantic retrieval, Opus) ·
+  sessions (#28 B+D + trace hygiene, Sonnet) · v3-frame (VA fixes + V0 + K2 + parity defects, Opus).
+  Integration gate (typecheck + sharded suite) running in pane `w6C:p8`.
