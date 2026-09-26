@@ -311,3 +311,114 @@ check, and `excluded` is never rendered into the prompt. `answerChat` returns th
 (unauthorized, full, count, wire, unauthorized-after-cap, ninth link, 408 unauthorized
 candidates, byte-bounded overflow), the recording stub model, and the same assertions over live
 HTTP and MCP against the production reader.
+
+## Amendment 2026-09-26 (overnight R9 (+ R4 already merged))
+
+Source: `docs/overnight/DECISIONS.md` **R9** ("#32 chat model: local Ollama, pluggable, stub in
+tests"), ruling on `Soul-Brews-Studio/arra-oracle-v4#32`. The R4 amendment above is already merged
+and is unchanged by this one: `coverage`, `excluded` and `excluded_omitted` mean exactly what it
+says. The sections above are left as written. Where they disagree with this amendment, this
+amendment wins.
+
+### What changed
+
+1. **`answerChat` is a read, and runs on the reader.** It is no longer a method of the context
+   writer facade (`createContextWriterService`). It lives on a chat facade,
+   `createChatService(reader, { model, settings })` (`service.createChatService.ts`), built over a
+   reader's `getContext`. The knowledge transport composes that facade onto the READER bundle
+   (`createKnowledgeAccess` → `bundle.chat`), for HTTP and MCP alike. The per-request "ephemeral
+   writer" (`getEphemeralWriter`, the registry flag `ephemeralWrite`) is deleted from both
+   transports. The context writer options (`ContextOptions`, `EvidenceOptions`) no longer carry
+   `model`. This replaces §4's "answerChat writer-only" and §6's "wired on
+   `createContextWriterService`". The writer facade loses exactly `answerChat`; the reader facades
+   and the nine runtime exports are unchanged.
+   - **Why:** measured in `.tmp/understand/analysis-32.json` and pinned by
+     `chat-gate-coexistence.test.ts` against the real fd-42 gate. In one gated server process the
+     ephemeral writer contended for the single `OWNERS` slot, so every `answerChat` after any write
+     answered `writer_unavailable`; and its `close()` released the process's only inherited gate,
+     so every write after the first `answerChat` answered `writer_unavailable` until restart.
+2. **Admitted under `content:read`** (was `content:write`). It reads and persists nothing. The model
+   is shown exactly the `items` that `getContext` returns to the same caller, so admitting it under
+   the same action widens nothing. A `content:write`-only credential is now refused `answerChat`
+   (403). The R3 peer binding on `/peer_name` applies unchanged.
+3. **New method `getChatSettings`** (`content:read`, also `kb_getChatSettings` and
+   `kb getChatSettings`). Request `{workspace_name}`, closed. It returns the effective settings
+   `{provider, model, max_output_tokens, timeout_ms}`, or `{model: null}` when no model is
+   configured. It never returns the model's address. It is model-free and dataset-free.
+4. **New closed error code `model_unavailable`** (`arra-publication-error/v1`, appended to
+   `PUBLICATION_ERROR_CODES`; HTTP 503; MCP `isError` carrying the same envelope, message
+   `"chat model unavailable"`). This replaces §3's mapping of model failures onto
+   `writer_unavailable`, which made "no model", "model failed" and "the dataset writer is busy"
+   indistinguishable. It is returned when:
+   - no model is configured (`ARRA_CHAT_PROVIDER` unset, or one of the unimplemented slots
+     `anthropic` / `openai`): refused **before** any dataset read or model call;
+   - the configured model cannot answer: unreachable, the 60 s timeout, a non-2xx reply, a
+     malformed reply, or an empty answer. The model is tried exactly once.
+
+   Precedence: grammar (`ContractError`) → `model_unavailable` if unconfigured → `getContext`'s own
+   refusals (`invalid_reference`, …) → one model call → `model_unavailable` if it fails. Never a
+   500, never a hang, never `writer_unavailable`.
+5. **Model wiring, from env, at composition** (`src/chat-model.ts`, imported lazily by
+   `composition.ts` the way `embed.ts` is):
+
+   | variable | meaning |
+   |---|---|
+   | `ARRA_CHAT_PROVIDER` | unset/empty: unconfigured. `ollama`: the one implemented provider. `anthropic`, `openai`: named slots, unconfigured. Anything else refuses startup. |
+   | `ARRA_CHAT_MODEL` | default `gemma3:4b` |
+   | `ARRA_CHAT_URL` | default `OLLAMA_URL` (the embedder's Ollama), else `http://127.0.0.1:11434`. http(s), no credentials, query or fragment. |
+   | limits (pinned, not env) | 512 output tokens (`num_predict`), 60 s `AbortSignal` timeout |
+
+   A malformed value refuses startup (`checkChatConfig`, right after `readConfig`). Reachability is
+   not a startup check: a stopped Ollama never stops the server; it makes answers
+   `model_unavailable`. The request is `POST {url}/api/chat` with
+   `{model, stream: false, messages: [system, user], options: {num_predict: 512}}`; redirects are
+   refused. The prompt is built from `items` only: fixed instructions, then one evidence line per
+   item, `[public_id] session / peer: content`, then the question. The instructions say the evidence
+   is recorded understanding, not a live agent, and ask the model to cite ids in brackets.
+   `items_used` stays the authoritative citation list; nothing is parsed out of the model's text.
+6. **Dev default:** `app/just/scripts/run_dev_server.py` sets `ARRA_CHAT_PROVIDER=ollama` unless
+   the variable is already exported (an exported empty value means unconfigured). `bun src/index.ts`
+   on its own stays unconfigured.
+
+### Result shapes, as amended
+
+```
+getChatSettings -> { provider: string, model: string, max_output_tokens: number, timeout_ms: number }
+                 | { model: null }
+answerChat      -> unchanged from the R4 amendment: { answer, coverage, excluded, excluded_omitted, items_used }
+```
+
+### Unauthorized evidence never reaches the model
+
+`chat-production-wiring.test.ts` points a production-composed server at a recording Ollama stub
+on 127.0.0.1 and asserts on the exact request bytes the model received. The prompt holds the
+asking peer's own session evidence. It never holds a linked session's secret that the peer is not
+a member of, nor any other workspace's data. The R4 in-process stub assertions in
+`chat-coverage.test.ts` still hold.
+
+### Caller impact
+
+- `content:read`-only credentials can now call `answerChat`. Before, they got 403.
+- `content:write`-only credentials can no longer call it (403).
+- `answerChat` no longer answers `writer_unavailable`. A client that read that code as "no model"
+  should read `model_unavailable`.
+- The v2 UI (`ModelNote.tsx`), the v1 `knowledge.html` hint and `kb <method> --help` were updated
+  in the same change. The CLI waits up to 75 s for `answerChat`, longer than the server's 60 s model
+  bound, so a slow answer arrives as the server's own result.
+
+### Not changed, stated so nobody infers it
+
+- `getContext`'s grammar and result, R4's coverage semantics, and `items_used`.
+- There is no `effort` parameter: R9 rules no effort enum, so the grammar stays closed and `effort`
+  is still `unexpected_field`.
+- The Anthropic and OpenAI providers are not implemented, and there is no cost ceiling, as R9 says
+  while the model is local.
+- Save/revise actions, observer/subject and context v2 (#32 slices C and D) are not part of this
+  amendment.
+
+### Evidence
+
+`chat-gate-coexistence.test.ts` (real gate, HTTP and MCP, both orders, three answers then a write),
+`chat-production-wiring.test.ts` (HTTP, MCP and CLI; configured, unconfigured, unreachable and
+failing model; prompt isolation), `chat-model.test.ts` (config validation, request shape, timeout),
+`knowledge-chat-writer-gate.test.ts` (routing: reader only, no writer).
