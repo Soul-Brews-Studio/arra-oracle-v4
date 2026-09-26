@@ -6,8 +6,9 @@
 //    adapter vocabulary. That writer is closed before the app opens its own.
 // 2. Boots the production pieces `buildApp` wires (composeService + createApp,
 //    flag on for both) against the dataset, with its
-//    `KnowledgeAccess` optionally wrapped so `indexRevisionChunks` throws for
-//    the steps that ask for it -- the one fault V1 must absorb.
+//    `KnowledgeAccess` optionally wrapped so `indexRevisionChunks` and/or
+//    `reconcileRevisionAssociations` throw for the steps that ask for it --
+//    the two post-publish calls `publish.ts` absorbs a failure from.
 // 3. Replays scripted MCP calls through `app.handle()`, with `{$ref}` captures,
 //    and prints one JSON object of raw outcomes. The parent asserts.
 //
@@ -26,6 +27,11 @@ type Step = {
   args: unknown;
   peer?: string;
   failIndex?: boolean;
+  /** Fix round (verifier finding 1): the same kind of seam as `failIndex`,
+   *  for `reconcileRevisionAssociations` (`publish.ts`'s other post-publish
+   *  call), so a test can prove `associationsError` surfaces as a
+   *  `compat_warnings` entry instead of a silent gap. */
+  failReconcile?: boolean;
   capture?: { name: string; path: (string | number)[] };
 };
 const [, , datasetRoot, workDir, payloadJson] = process.argv;
@@ -88,9 +94,11 @@ writeFileSync(
   { encoding: "utf-8", mode: 0o600 },
 );
 
-// The production composition, with one seam: a flag the steps flip to make
-// indexRevisionChunks fail after the publish has already been accepted.
+// The production composition, with two seams: flags the steps flip to make
+// indexRevisionChunks / reconcileRevisionAssociations fail after the publish
+// has already been accepted.
 let failIndexNow = false;
+let failReconcileNow = false;
 const composition = await import("../../../../src/composition");
 const realCompose = composition.composeKnowledgeAccess;
 // composeKnowledgeAccess became async in the chat slice (#32); awaited here at
@@ -102,12 +110,18 @@ const wrapped = {
   getBundle: async (action: Parameters<typeof access.getBundle>[0]) => {
     const bundle = (await access.getBundle(action)) as Record<string, any>;
     const context = bundle.context as Record<string, (b: Uint8Array) => Promise<unknown>>;
+    const evidence = bundle.evidence as Record<string, (b: Uint8Array) => Promise<unknown>>;
     return {
       ...bundle,
       context: {
         ...context,
         indexRevisionChunks: (bytes: Uint8Array) =>
           failIndexNow ? Promise.reject(new Error("injected index failure")) : context.indexRevisionChunks!(bytes),
+      },
+      evidence: {
+        ...evidence,
+        reconcileRevisionAssociations: (bytes: Uint8Array) =>
+          failReconcileNow ? Promise.reject(new Error("injected reconcile failure")) : evidence.reconcileRevisionAssociations!(bytes),
       },
     } as unknown as Awaited<ReturnType<typeof access.getBundle>>;
   },
@@ -134,6 +148,7 @@ const outcomes: Record<string, unknown> = { operator: operatorResults };
 let id = 1;
 for (const step of payload.steps) {
   failIndexNow = step.failIndex === true;
+  failReconcileNow = step.failReconcile === true;
   const headers: Record<string, string> = {
     host: "127.0.0.1:3939",
     "content-type": "application/json",
@@ -167,4 +182,5 @@ for (const step of payload.steps) {
   }
 }
 failIndexNow = false;
+failReconcileNow = false;
 console.log(JSON.stringify(outcomes));

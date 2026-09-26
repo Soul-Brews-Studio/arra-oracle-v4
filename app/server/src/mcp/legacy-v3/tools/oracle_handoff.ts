@@ -42,6 +42,6 @@ export async function oracle_handoff(args: Record<string, unknown>, context: V3T
         ? []
         : [{ code: "partial", field: "concepts", detail: `this entry's term associations did not reconcile (${done.associationsError}); oracle_concepts/oracle_stats may undercount it until a retry succeeds` }]),
     ],
-    v4: { node_id: done.node_id, revision_id: done.revision_id, embedding: done.embedding },
+    v4: { node_id: done.node_id, revision_id: done.revision_id, embedding: done.embedding, ...(done.associationsError === undefined ? {} : { associationsError: done.associationsError }) },
   };
 }

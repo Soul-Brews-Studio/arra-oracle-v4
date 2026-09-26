@@ -42,6 +42,10 @@ export async function oracle_learn(args: Record<string, unknown>, context: V3Too
         ? []
         : [{ code: "partial", field: "concepts", detail: `this entry's term associations did not reconcile (${done.associationsError}); oracle_concepts/oracle_stats may undercount it until a retry succeeds` }]),
     ],
-    v4: { node_id: done.node_id, revision_id: done.revision_id },
+    // `associationsError` has no v3 precedent (unlike `embeddingError`,
+    // which mirrors v3's own field): a pure v4 addition, so it lives inside
+    // `v4`, the "carrying native ids" extension point (V3-PARITY.md §2.5),
+    // not as a bare new top-level key.
+    v4: { node_id: done.node_id, revision_id: done.revision_id, ...(done.associationsError === undefined ? {} : { associationsError: done.associationsError }) },
   };
 }

@@ -106,6 +106,9 @@ beforeAll(async () => {
     { label: "count_before_fail", bank: FRESH, tool: "kb_listNodes", args: { payload: { workspace_name: FRESH, after_id: null, limit: 1, include_total: true, type_term: null } } },
     { label: "index_fails", bank: FRESH, tool: "oracle_learn", failIndex: true, args: { pattern: "published, never indexed" }, capture: { name: "index_fails_rev", path: ["v4", "revision_id"] } },
     { label: "reconcile", bank: FRESH, tool: "kb_reconcileSearchChunks", args: { payload: { workspace_name: FRESH, limit: 1024 } } },
+    // Fix round (verifier finding 1): the same "does not block the write"
+    // rule, for the OTHER post-publish call `publish.ts` makes.
+    { label: "reconcile_fails", bank: FRESH, tool: "oracle_learn", failReconcile: true, args: { pattern: "published, associations not reconciled", concepts: ["never-counted"] } },
     { label: "too_big", bank: FRESH, tool: "oracle_learn", args: { pattern: "x".repeat(300 * 1024) } },
     COUNT("count_after", FRESH),
     // A sealed adapter vocabulary: a new concept cannot be created in it.
@@ -202,7 +205,9 @@ describe("refusals (V1 #3, #4, #9)", () => {
 
   test("content over the 256 KiB MCP envelope is refused before any write", () => {
     expect(out.too_big.status).toBe(413);
-    expect(Number(out.count_after.value.total)).toBe(Number(out.count_before_fail.value.total) + 1);
+    // +2, not +1: both `index_fails` and `reconcile_fails` (fix round)
+    // publish a node between these two counts; `too_big` itself adds none.
+    expect(Number(out.count_after.value.total)).toBe(Number(out.count_before_fail.value.total) + 2);
   });
 });
 
@@ -213,6 +218,18 @@ describe("indexing never blocks the write (V1 #5)", () => {
     expect(typeof out.index_fails.value.embeddingError).toBe("string");
     expect(out.reconcile.isError).toBe(false);
     expect(JSON.stringify(out.reconcile.value.missing_revisions)).toContain(out.index_fails.value.v4.revision_id);
+  });
+
+  // Fix round (verifier finding 1): `reconcileRevisionAssociations` failing
+  // must not block the publish either -- the node is already written and
+  // readable -- but unlike before this fix, the gap is never silent: it is
+  // named in `compat_warnings`, not just swallowed into a plain `success`.
+  test("a reconcile failure still succeeds, with v4.associationsError and a compat_warnings entry naming the gap", () => {
+    const res = out.reconcile_fails;
+    expect(res.isError).toBe(false);
+    expect(res.value).toMatchObject({ success: true, embedding: "enqueued" });
+    expect(typeof res.value.v4.associationsError).toBe("string");
+    expect(res.value.compat_warnings).toContainEqual(expect.objectContaining({ code: "partial", field: "concepts" }));
   });
 });
 
