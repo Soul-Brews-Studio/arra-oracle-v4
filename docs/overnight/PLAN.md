@@ -181,3 +181,16 @@ are part of done.
   regression in the existing Python suite (139 OK → 44 failures in `test_revision_v1`). **honcho-rt REFUTED**:
   mutations to the ordering and per-field diff survive. Neither merges; a repair workflow (`wf_3f721cdd-94a`)
   is running a second fix-and-verify round.
+- 22:52 **ACCEPTOR TASK 4 on the integration head: scoreboard 102 PASS / 9 FAIL / 3 GAP** (baseline 10/69/4; #87 grew
+  from 5 checks to 36). Kernel 44 / HTTP 44 / MCP 44 / **CLI 44**. **Isolation 193 PASS / 0 FAIL.**
+  Codex independently ACCEPTED R3 (operator view is explicit granted authority, not the old leak; readonly or
+  no-requester, non-member, departed and spoofed are all denied on HTTP, MCP and CLI) and R4 (the aggregate reveals no
+  identifiers). Remaining FAILs belong to slices still in flight: #103/#102 ops-root, #29 lifecycle, #30 search-query,
+  #32 (+ its #31 row) chat. GAPs: the #29 recall fixture, and the #33 browser checks, skipped explicitly.
+  ```text
+  issue  PASS FAIL GAP    issue  PASS FAIL GAP    issue  PASS FAIL GAP
+  #27      2    0   0     #31     46    1   0     #85      6    0   0
+  #28      4    0   0     #32      0    2   0     #87     36    0   0
+  #29      2    2   2     #33      1    0   1     #102     0    1   0
+  #30      3    1   0     #75      2    0   0     #103     0    2   0
+  ```
