@@ -25,6 +25,7 @@
     "test:knowledge-chat": "bun test test/knowledge-chat-*.test.ts",
     "test:lifecycle": "bun test test/lifecycle-*.test.ts",
     "test:mcp": "bun test test/mcp-*.test.ts",
+    "test:migration": "bun test test/migration-*.test.ts",
     "test:publication": "bun test test/publication-*.test.ts test/fixtures/publication-v1/*.test.ts",
     "test:read-cursor": "bun test test/read-cursor-*.test.ts",
     "test:replay": "bun test test/replay-*.test.ts",
