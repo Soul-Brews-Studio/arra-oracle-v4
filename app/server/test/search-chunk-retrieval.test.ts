@@ -11,11 +11,15 @@
  * What each case pins, and why it is the discriminating one:
  * - ลืม inside หลงลืม: the inside-word Thai case `icu` measurably misses (#10).
  * - หลงทาง: shares the trigram หลง with หลงลืม, so a trigram index alone
- *   over-matches; substring post-verification must drop it (R14).
+ *   over-matches; substring post-verification must drop it (R14). Every text
+ *   here fits one chunk, so the chunk-local pre-filter already does; the case
+ *   only the whole-head-text re-check can refuse (an over-match cut at a chunk
+ *   seam) is in `search-chunk-retrieval-straddle.test.ts`.
  * - a 2-code-point query has no trigram to look up: it must be the bounded
  *   scan, and say so (`match: "substring_scan"`).
  * - retired / superseded / stale-revision / other-workspace / pending rows are
- *   each present in search_chunks_v1 and MUST NOT surface.
+ *   each present in search_chunks_v1 and MUST NOT surface; so is a chunk that
+ *   keeps a vector but is not `ready` (made by test-side surgery).
  * - semantic ranking uses stub vectors whose squared-L2 distances are known.
  * - a node indexed ONLY under another embedding profile, sitting exactly at
  *   the query vector, never answers the default profile's search: vector
@@ -71,6 +75,7 @@ const N = {
   pending: pad("srchPending"),
   beta: pad("srchBeta"),
   other: pad("srchOther"),
+  failed: pad("srchFailed"),
 };
 const R = {
   thai: pad("revThai"),
@@ -83,9 +88,10 @@ const R = {
   pending: pad("revPending"),
   beta: pad("revBeta"),
   other: pad("revOther"),
+  failed: pad("revFailed"),
   stale2: pad("revStale2"),
 };
-const REVISIONS = [R.thai, R.fox, R.mix, R.retired, R.old, R.successor, R.stale1, R.pending, R.beta, R.other, R.stale2];
+const REVISIONS = [R.thai, R.fox, R.mix, R.retired, R.old, R.successor, R.stale1, R.pending, R.beta, R.other, R.failed, R.stale2];
 const chunk = (revisionId: string, profile = PROFILE) => deriveChunkId(revisionId, CHUNKER_VERSION, profile, 0n);
 
 type Op = { label: string; facade: "publication" | "context" | "reader" | "reader_other" | "harness"; method: string; request?: unknown };
@@ -135,6 +141,7 @@ function buildOps(fixture: Fixture): Op[] {
   publish("pub_pending", ALPHA, alpha, N.pending, "pending note", "หลงลืม pending-marker");
   publish("pub_beta", BETA, beta, N.beta, "beta note", "ฉันหลงลืมกุญแจไว้ที่บ้าน beta-marker");
   publish("pub_other", ALPHA, alpha, N.other, "profile note", "other-profile-marker");
+  publish("pub_failed", ALPHA, alpha, N.failed, "failed note", "failed-embed-marker");
 
   // Before any chunk index call: the reader answers, never builds an index.
   harness("indices_before", "listIndices");
@@ -151,6 +158,7 @@ function buildOps(fixture: Fixture): Op[] {
     ["idx_stale1", ALPHA, N.stale, R.stale1],
     ["idx_pending", ALPHA, N.pending, R.pending],
     ["idx_beta", BETA, N.beta, R.beta],
+    ["idx_failed", ALPHA, N.failed, R.failed],
   ] as const) index(label, workspace, node, revision);
   // Indexed and embedded ONLY under another profile, AT the query vector.
   index("idx_other", ALPHA, N.other, R.other, OTHER_PROFILE);
@@ -165,7 +173,10 @@ function buildOps(fixture: Fixture): Op[] {
   embed("emb_stale1", ALPHA, R.stale1, E0);
   embed("emb_beta", BETA, R.beta, E0);
   embed("emb_other", ALPHA, R.other, E0, OTHER_PROFILE);
-  // N.pending stays pending: indexed, never embedded.
+  // N.pending stays pending: indexed, never embedded. N.failed keeps its
+  // vector AT e0, but its status is then set to `failed`.
+  embed("emb_failed", ALPHA, R.failed, E0);
+  harness("fail_chunk", "markChunkFailed", { id: chunk(R.failed) });
 
   // Lifecycle AFTER indexing, so the ineligible nodes' chunks really exist.
   ops.push({
@@ -424,8 +435,9 @@ describe("#30 knowledge retrieval on a real gated dataset", () => {
     const hits = value.hits as Hit[];
     // thai=e0 (0), mix=(e0+e1)/sqrt2 (2 - sqrt2), fox=e1 (2), successor=e2 (2):
     // a tie at 2 is broken by node id. retired/old/stale1/beta sit AT e0,
-    // pending has no vector, and `other` sits AT e0 under another profile:
-    // none of them may appear.
+    // pending has no vector, `other` sits AT e0 under another profile, and
+    // `failed` sits AT e0 with status `failed`: none of them may appear.
+    expect(ok("fail_chunk")).toEqual([{ status: "failed", has_vector: true }]);
     expect(hits.map((hit) => hit.node_id)).toEqual([N.thai, N.mix, ...[N.fox, N.successor].sort()]);
     expect(hits[0]!.distance).toBeCloseTo(0, 5);
     expect(hits[1]!.distance).toBeCloseTo(2 - Math.SQRT2, 5);

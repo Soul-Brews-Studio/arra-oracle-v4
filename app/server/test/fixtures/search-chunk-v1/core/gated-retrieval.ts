@@ -99,6 +99,17 @@ const harness: Record<string, (request: any) => Promise<unknown>> = {
   async embedCalls() {
     return [...embedCalls];
   },
+  /** Surgery: a chunk that keeps its stored vector but is NOT `ready` -- what
+   *  an embed step that stores a vector and then marks the chunk failed would
+   *  leave. No product writer does this today; semantic search must still
+   *  refuse it. Answers the row's status and whether its vector is there. */
+  async markChunkFailed(request: { id: string }) {
+    const tbl = await chunkTable();
+    const where = `id = '${request.id.replaceAll("'", "''")}'`;
+    await tbl.update({ where, values: { status: "failed" } });
+    const rows = await tbl.query().where(where).select(["status", "embedding"]).toArray();
+    return rows.map((row) => ({ status: row.status, has_vector: row.embedding !== null && row.embedding !== undefined }));
+  },
   /** Surgery: make the NEXT index build fail for real (the index directory is
    *  not writable), while row appends -- data/, _versions/ -- still land. */
   async lockIndexDir() {
