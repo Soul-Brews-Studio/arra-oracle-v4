@@ -194,3 +194,7 @@ are part of done.
   #29      2    2   2     #33      1    0   1     #102     0    1   0
   #30      3    1   0     #75      2    0   0     #103     0    2   0
   ```
+- 22:53 WAVE 1 final: **ops-root REFUTED twice**. The verifier found a real defect: a content:read-only caller can send a
+  malformed `session_name` over MCP; the legacy writer stores it raw, and the new strict reader then throws for the whole
+  workspace, so the audit listing is denied for everyone. There was also a 520-line fixture. Repair workflow
+  `wf_de3ce6e1-49a` (Opus) is fixing both ends: the writer validates, and one bad row cannot deny the listing.
