@@ -328,3 +328,17 @@ are part of done.
 - 04:37 **FIRST GREEN GITHUB ACTIONS RUN** on this repo: https://github.com/Soul-Brews-Studio/arra-oracle-v4/actions/runs/36271049858
   (v4/on-ci-green `f7aafb0`): typecheck, build, the sharded full suite, the 3 Python suites and the UI v2 build all passed. The ci-green slice is confirming
   with a second run before it hands back. R22 and style-split are in fix rounds; final-docs is in its second verification.
+- 04:57 **ci-green ACCEPTED**: two green GitHub runs (36271049858, 36272542779; 1780/0 on Linux, 2 cores). The root cause was mostly NOT timing. **Linux E2BIG**:
+  a single argv string over 131071 bytes fails (macOS has no such limit), and 3 harnesses passed 146–312 KB JSON to gated children, which surfaced as "WIDE node" and "(unnamed)"
+  failures. Now spilled to a file with a guard. The embed criterion is proven by order, not clock; a chat stub that could hang `stop()` was fixed; one timeout knob
+  (TEST_TIME_SCALE). final-docs was refuted on one figure (the UI calls 30 of 57 methods, not 35; 5 are comment-only names), fixed by the driver (`15e2b1d`).
+  style-split ACCEPTED and MERGED (`9741c4a`). The ci-green merge is in progress (`wf_8bbdf3f7-e02`): it applies its conversions to tests added since its base,
+  then pushes the integration branch and watches its CI to the end.
+- 05:18 **R22 ACCEPTED**: keyword hit ORDER is now computed from workspace-local data only (occurrences in the head text, then accepted time, then node_id). BM25
+  only selects candidates. The old leak test is inverted: ALPHA's order and bytes are identical after BETA-only writes. The residual is measured and documented:
+  when a workspace has more matches than the overfetch, which candidates enter can still depend on global statistics; a per-workspace index closes that.
+  Suite on the slice: 1917/0 over 131 files. It merges after ci-green.
+- 05:45 **ci-green merge ACCEPTED and pushed** (`0a98289`). Its conversions were extended to every test added after its base.
+  **GitHub CI GREEN ON THE INTEGRATION BRANCH: https://github.com/Soul-Brews-Studio/arra-oracle-v4/actions/runs/36275352354** (1985/0, 139 files, Linux).
+  MERGED R22 (`debd350`; gated-retrieval payload reader combined: harness spill checked before R22's own @path, because both start with "@") and final-docs
+  (`4c78dd2`, then `684cf12` fixing claims that went stale during the night: CI not green; R22 not on base). **FEATURE FREEZE.** Final gate, final CI, final acceptor run.
