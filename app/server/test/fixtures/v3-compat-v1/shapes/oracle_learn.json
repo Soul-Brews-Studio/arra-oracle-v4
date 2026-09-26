@@ -1,0 +1,15 @@
+{
+  "tool": "oracle_learn",
+  "v3Source": {
+    "handler": "arra-oracle-v3 src/tools/learn.ts:307-318 (success), :140-149 (usage error, isError:true)",
+    "commit": "61e5f8b6"
+  },
+  "success": {
+    "success": { "type": "boolean", "const": true },
+    "file": { "type": "string", "note": "the written markdown path, learn.ts:310" },
+    "id": { "type": "string" },
+    "embedding": { "type": "string", "enum": ["ok", "failed"], "note": "handler variable embeddingStatus, learn.ts:284/294/312" },
+    "embeddingError": { "type": "string", "optional": true, "note": "only present when embedding === 'failed', learn.ts:313" },
+    "message": { "type": "string" }
+  }
+}

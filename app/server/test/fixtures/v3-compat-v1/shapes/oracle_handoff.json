@@ -1,0 +1,13 @@
+{
+  "tool": "oracle_handoff",
+  "v3Source": {
+    "handler": "arra-oracle-v3 src/tools/handoff.ts:129-135 (success)",
+    "commit": "61e5f8b6"
+  },
+  "success": {
+    "success": { "type": "boolean", "const": true },
+    "file": { "type": "string", "note": "sourceFileRel, handoff.ts:113/131" },
+    "message": { "type": "string" }
+  },
+  "notes": "v3's real output has NO `id` field (unlike oracle_learn) -- a handoff is a write-only file, never assigned a document id in v3. V3-PARITY.md §4.3 adds `id: node_id` in v4 as a genuine addition, named in the design, not a copy of a v3 field."
+}

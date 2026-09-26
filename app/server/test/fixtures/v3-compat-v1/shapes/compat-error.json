@@ -1,0 +1,25 @@
+{
+  "envelope": "arra-v3-compat/1",
+  "source": "docs/overnight/V3-PARITY.md §2.6 (this is a v4 design, not a v3 source citation -- v3 has no such envelope; v3 errors are a bare {success:false,error} shape or a thrown Error caught by runMcp)",
+  "shape": {
+    "success": { "type": "boolean", "const": false },
+    "error": { "type": "string", "note": "v3-style text, e.g. 'Document not found: X' -- v3 clients read `Error: <msg>`" },
+    "compat": {
+      "type": "object",
+      "shape": {
+        "version": { "type": "string", "const": "arra-v3-compat/1" },
+        "code": {
+          "type": "string",
+          "enum": [
+            "not_carried", "not_yet_available", "legacy_id_unknown", "speaker_required",
+            "unsupported_argument", "semantic_refusal", "no_results", "kernel_error"
+          ]
+        },
+        "tool": { "type": "string" },
+        "path": { "type": "string", "optional": true },
+        "detail": { "type": "string" }
+      }
+    },
+    "v4_error": { "type": "object", "nullable": true, "note": "the wrapped arra-error/v1 envelope, unchanged, only when compat.code === 'kernel_error'" }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "tool": "____IMPORTANT",
+  "v3Source": {
+    "handler": "arra-oracle-v3 src/mcp/guide.ts:13-31 (guideToolResponse)",
+    "commit": "61e5f8b6"
+  },
+  "responseKind": "plain text, NOT a JSON.stringify'd object -- v3's `content[0].text` is the literal guide string (guide.ts:17-28), unlike every other tool in this family.",
+  "v4Requirements": {
+    "source": "V3-PARITY.md §2.5 (oracle_recap returns markdown, text() passes strings through), §4.5 (____IMPORTANT content)",
+    "mustMention": ["not carried", "excluded from recall"]
+  }
+}
