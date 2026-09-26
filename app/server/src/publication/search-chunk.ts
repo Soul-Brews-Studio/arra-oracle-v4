@@ -46,5 +46,9 @@ export { DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, searchLimit } from "./search-ch
 export { type SearchKnowledgeKeywordRequest, parseSearchKnowledgeKeyword } from "./search-chunk.parseSearchKnowledgeKeyword";
 export { type SearchKnowledgeSemanticRequest, parseSearchKnowledgeSemantic } from "./search-chunk.parseSearchKnowledgeSemantic";
 export { SNIPPET_CODE_POINTS, searchSnippet } from "./search-chunk.searchSnippet";
+export { chunkSourceText } from "./search-chunk.chunkSourceText";
+export { chunkMayHoldQuery } from "./search-chunk.chunkMayHoldQuery";
+export { seamPredicate } from "./search-chunk.seamPredicate";
+export { keywordScanPredicate } from "./search-chunk.keywordScanPredicate";
 export { type RankedChunk, rankedChunk } from "./search-chunk.rankedChunk";
 export { type HitHead, type KnowledgeHit, groupKnowledgeHits } from "./search-chunk.groupKnowledgeHits";

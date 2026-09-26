@@ -188,18 +188,21 @@ export async function composeService(config: RuntimeConfig): Promise<OperationSe
  */
 export function composeKnowledgeAccess(env: NodeJS.ProcessEnv = process.env): KnowledgeAccess {
   const datasetRoot = env.ARRA_KNOWLEDGE_DATASET_ROOT;
+  const embeddingProfile = env.EMBEDDING_MODEL?.trim() ? env.EMBEDDING_MODEL.trim() : DEFAULT_EMBEDDING_PROFILE;
   return createKnowledgeAccess({
     datasetRoot: typeof datasetRoot === "string" && datasetRoot.trim() ? datasetRoot : undefined,
     env,
-    // #30 semantic search: the query embedder is the same local Ollama model
-    // `embed.ts` serves, imported lazily on first use like `composeService`'s
-    // raw modules. Its profile is that model's name -- the name an embed
-    // worker stores via `indexRevisionChunks` -- with `embed.ts`'s own default
-    // (`all-minilm`, `DEFAULT_EMBEDDING_PROFILE`). SEAM: the concurrent
-    // profile registry replaces this pairing with a registry entry.
+    // #30 semantic search: the query embedder is `embed.ts`'s local Ollama
+    // client, imported lazily on first use like `composeService`'s raw
+    // modules. Its profile is the model's name -- the name an embed worker
+    // stores via `indexRevisionChunks` -- from THIS `env`, blank meaning
+    // `DEFAULT_EMBEDDING_PROFILE`; and that same name is the model it calls,
+    // so the profile a search reports can never differ from the model that
+    // embedded its query. SEAM: the concurrent profile registry replaces this
+    // pairing with a registry entry.
     embedder: {
-      profile: env.EMBEDDING_MODEL?.trim() ? env.EMBEDDING_MODEL : DEFAULT_EMBEDDING_PROFILE,
-      embed: async (text: string) => (await import("./embed")).embedOne(text),
+      profile: embeddingProfile,
+      embed: async (text: string) => (await import("./embed")).embedOne(text, embeddingProfile),
     },
   });
 }

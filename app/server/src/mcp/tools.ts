@@ -150,12 +150,15 @@ const BINDING_NOTE =
 const SEARCH_NOTES: Readonly<Record<string, string>> = Object.freeze({
   searchKnowledgeKeyword:
     " Keyword recall: payload {workspace_name, query, limit?} (limit 1..50, default 10). Answers NODES at their" +
-    " current head revision whose text contains the query, case-insensitive; retired and superseded nodes are" +
-    ' excluded. match is "ngram" (trigram index, every hit re-checked as a substring) or "substring_scan"' +
-    " (a query under 3 characters, or no index built yet). Never fused with semantic results.",
+    " current head revision whose text (title and body, across chunk boundaries) contains the query," +
+    ' case-insensitive; retired and superseded nodes are excluded. match is "ngram" (trigram index, every hit' +
+    ' re-checked as a substring) or "substring_scan" (a query under 3 characters, or no index built yet); a' +
+    ' hit with match "substring_scan" and score null in an ngram answer was found at a chunk seam.' +
+    " Never fused with semantic results.",
   searchKnowledgeSemantic:
     " Semantic recall: payload {workspace_name, query, limit?, embedding_profile?} (profile defaults to the" +
-    " deployment's). Answers NODES at their current head revision, nearest READY chunk vector first by squared" +
+    " server's query embedder's own: EMBEDDING_MODEL, else all-minilm; any other profile is refused)." +
+    " Answers NODES at their current head revision, nearest READY chunk vector first by squared" +
     " L2 distance; retired and superseded nodes are excluded. Never fused with keyword results.",
 });
 

@@ -1,6 +1,6 @@
 import { fail } from "../contracts/errors";
 import { overfetch } from "../fts/fts";
-import { CHUNKER_VERSION, groupKnowledgeHits, parseSearchKnowledgeSemantic, rankedChunk } from "./search-chunk";
+import { CHUNKER_VERSION, DEFAULT_EMBEDDING_PROFILE, groupKnowledgeHits, parseSearchKnowledgeSemantic, rankedChunk } from "./search-chunk";
 import { quote } from "./storage";
 import { SEARCH_CHUNKS } from "./service.constants";
 import { contextScope } from "./service.contextScope";
@@ -15,10 +15,13 @@ import { type DatasetAdapter, type QueryEmbedder } from "./service.types";
  * chunk vector nearest the query's, under ONE embedding profile.
  *
  * - The query is embedded by the injected `embedder` (composition: `embed.ts`
- *   over local Ollama; tests: a stub). A profile the embedder does not serve
- *   is refused (`invalid_value` at `/embedding_profile`) BEFORE any model
- *   call: comparing one model's query vector with another model's stored
- *   vectors answers nothing meaningful, so vector spaces are never mixed.
+ *   over local Ollama; tests: a stub). A request naming no profile reads the
+ *   embedder's own (`DEFAULT_EMBEDDING_PROFILE` only when none is composed,
+ *   which then answers `writer_unavailable` anyway). A profile the embedder
+ *   does not serve is refused (`invalid_value` at `/embedding_profile`)
+ *   BEFORE any model call: comparing one model's query vector with another
+ *   model's stored vectors answers nothing meaningful, so vector spaces are
+ *   never mixed.
  * - Candidates are `status = 'ready'` chunks of that profile and the one
  *   implemented chunker, nearest first by LanceDB `l2`, which is the SQUARED
  *   Euclidean distance -- reported as stored (`metric: "l2_squared"`).
@@ -35,7 +38,10 @@ export async function searchKnowledgeSemantic(
 ) {
   const request = parseSearchKnowledgeSemantic(requestBytes);
   await requireWorkspace(reader, request.workspace_name);
-  if (embedder !== undefined && request.embedding_profile !== embedder.profile) {
+  // SEAM (#30 profile registry): "the active profile" is today the composed
+  // embedder's own; a registry's default entry replaces this line.
+  const profile = request.embedding_profile ?? embedder?.profile ?? DEFAULT_EMBEDDING_PROFILE;
+  if (embedder !== undefined && profile !== embedder.profile) {
     fail("invalid_value", ["embedding_profile"], "no query embedder serves this embedding profile");
   }
   const vector = await embedSearchQuery(embedder, request.query);
@@ -43,10 +49,10 @@ export async function searchKnowledgeSemantic(
   await reader.refresh(SEARCH_CHUNKS);
   const predicate =
     `${contextScope(request.workspace_name)} AND status = 'ready'` +
-    ` AND embedding_profile = ${quote(request.embedding_profile)}` +
+    ` AND embedding_profile = ${quote(profile)}` +
     ` AND chunker_version = ${quote(CHUNKER_VERSION)}`;
 
-  const current = currentEligibleChunks(reader, request.workspace_name);
+  const current = currentEligibleChunks(reader, request.workspace_name, null);
   const hits = await overfetch(request.limit, async (fetch) => {
     const candidates = await reader.vectorSearchChunks(vector, predicate, fetch);
     const kept = await current(candidates.map((row) => rankedChunk(row, row._distance)));
@@ -54,7 +60,7 @@ export async function searchKnowledgeSemantic(
   });
 
   return {
-    embedding_profile: request.embedding_profile,
+    embedding_profile: profile,
     metric: "l2_squared" as const,
     hits: hits.map((hit) => ({
       node_id: hit.node_id,
