@@ -15,7 +15,8 @@
  * `messages` rows the caller already owns, re-projected through
  * `context.ts`'s own `encodeMessageRow`. This file only shapes the REQUEST
  * and the RESPONSE around that derivation; service.ts owns the retrieval,
- * the per-item authorization and the model call.
+ * the per-session authorization (service.getContext.ts, #85) and the model
+ * call.
  */
 
 import { requireBoundedText, requireClosedObject, requireNonemptyString, type Tokens } from "../contracts/common";
@@ -30,7 +31,8 @@ const MAX_NAME_BYTES = 256;
 const MAX_QUESTION_BYTES = 4096;
 
 /** Upper bound on how many context items one call may compose. Request-side;
- *  service.ts may still return FEWER, reporting why via `coverage`. */
+ *  service.ts may still return FEWER, reporting why via `coverage` and
+ *  `excluded`. */
 export const MAX_CONTEXT_ITEMS = 50;
 /**
  * Cumulative wire budget for the assembled context array, mirroring
@@ -146,21 +148,45 @@ export function projectContextItem(encodedMessage: Record<string, unknown>): Cha
   return { public_id, session_name, peer_name, role: role ?? null, content, seq_in_session, created_at };
 }
 
-export type ExcludedContextItem = {
-  reason: "unauthorized" | "budget_exceeded";
-  session_name: string;
-  public_id: string | null;
-};
+/**
+ * An AUTHORIZED candidate a budget or count bound stopped. It keeps its
+ * identifiers: they belong to sessions the requester is a current member of.
+ *
+ * The one session-level entry is the linked-session bound
+ * (`MAX_LINKED_SESSIONS`): both fields are null, because the set of linked
+ * sessions that were never searched is open-ended and may include sessions
+ * the requester is not a member of, so naming one would be a disclosure.
+ */
+export type BudgetExcludedContextItem =
+  | { reason: "budget_exceeded"; session_name: string; public_id: string }
+  | { reason: "budget_exceeded"; session_name: null; public_id: null };
+
+/**
+ * Every authorization exclusion of one call, folded into ONE anonymous entry
+ * (#85, overnight ruling R4). Listing them by `public_id`/`session_name`
+ * disclosed exactly what the membership check exists to withhold. `count` is
+ * the number of candidate messages refused, at most `max_items + 1` per
+ * unauthorized linked session (the same per-session lookahead an authorized
+ * session gets), so it is a lower bound, never an overcount.
+ */
+export type UnauthorizedContextExclusion = { reason: "unauthorized"; count: number };
+
+export type ExcludedContextItem = BudgetExcludedContextItem | UnauthorizedContextExclusion;
 
 export type ContextResult = {
   items: ChatContextItem[];
-  /** `"partial"` whenever a BUDGET or COUNT bound stopped an authorized
-   *  candidate from being included -- reported structurally, never a silent
-   *  truncation. Authorization exclusions are always listed in `excluded`
-   *  too, but do not by themselves flip this to `"partial"`: dropping a peer's
-   *  own out-of-scope item is correct access control, not incompleteness. */
+  /** `"full"` ONLY when nothing was excluded for any reason (#85, R4):
+   *  `excluded` is empty and `excluded_omitted` is 0. Any unauthorized
+   *  exclusion, any budget/count stop and the linked-session bound all make
+   *  it `"partial"`. It answers "is this everything?", not "is this
+   *  everything you may see?" -- the second question gave a false "yes" to
+   *  the first. */
   coverage: "full" | "partial";
   excluded: ExcludedContextItem[];
+  /** How many `budget_exceeded` entries were NOT listed because `excluded`
+   *  reached its own byte bound (`MAX_CONTEXT_WIRE_BYTES`). The list's own
+   *  truncation signal; 0 when the list is complete. */
+  excluded_omitted: number;
 };
 
 /** One wire-byte measurement, matching `context.ts`'s own `rowWireBytes`

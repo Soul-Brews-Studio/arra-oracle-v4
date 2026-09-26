@@ -112,7 +112,7 @@ function fakeWriterBundle(closeCalls: number[], id: number) {
     context: {
       async answerChat(bytes: Uint8Array) {
         parseAnswerChat(bytes); // real governed parser, same discipline as elsewhere
-        return { answer: "stub", coverage: "full", excluded: [], items_used: [] };
+        return { answer: "stub", coverage: "full", excluded: [], excluded_omitted: 0, items_used: [] };
       },
       async joinSession(bytes: Uint8Array) {
         parseJoinSession(bytes); // real governed parser

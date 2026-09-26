@@ -1,13 +1,12 @@
 import type { ContextResult } from "../api/memory";
 
 /**
- * `title` states the real rule because the obvious-sounding one is wrong:
- * seeing ANY `unauthorized` entry in `excluded` looks like missing data, but
- * it isn't -- it's `getContext` correctly refusing a peer's out-of-scope
- * item. Only a `budget_exceeded` exclusion (max_items or the wire-byte cap)
- * means an authorized candidate was actually left out. `coverage` already
- * encodes this server-side (service.getContext.ts's `budgetExceeded` flag);
- * this badge just has to not relabel it as a generic "warning".
+ * `coverage` answers "is this everything?" (#85, overnight ruling R4):
+ * `"full"` only when nothing was excluded for any reason. An unauthorized
+ * omission counts, because the caller did not get the whole picture even if
+ * access control was right to withhold it. The server derives this; the
+ * badge only has to say what it means and point at the excluded list for
+ * the why.
  */
 export function CoverageBadge({ coverage }: { coverage: ContextResult["coverage"] }) {
   const full = coverage === "full";
@@ -18,8 +17,8 @@ export function CoverageBadge({ coverage }: { coverage: ContextResult["coverage"
       }`}
       title={
         full
-          ? "Every authorized candidate fit inside max_items and the wire budget."
-          : "A budget or count bound stopped an authorized item from being included -- not caused by unauthorized exclusions alone."
+          ? "Nothing was excluded: every candidate was authorized and fit inside max_items, the wire budget and the linked-session bound."
+          : "Something was left out: unauthorized evidence, a max_items or wire-budget stop, or linked sessions past the bound. The excluded list says which."
       }
     >
       <span className={`h-1.5 w-1.5 rounded-full ${full ? "bg-accent" : "bg-[#f0a35e]"}`} />

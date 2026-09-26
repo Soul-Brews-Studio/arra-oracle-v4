@@ -238,3 +238,76 @@ unmodified.
   any test file as of this commit.
 - Does not take a position on whether `answerChat` being unwired to any production entrypoint
   (§6) is acceptable for a v1 freeze — that is a product/scope call for whoever ratifies this.
+
+## Amendment 2026-09-26 (overnight R4)
+
+Source: `docs/overnight/DECISIONS.md` **R4** ("`coverage` means complete, not 'complete within
+what you may see'"), ruling on `Soul-Brews-Studio/arra-oracle-v4#85`. The sections above are left
+as written. Where they disagree with this amendment, this amendment wins.
+
+### What changed
+
+1. **`coverage` means complete.** `coverage` is `"full"` only when nothing was excluded for any
+   reason: `excluded` is empty and `excluded_omitted` is 0. An unauthorized exclusion, a
+   `max_items` stop, a wire-budget stop and the linked-session bound each make it `"partial"`.
+   This replaces the §2 paragraph that said an authorization exclusion alone does not flip
+   coverage. The old rule gave a false "yes" to the question the field exists to answer ("is
+   this everything?"). `chat-service.test.ts` asserted `"full"` for that case, and that assertion
+   is changed along with this amendment.
+2. **Unauthorized items are never identified.** Listing them by `public_id` and `session_name` was
+   itself the leak. All authorization exclusions in one call fold into a single entry,
+   `{ reason: "unauthorized", count }`. It appears only when `count > 0`. `count` is the number of
+   candidate messages refused. Each unauthorized linked session contributes at most
+   `max_items + 1` of them, the same per-session lookahead an authorized session gets, so `count`
+   can undercount but never overcounts.
+3. **Budget and limit exclusions keep their identifiers**, because they belong to sessions the
+   requester is a current member of: `{ reason: "budget_exceeded", session_name, public_id }`.
+4. **The linked-session bound is reported.** This resolves the §5 "UNRESOLVED / gap" and the
+   matching §9 bullet. When `session_links` holds more than `MAX_LINKED_SESSIONS` (8) rows from
+   the anchor, the `+ 1` lookahead row is no longer discarded silently. It produces one
+   session-level entry, `{ reason: "budget_exceeded", session_name: null, public_id: null }`. It
+   names no session, because the set of unsearched sessions is open-ended and may include
+   sessions the requester is not a member of. It is conservative: a ninth row that duplicates an
+   earlier target still reports the bound.
+5. **`excluded` has its own truncation signal.** The list is byte-bounded by a budget the same
+   size as the item budget (`MAX_CONTEXT_WIRE_BYTES`, 65536) but separate from it. Entries past
+   the bound are counted in a new result field, `excluded_omitted: number`, which is 0 when the
+   list is complete. Overflow no longer borrows `coverage`. The fixed entries (the unauthorized
+   count, then the link bound) go first, so they are never the ones omitted.
+6. **Authorization runs once per session, before any message row is read.** It used to run per
+   candidate, after the `max_items` gate. That ordering recorded an unauthorized candidate past
+   the cap as `budget_exceeded`, with its `public_id` attached. An unauthorized session is now
+   only counted. The count reads a projection of the ordering column alone, so no content and no
+   identifier of that session enters the process. Membership lookups per call drop from up to
+   459 to at most 9.
+
+### Result shapes, as amended
+
+```
+getContext  -> { items, coverage: "full"|"partial", excluded: ExcludedContextItem[], excluded_omitted: number }
+answerChat  -> { answer, coverage, excluded, excluded_omitted, items_used: string[] }
+
+ExcludedContextItem =
+    { reason: "unauthorized",    count: number }                              // at most one, first
+  | { reason: "budget_exceeded", session_name: null,   public_id: null }      // link bound, at most one
+  | { reason: "budget_exceeded", session_name: string, public_id: string }    // one per stopped item
+```
+
+`answerChat` passes only `items` to the model. Every item passed the per-session membership
+check, and `excluded` is never rendered into the prompt. `answerChat` returns the same `coverage`,
+`excluded` and `excluded_omitted` that `getContext` computed.
+
+### Caller impact
+
+- This is a wire change on HTTP `POST /api/knowledge/:bank/getContext|answerChat` and on MCP
+  `kb_getContext` / `kb_answerChat`. The UI (`app/ui/v2` `CoverageBadge`, `ExcludedList`,
+  `api/memory.ts`, and the v1 `knowledge.html`) was updated in the same change.
+- `"partial"` is **not a retry signal**. The same request by the same requester returns the same
+  exclusions. Read `excluded` to learn why.
+
+### Evidence
+
+`app/server/test/chat-coverage.test.ts` runs a real gated dataset. It covers all eight scenarios
+(unauthorized, full, count, wire, unauthorized-after-cap, ninth link, 408 unauthorized
+candidates, byte-bounded overflow), the recording stub model, and the same assertions over live
+HTTP and MCP against the production reader.

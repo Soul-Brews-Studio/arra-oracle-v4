@@ -48,7 +48,7 @@ export function ContextPanel({
             <CoverageBadge coverage={context.coverage} />
           </div>
 
-          <ExcludedList excluded={context.excluded} />
+          <ExcludedList excluded={context.excluded} omitted={context.excluded_omitted} />
 
           <div>
             <button

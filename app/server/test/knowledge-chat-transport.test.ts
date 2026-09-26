@@ -77,7 +77,7 @@ const fakeBundle: KnowledgeBundle = {
     async getContext(bytes: Uint8Array) {
       const request = parseGetContext(bytes); // REAL governed parser
       expect(request.workspace_name).toBe("acme");
-      return { items: [CONTEXT_ITEM], coverage: "full" as const, excluded: [] };
+      return { items: [CONTEXT_ITEM], coverage: "full" as const, excluded: [], excluded_omitted: 0 };
     },
     async answerChat(bytes: Uint8Array) {
       const request = parseAnswerChat(bytes); // REAL governed parser
@@ -85,6 +85,7 @@ const fakeBundle: KnowledgeBundle = {
         answer: `stub answer to: ${request.question}`,
         coverage: "full",
         excluded: [],
+        excluded_omitted: 0,
         items_used: [CONTEXT_ITEM.public_id],
       };
     },
@@ -136,7 +137,7 @@ describe("knowledge explorer: getContext round-trips (read-only)", () => {
     const res = await send("/api/knowledge/acme/getContext", authedJson(body));
     expect(res.status).toBe(200);
     const parsed = await res.json();
-    expect(parsed).toEqual({ items: [CONTEXT_ITEM], coverage: "full", excluded: [] });
+    expect(parsed).toEqual({ items: [CONTEXT_ITEM], coverage: "full", excluded: [], excluded_omitted: 0 });
   });
 
   test("a body naming a different workspace than the route is refused before the facade ever runs", async () => {

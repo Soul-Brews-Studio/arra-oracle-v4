@@ -18,6 +18,9 @@ const model: ChatModelFn = options.model ?? (() => mapModelFailure());
           }),
         );
         const contextResult = await getContext(writer, contextBytes);
+        // ONLY `items` crosses into the model: every one of them passed the
+        // per-session membership check. `excluded` is never rendered or
+        // passed, and it no longer identifies unauthorized items anyway (#85).
         const contextText = renderContextText(contextResult.items);
         let answer: string;
         try {
@@ -31,6 +34,7 @@ const model: ChatModelFn = options.model ?? (() => mapModelFailure());
           answer,
           coverage: contextResult.coverage,
           excluded: contextResult.excluded,
+          excluded_omitted: contextResult.excluded_omitted,
           items_used: contextResult.items.map((item) => item.public_id),
         };
       })();
