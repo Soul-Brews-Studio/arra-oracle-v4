@@ -13,9 +13,12 @@ import { guide } from "./guide";
 import { oracle_handoff } from "./tools/oracle_handoff";
 import { oracle_ask } from "./tools/oracle_ask";
 import { oracle_learn } from "./tools/oracle_learn";
+import { oracle_read } from "./tools/oracle_read";
 import { oracle_research_note } from "./tools/oracle_research_note";
 import { oracle_search } from "./tools/oracle_search";
 import { oracle_search_chain } from "./tools/oracle_search_chain";
+import { oracle_supersede } from "./tools/oracle_supersede";
+import { oracle_verify } from "./tools/oracle_verify";
 
 export type V3ToolContext = {
   readonly tool: string;
@@ -40,4 +43,8 @@ export const V3_HANDLERS: Readonly<Record<string, V3Handler>> = Object.freeze({
   oracle_search,
   oracle_ask,
   oracle_search_chain,
+  // V2 knowledge reads (V3-PARITY.md §4.2/§4.3, §7 "V2"; DECISIONS.md R18 D3).
+  oracle_read,
+  oracle_supersede,
+  oracle_verify,
 });

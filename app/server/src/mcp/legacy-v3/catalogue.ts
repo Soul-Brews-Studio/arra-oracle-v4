@@ -154,7 +154,10 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
   spec({
     name: "oracle_supersede",
     action: "content:write",
-    uses: ["getAcceptedHead", "listLifecycleHistory", "supersedeNode", "getTerm"],
+    // A7: peer_name is ensured the same way learn/handoff ensure their author
+    // -- getPeer, else an idempotent registerPeer -- so a first-time speaker
+    // does not need to have called a knowledge-write tool first.
+    uses: ["getAcceptedHead", "listLifecycleHistory", "supersedeNode", "getTerm", "getPeer", "registerPeer"],
     requires: ["getAcceptedHead", "listLifecycleHistory", "supersedeNode"],
     description: "Mark one entry as replaced by another. The old entry leaves recall but stays readable by id, with superseded_by." + RECALL,
     inputSchema: obj({ oldId: str("Required."), newId: str("Required."), reason: str(""), peer: str("") }, ["oldId", "newId"]),

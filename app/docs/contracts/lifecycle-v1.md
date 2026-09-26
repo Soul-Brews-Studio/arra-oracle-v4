@@ -472,3 +472,60 @@ actually excludes retired/superseded content end-to-end, not just that parsing s
 `nodes list` alias test (unchanged assertion, now the fix-round regression pin) proves the alias's
 wire body without `--history` is byte-for-byte identical to what it always sent -- this is the
 `invalid_request` regression the verifier measured on the alias's real HTTP/MCP path, now closed.
+
+## 13. Amendment 2026-09-26 (overnight R18 (V2 read/supersede/verify) + D3)
+
+Appended, not rewritten. Ruling: [`docs/overnight/DECISIONS.md`](../../../docs/overnight/DECISIONS.md)
+R18, `docs/overnight/V3-PARITY.md` §3 A6/A3, §4.2/§4.3 (`oracle_read`, `oracle_supersede`).
+
+**What changed.** Two new files under `app/server/src/mcp/legacy-v3/tools/` (`oracle_read.ts`,
+`oracle_supersede.ts`) became the first CONSUMERS of `getAcceptedHead`'s `lifecycle` label (§12
+above) and of `supersedeNode` from outside the registry/transport layer this contract already
+names. Nothing in `publication/*` changed; this amendment records the new caller, the way §10's
+exposure amendment recorded the registry as one.
+
+- **D3 (recall vs. browse).** `oracle_read` is a browse path: it reads a node's OWN terminal event
+  straight off `getAcceptedHead`'s `lifecycle` field -- `superseded_by`/`superseded_at`/
+  `superseded_reason` are `lifecycle.new_id`/`.superseded_at`/`.reason` verbatim. No separate
+  `listLifecycleHistory` call is needed for this case: a node carries at most one terminal event
+  (§2's append-only rule), so `getAcceptedHead`'s label already IS that event.
+- **`oracle_supersede`'s pre-check** reads the OLD node's `lifecycle` label the same way, before
+  ever calling `supersedeNode`: the same successor already recorded there answers v3's
+  `unchanged:true` with no kernel write attempted; a different successor, or a retirement, is a
+  refused `semantic_refusal` naming what actually happened. Only an untouched node (`lifecycle:
+  null`) reaches `supersedeNode` at all.
+- **The adapter retries once on a returned `stale_pin` conflict**, re-reading the CURRENT head via
+  `getAcceptedHead` and re-attempting with a freshly derived `operation_id` (the pin is part of the
+  id, per §2). A `successor_terminal` conflict (the NEW node already carries its own terminal
+  event) is surfaced as `semantic_refusal`, naming the successor -- this is the #29 slice B rule
+  this contract's §12 point 1 already states, reached here through the adapter rather than
+  `kb_supersedeNode` directly.
+- **D1 id resolution** (`app/server/src/mcp/legacy-v3/ids.resolveNodeId.ts`) now takes an optional
+  `path` argument (default `/id`) so `oracle_supersede`'s `oldId`/`newId` arguments name themselves
+  correctly in a refusal, instead of every resolver error reading `/id` regardless of which
+  argument actually failed. No existing caller (`oracle_read`, the unit tests in
+  `test/mcp-v3-frame.test.ts`) passes a fifth argument, so its behaviour is unchanged for them.
+
+**Why.** Both tools work entirely from data `getAcceptedHead` already returns; adding a second
+`listLifecycleHistory` round trip for information already in hand would be an unnecessary kernel
+call this contract's own §6 bounds do not require. The pre-check pattern also means a v3 client's
+literal retry (same `oldId`/`newId`/`reason`) never even reaches the kernel's own idempotent-replay
+path in the common case -- it is answered from the read alone, which is cheaper and matches v3's
+`unchanged:true` semantics exactly regardless of whether the caller's `reason` string happens to
+match the original (the kernel's own operation-id replay check is reason-sensitive; this adapter's
+pre-check is not, by design, since v3 never distinguished the two).
+
+**Not changed here.** No kernel file changed. `supersedeNode`'s own successor-terminal and
+stale-pin rules are exactly as §12 above states; this section only records who now calls it and
+how the adapter classifies what comes back.
+
+**Evidence.** `app/server/test/mcp-v3-reads.test.ts` (new): red before `oracle_read`/
+`oracle_supersede` existed (14 of 15 failing, `not_yet_available`) -- covers self-supersede refusal,
+the success shape with v3 type labels, `read(old)` showing `superseded_by`/`_at`/`_reason`, a
+repeat supersede answering `unchanged:true` with the history table still one row, a different-
+successor refusal naming it, a `successor_terminal` refusal, the default `reason` string, and a
+bound `X-Arra-Peer` landing in the lifecycle event's own `peer_name`. `test/mcp-v3-acceptance.test.ts`
+(pre-existing, VA harness): steps 5, 10, 11, 12 and 35 move from GAP to PASS (baseline PASS 10/
+FAIL 0/GAP 27 of 37; after this slice, PASS 15/FAIL 0/GAP 22 of 37 -- the remaining GAPs belong to
+other slices' tools, `oracle_search`/`oracle_trace*`/`oracle_thread*`/`oracle_stats`/`oracle_list`/
+`oracle_inbox`).

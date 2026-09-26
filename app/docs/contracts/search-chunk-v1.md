@@ -759,10 +759,45 @@ Known limits, disclosed rather than fixed:
 - `text_index` is non-null exactly when the caller's workspace owns every chunk row, which
   tells a `content:read` caller whether any other workspace has indexed chunks (one bit).
 
-## Amendment 2026-09-26 (overnight R18 (V5) + R7 + R14)
+## 15. Amendment 2026-09-26 (overnight R18 (V5) + R7 + R14)
 
 v3-search slice (Claude Opus 5.5, AI); rulings in `docs/overnight/DECISIONS.md` R18 (V5, D3), R7, R14. Section 13 stands; this adds its first adapter consumer.
 
 - The v3-compatible tools `oracle_search`, `oracle_ask` and `oracle_search_chain` (`app/server/src/mcp/legacy-v3/`) reach `searchKnowledgeKeyword`/`searchKnowledgeSemantic` through the same registry entries, parser and eligibility as HTTP and `kb_*`. `oracle_search` and `oracle_ask` consume answer ORDER only, never a `score` or `distance` value, so a change to the keyword `score` field does not change their contract. `oracle_search_chain` does read the semantic `distance` (squared L2 as stored, section 13): its v3 `score` is `1/(1+distance)`, a hop whose best falls under half the previous hop's stops the chain, and each result carries `distance`. A change to that field's meaning changes this tool.
 - Both searches (and the two chat methods) exist on the reader only, as section 13 says. The adapter's `kb()` sends them to a reader even inside a `content:write` tool, from its own list (`mcp/legacy-v3/readerOnlyMethods.ts`), which a test pins to exactly the registry methods whose `call` refuses a writer bundle; the registry itself is unchanged. A `content:write` tool reaches them only when it also needs `content:read` (`authorization-integration-v1.md`, amendment "R18 (V5) + R7 + R14").
 - The v3 adapter does not route recall to the legacy `memories` path: `oracle_learn` writes the target-19 tier, and splitting one fact across two writable stores is what V3-PARITY §4.4 forbids.
+
+## 16. Amendment 2026-09-26 (overnight R18 (V2 read/supersede/verify) + D3)
+
+Appended, not rewritten. Ruling: [`docs/overnight/DECISIONS.md`](../../../docs/overnight/DECISIONS.md)
+R18/R20, `docs/overnight/V3-PARITY.md` §4.2 (`oracle_verify`).
+
+**What changed.** `app/server/src/mcp/legacy-v3/tools/oracle_verify.ts` (new) is the first v3-compat
+consumer of `reconcileSearchChunks` (§6 above). It maps v3's `verify` shape onto that one kernel:
+`healthy = visited - missing - stale`, `missing`/`drifted` = the kernel's `missing`/`stale` counts,
+`missing_documents` = `missing_revisions`, and a `partial` warning when `exhausted` is false.
+`orphaned` and `untracked` are always `null`, named `field_unavailable`: this kernel has no concept
+of either (nothing is ever deleted out from under a chunk row to make one "orphaned", and every
+node is tracked by construction). `check:false` is `not_carried` (v3's version wrote a synthetic
+`superseded_by:'_verified_orphan'`, inventing a lifecycle event this kernel never would); `type` is
+accepted and ignored, named `argument_ignored`.
+
+**GAP, named rather than approximated: no `getSearchFreshness` on this base.** R20 (embedding-digest
+pinning: `getSearchFreshness` reporting the pinned and last-measured model digest) has not landed in
+this checkout as of this amendment -- `rg -i freshness app/server/src` finds nothing. v3's `verify`
+concept conflates two questions this v4 split into two kernels: "is every current node's text
+indexed" (`reconcileSearchChunks`, wired here) and "is the embedding profile consistent"
+(`getSearchFreshness`, R20, not yet present). `oracle_verify` answers only the first; it does not
+invent a digest-freshness field, does not silently claim the embedding half is healthy, and does not
+call a kernel that does not exist. When `getSearchFreshness` lands, `oracle_verify`'s `uses`/
+`requires` and this section both need a follow-up amendment naming the added field(s).
+
+**Not changed here.** No kernel file changed; `reconcileSearchChunks` itself is exactly as §6 and
+§12/§13 above describe (visits every current node, reports terminal nodes as `ineligible` rather
+than `missing`, reports and never reclaims stale rows).
+
+**Evidence.** `app/server/test/mcp-v3-reads.test.ts` (new, failing-first: red before `oracle_verify`
+existed, all three `oracle_verify` steps answering `not_yet_available`): a normal call's `healthy`/
+`missing`/`drifted` are numbers, `orphaned`/`untracked` are `null` and named in `compat_warnings`,
+`missing_documents` is an array; `check:false` answers `not_carried`; a `type` filter is accepted,
+ignored and named `argument_ignored`.
