@@ -26,7 +26,9 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { createScratch, type Scratch } from "./helpers/auth-fixture";
 import { createFixture, revisionEnvelope, runGated, type Fixture } from "./helpers/publication-fixture";
+import { knowledgeErrorResponse } from "../src/knowledge/transport";
 import { CHUNKER_VERSION, activeEmbeddingProfileId, fetchOllamaModelDigest } from "../src/publication/search-chunk";
+import { failEmbeddingProfileMismatch } from "../src/publication/search-chunk.failEmbeddingProfileMismatch";
 
 const CHILD = new URL("./fixtures/search-chunk-v1/embed/composed-child.ts", import.meta.url).pathname;
 const ALPHA = "alpha-workspace";
@@ -233,5 +235,26 @@ describe("fetchOllamaModelDigest: bounded, and only a recognisable digest counts
     expect(await fetchOllamaModelDigest({ url: stub.url, model: "all-minilm" })).toBeNull();
     stub.digest = DIGEST_A;
     expect(await fetchOllamaModelDigest({ url: stub.url, model: "all-minilm" })).toBe(DIGEST_A);
+  });
+});
+
+describe("embedding_profile_mismatch on the wire", () => {
+  test("HTTP maps it to 409 with the closed envelope plus both digests", async () => {
+    let thrown: unknown = null;
+    try {
+      failEmbeddingProfileMismatch(DIGEST_A, DIGEST_B);
+    } catch (error) {
+      thrown = error;
+    }
+    const response = knowledgeErrorResponse(thrown);
+    expect(response?.status).toBe(409);
+    expect(await response!.json()).toEqual({
+      version: "arra-publication-error/v1",
+      code: "embedding_profile_mismatch",
+      path: "",
+      message: "embedding model digest differs from the dataset's pinned digest",
+      pinned_digest: DIGEST_A,
+      measured_digest: DIGEST_B,
+    });
   });
 });
