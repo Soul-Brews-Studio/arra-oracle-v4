@@ -286,14 +286,13 @@ function storedEvidenceRef(value: unknown): string | null {
 /**
  * RAW microseconds to the exact wire millisecond string. `created_at` is NOT
  * NULL on the physical schema, so a null here is stored corruption, never a
- * legitimate absence.
+ * legitimate absence. `bigint` ONLY (#105): a plain JS `number` here can only
+ * be a lossy MILLISECOND read from the client's `toArray()`/`.get()`
+ * accessor mistaken for microseconds -- see `context.rawMicros.ts` for the
+ * full rationale.
  */
 function storedTimestamp(value: unknown): string {
   if (typeof value === "bigint") return microsToTimestamp(value);
-  if (typeof value === "number") {
-    if (!Number.isSafeInteger(value)) failPublication("integrity_failure", "");
-    return microsToTimestamp(BigInt(value));
-  }
   return failPublication("integrity_failure", "");
 }
 

@@ -25,12 +25,12 @@ export async function selectCursorRow(
   if (row === null) return null;
   const encoded = encodeReadCursorRow(row);
   const raw = row.last_read_at;
-  const rawMicros =
-    typeof raw === "bigint"
-      ? raw
-      : typeof raw === "number" && Number.isSafeInteger(raw)
-        ? BigInt(raw)
-        : failPublication("integrity_failure", "");
+  // `bigint` ONLY (#105): `raw` is the same raw Arrow cell `encodeReadCursorRow`
+  // just accepted above, so in practice this is already unreachable for a
+  // `number` -- `read-cursor.ts`'s own `storedTimestamp` rejects one first.
+  // Hardened here too, defense-in-depth: see `context.rawMicros.ts` for the
+  // full rationale against ever accepting a plain JS `number` as raw micros.
+  const rawMicros = typeof raw === "bigint" ? raw : failPublication("integrity_failure", "");
   let seq: bigint | null = null;
   if (encoded.last_read_message_id !== null) {
     // A retained pointer is dereferenced and fully validated. An orphan is

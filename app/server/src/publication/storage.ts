@@ -278,10 +278,18 @@ export function decodeArrowRows(arrow: {
           const data = vector.data[0];
           const values = data?.values as BigInt64Array | undefined;
           const offset = (data?.offset ?? 0) + row;
-          record[field.name] =
-            values !== undefined && offset < values.length
-              ? values[offset]
-              : BigInt(Number(vector.get(row)));
+          if (values === undefined || offset >= values.length) {
+            // No raw buffer to read (#105): `vector.get(row)` is the SAME
+            // lossy row accessor `toArray()` uses, which returns MILLISECONDS
+            // for a timestamp[us] cell (LANCEDB-FACTS.md §1). The old
+            // fallback here was `BigInt(Number(vector.get(row)))`, which
+            // relabels that millisecond value as microseconds and silently
+            // understates the real instant 1000x instead of failing closed.
+            // A dataset this decoder cannot read raw is one it must refuse,
+            // not approximate.
+            failPublication("integrity_failure");
+          }
+          record[field.name] = values[offset];
           continue;
         }
         const value = vector.get(row);

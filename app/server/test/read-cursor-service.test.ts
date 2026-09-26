@@ -755,7 +755,7 @@ describe("raw byte handling is DELEGATED to the accepted strict parser", () => {
   });
 });
 
-describe("stored names, pointers and safe-number timestamps", () => {
+describe("stored names, pointers and raw-microsecond timestamps", () => {
   const MICROS = BigInt(Date.parse("2026-09-21T00:00:00.000Z")) * 1000n;
   const row = (o: Record<string, unknown> = {}) => ({
     workspace_name: "alpha-workspace", peer_name: "peer-a", session_name: "sess-a",
@@ -800,16 +800,24 @@ describe("stored names, pointers and safe-number timestamps", () => {
     corrupt(row({ last_read_message_id: "42" }));
   });
 
-  test("a SAFE-NUMBER timestamp converts exactly, like a bigint", () => {
-    // Arrow can hand back either representation; both must render the same
-    // instant, and an unsafe number is refused rather than rounded.
-    // Derived from the SAME instant rather than a hand-typed literal, which is
-    // how an earlier revision of this test silently compared a 2025 value.
-    const asNumber = encodeReadCursorRow(row({ last_read_at: Number(MICROS) }));
+  test("a bigint timestamp converts exactly; a JS number is now refused (#105 amendment)", () => {
+    // CORRECTED 2026-09-26 (overnight R1, docs/overnight/DECISIONS.md): this
+    // test previously asserted that a safe-integer `number` converts exactly
+    // "like a bigint", reasoning that "Arrow can hand back either
+    // representation". Measured false (LANCEDB-FACTS.md §1): the client's
+    // lossy `toArray()`/`.get()` accessor -- the only thing that could ever
+    // hand this kernel a plain `number` -- always returns MILLISECONDS, never
+    // raw microseconds. `decodeArrowRows`/`rawRows` (storage.ts) return the
+    // raw microsecond value as a `bigint`, always. So a real `number` reaching
+    // this row's `last_read_at` is not "the same instant, differently typed"
+    // -- it is a millisecond value 1000x smaller than the microseconds it
+    // would be mistaken for, which is exactly the #105 latent hazard. There is
+    // no legitimate production path that hands this encoder a `number`; the
+    // fix is to refuse one rather than accept it as equivalent to a `bigint`.
     const asBigInt = encodeReadCursorRow(row({ last_read_at: MICROS }));
+    expect(asBigInt.last_read_at).toBe("2026-09-21T00:00:00.000Z");
     expect(Number.isSafeInteger(Number(MICROS))).toBe(true);
-    expect(asNumber.last_read_at).toBe("2026-09-21T00:00:00.000Z");
-    expect(asNumber).toEqual(asBigInt);
+    corrupt(row({ last_read_at: Number(MICROS) }));
     corrupt(row({ last_read_at: Number(MICROS) + 0.5 }));
   });
 });
