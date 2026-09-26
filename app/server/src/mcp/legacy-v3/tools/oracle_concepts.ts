@@ -1,15 +1,11 @@
 import type { V3ToolContext } from "../handlers";
+import { safeNumber } from "../safeNumber";
 
 type ConceptsVocabulary = { id: string } | null;
 type TermUsage = { rows: { term_id: string; name: string; count: string }[]; total_unique: string; coverage: "full" | "partial" };
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
-
-function safeNumber(text: string): number {
-  const n = Number(text);
-  return Number.isSafeInteger(n) ? n : Number.MAX_SAFE_INTEGER;
-}
 
 function normalizeLimit(value: unknown): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) return DEFAULT_LIMIT;
