@@ -1,0 +1,13 @@
+{
+  "_label": "SYNTHETIC -- hand-authored, agent_authored, not held out. Paired with corpus.json/queries.json in this directory.",
+  "provenance": {
+    "label": "run-lance-v1 tiny synthetic fixture",
+    "source": "hand-authored for app/benchmarks, issue #7",
+    "created": "2026-09-26"
+  },
+  "queries": [
+    {"id": "q_lum", "relevant_ids": ["r1"], "lang": "th", "purpose": "literal"},
+    {"id": "q_title", "relevant_ids": ["r2"], "lang": "th", "purpose": "semantic"},
+    {"id": "q_grocery", "relevant_ids": ["r3"], "lang": "en", "purpose": "semantic"}
+  ]
+}

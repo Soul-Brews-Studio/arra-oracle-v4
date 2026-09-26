@@ -1,0 +1,13 @@
+{
+  "_label": "SYNTHETIC -- hand-authored, tiny fixture for run_lance.test.ts. Not a claim about retrieval quality; not held out.",
+  "provenance": {
+    "label": "run-lance-v1 tiny synthetic fixture",
+    "source": "hand-authored for app/benchmarks, issue #7",
+    "created": "2026-09-26"
+  },
+  "documents": [
+    {"id": "r1", "title": "เรื่องเก่า", "type": "note", "body": "ฉันหลงลืมเรื่องนี้ไปนานแล้ว", "lang": "th"},
+    {"id": "r2", "title": "ประชุมทีม", "type": "note", "body": "สรุปผลงานประจำเดือนนี้", "lang": "th"},
+    {"id": "r3", "title": "grocery list", "type": "note", "body": "milk eggs bread butter", "lang": "en"}
+  ]
+}

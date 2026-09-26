@@ -1,48 +1,83 @@
 """Provenance-qualified corpus + qrels loading for the #7 benchmark harness.
 
-A retrieval number is uninterpretable without knowing what it was measured on.
-This module makes the synthetic/held-out distinction a STRUCTURAL property of
-the loaded object, not a convention a caller can forget or mislabel:
+A retrieval number is uninterpretable without knowing what it was measured on,
+and without knowing who judged relevance. This module makes both of those
+STRUCTURAL properties of the loaded object, not a convention a caller can
+forget or mislabel (R16/A2):
 
-* `Provenance.kind` is never accepted as a field from the input payload. It is
-  stamped by which loader function was called -- `load_synthetic_corpus`
-  ignores any "kind" the payload tries to supply, and there is no function
-  that lets a caller choose the kind directly. The only way to produce a
-  `Provenance` object at all is through one of the two named loaders.
-* A `Qrels` can only be paired with a `Corpus` of the SAME kind (checked in
-  `bind_qrels`). A synthetic qrels file cannot be scored against a held-out
-  corpus or vice versa -- that mismatch is refused outright, not merged.
-* Every report the runner emits carries the `Provenance` object through
-  untouched, so "synthetic" cannot become "held out" by omission on the way
-  to the final JSON.
+* `Corpus.provenance.origin` is one of `synthetic` / `agent_authored` /
+  `user_derived`, and `Qrels.provenance.origin` is one of `agent_authored` /
+  `independently_judged`. Neither is ever accepted as a field from the input
+  payload -- it is stamped by which loader function was called
+  (`load_synthetic_corpus` ignores any "origin" the payload tries to supply,
+  and there is no function that lets a caller choose the origin directly).
+  Every loader below is the intended, honest path to a `CorpusProvenance`/
+  `QrelsProvenance`. `Corpus`/`Qrels`/`*Provenance` are still ordinary public
+  dataclasses, though, so a caller COULD construct one directly instead of
+  calling a loader -- that is on the caller, exactly like choosing to lie
+  about a fact is always on the person stating it (see
+  `load_user_derived_corpus`'s docstring). `run_benchmark`
+  (`harness_runner.py`) is the structural backstop: it refuses to run at all
+  if `corpus.provenance.origin`/`qrels.provenance.origin` is not one of
+  `CORPUS_ORIGINS`/`QRELS_ORIGINS`, whether or not the object went through a
+  loader.
+* `held_out` (a qrels can be built from queries that never saw the corpus
+  during authoring) is orthogonal to who judged relevance, so it is a
+  separate, explicitly required keyword on the qrels loaders -- there is no
+  default, because a silently-defaulted `held_out=False` would be exactly
+  the kind of claim-by-omission this module exists to prevent.
+* `bind_qrels` refuses to pair a corpus/qrels of mismatched relevant ids, AND
+  refuses to let a caller bind qrels for a report that will claim a
+  `qrels_origin` other than the one the qrels loader actually stamped --
+  concretely, agent-authored qrels can never be bound for a report labelled
+  `independently_judged`, no matter what an operator script hard-codes.
+* Every report the runner emits carries the provenance objects through
+  untouched, so "agent_authored" cannot become "independently_judged" by
+  omission on the way to the final JSON.
 
-This module never fetches or constructs a held-out corpus itself -- it only
-loads one a caller already has on disk, and it never uploads or transmits
-anything. Held-out corpora are expected to stay local (private memory
-content); this loader does no network I/O at all.
+Corpus documents carry their own `title`/`type`/`body`/`lang` (not just an
+opaque id), so that the exact text a benchmark indexes is itself part of the
+frozen, hashable artifact -- the same JSON file this module loads is also
+what `run_lance.ts` reads to build the LanceDB tables it measures.
+
+This module never fetches or constructs a corpus itself -- it only loads one
+a caller already has on disk, and it never uploads or transmits anything.
+`user_derived` corpora are expected to stay local (private memory content);
+this loader does no network I/O at all.
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 __all__ = [
     "CorpusInputError",
-    "Provenance",
+    "CorpusProvenance",
+    "QrelsProvenance",
+    "Document",
     "Corpus",
     "Query",
     "Qrels",
+    "CORPUS_ORIGINS",
+    "QRELS_ORIGINS",
+    "QUERY_LANGS",
     "load_synthetic_corpus",
-    "load_held_out_corpus",
-    "load_synthetic_qrels",
-    "load_held_out_qrels",
+    "load_agent_authored_corpus",
+    "load_user_derived_corpus",
+    "load_agent_authored_qrels",
+    "load_independently_judged_qrels",
     "bind_qrels",
 ]
 
-SYNTHETIC = "synthetic"
-HELD_OUT = "held_out"
-_KINDS = (SYNTHETIC, HELD_OUT)
+CORPUS_ORIGINS = ("synthetic", "agent_authored", "user_derived")
+QRELS_ORIGINS = ("agent_authored", "independently_judged")
+# Matches harness_runner.LANGUAGE_GROUPS minus "all" exactly -- a query lang
+# outside this set would otherwise count in the "all" macro group but never
+# in "en" or "th", silently under-reporting whichever group it was meant for
+# (not imported from harness_runner to avoid a circular import; harness_runner
+# already imports from this module).
+QUERY_LANGS = ("en", "th")
 
 
 class CorpusInputError(ValueError):
@@ -50,17 +85,39 @@ class CorpusInputError(ValueError):
 
 
 @dataclass(frozen=True)
-class Provenance:
-    kind: str  # "synthetic" | "held_out" -- set ONLY by a loader function below
+class CorpusProvenance:
+    origin: str  # one of CORPUS_ORIGINS -- set ONLY by a loader function below
     label: str
     source: str
     created: str
 
 
 @dataclass(frozen=True)
+class QrelsProvenance:
+    origin: str  # one of QRELS_ORIGINS -- set ONLY by a loader function below
+    held_out: bool  # required at load time; never defaulted
+    label: str
+    source: str
+    created: str
+
+
+@dataclass(frozen=True)
+class Document:
+    id: str
+    title: str
+    type: str
+    body: str
+    lang: str
+
+
+@dataclass(frozen=True)
 class Corpus:
-    provenance: Provenance
-    document_ids: tuple
+    provenance: CorpusProvenance
+    documents: tuple[Document, ...]
+
+    @property
+    def document_ids(self) -> tuple[str, ...]:
+        return tuple(document.id for document in self.documents)
 
 
 @dataclass(frozen=True)
@@ -73,7 +130,7 @@ class Query:
 
 @dataclass(frozen=True)
 class Qrels:
-    provenance: Provenance
+    provenance: QrelsProvenance
     queries: tuple
 
 
@@ -112,33 +169,70 @@ def _read(payload) -> dict:
     raise CorpusInputError("payload must be a dict, JSON bytes, or JSON str")
 
 
-def _build_provenance(kind: str, payload: dict) -> Provenance:
-    assert kind in _KINDS  # internal misuse, not a caller-input error
-    # "kind" in the payload, if present, is IGNORED -- it can never override
+def _build_corpus_provenance(origin: str, payload: dict) -> CorpusProvenance:
+    # A `raise`, not an `assert`: this still only fires on internal misuse
+    # (every call site below passes a hard-coded literal), but `assert` is
+    # stripped entirely under `python -O`, which would silently turn this
+    # into no check at all.
+    if origin not in CORPUS_ORIGINS:
+        raise CorpusInputError(f"internal misuse: origin must be one of {CORPUS_ORIGINS}, got {origin!r}")
+    # "origin" in the payload, if present, is IGNORED -- it can never override
     # which loader function the caller chose to call.
-    return Provenance(
-        kind=kind,
+    return CorpusProvenance(
+        origin=origin,
         label=_text(payload.get("label"), "provenance.label"),
         source=_text(payload.get("source"), "provenance.source"),
         created=_text(payload.get("created"), "provenance.created"),
     )
 
 
-def _build_corpus(kind: str, payload) -> Corpus:
+def _build_qrels_provenance(origin: str, held_out: bool, payload: dict) -> QrelsProvenance:
+    if origin not in QRELS_ORIGINS:  # internal misuse; see _build_corpus_provenance
+        raise CorpusInputError(f"internal misuse: origin must be one of {QRELS_ORIGINS}, got {origin!r}")
+    # Unlike `origin` above, `held_out` DOES come straight from a caller's
+    # keyword argument -- `held_out="no"` is truthy in Python, so without
+    # this check it would be stored, and later read as "held out: yes".
+    if not isinstance(held_out, bool):
+        raise CorpusInputError(f"held_out must be a bool, got {held_out!r}")
+    # "origin"/"held_out" in the payload, if present, are IGNORED -- neither
+    # can override the loader function or the required keyword the caller
+    # explicitly passed.
+    return QrelsProvenance(
+        origin=origin,
+        held_out=held_out,
+        label=_text(payload.get("label"), "provenance.label"),
+        source=_text(payload.get("source"), "provenance.source"),
+        created=_text(payload.get("created"), "provenance.created"),
+    )
+
+
+def _build_document(payload) -> Document:
+    fields = _dict(payload, "corpus.documents[]")
+    return Document(
+        id=_text(fields.get("id"), "corpus.documents[].id"),
+        title=_text(fields.get("title"), "corpus.documents[].title"),
+        type=_text(fields.get("type"), "corpus.documents[].type"),
+        body=_text(fields.get("body"), "corpus.documents[].body"),
+        lang=_text(fields.get("lang"), "corpus.documents[].lang"),
+    )
+
+
+def _build_corpus(origin: str, payload) -> Corpus:
     document = _read(payload)
-    provenance = _build_provenance(kind, _dict(document.get("provenance"), "corpus.provenance"))
-    raw_ids = _list(document.get("document_ids"), "corpus.document_ids")
-    if not raw_ids:
-        raise CorpusInputError("corpus.document_ids must be non-empty")
-    ids = tuple(_text(value, "corpus.document_ids[]") for value in raw_ids)
+    provenance = _build_corpus_provenance(origin, _dict(document.get("provenance"), "corpus.provenance"))
+    raw_documents = _list(document.get("documents"), "corpus.documents")
+    if not raw_documents:
+        raise CorpusInputError("corpus.documents must be non-empty")
+    documents = tuple(_build_document(entry) for entry in raw_documents)
+    ids = [doc.id for doc in documents]
     if len(set(ids)) != len(ids):
-        raise CorpusInputError("corpus.document_ids must not contain duplicates")
-    return Corpus(provenance=provenance, document_ids=ids)
+        raise CorpusInputError("corpus.documents[].id must not contain duplicates")
+    return Corpus(provenance=provenance, documents=documents)
 
 
-def _build_qrels(kind: str, payload) -> Qrels:
+def _build_qrels(origin: str, held_out: bool, payload) -> Qrels:
     document = _read(payload)
-    provenance = _build_provenance(kind, _dict(document.get("provenance"), "qrels.provenance"))
+    provenance = _build_qrels_provenance(origin, held_out, _dict(document.get("provenance"), "qrels.provenance"))
     raw_queries = _list(document.get("queries"), "qrels.queries")
     if not raw_queries:
         raise CorpusInputError("qrels.queries must be non-empty")
@@ -155,11 +249,13 @@ def _build_qrels(kind: str, payload) -> Qrels:
             raise CorpusInputError(f"query {query_id}: relevant_ids must be non-empty")
         lang = fields.get("lang")
         purpose = fields.get("purpose")
+        if lang is not None and lang not in QUERY_LANGS:
+            raise CorpusInputError(f"query {query_id}: lang must be one of {QUERY_LANGS} or absent, got {lang!r}")
         queries.append(
             Query(
                 id=query_id,
                 relevant_ids=frozenset(relevant),
-                lang=_text(lang, "qrels.queries[].lang") if lang is not None else None,
+                lang=lang,
                 purpose=_text(purpose, "qrels.queries[].purpose") if purpose is not None else None,
             )
         )
@@ -167,40 +263,73 @@ def _build_qrels(kind: str, payload) -> Qrels:
 
 
 def load_synthetic_corpus(payload) -> Corpus:
-    """Load a corpus and stamp it `kind="synthetic"`. This is the ONLY path
+    """Load a corpus and stamp it `origin="synthetic"`. This is the ONLY path
     that produces a synthetic corpus -- there is no parameter that changes it."""
-    return _build_corpus(SYNTHETIC, payload)
+    return _build_corpus("synthetic", payload)
 
 
-def load_held_out_corpus(payload) -> Corpus:
-    """Load a corpus and stamp it `kind="held_out"`. This is the ONLY path
-    that produces a held-out corpus -- there is no parameter that changes it.
+def load_agent_authored_corpus(payload) -> Corpus:
+    """Load a corpus and stamp it `origin="agent_authored"`: written by an AI
+    agent, not drawn from real memory content and not independently
+    authored. This is the ONLY path that produces this origin."""
+    return _build_corpus("agent_authored", payload)
 
-    Calling this on a fixture you invented does not make it held out; the
-    kind describes which function you called, and choosing the wrong one is
+
+def load_user_derived_corpus(payload) -> Corpus:
+    """Load a corpus and stamp it `origin="user_derived"`: drawn from real
+    memory content the user (Nat, or a third party with consent) owns. This
+    is the ONLY path that produces this origin.
+
+    Calling this on a fixture you invented does not make it user-derived; the
+    origin describes which function you called, and choosing the wrong one is
     on the caller, exactly as choosing to lie about a fact is always on the
     person stating it. What this DOES guarantee is that a corpus loaded
-    through `load_synthetic_corpus` can never silently become "held_out" --
-    the two kinds cannot be confused by a typo in the payload.
+    through `load_synthetic_corpus`/`load_agent_authored_corpus` can never
+    silently become `user_derived` -- the origins cannot be confused by a
+    typo in the payload.
     """
-    return _build_corpus(HELD_OUT, payload)
+    return _build_corpus("user_derived", payload)
 
 
-def load_synthetic_qrels(payload) -> Qrels:
-    return _build_qrels(SYNTHETIC, payload)
+def load_agent_authored_qrels(payload, *, held_out: bool) -> Qrels:
+    """Load qrels and stamp `origin="agent_authored"`: the relevance
+    judgments were written by the same agent that wrote the corpus/queries
+    (or another agent), not by an independent human judge. `held_out` is
+    required, not defaulted -- state explicitly whether the queries were
+    authored without seeing the corpus."""
+    return _build_qrels("agent_authored", held_out, payload)
 
 
-def load_held_out_qrels(payload) -> Qrels:
-    return _build_qrels(HELD_OUT, payload)
+def load_independently_judged_qrels(payload, *, held_out: bool) -> Qrels:
+    """Load qrels and stamp `origin="independently_judged"`: relevance was
+    judged by someone other than whoever authored the corpus or the queries.
+    `held_out` is required, not defaulted, for the same reason as above."""
+    return _build_qrels("independently_judged", held_out, payload)
 
 
-def bind_qrels(corpus: Corpus, qrels: Qrels) -> Qrels:
-    """Validate a qrels against its corpus. Refuses a kind mismatch and any
-    relevant id absent from the corpus. Returns `qrels` unchanged on success."""
-    if corpus.provenance.kind != qrels.provenance.kind:
+def bind_qrels(corpus: Corpus, qrels: Qrels, *, for_report_qrels_origin: str) -> Qrels:
+    """Validate a qrels against its corpus, and against the label the caller
+    is about to write into a final report.
+
+    `for_report_qrels_origin` is required -- it is the `qrels_origin` the
+    caller (typically `run_benchmark`, or an operator script assembling a
+    report) is about to claim in the report it produces. It must equal the
+    qrels' own stamped origin exactly. Passing `qrels.provenance.origin`
+    itself is always safe and is the ordinary case; this parameter exists so
+    that a hard-coded or mistaken claim elsewhere -- pairing agent-authored
+    qrels with a report that will say "independently_judged" -- is refused
+    HERE, at the one place corpus and qrels are joined, rather than trusted
+    to every downstream caller.
+
+    Also refuses any relevant id absent from the corpus. Returns `qrels`
+    unchanged on success.
+    """
+    if for_report_qrels_origin not in QRELS_ORIGINS:
+        raise CorpusInputError(f"for_report_qrels_origin must be one of {QRELS_ORIGINS}, got {for_report_qrels_origin!r}")
+    if qrels.provenance.origin != for_report_qrels_origin:
         raise CorpusInputError(
-            f"provenance kind mismatch: corpus is {corpus.provenance.kind!r}, "
-            f"qrels is {qrels.provenance.kind!r}"
+            f"bind_qrels: report would be labelled qrels_origin={for_report_qrels_origin!r}, "
+            f"but these qrels are stamped {qrels.provenance.origin!r}"
         )
     known = set(corpus.document_ids)
     for query in qrels.queries:

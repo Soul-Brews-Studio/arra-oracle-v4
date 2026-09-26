@@ -1,12 +1,18 @@
 {
-  "_label": "SYNTHETIC -- hand-authored, not held-out. Exercises harness_runner.py end to end. Numbers here demonstrate the harness's plumbing (null baseline, per-method report, RRF as a scored candidate), not any claim about retrieval quality.",
+  "_label": "SYNTHETIC -- hand-authored, agent_authored qrels, not held-out. Exercises harness_runner.py end to end. Numbers here demonstrate the harness's plumbing (null baseline, per-method report, RRF as a scored candidate), not any claim about retrieval quality.",
   "corpus": {
     "provenance": {
       "label": "harness-v1 synthetic smoke corpus",
       "source": "hand-authored for app/benchmarks, issue #7",
       "created": "2026-09-21"
     },
-    "document_ids": ["c1", "c2", "c3", "c4", "c5"]
+    "documents": [
+      {"id": "c1", "title": "c1 title", "type": "note", "body": "c1 body", "lang": "en"},
+      {"id": "c2", "title": "c2 title", "type": "note", "body": "c2 body", "lang": "en"},
+      {"id": "c3", "title": "c3 title", "type": "note", "body": "c3 body", "lang": "en"},
+      {"id": "c4", "title": "c4 title", "type": "note", "body": "c4 body", "lang": "en"},
+      {"id": "c5", "title": "c5 title", "type": "note", "body": "c5 body", "lang": "en"}
+    ]
   },
   "qrels": {
     "provenance": {
