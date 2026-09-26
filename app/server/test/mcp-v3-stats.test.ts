@@ -6,27 +6,26 @@
 // `expectListed`/200 assertions with `GAP`/403, never `PASS`.
 //
 // Real gate, real dataset, real wire: `fixtures/v3-compat-v1/core/writes-child.ts`
-// (unmodified -- it is a generic MCP-call replayer, not specific to any one
-// v3 tool) boots the production app inside `exec_with_gate` on a genuinely
-// fresh, taxonomy-empty workspace, so `oracle_learn`'s K2 bootstrap and K6's
-// `reconcileRevisionAssociations` are both exercised for real before
+// (a generic MCP-call replayer, not specific to any one v3 tool) boots the
+// production app inside `exec_with_gate` on a genuinely fresh, taxonomy-empty
+// workspace, so `oracle_learn`'s K2 bootstrap is exercised for real before
 // `oracle_concepts`/`oracle_stats` read the result back.
 //
-// FIX ROUND (an independent verifier's finding on the first cut of this
-// slice): this file used to call `kb_reconcileRevisionAssociations` by hand
-// after each `oracle_learn` step, through the raw `kb_*` registry name --
-// a call no real v3 client can make, since it is `content:write` and no
-// `V3_CATALOGUE` entry ever exposes it. That hid the actual production bug:
-// `publish.ts` (the ONE place every v3 write goes through) never reconciled
-// associations itself, so a real `oracle_learn` left `node_revision_terms`
-// empty forever and `oracle_concepts`/`oracle_stats.unique_concepts` silently
-// answered zero, with no warning. Deleting those hand-inserted steps (which
-// is what the verifier did in a scratch copy to prove it) is the RED for
-// this fix: with `reconcileRevisionAssociations` still absent from
-// `publish.ts`'s call sequence, `concepts`/`stats` below fail exactly as the
-// verifier reported. The fix moved the reconcile call into `publish()`
-// itself (`mcp/legacy-v3/publish.ts`), so no step below calls it by hand
-// anymore -- these steps are now a plain, unmodified v3 client session.
+// FIRST FIX ROUND: this file used to call `kb_reconcileRevisionAssociations`
+// by hand after each `oracle_learn`, a call no real v3 client can make, which
+// hid that nothing on the v3 write path filled the `node_revision_terms`
+// projection K6 then read.
+//
+// SECOND FIX ROUND (the verifier's blocking finding): the first fix made the
+// v3 write path reconcile, but left the reader counting the DERIVED
+// projection, so every OTHER writer -- `kb_publishRevision`, HTTP, the v4 UI
+// -- was still silently undercounted with `coverage:"full"`. The verifier's
+// repro is reproduced below verbatim: a `kb_publishRevision` of a second node
+// carrying learn1's exact `term_snapshot_json`, which nothing ever
+// reconciles. Seen RED before the fix: `oracle_concepts` answered
+// `apfs:2, backup:1` (the published terms give 3 and 2), with no warning.
+// `listTermUsage` now counts the accepted heads' own snapshots, so no step
+// here reconciles anything, and none needs to.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
@@ -44,6 +43,33 @@ let taxonomy: TaxonomyFixture;
 let work: string;
 let out: Record<string, any> = {};
 
+/** A `publishRevision` content object, field for field what `mcp/legacy-v3/publish.ts` sends. */
+function rawContent(workspace: string, nodeId: string, termSnapshot: unknown) {
+  return {
+    workspace_name: workspace,
+    node_id: nodeId,
+    base_revision_id: null,
+    title: "published through kb_publishRevision, never reconciled",
+    body: "APFS snapshot notes, written by a plain v4 client",
+    body_format: "markdown",
+    fields: "{}",
+    author_peer_name: null,
+    observer_peer_name: null,
+    subject_peer_name: null,
+    session_name: null,
+    is_active: true,
+    valid_from: null,
+    valid_to: null,
+    change_reason: null,
+    schema_version: "1",
+    canonical_version: "arra-revision/v1",
+    term_snapshot_json: termSnapshot,
+    link_snapshot_json: "[]",
+    h_metadata: null,
+    internal_metadata: null,
+  };
+}
+
 async function runChild(root: string, banks: string[], steps: unknown[]) {
   const result = await runGated(root, CHILD, [root, work, JSON.stringify({ banks, operator: [], steps })], {
     deadlineMs: 180_000,
@@ -60,13 +86,17 @@ beforeAll(async () => {
   taxonomy = await createTaxonomyFixture([BANK_A, BANK_B]);
 
   out = await runChild(taxonomy.datasetRoot, [BANK_A, BANK_B], [
-    // No `kb_reconcileRevisionAssociations` step anywhere here: a real v3
-    // client only ever calls the `oracle_*` names below. Reconciliation now
-    // happens inside `publish()` itself, once per `oracle_learn`.
+    // No `kb_reconcileRevisionAssociations` step anywhere here: nothing in
+    // this session ever fills the `node_revision_terms` projection.
     { label: "learn1", bank: BANK_A, tool: "oracle_learn", args: { pattern: "APFS snapshots: tmutil localsnapshot before disk surgery", concepts: ["apfs", "backup"] }, capture: { name: "learn1", path: ["id"] } },
     { label: "learn2", bank: BANK_A, tool: "oracle_learn", args: { pattern: "APFS snapshots also work over Time Machine", concepts: ["apfs"] }, capture: { name: "learn2", path: ["id"] } },
+    // The verifier's repro: a plain v4 write (no v3 adapter, no reconcile)
+    // of a third node carrying learn1's exact snapshot (apfs + backup).
+    { label: "head1", bank: BANK_A, tool: "kb_getAcceptedHead", args: { payload: { workspace_name: BANK_A, node_id: { $ref: "learn1" } } }, capture: { name: "snap1", path: ["revision", "term_snapshot_json"] } },
+    { label: "raw_publish", as: "free", bank: BANK_A, tool: "kb_publishRevision", args: { payload: { operation_id: "v3-stats-raw-publish-1", content: rawContent(BANK_A, "rawpublishnode0000001", { $ref: "snap1" }) } } },
     { label: "concepts", bank: BANK_A, tool: "oracle_concepts", args: {} },
     { label: "concepts_filtered", bank: BANK_A, tool: "oracle_concepts", args: { type: "learning", limit: 1 } },
+    { label: "concepts_principle", bank: BANK_A, tool: "oracle_concepts", args: { type: "principle" } },
     { label: "stats", bank: BANK_A, tool: "oracle_stats", args: {} },
     // A workspace with real content but nothing ever tagged with a concept:
     // an honest "no concepts vocabulary yet" (K2 lookup miss), not an error.
@@ -81,37 +111,41 @@ afterAll(async () => {
   if (work) await rm(work, { recursive: true, force: true });
 });
 
-describe("oracle_learn (V1) auto-reconciles associations (fix round, verifier finding 1)", () => {
-  test("plain oracle_learn calls -- no kb_reconcileRevisionAssociations step -- report no associations gap", () => {
-    for (const label of ["learn1", "learn2"] as const) {
-      const res = out[label];
-      expect(res.isError).toBe(false);
-      expect(res.value.success).toBe(true);
-      const warnings = (res.value.compat_warnings ?? []) as { field: string }[];
-      expect(warnings).not.toContainEqual(expect.objectContaining({ field: "concepts" }));
-    }
+describe("the verifier's repro: a node no one reconciled is still counted", () => {
+  test("kb_publishRevision of learn1's snapshot is accepted (a real, published, never-reconciled head)", () => {
+    expect(out.head1.isError).toBe(false);
+    expect(typeof out.head1.value.revision.term_snapshot_json).toBe("string");
+    expect(out.raw_publish.isError).toBe(false);
+    expect(out.raw_publish.value.outcome).toBe("accepted");
   });
 });
 
 describe("oracle_concepts (V8, K6)", () => {
-  test("counts concept usage over reconciled current heads, ranked by count then name", () => {
+  test("counts concept usage over EVERY current head's published terms, ranked by count then name", () => {
     const res = out.concepts;
     expect(res.isError).toBe(false);
-    expect(res.value).toMatchObject({
+    // learn1 (apfs, backup) + learn2 (apfs) + raw_publish (apfs, backup).
+    expect(res.value).toEqual({
       concepts: [
-        { name: "apfs", count: 2 },
-        { name: "backup", count: 1 },
+        { name: "apfs", count: 3 },
+        { name: "backup", count: 2 },
       ],
       total_unique: 2,
       filter_type: "all",
     });
   });
 
-  test("type filters on v4's own type vocabulary, with a semantic_change warning", () => {
+  test("type learning is v3's own type, kept as-is: filtered, and no warning", () => {
     const res = out.concepts_filtered;
     expect(res.isError).toBe(false);
-    expect(res.value.concepts).toEqual([{ name: "apfs", count: 2 }]);
-    expect(res.value.filter_type).toBe("learning");
+    expect(res.value).toEqual({ concepts: [{ name: "apfs", count: 3 }], total_unique: 2, filter_type: "learning" });
+  });
+
+  test("type principle has no v4 type of that name: an empty answer named by a semantic_change warning", () => {
+    const res = out.concepts_principle;
+    expect(res.isError).toBe(false);
+    expect(res.value.concepts).toEqual([]);
+    expect(res.value.filter_type).toBe("principle");
     expect(res.value.compat_warnings).toContainEqual(expect.objectContaining({ code: "semantic_change", field: "type" }));
   });
 
@@ -137,11 +171,12 @@ describe("oracle_stats (V8, K7 full shape)", () => {
     const res = out.stats;
     expect(res.isError).toBe(false);
     const value = res.value;
-    // BANK_A has exactly learn1 + learn2, both type learning, each a
-    // single sub-1000-char chunk: exact, not >=, so a doubled or dropped
-    // count fails this instead of surviving under a loose bound.
-    expect(value.total_documents).toBe(2);
-    expect(value.by_type).toEqual({ learning: 2 });
+    // BANK_A has exactly learn1 + learn2 + raw_publish, all type learning.
+    // Only the two oracle_learn nodes were indexed (a raw kb_publishRevision
+    // indexes nothing), each a single sub-1000-char chunk. Exact, not >=, so
+    // a doubled or dropped count fails this instead of surviving a loose bound.
+    expect(value.total_documents).toBe(3);
+    expect(value.by_type).toEqual({ learning: 3 });
     expect(value.fts_indexed).toBe(2);
     expect(value.unique_concepts).toBe(2);
     // Nothing has been embedded yet: chunks exist (pending) but none are ready.

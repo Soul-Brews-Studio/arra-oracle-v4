@@ -3,8 +3,9 @@ import { derivedId } from "./ids.derivedId";
 
 export type Row = { id: string; name: string; is_active?: boolean } & Record<string, unknown>;
 
-/** The seed manifest's literal term names (`seedReservedVocabularies` grammar). */
-const TYPE_TERMS = ["note", "conclusion", "learning", "discussion", "correction"] as const;
+/** The seed manifest's literal term names (`seedReservedVocabularies` grammar).
+ *  Exported for `oracle_concepts`, which tells a v4 type from a v3-only one. */
+export const TYPE_TERMS = ["note", "conclusion", "learning", "discussion", "correction"] as const;
 const HORIZON_TERMS = ["short_term", "long_term"] as const;
 
 /**

@@ -1,5 +1,6 @@
 import { SERVER_VERSION } from "../../protocol";
 import type { V3ToolContext } from "../handlers";
+import { handoffWarning } from "../handoffWarning";
 import { safeNumber } from "../safeNumber";
 
 type KnowledgeStats = {
@@ -38,6 +39,14 @@ type Warning = { code: string; field: string; detail: string };
  * `fts_status` come from the same bounded chunk scan and are nulled and
  * warned together the same way: a bank with thousands of unmeasured chunks
  * must never read back `fts_status:"empty"`.
+ *
+ * Second fix round: `unique_concepts` is K6's `total_unique`, now counted
+ * from every accepted head's own term snapshot, so a head no writer
+ * reconciled is no longer missing from it; a `coverage:"partial"` answer is
+ * still named in `compat_warnings`. The K6 call asks for the full ranking
+ * (200 rows, the kernel's cap, at no extra scan cost) rather than 1, so a
+ * `handoff` concept is seen and named: v3 never counted handoffs, and
+ * `oracle_handoff` nodes are in `total_documents`/`by_type.note` here.
  */
 export async function oracle_stats(_args: Record<string, unknown>, context: V3ToolContext): Promise<unknown> {
   const stats = (await context.kb("knowledgeStats", {})) as KnowledgeStats;
@@ -95,12 +104,14 @@ export async function oracle_stats(_args: Record<string, unknown>, context: V3To
     const usage = (await context.kb("listTermUsage", {
       vocabulary_id: conceptsVocabulary.id,
       type_term: null,
-      limit: 1,
+      limit: 200,
     })) as TermUsage;
     unique_concepts = safeNumber(usage.total_unique);
     if (usage.coverage === "partial") {
       warnings.push({ code: "partial", field: "unique_concepts", detail: "more nodes than this build's bounded scan window; unique_concepts is not exact" });
     }
+    const handoff = handoffWarning(usage.rows, "total_documents", "total_documents and by_type.note");
+    if (handoff !== null) warnings.push(handoff);
   }
 
   return {

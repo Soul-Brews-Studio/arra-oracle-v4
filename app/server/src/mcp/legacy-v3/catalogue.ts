@@ -201,7 +201,9 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
     // it once `knowledgeStats` landed).
     uses: ["knowledgeStats", "listTermUsage", "lookupVocabularyByName"],
     requires: ["knowledgeStats", "listTermUsage", "lookupVocabularyByName"],
-    description: "Counts for this bank. Fields v4 cannot count yet are null and named in compat_warnings.",
+    description:
+      "Counts for this bank. Fields v4 cannot count yet are null and named in compat_warnings." +
+      " Handoffs are entries in v4 (type note, concept handoff) and are counted; v3 kept them as inbox files.",
     inputSchema: obj({}),
   }),
   spec({
@@ -213,7 +215,8 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
     requires: ["listTermUsage", "lookupVocabularyByName"],
     description:
       "Concept tags in use in this bank, with counts over current entries." +
-      " type filters on v4's own type vocabulary (learning, note, conclusion, discussion, correction), not v3's principle/pattern/retro.",
+      " type filters on v4's own types (learning, note, conclusion, discussion, correction). v3's principle/pattern/retro" +
+      " are stored as note plus a legacy_type tag, which this filter does not read: they match nothing, with a semantic_change warning.",
     inputSchema: obj({ type: str(""), limit: int("") }),
   }),
   spec({
