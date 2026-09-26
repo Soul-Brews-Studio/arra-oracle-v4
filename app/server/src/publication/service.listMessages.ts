@@ -1,14 +1,23 @@
-import { MAX_RESULT_WIRE_BYTES, encodeMessageRow, parseListMessages, rowWireBytes } from "./context";
+import { MAX_RESULT_WIRE_BYTES, type RequestAuthority, encodeMessageRow, parseListMessages, requireMessageReadAuthority, rowWireBytes } from "./context";
 import { failPublication } from "./errors";
 import { quote } from "./storage";
 import { MESSAGES, SESSIONS } from "./service.constants";
 import { contextOne } from "./service.contextOne";
 import { contextScope } from "./service.contextScope";
+import { requireCurrentMembership } from "./service.requireCurrentMembership";
 import { requireWorkspace } from "./service.requireWorkspace";
 import { type DatasetAdapter } from "./service.types";
 
-export async function listMessages(reader: DatasetAdapter, requestBytes: Uint8Array): Promise<{ rows: Record<string, unknown>[]; next_after_seq: string | null }> {
+/**
+ * #87 / R3 (docs/overnight/DECISIONS.md): membership is a read boundary here.
+ * A named `requester_peer_name` must hold CURRENT membership of the session --
+ * the same `requireCurrentMembership` getContext applies, so a departed member
+ * is refused exactly like a stranger. With no requester, only the audit:read
+ * operator view in `authority` may read; that is decided before any storage.
+ */
+export async function listMessages(reader: DatasetAdapter, requestBytes: Uint8Array, authority: RequestAuthority): Promise<{ rows: Record<string, unknown>[]; next_after_seq: string | null }> {
 const request = parseListMessages(requestBytes);
+      requireMessageReadAuthority(request.requester_peer_name, authority);
       await requireWorkspace(reader, request.workspace_name);
       await reader.refresh(SESSIONS);
       const session = await contextOne(
@@ -17,6 +26,18 @@ const request = parseListMessages(requestBytes);
         `${contextScope(request.workspace_name)} AND name = ${quote(request.session_name)}`,
       );
       if (session === null) failPublication("invalid_reference", "/session_name");
+      // Session existence is not secret (listSessions shows it to any
+      // content:read holder), so refusing a non-member here, AFTER the
+      // session check, reveals nothing a caller could not already list.
+      if (request.requester_peer_name !== null) {
+        await requireCurrentMembership(
+          reader,
+          request.workspace_name,
+          request.session_name,
+          request.requester_peer_name,
+          "/requester_peer_name",
+        );
+      }
 
       await reader.refresh(MESSAGES);
       const after = request.after_seq === null ? null : BigInt(request.after_seq);

@@ -108,3 +108,87 @@ Before sharing source, core publishes helper signatures early and marks absent A
 
 ## 10. Stop conditions and limits
 Report actual failures before changing any expectation; source repairs serialized under core. No commit/push/PR until exact-hash acceptance packaging dispatch. Do not close parent28 from this slice. Keep process-death/SDK-failure distinct from power loss; cooperative gate distinct from CAS or hostile-same-UID protection. No authorized ordinary-user path or deployment is claimed. Dataset-size and engine-work performance are separate future measured optimization, never approximated correctness.
+
+## Amendment 2026-09-26 (overnight R3)
+
+Appended, not rewritten: the frozen text above stands except where this section says
+otherwise. Authority: `docs/overnight/DECISIONS.md` R3, which applies the Codex design
+lead's closed decision of 2026-09-21 ("membership becomes a real read boundary on
+listMessages/getMessage"). Issue #87.
+
+**What changes.** Session membership is now a read boundary on `getMessage` and
+`listMessages`, not only a write rule and a `getContext` filter. Before this amendment
+any `content:read` holder read every message of every session in the workspace, while
+`getContext` refused the same content to a non-member; that split looked like a
+membership guarantee and was not one.
+
+**Grammar (§2).** Both reads accept one OPTIONAL key:
+
+```text
+getMessage   {workspace_name:W, public_id:N [, requester_peer_name:S|null]}
+listMessages {workspace_name:W, session_name:S, after_seq:I|null, limit:number [, requester_peer_name:S|null]}
+```
+
+`requester_peer_name` is the only optional key in this grammar. Omitted and `null` both
+mean "no requester". A present non-null value uses the S grammar (nonempty valid Unicode,
+at most 256 UTF-8 bytes, no normalization) and fails at `/requester_peer_name`. Every other
+key stays required, and unknown keys still reject: `peer_name` is not an alias. Optional
+rather than required-nullable because every existing caller (UI v2, the dev stack, the
+acceptor probe) omits it and reads through the operator view below.
+
+**Authority argument.** The facade methods become `getMessage(bytes, authority)` and
+`listMessages(bytes, authority)`. `authority` is `RequestAuthority {operator: boolean,
+peers: readonly S[] | null}`, built by the transport only from the policy snapshot that
+admitted the request, never from request bytes:
+
+- `operator` is true when the admitted principal also holds `audit:read` on the route
+  workspace. HTTP decides this with a second `admit` on the same snapshot and clock; MCP
+  reads it from the four-action projection.
+- `peers` is the admitting grant's arra-auth/v1 binding (authorization-v1.md, amendment of
+  this date), or null.
+
+A missing or malformed authority is a wiring fault: a plain `TypeError`, nothing read.
+
+**Precedence (§6, reads).**
+
+1. Grammar.
+2. Authority, before any storage read:
+   - no requester and not `operator` gives `forbidden` at `/requester_peer_name`;
+   - a requester outside a non-null `peers` gives `forbidden` at `/requester_peer_name`.
+3. Workspace, as before.
+4. `listMessages` checks the session (`invalid_reference` `/session_name`), then the
+   requester's CURRENT membership through `requireCurrentMembership`, the same check
+   `getContext` applies: the peer must exist and its membership row must exist with
+   `left_at` null. Otherwise `invalid_reference` at `/requester_peer_name`. Then the page,
+   as before. Session existence is already visible to `content:read` through
+   `listSessions`, so this refusal reveals nothing new.
+5. `getMessage` looks up the scoped `public_id`. Absent returns null, as before. With a
+   requester, it checks CURRENT membership of the row's own session. A stranger, a
+   departed member or a nonexistent peer reads null, identical to an absent id, so a
+   non-member cannot learn that an id exists (authorization-v1.md §3: "Missing and
+   inaccessible references must not expose existence").
+
+A named requester narrows the operator view too: `operator` with a requester reads as that
+requester.
+
+**New error code.** `arra-publication-error/v1` gains exactly one code, `forbidden`
+(fixed message `request not permitted for this caller`), mapped to HTTP 403. §6's
+permitted-code list grows by this one code for `getMessage`/`listMessages`. No other
+context kernel throws it; the transport peer-binding check may return it for any method
+with declared acting-peer fields (authorization-v1.md amendment).
+
+**§8 history clause.** "Retired/left status by itself does not erase readable history"
+still holds for storage and for the operator view. It no longer holds for the departed
+member itself: as requester it reads nothing, which matches the append rule.
+
+**Transports.** HTTP `POST /api/knowledge/:bank/{getMessage,listMessages}` and MCP
+`kb_getMessage`/`kb_listMessages` pass the authority through the registry. The MCP tool
+descriptions and payload schema document `requester_peer_name` and the `audit:read`
+operator view.
+
+**Evidence.**
+
+- `app/server/test/context-read-boundary.test.ts`: service level, real gated dataset.
+- `app/server/test/transport-read-boundary.test.ts`: live `createApp`, HTTP and MCP.
+
+Both were seen red before the change.

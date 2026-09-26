@@ -34,7 +34,10 @@
  * against a real dataset, not as a batch.
  */
 
+import type { RequestAuthority } from "../publication/context";
 import type { EvidenceReaderBundle, EvidenceWriterBundle } from "../publication/service";
+
+export type { RequestAuthority };
 
 /**
  * `audit:read` widened in for #94 (`listMcpCalls`/`listConnections`): the
@@ -58,7 +61,13 @@ export type KnowledgeMethod = {
   readonly action: KnowledgeAction;
   /** Tokens to the object carrying `workspace_name`. `[]` means top-level. */
   readonly scopePath: readonly string[];
-  readonly call: (bundle: KnowledgeBundle, bytes: Uint8Array) => Promise<unknown>;
+  /**
+   * `authority` is built by the transport from the policy snapshot that
+   * admitted this request (#87 / R3), never from its bytes. Only the message
+   * reads consume it; every other entry ignores it. Peer-binding checks for
+   * every method are declared in `registry.peerFields.ts`.
+   */
+  readonly call: (bundle: KnowledgeBundle, bytes: Uint8Array, authority: RequestAuthority) => Promise<unknown>;
   /**
    * True for a `content:write`-gated method that is defined only on the
    * writer facade but PERSISTS NOTHING (currently only `answerChat`). The
@@ -133,8 +142,11 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
   // ── context ──────────────────────────────────────────────────────────
   getPeer: { action: "content:read", scopePath: [], call: (b, x) => b.context.getPeer(x) },
   getSession: { action: "content:read", scopePath: [], call: (b, x) => b.context.getSession(x) },
-  getMessage: { action: "content:read", scopePath: [], call: (b, x) => b.context.getMessage(x) },
-  listMessages: { action: "content:read", scopePath: [], call: (b, x) => b.context.listMessages(x) },
+  // #87 / R3: membership is a read boundary on these two, so they take the
+  // admitted authority (named requester -> CURRENT membership; none -> the
+  // audit:read operator view).
+  getMessage: { action: "content:read", scopePath: [], call: (b, x, a) => b.context.getMessage(x, a) },
+  listMessages: { action: "content:read", scopePath: [], call: (b, x, a) => b.context.listMessages(x, a) },
   listPeers: { action: "content:read", scopePath: [], call: (b, x) => b.context.listPeers(x) },
   listSessions: { action: "content:read", scopePath: [], call: (b, x) => b.context.listSessions(x) },
   getReadCursor: { action: "content:read", scopePath: [], call: (b, x) => b.context.getReadCursor(x) },

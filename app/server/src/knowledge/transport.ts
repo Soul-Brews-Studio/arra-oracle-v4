@@ -38,8 +38,6 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { admit, type AdmissionTarget } from "../auth/policy";
-import { loadPolicy } from "../auth/loader";
 import {
   checkBodyEncoding,
   errorResponse,
@@ -49,8 +47,11 @@ import {
 } from "../auth/http";
 import { ContractError } from "../contracts/errors";
 import { parseStrictBytes, type JcsObject, type JcsValue } from "../contracts/jcs";
-import { openEvidenceReader, openEvidenceWriter } from "../publication/service";
-import { KNOWLEDGE_METHODS, type KnowledgeAction, type KnowledgeBundle } from "./registry";
+import { PublicationError, openEvidenceReader, openEvidenceWriter } from "../publication/service";
+import { KNOWLEDGE_METHODS, type KnowledgeAction, type KnowledgeBundle, type RequestAuthority } from "./registry";
+import { PEER_FIELDS } from "./registry.peerFields";
+import { KnowledgeAuthDenied, admitKnowledgeAction, type KnowledgeAuthFailure } from "./transport.admitKnowledgeAction";
+import { findUnboundPeer } from "./transport.findUnboundPeer";
 
 /** Matches the governed kernel's own request cap exactly (publication/service.ts). */
 export const MAX_KNOWLEDGE_REQUEST_BYTES = 1024 * 1024;
@@ -154,6 +155,8 @@ const STATUS_FOR_CODE: Readonly<Record<string, number>> = Object.freeze({
   unsupported_dataset: 400,
   recovery_required: 503,
   limit_exceeded: 413,
+  // #87 / R3: the admitted caller's own authority does not cover the request.
+  forbidden: 403,
 });
 
 /**
@@ -203,15 +206,7 @@ export function peekWorkspaceName(bytes: Uint8Array, scopePath: readonly string[
 
 // ── admission ────────────────────────────────────────────────────────────
 
-export type KnowledgeAuthFailure = "unauthenticated" | "forbidden" | "policy_unavailable";
-
-export class KnowledgeAuthDenied extends Error {
-  readonly code: KnowledgeAuthFailure;
-  constructor(code: KnowledgeAuthFailure) {
-    super(code);
-    this.code = code;
-  }
-}
+export { KnowledgeAuthDenied, admitKnowledgeAction, type KnowledgeAuthFailure } from "./transport.admitKnowledgeAction";
 
 const AUTH_STATUS_FOR: Readonly<Record<KnowledgeAuthFailure, number>> = Object.freeze({
   unauthenticated: 401,
@@ -220,32 +215,16 @@ const AUTH_STATUS_FOR: Readonly<Record<KnowledgeAuthFailure, number>> = Object.f
 });
 
 /**
- * Admit exactly one workspace action, reusing the #25 admission primitives
- * (`admit`, `loadPolicy`) directly — the same pure decision the memories
- * transport in `auth/service.ts` is built on. This module does not reinvent
- * policy evaluation; it only supplies the target for a different domain.
+ * #87 / R3 anti-spoofing, shared by HTTP and MCP: when the admitting grant
+ * carries a `peers` binding, refuse (`forbidden`, 403) any caller-asserted
+ * peer (`registry.peerFields.ts`) the binding does not list. Run after
+ * admission and BEFORE any writer is opened or kernel runs; inert when unbound.
  */
-export function admitKnowledgeAction(
-  policyPath: string,
-  authorization: string | null,
-  workspace: string,
-  action: KnowledgeAction,
-): void {
-  let policy;
-  try {
-    policy = loadPolicy(policyPath);
-  } catch {
-    throw new KnowledgeAuthDenied("policy_unavailable");
-  }
-  const target: AdmissionTarget = { kind: "workspace", workspace, action };
-  try {
-    admit(policy, { authorization, now_ms: Date.now(), target });
-  } catch (error) {
-    const code = (error as { code?: string }).code;
-    if (code === "unauthenticated") throw new KnowledgeAuthDenied("unauthenticated");
-    if (code === "forbidden") throw new KnowledgeAuthDenied("forbidden");
-    throw new KnowledgeAuthDenied("policy_unavailable");
-  }
+export function requireBoundPeers(method: string, bytes: Uint8Array, authority: RequestAuthority): void {
+  if (authority.peers === null) return;
+  const fields = Object.hasOwn(PEER_FIELDS, method) ? PEER_FIELDS[method]! : [];
+  const pointer = findUnboundPeer(bytes, fields, authority.peers);
+  if (pointer !== null) throw new PublicationError("forbidden", pointer);
 }
 
 // ── dataset access (writer-ownership decision lives here) ─────────────────
@@ -379,7 +358,9 @@ export type KnowledgeAccess = {
  * Order, fixed: validate the route scope grammar and the method name (pure
  * routing, no policy I/O), check body encoding, read the bounded raw bytes,
  * peek the body's own scope claim with the governed parser and require it to
- * equal the route bank, THEN admit, THEN dispatch the ORIGINAL bytes to the
+ * equal the route bank, THEN admit (which also yields the request's #87
+ * `RequestAuthority`), THEN refuse any caller-asserted peer outside the
+ * grant's binding, THEN dispatch the ORIGINAL bytes and that authority to the
  * registered method. A malformed or oversized body never reaches admission
  * with a false success, but a body-format fault surfaces its own governed
  * envelope rather than a generic 400 wherever this module can tell the two
@@ -410,11 +391,17 @@ export async function handleKnowledgeRequest(
   }
   if (scoped === null || scoped !== params.bank) return errorResponse(400);
 
+  let authority: RequestAuthority;
   try {
-    admitKnowledgeAction(ctx.policyPath, readAuthorization(request), params.bank, entry.action);
+    authority = admitKnowledgeAction(ctx.policyPath, readAuthorization(request), params.bank, entry.action);
   } catch (error) {
     if (error instanceof KnowledgeAuthDenied) return errorResponse(AUTH_STATUS_FOR[error.code]);
     return errorResponse(503);
+  }
+  try {
+    requireBoundPeers(params.method, raw.bytes, authority);
+  } catch (error) {
+    return knowledgeErrorResponse(error) ?? errorResponse(400);
   }
 
   // A method marked `ephemeralWrite` (currently only `answerChat`) must run
@@ -440,7 +427,7 @@ export async function handleKnowledgeRequest(
     } else {
       bundle = await ctx.access.getBundle(entry.action);
     }
-    const result = await entry.call(bundle, raw.bytes);
+    const result = await entry.call(bundle, raw.bytes, authority);
     return new Response(JSON.stringify(result ?? null), {
       status: 200,
       headers: { "content-type": "application/json", "cache-control": "no-store" },

@@ -15,7 +15,7 @@
 import type { WorkspaceAction } from "../auth/policy";
 import type { McpEnvelope, OperationService, ToolOperations } from "../auth/service";
 import { KNOWLEDGE_METHODS } from "../knowledge/registry";
-import type { KnowledgeAccess } from "../knowledge/transport";
+import { requireBoundPeers, type KnowledgeAccess } from "../knowledge/transport";
 import { SERVER_NAME, SERVER_VERSION, err, negotiate, ok, text } from "./protocol";
 import { TOOLS } from "./tools";
 
@@ -109,6 +109,9 @@ async function dispatchKnowledgeTool(name: string, args: Record<string, unknown>
   }
   if (knowledgeAccess === null) throw new Error("knowledge transport is not configured");
   const bytes = new TextEncoder().encode(JSON.stringify(payload));
+  // #87 / R3: the same peer-binding refusal as HTTP, before any writer opens;
+  // it throws the governed `forbidden` envelope, carried out unchanged.
+  requireBoundPeers(method, bytes, ops.authority);
   // Same gate discipline as the HTTP transport (`knowledge/transport.ts`'s
   // `handleKnowledgeRequest`): an `ephemeralWrite` method (currently only
   // `answerChat`) must never share the process-lifetime cached writer, or
@@ -121,13 +124,13 @@ async function dispatchKnowledgeTool(name: string, args: Record<string, unknown>
     }
     const opened = await knowledgeAccess.getEphemeralWriter();
     try {
-      return await entry.call(opened, bytes);
+      return await entry.call(opened, bytes, ops.authority);
     } finally {
       await opened.close().catch(() => undefined);
     }
   }
   const bundle = await knowledgeAccess.getBundle(entry.action);
-  return entry.call(bundle, bytes);
+  return entry.call(bundle, bytes, ops.authority);
 }
 
 /** Pure dispatcher: receives scope-bound operations, never a context. */
