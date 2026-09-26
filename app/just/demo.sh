@@ -78,6 +78,16 @@ cleanup() {
   exit "$rc"
 }
 trap cleanup EXIT
+# Fix round (nonblocking finding): without an explicit handler, an INT/TERM
+# delivered to this script does not reliably leave `$?` non-zero by the time
+# the EXIT trap above reads it -- observed printing `STEP_OK stack-down` AND
+# `DEMO_DONE` after a `kill -TERM`, even though the run was interrupted, not
+# finished. Cleanup itself (stopping the server, removing the mktemp root)
+# already ran correctly either way; only the "it finished" claim was wrong.
+# `exit N` here still runs through the EXIT trap above, now with the
+# conventional 128+signal status so `[ "$rc" -eq 0 ]` correctly says no.
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 demo_stack_up
 CLI=(bun "$APP/cli.ts")

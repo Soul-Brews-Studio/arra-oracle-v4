@@ -7,7 +7,7 @@
 # port is a free ephemeral one, not the fixed 3939 a real dev-stack may
 # already be holding.
 #
-# Sourced by demo.sh, which sets: PY, APP, SRV, SCRIPTS, BANK, PEER_ID first.
+# Sourced by demo.sh, which sets: PY, APP, SRV, SCRIPTS, BANK first.
 # Exports on success: ROOT, KDATA, LDATA, POLICY, TOKEN, PORT, ORIGIN,
 # ARRA_URL/ARRA_BANK/ARRA_TOKEN (consumed by app/cli.ts), SERVER_PID.
 
@@ -21,16 +21,18 @@ demo_stack_up() {
   show "mktemp -d  ->  $ROOT"
 
   show "ARRA_DATA_DIR=$LDATA $PY -m arra_migrate"
-  ARRA_DATA_DIR="$LDATA" "$PY" -m arra_migrate
+  ARRA_DATA_DIR="$LDATA" "$PY" -m arra_migrate || fail "dataset-create" "arra_migrate (legacy15) exited non-zero"
   echo
 
   show "$PY app/just/scripts/create_target19_dataset.py $KDATA"
-  "$PY" "$SCRIPTS/create_target19_dataset.py" "$KDATA"
+  "$PY" "$SCRIPTS/create_target19_dataset.py" "$KDATA" \
+    || fail "dataset-create" "create_target19_dataset.py exited non-zero"
   echo
   ok "dataset-create"
 
   show "$PY app/just/scripts/write_dev_policy.py $ROOT $BANK demo-operator"
-  "$PY" "$SCRIPTS/write_dev_policy.py" "$ROOT" "$BANK" "demo-operator" >/dev/null
+  "$PY" "$SCRIPTS/write_dev_policy.py" "$ROOT" "$BANK" "demo-operator" >/dev/null \
+    || fail "dev-policy" "write_dev_policy.py exited non-zero"
   POLICY="$ROOT/dev-policy.json"
   TOKEN="$(cat "$ROOT/dev-token.txt")"
   echo "policy: $POLICY"

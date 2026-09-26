@@ -1,9 +1,13 @@
 # Shared helpers for app/just/demo.sh (Nat's "LET PLAY" relic c30e0ba2 #20246;
 # overnight ruling R8/R9/R14/R18/R20, docs/overnight/DECISIONS.md).
 #
-# Sourced by demo.sh AFTER it sets: PY (the venv python), CLI (an array,
-# `(bun "$APP/cli.ts")`), ORIGIN, BANK. Every function here is print-first:
-# the demo's whole point is a readable transcript, not a quiet pass/fail.
+# Sourced by demo.sh, which sets PY (the venv python) and BANK first; CLI
+# (an array, `(bun "$APP/cli.ts")`) and ORIGIN are set AFTER this file is
+# sourced, once `demo_stack_up` (stack.sh) has a running server -- `run_cli`
+# and `mcp_v3_call` are only ever called later, from `demo_kb_loop`/
+# `demo_v3_loop`, by which point both exist. Every function here is
+# print-first: the demo's whole point is a readable transcript, not a quiet
+# pass/fail.
 #
 # Nothing here opens a dataset or a socket -- that is stack.sh's job.
 
@@ -19,8 +23,12 @@ step() {
 # Echo a command line for the human BEFORE running it. Never hand this a
 # real credential: `run_cli`/`mcp_v3_call` build their own redacted line
 # instead of accepting one from a caller, so there is exactly one place in
-# this whole demo that could leak the token, and it never does (grepped in
-# CI, see demo-loop.test.ts).
+# this whole demo that could leak the token, and it never does. (Fix round:
+# the previous comment here claimed this was grepped for in a
+# `demo-loop.test.ts` that does not exist -- `demo.test.ts` is this demo's
+# only test file, and it makes no token/Bearer assertion of its own; the
+# no-argv discipline below is enforced by review, not by CI, until that
+# lands.)
 show() { echo "+ $*"; }
 
 # One line per verdict, grepped by the bun test (`demo.test.ts`) as this
