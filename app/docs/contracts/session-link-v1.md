@@ -75,7 +75,9 @@ Both methods are now registry entries — `listSessionLinks` at `content:read`, 
 
 Proof: `app/server/test/knowledge-expose13-registry.test.ts` (registry shape, no dataset), `app/server/test/knowledge-expose13-transport.test.ts` (HTTP 404→200 and `kb_createSessionLink`/`kb_listSessionLinks` on `tools/list`, against a fake bundle calling this file's own real parsers), and `app/server/test/knowledge-expose13-live.test.ts` (`createSessionLink` → `listSessionLinks` round-tripped over both HTTP and MCP against a real writer-gated target-19 dataset, plus a same-payload MCP replay landing `already_satisfied`, proving both transports dispatch to the identical registry entry against the identical dataset).
 
-## Amendment 2026-09-26 (overnight R7 (#28 part), Unit B)
+## Amendment 2026-09-26 (overnight R7 (#28 part))
+
+This amendment covers analysis-28.json's Unit B (mixed-relation cycle refusal, below).
 
 Decision 4's cycle walk queried only the relation named on the PROPOSED edge (`relation = rel`). An independent re-verification (`.tmp/understand/analysis-28.json` run2) measured that this let a caller build a two-node loop by mixing relations: with `sess-b --continues--> sess-a` already stored, a request for `sess-a --forked_from--> sess-b` queried `relation = 'forked_from'` while walking, never saw the stored `continues` edge, and returned `"created"` (`oob_cross_relation_cycle: returned created`). `docs/overnight/DECISIONS.md` R7 rules on this for the `#28` part: "Mixed `continues`/`forked_from` cycles are refused across both link kinds (amendment to `session-link-v1.md` Decision 4)."
 
@@ -87,6 +89,6 @@ Decision 4's cycle walk queried only the relation named on the PROPOSED edge (`r
 
 `related_to` is untouched by this amendment: it is still checked first (`if (rel === "related_to") return;`) and never enters the walk, unioned relation set or not — no traversal, no bound, no cycle policy, exactly as the base decision above states.
 
-No schema change, no grammar change, no change to Decision 1–3, 5 or 6. This is a narrower cycle-detection query, not a new rule.
+No schema change, no grammar change, no change to Decision 1–3, 5 or 6. The query itself is WIDER — a union of both relations instead of one — even though the set of requests it accepts is narrower (a mixed loop that previously slipped through is now refused). This is a wider cycle-detection query, not a new rule.
 
 Proof: `app/server/test/session-link-service.test.ts` — "a mixed continues/forked_from loop is refused at the request that closes it" (red before this amendment's code change, green after), "a legal diamond across continues AND forked_from stays accepted", and "related_to stays exempt from the cycle walk even facing a directed loop".

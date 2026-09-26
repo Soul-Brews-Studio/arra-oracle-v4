@@ -241,7 +241,9 @@ refusals, against a fake bundle calling this file's own real parsers), and
 `listTraceHits` round-tripped over both HTTP and MCP against a real writer-gated target-19
 dataset, including a same-payload MCP replay of `createTrace` landing `already_satisfied`).
 
-## Amendment 2026-09-26 (overnight R7 (#28 part), hygiene: K13)
+## Amendment 2026-09-26 (overnight R7 (#28 part))
+
+This amendment covers the v3-parity review's K13 hygiene defect (depth validation, below).
 
 The v3-parity review (`docs/overnight/V3-PARITY.md` K13, defect 4) measured that
 `createTrace` accepted **any** nonnegative `depth`, regardless of the resolved
