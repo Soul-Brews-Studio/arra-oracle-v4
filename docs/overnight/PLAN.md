@@ -319,3 +319,4 @@ are part of done.
 - 03:56 v3-list ACCEPTED after repair (recall goes through one eligibility rule via listNodes `eligible_only`; browse flags `ineligible_reasons`) and MERGED
   (`87f9f06`; handler union, duplicate imports removed, lifecycle amendments renumbered 10–17). **v3 client acceptance harness: PASS 37 / FAIL 0 / GAP 0 of 37:
   a recorded real v3 client session runs end to end against v4.** Gate 9 is running.
+- 04:00 **GATE 9 on `87f9f06`: typecheck OK · TS 1972 pass / 0 fail (134/134 files, 183s) · Python 268 OK · probe 57 methods, HTTP/MCP/CLI 57 each, isolation 0 · v3 client acceptance 37/37.**
