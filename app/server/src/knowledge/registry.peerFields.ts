@@ -15,9 +15,14 @@
  *
  * Deliberately NOT listed: lookup targets (`getPeer.peer_name`,
  * `registerPeer.name`) and a revision's `subject_peer_name`. Naming a peer, or
- * writing ABOUT one, is not acting as it. A method added to the registry later
- * that carries an acting-peer field (e.g. #28's `created_by_peer_name`) must
- * be added here too; absence means "asserts no peer", not "exempt".
+ * writing ABOUT one, is not acting as it.
+ *
+ * EXHAUSTIVE over `KNOWLEDGE_METHODS`: every registered method appears, and
+ * `[]` is a reviewed "asserts no peer". A method added to the registry later
+ * (e.g. #28's `created_by_peer_name`, a lifecycle or trace `peer_name`) must
+ * be classified here too -- `transport-peer-fields.test.ts` fails until it
+ * is, and until then a bound grant is refused that method outright
+ * (`transport.requireBoundPeers.ts`), never let through unchecked.
  */
 
 export type PeerFieldPath = readonly string[];
@@ -41,4 +46,27 @@ export const PEER_FIELDS: Readonly<Record<string, readonly PeerFieldPath[]>> = O
     ["content", "author_peer_name"],
     ["content", "observer_peer_name"],
   ],
+  // reviewed: these assert no acting peer (lookups, taxonomy, evidence, audit)
+  getAcceptedHead: [],
+  listAcceptedHistory: [],
+  listNodes: [],
+  getVocabulary: [],
+  getTerm: [],
+  createVocabulary: [],
+  createTerm: [],
+  renameTerm: [],
+  retireTerm: [],
+  reparentTerm: [],
+  seedReservedVocabularies: [],
+  getPeer: [],
+  getSession: [],
+  listPeers: [],
+  listSessions: [],
+  registerPeer: [],
+  registerSession: [],
+  listMcpCalls: [],
+  listConnections: [],
+  getRevisionAssociations: [],
+  scanDependents: [],
+  reconcileRevisionAssociations: [],
 });

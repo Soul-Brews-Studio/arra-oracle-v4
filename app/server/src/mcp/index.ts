@@ -15,7 +15,8 @@
 import type { WorkspaceAction } from "../auth/policy";
 import type { McpEnvelope, OperationService, ToolOperations } from "../auth/service";
 import { KNOWLEDGE_METHODS } from "../knowledge/registry";
-import { requireBoundPeers, type KnowledgeAccess } from "../knowledge/transport";
+import type { KnowledgeAccess } from "../knowledge/transport";
+import { requireBoundPeers } from "../knowledge/transport.requireBoundPeers";
 import { SERVER_NAME, SERVER_VERSION, err, negotiate, ok, text } from "./protocol";
 import { TOOLS } from "./tools";
 

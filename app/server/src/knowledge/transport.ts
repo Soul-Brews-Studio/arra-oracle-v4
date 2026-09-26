@@ -47,11 +47,10 @@ import {
 } from "../auth/http";
 import { ContractError } from "../contracts/errors";
 import { parseStrictBytes, type JcsObject, type JcsValue } from "../contracts/jcs";
-import { PublicationError, openEvidenceReader, openEvidenceWriter } from "../publication/service";
+import { openEvidenceReader, openEvidenceWriter } from "../publication/service";
 import { KNOWLEDGE_METHODS, type KnowledgeAction, type KnowledgeBundle, type RequestAuthority } from "./registry";
-import { PEER_FIELDS } from "./registry.peerFields";
 import { KnowledgeAuthDenied, admitKnowledgeAction, type KnowledgeAuthFailure } from "./transport.admitKnowledgeAction";
-import { findUnboundPeer } from "./transport.findUnboundPeer";
+import { requireBoundPeers } from "./transport.requireBoundPeers";
 
 /** Matches the governed kernel's own request cap exactly (publication/service.ts). */
 export const MAX_KNOWLEDGE_REQUEST_BYTES = 1024 * 1024;
@@ -214,18 +213,7 @@ const AUTH_STATUS_FOR: Readonly<Record<KnowledgeAuthFailure, number>> = Object.f
   policy_unavailable: 503,
 });
 
-/**
- * #87 / R3 anti-spoofing, shared by HTTP and MCP: when the admitting grant
- * carries a `peers` binding, refuse (`forbidden`, 403) any caller-asserted
- * peer (`registry.peerFields.ts`) the binding does not list. Run after
- * admission and BEFORE any writer is opened or kernel runs; inert when unbound.
- */
-export function requireBoundPeers(method: string, bytes: Uint8Array, authority: RequestAuthority): void {
-  if (authority.peers === null) return;
-  const fields = Object.hasOwn(PEER_FIELDS, method) ? PEER_FIELDS[method]! : [];
-  const pointer = findUnboundPeer(bytes, fields, authority.peers);
-  if (pointer !== null) throw new PublicationError("forbidden", pointer);
-}
+export { requireBoundPeers } from "./transport.requireBoundPeers";
 
 // ── dataset access (writer-ownership decision lives here) ─────────────────
 
