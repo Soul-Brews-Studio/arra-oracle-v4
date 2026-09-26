@@ -118,3 +118,10 @@ are part of done.
   - answerChat is exposed but returns 503 `writer_unavailable` over HTTP and `isError` over MCP.
   - Target for done: 44/44 reachable on HTTP, MCP and CLI; 0 isolation failures; answerChat answers
     through a real, pluggable model with a deterministic stub in tests.
+- 21:29 Understand workflow done (22/22 agents, 4.2M subagent tokens). Reports in `.tmp/understand/`.
+  Findings: #105 misdiagnosed (the dev seed writes sub-ms); #87 #85 #103 #27 #28 #30 #31 #32 #33 #34 #7 #8 real;
+  #29 #89 #102 #10 partial. Rulings R1–R13 written to `DECISIONS.md` and committed (`be2d9ab`).
+- 21:29 WAVE 1 launched (`wf_c985e743-0cc`), 8 slices, each in its own worktree branched from `be2d9ab`:
+  seed-ms (#105 #75, Sonnet) · membership (#87, Opus) · coverage (#85, Opus) · ops-root (#103 #102, Sonnet) ·
+  sealed-vocab (#27, Opus) · expose-13 (#28–#31 exposure, Sonnet) · cli-kb (#31 CLI, Sonnet) · ci (R13 + AGENTS.md, Sonnet).
+  Each goes implement → Opus refuter (mutation check + live probe) → one fix round → re-verify.

@@ -1,6 +1,6 @@
 # Overnight rulings, 2026-09-26/27
 
-**Version**: `v26.9.26-alpha.2125`
+**Version**: `v26.9.26-alpha.2140`
 **Made by**: v4-overnight (Claude Opus 5.5, AI), under Nat's standing instruction for tonight:
 *"do anything you want … go until finish without any ask or wait me"*.
 
@@ -132,7 +132,11 @@ branch, so it reverts cleanly.
     as SPEC §4.1.2 (latest, PR #106) says. It is the only measured tokenizer that
     finds the inside-word counterexample, ลืม inside หลงลืม. `icu` segments whole
     words and misses it.
-  - The legacy `memories` path keeps `icu` and is left alone.
+  - One shared `FTS_INDEX_OPTIONS` module serves both stores, so they cannot
+    diverge. The legacy `memories` path moves to the same `ngram(3,3)` (R14);
+    it is the only live search today, and #10 requires the inside-word case
+    on it. *(Amended 21:40: the first version of this ruling left legacy on
+    `icu`, which cannot pass #10.)*
   - Keyword and semantic retrieval are separate methods, not fused. Fusing measured worse than
     either alone in relic's evaluation.
   - One table holds several embedding profiles, as built. DESIGN gets an amendment.
@@ -174,6 +178,62 @@ branch, so it reverts cleanly.
 - **Ruling**: legacy free-text `memories.type` values that exactly match a reserved type
   term keep it. Everything else becomes `note`, and the original string is kept as
   a tag term, so nothing is lost. The rehearsal always runs on a copy.
+
+## R14 · #10 Thai inside-word search, shared by both stores
+
+- **Ruling**: option (a) from the #10 analysis.
+  - `FTS_INDEX_OPTIONS = {baseTokenizer:"ngram", ngramMinLength:3, ngramMaxLength:3,
+    prefixOnly:false, stem:false, removeStopWords:false}` lives in one module.
+    `ensureFtsIndex` rebuilds under the same index name only when the live
+    `indexDetails` differ, so an existing index is still kept when it matches.
+  - Queries shorter than 3 code points fall back to a bounded, escaped `LIKE`
+    scan, and the response says so with `match: "substring_scan"` (the default is
+    `match: "ngram"`), as SPEC §4.1.2 says: "fall back to LIKE and say so".
+  - Substring post-verification is on: overfetch the FTS candidates, keep rows
+    that actually contain the query (case-folded), trim to the limit. This
+    removes the measured ngram false positives (หลงทาง, ความทรงจำ).
+- **Reverse by**: changing the one options constant back to `icu`; the tests
+  name the behaviour each setting buys.
+
+## R15 · #8 Honcho round-trip, phase 1 only
+
+- **Ruling**:
+  - The target is the v3.2.0 pin already in the repo.
+  - Interchange is at REST level: lossy fields are listed in `LOSSY_FIELDS`, each
+    with a reason.
+  - Names outside `^[a-zA-Z0-9_-]+$` get a reversible encoding, proven by a
+    round-trip test.
+  - `messages.ingested_at NOT NULL` is recorded as an explicit exception to §15.1.
+- The live run against a container stays blocked. Starting colima is a host
+  change, and the shared white.local instance must never be used. Everything up to
+  the live call is built and tested against a fixture.
+
+## R16 · #7 recall measurement: harness now, judgments from Nat
+
+- **Ruling**: build phase A:
+  - a manifest-echoing harness;
+  - origin labels that refuse to pair agent-authored qrels with a report
+    labelled "independently judged";
+  - a Bun LanceDB executor with the product profiles (`ngram3` from R14, plus
+    `literal_includes` and vector).
+- Phase B is Nat's: a private Thai/English corpus drawn from real memory
+  content, and relevance judgments by someone other than the agent that wrote
+  the queries. No quality number is published tonight. A number over an
+  agent-authored corpus is exactly what the issue forbids.
+
+## R17 · #34 migration backfill policies
+
+- `vocabularies` created from legacy tags: `cardinality: many`,
+  `required: false`, flat hierarchy.
+- A null `supersede_log.reason` becomes `"legacy: reason not recorded"`, and the
+  report counts these rows.
+- `distilled_at` goes to the trace link's `internal_metadata`, never invented as
+  `captured_at`.
+- Scope is local datasets only. `writer_gate` refuses remote roots, and R2 is
+  out of scope.
+- The inherited gates are **release-excluded tonight and named in the report**:
+  #7 (judgments), #8 (container), and #10's quality half. The rehearsal
+  report must say so. It must never look green on their account.
 
 ## R12 · Model split tonight (corrects PLAN v0)
 
