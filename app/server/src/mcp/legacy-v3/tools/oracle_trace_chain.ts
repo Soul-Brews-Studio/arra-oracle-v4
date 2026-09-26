@@ -13,8 +13,21 @@ const MAX_STEPS = 1024;
  *
  * v3's `nextTraceId` is a single maintained pointer (`oracle_trace_link` kept
  * it exclusive); v4 allows several traces to name the same `prev_id` (a
- * fork, D11: linking is not carried, so nothing PREVENTS one). Reaching a
- * fork stops the forward walk and reports it rather than picking a branch.
+ * fork, D11: linking is not carried, so nothing PREVENTS one).
+ *
+ * FIX (overnight R18 fix round): `prev_id` is single-valued -- walking it
+ * backward from `start` can never itself hit a fork, only FORWARD listing
+ * can (several traces sharing one `prev_id`). So the segment from the
+ * earliest reachable ancestor up to `start` is already fully known from that
+ * backward walk and is never ambiguous; only what comes AFTER `start` is
+ * unknown and needs a `listTraces({prev_id})` round trip. An earlier version
+ * of this file threw the backward path away and tried to re-derive it
+ * forward from the root instead, so a fork upstream of `start` (an unrelated
+ * trace also naming the root as `prev_id`) stopped the walk before it ever
+ * reached `start`: `position` fell back to 0 on a chain that no longer
+ * contained the trace the caller asked for. Reaching a genuine fork AFTER
+ * `start` still stops the forward-continuation walk and reports it, rather
+ * than picking a branch.
  */
 export async function oracle_trace_chain(args: Record<string, unknown>, context: V3ToolContext): Promise<unknown> {
   const start = await resolveTraceId(context.kb, args.traceId, context.tool);
@@ -23,23 +36,30 @@ export async function oracle_trace_chain(args: Record<string, unknown>, context:
   // nothing to walk from).
   if (start === null) return { chain: [], position: 0, chain_length: 0 };
 
-  // Backward: walk `prev_id` to the earliest reachable ancestor.
-  let head = start;
-  const seenBack = new Set<string>([head.id as string]);
-  for (let steps = 0; head.prev_id !== null && steps < MAX_STEPS; steps++) {
-    const prev = (await context.kb("getTrace", { id: head.prev_id })) as TraceRow | null;
+  // Backward: walk `prev_id` to the earliest reachable ancestor, recording
+  // every node visited -- `backward` ends up `[start, ..., root]`.
+  const backward: TraceRow[] = [start];
+  const seenBack = new Set<string>([start.id as string]);
+  for (let steps = 0; backward[backward.length - 1]!.prev_id !== null && steps < MAX_STEPS; steps++) {
+    const prev = (await context.kb("getTrace", { id: backward[backward.length - 1]!.prev_id })) as TraceRow | null;
     if (prev === null || seenBack.has(prev.id as string)) break;
     seenBack.add(prev.id as string);
-    head = prev;
+    backward.push(prev);
   }
+  // Reversed, that is `[root, ..., start]` -- the chain root-to-start, known
+  // outright with no forward query, and `start` is always its last entry.
+  const known = backward.slice().reverse();
+  const position = known.length - 1;
 
-  // Forward: one successor at a time. `limit:2` is the cheapest way to tell
-  // "exactly one" from "a fork" without reading a third row.
-  const rows: TraceRow[] = [head];
-  const seenForward = new Set<string>([head.id as string]);
+  // Forward-continuation: one successor PAST `start` at a time, the only
+  // segment the backward walk above never visited. `limit:2` is the
+  // cheapest way to tell "exactly one" from "a fork" without reading a
+  // third row.
+  const rows: TraceRow[] = known.slice();
+  const seenForward = new Set<string>(rows.map((row) => row.id as string));
   let forked = false;
   let branches: string[] = [];
-  let cursor = head;
+  let cursor = rows[rows.length - 1]!;
   for (let steps = 0; steps < MAX_STEPS; steps++) {
     const successors = (await context.kb("listTraces", {
       parent_id: null,
@@ -72,11 +92,10 @@ export async function oracle_trace_chain(args: Record<string, unknown>, context:
     next_trace_id: index + 1 < rows.length ? rows[index + 1]!.id : null,
     created_at: row.created_at,
   }));
-  const position = rows.findIndex((row) => row.id === start.id);
 
   return {
     chain,
-    position: position < 0 ? 0 : position,
+    position,
     chain_length: chain.length,
     ...(forked ? { forked: true, branches } : {}),
   };

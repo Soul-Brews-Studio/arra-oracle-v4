@@ -15,6 +15,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFixture, runGated, type Fixture } from "./helpers/publication-fixture";
+import { openEvidenceReader } from "../src/publication/service";
 
 const CHILD = join(import.meta.dir, "fixtures", "v3-compat-v1", "core", "writes-child.ts");
 const WS = "ws-trace";
@@ -84,6 +85,21 @@ beforeAll(async () => {
     { label: "chain_from_a_forked", bank: WS, tool: "oracle_trace_chain", args: { traceId: { $ref: "A" } } },
     { label: "chain_unknown", bank: WS, tool: "oracle_trace_chain", args: { traceId: pad("unknownchainstart") } },
     { label: "chain_uuid", bank: WS, tool: "oracle_trace_chain", args: { traceId: V3_UUID } },
+
+    // 6b (fix round, K5/V7 defect): R <- S1 <- S2, then an UNRELATED fork F
+    // off R (upstream of S1/S2, not at S1 or S2 themselves -- the slice's own
+    // "chain_from_a_forked" case above only ever asked about the fork point
+    // itself, A, so it could not catch a fork sitting BETWEEN the requested
+    // trace and the root). Backward from S2 already knows S2<-S1<-R
+    // unambiguously (`prev_id` is single-valued); F must never cost S2 its
+    // own position in its own chain.
+    { label: "chain_r", bank: WS, tool: "oracle_trace", args: { query: "chain root r" }, capture: { name: "R", path: ["trace_id"] } },
+    { label: "chain_s1", bank: WS, tool: "oracle_trace", args: { query: "chain step s1", prevTraceId: { $ref: "R" } }, capture: { name: "S1", path: ["trace_id"] } },
+    { label: "chain_s2", bank: WS, tool: "oracle_trace", args: { query: "chain step s2", prevTraceId: { $ref: "S1" } }, capture: { name: "S2", path: ["trace_id"] } },
+    { label: "chain_from_s2_before_fork", bank: WS, tool: "oracle_trace_chain", args: { traceId: { $ref: "S2" } } },
+    { label: "chain_f_fork", bank: WS, tool: "oracle_trace", args: { query: "chain fork upstream of s2", prevTraceId: { $ref: "R" } }, capture: { name: "F", path: ["trace_id"] } },
+    { label: "chain_from_s2_after_fork", bank: WS, tool: "oracle_trace_chain", args: { traceId: { $ref: "S2" } } },
+    { label: "chain_from_r_after_fork", bank: WS, tool: "oracle_trace_chain", args: { traceId: { $ref: "R" } } },
 
     // 7. Distill: promoted -> learning; not promoted -> conclusion;
     //    re-distill adds a SECOND node; the trace row is never rewritten.
@@ -180,6 +196,39 @@ describe("oracle_trace_chain (V3 #6, V7 forward)", () => {
     expect(out.chain_from_a_forked.value.branches.sort()).toEqual([out.chain_b.value.trace_id, out.chain_c_fork.value.trace_id].sort());
   });
 
+  test("a fork upstream of the requested trace never drops it from its own chain (fix round)", () => {
+    // Before the fork exists: R <- S1 <- S2, asking about S2 sees all three.
+    expect(out.chain_from_s2_before_fork.isError).toBe(false);
+    expect(out.chain_from_s2_before_fork.value.chain.map((c: any) => c.trace_id)).toEqual([
+      out.chain_r.value.trace_id, out.chain_s1.value.trace_id, out.chain_s2.value.trace_id,
+    ]);
+    expect(out.chain_from_s2_before_fork.value.position).toBe(2);
+    expect(out.chain_from_s2_before_fork.value.chain_length).toBe(3);
+    expect(out.chain_from_s2_before_fork.value.forked).toBeUndefined();
+
+    // F forks off R, UPSTREAM of S1/S2 -- not at S2 itself. S2's own chain
+    // (reached via S2's unambiguous prev_id pointers back through S1 to R)
+    // must be unaffected: still all three, S2 still in it, at its own
+    // position, never coerced to `position: 0` on a truncated `chain:[R]`.
+    expect(out.chain_from_s2_after_fork.isError).toBe(false);
+    expect(out.chain_from_s2_after_fork.value.chain.map((c: any) => c.trace_id)).toEqual([
+      out.chain_r.value.trace_id, out.chain_s1.value.trace_id, out.chain_s2.value.trace_id,
+    ]);
+    expect(out.chain_from_s2_after_fork.value.position).toBe(2);
+    expect(out.chain_from_s2_after_fork.value.chain_length).toBe(3);
+
+    // Asking about R itself still sees the fork it actually sits at (R has
+    // two children, S1 and F): the ambiguity is real information about R's
+    // OWN forward continuation, unlike the false one the bug reported for S2.
+    expect(out.chain_from_r_after_fork.isError).toBe(false);
+    expect(out.chain_from_r_after_fork.value.forked).toBe(true);
+    expect(out.chain_from_r_after_fork.value.branches.sort()).toEqual(
+      [out.chain_s1.value.trace_id, out.chain_f_fork.value.trace_id].sort(),
+    );
+    expect(out.chain_from_r_after_fork.value.chain.map((c: any) => c.trace_id)).toEqual([out.chain_r.value.trace_id]);
+    expect(out.chain_from_r_after_fork.value.position).toBe(0);
+  });
+
   test("an unknown but well-formed start is v3's own empty chain, not an error", () => {
     expect(out.chain_unknown.isError).toBe(false);
     expect(out.chain_unknown.value).toEqual({ chain: [], position: 0, chain_length: 0 });
@@ -206,6 +255,21 @@ describe("oracle_trace_distill (V3 #7, R18 D4)", () => {
   test("re-distilling adds a SECOND node, never replacing the first", () => {
     expect(out.distill_again.isError).toBe(false);
     expect(out.distill_again.value.learningId).not.toBe(out.distill_promoted.value.learningId);
+  });
+
+  test("the distilled node's project term is the TRACE's own project, never args.project (fix round)", async () => {
+    // T1 was traced with `project: "github.com/laris-co/example-fw"`. Neither
+    // v3's real call shape nor this tool's `inputSchema` has a `project`
+    // argument on `oracle_trace_distill` itself -- reading one off `args`
+    // (the pre-fix-round behavior) always produced `_universal`, even here.
+    const reader = await openEvidenceReader(fixture.datasetRoot);
+    const head = (await reader.publication.getAcceptedHead(
+      new TextEncoder().encode(JSON.stringify({ workspace_name: WS, node_id: out.distill_promoted.value.learningId })),
+    )) as { revision: { term_snapshot_json: string } } | null;
+    expect(head).not.toBeNull();
+    const terms = JSON.parse(head!.revision.term_snapshot_json) as { vocabulary_name_snapshot: string; term_name_snapshot: string }[];
+    const project = terms.find((t) => t.vocabulary_name_snapshot === "project");
+    expect(project?.term_name_snapshot).toBe("laris-co/example-fw");
   });
 
   test("the trace row itself is byte-identical before and after every distill", () => {

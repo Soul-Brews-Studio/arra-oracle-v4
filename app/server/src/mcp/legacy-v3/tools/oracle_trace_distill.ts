@@ -23,6 +23,14 @@ import { titleOf } from "../titleOf";
  * caller's own `origin` argument is used as the author ONLY when it names
  * the bound speaking peer; otherwise it is kept, informational only, in the
  * new node's `fields.origin` -- never silently discarded.
+ *
+ * FIX (overnight R18 fix round): the distilled node's `project` term comes
+ * from the TRACE's own `h_metadata.project` (v3's `distill.ts` used
+ * `trace.project`, the row it was distilling FROM), never from
+ * `args.project` -- neither v3's real call shape nor this tool's own
+ * `inputSchema` has a `project` argument, so reading one off `args` always
+ * produced `_universal`, even for a trace `oracle_trace` recorded a real
+ * project on.
  */
 export async function oracle_trace_distill(args: Record<string, unknown>, context: V3ToolContext): Promise<unknown> {
   const trace = await resolveTraceId(context.kb, args.traceId, context.tool);
@@ -35,6 +43,7 @@ export async function oracle_trace_distill(args: Record<string, unknown>, contex
   }
   const promote = args.promoteToLearning === true;
   const author = await ensureSpeaker(context, args);
+  const traceMeta = typeof trace.h_metadata === "string" ? (JSON.parse(trace.h_metadata) as Record<string, unknown>) : {};
 
   const concepts = ["trace-awakening"];
   if (typeof args.theme === "string" && args.theme.trim() !== "") concepts.push(args.theme.trim());
@@ -47,7 +56,7 @@ export async function oracle_trace_distill(args: Record<string, unknown>, contex
     title: titleOf(awakening),
     body: awakening,
     fields: originArg !== null && !originIsSpeaker ? { origin: originArg } : {},
-    terms: { type: promote ? "learning" : "conclusion", concepts, project: normalizeProject(args.project) },
+    terms: { type: promote ? "learning" : "conclusion", concepts, project: normalizeProject(traceMeta.project) },
     links: [
       {
         relation: "derived_from",
