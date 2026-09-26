@@ -213,3 +213,9 @@ empty/short page (`listTraceHits`), never `not_found`. `{outcome: "conflict", re
 - `trace_hits` having no `id` column at all — its key is purely positional — means a hit
   cannot be addressed independently of its trace and position; there is no way to reference
   "this hit" from outside the `(workspace_name, trace_id, position)` triple.
+
+## Amendment 2026-09-26 (overnight R11 + R17)
+
+Appended, not rewritten. Context: the #34 copy migration under [`docs/overnight/DECISIONS.md`](../../../docs/overnight/DECISIONS.md) R11 and R17.
+
+**What changed.** Legacy `traces.status` values `raw | distilled | retired` are outside this kernel's closed set `open | complete | abandoned`, so a verbatim copy reads back as `integrity_failure`. The copy migration maps `raw -> open`, `distilled -> complete`, `retired -> abandoned` and records the legacy value on the trace's report record. This mapping is an implementer decision made during the overnight run. It is **not** part of R11/R17 and needs a ruling to stand (DESIGN §10 still lists `raw | reviewed | distilled | retired`). Legacy integer-millisecond columns are copied raw, and `distilled_to` / `distilled_at` become a revision link plus revision metadata. Legacy `trace_hits` are reported unresolved, because a free-text `ref` does not determine a structured `target`.

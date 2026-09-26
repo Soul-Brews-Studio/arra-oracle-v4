@@ -206,3 +206,11 @@ poisons.
   rule can never actually need to page — a single node can only ever have zero or one
   lifecycle event. This is deliberate future-proofing already present in shipped code, not a
   gap.
+
+## Amendment 2026-09-26 (overnight R11 + R17)
+
+Appended, not rewritten. Ruling: [`docs/overnight/DECISIONS.md`](../../../docs/overnight/DECISIONS.md) R17.
+
+**What changed.** The #34 copy migration writes legacy supersede/retire history through `supersedeNode` / `retireNode`, not as copied rows. A legacy `supersede_log.reason` that is NULL becomes the literal `"legacy: reason not recorded"`, because `reason` is a required request field and a NOT NULL column here; the report counts these rows (`policies.null_reason_backfilled`, next to `null_reason_rows_in`). Events are pinned to the first revisions the same run published, applied in legacy `superseded_at` order with the kernel clock set to that legacy time. The kernel allocates `supersede_log.id` (max + 1), so legacy integer ids are not preserved; each legacy row's record carries its legacy id as the key. A second legacy event on an already-terminal node is reported rejected (`conflict_already_terminal`), never overwritten.
+
+**Why.** R17: the target requires a reason, and the legacy log allowed none. Inventing a plausible reason would be worse than a fixed, searchable marker.
