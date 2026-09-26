@@ -422,7 +422,6 @@
     },
     {
       "step": 13,
-      "ref": "search-apfs-after-supersede",
       "slice": "V5",
       "as": "rw",
       "method": "tools/call",
@@ -1022,8 +1021,8 @@
         "kind": "alias_matches",
         "aliasOf": "oracle_search",
         "neverListed": true,
-        "notes": "V3-PARITY.md §8 step 22 and §2.4 (D6): `arra_search` resolves to `oracle_search`'s action and result set, and is never advertised. No indexed real `arra_search` call was found on this machine within the current lookback window -- §2.4 [run] dates the last one at 2026-05-18, from the era when v3 briefly *listed* arra_* names (rebrand commit 8b0b0373). This step is therefore modelled on §2.4's own citation plus step 7's real oracle_search shape, not on a freshly re-found transcript. Compared with step 13, the same query at the same dataset state (R18 V5, 2026-09-27): rev 2 compared with step 7, but steps 9-10 add L1B and supersede L1 in between, so no correct search could return step 7's set here.",
-        "compareToStepRef": "search-apfs-after-supersede"
+        "notes": "V3-PARITY.md §8 step 22 and §2.4 (D6): `arra_search` resolves to `oracle_search`'s action and result set, and is never advertised. No indexed real `arra_search` call was found on this machine within the current lookback window -- §2.4 [run] dates the last one at 2026-05-18, from the era when v3 briefly *listed* arra_* names (rebrand commit 8b0b0373). This step is therefore modelled on §2.4's own citation plus step 7's real oracle_search shape, not on a freshly re-found transcript. Compared with oracle_search called with the same arguments right after the alias, the one comparison made at the same dataset state (R18 V5, 2026-09-27). Rev 2 compared with step 7, which steps 9-10 invalidate; a first fix compared with step 13, but step 21 writes a node in between and the keyword answer's snippets moved with it (3 FAIL in 6 runs).",
+        "compareToCanonicalCall": true
       }
     },
     {
