@@ -18,7 +18,10 @@ const RANK: Readonly<Record<string, number>> = Object.freeze({ "content:read": 0
  *     refusing a payload that already names another workspace;
  * then encodes to JSON bytes and calls the SAME registry entry HTTP and
  * `kb_*` call, through the same governed parser and peer binding. One bundle
- * per tool call, opened for the tool's own action.
+ * per tool call, opened for the tool's own action -- except a `readerOnly`
+ * method (the #30 searches, the chat facade), which no writer carries: a
+ * write tool reaches it through one reader opened for the call (R18 V5,
+ * `oracle_search_chain` searches, then writes traces).
  *
  * A refusal here is an adapter wiring fault, not caller input, so it is a
  * plain Error, never a governed envelope.
@@ -31,10 +34,17 @@ export function createKb(context: {
 }): Kb {
   const { spec, bank, authority, access } = context;
   let bundle: Promise<KnowledgeBundle> | null = null;
+  let reader: Promise<KnowledgeBundle> | null = null;
   const pinned = () => {
     if (access === null) return Promise.reject(new Error("knowledge transport is not configured"));
     bundle ??= access.getBundle(spec.action);
     return bundle;
+  };
+  const readerOnly = () => {
+    if (spec.action === "content:read") return pinned();
+    if (access === null) return Promise.reject(new Error("knowledge transport is not configured"));
+    reader ??= access.getBundle("content:read");
+    return reader;
   };
 
   return async (method, payload) => {
@@ -55,6 +65,6 @@ export function createKb(context: {
     node.workspace_name = bank;
 
     const bytes = new TextEncoder().encode(JSON.stringify(scoped));
-    return callKnowledgeMethod(access, method, bytes, authority, pinned);
+    return callKnowledgeMethod(access, method, bytes, authority, entry.readerOnly === true ? readerOnly : pinned);
   };
 }

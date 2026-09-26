@@ -44,6 +44,13 @@ const fakeBundle = new Proxy({}, {
   get: (_t, facade) => new Proxy({}, { get: (_u, method) => async () => void calls.push(`${String(facade)}.${String(method)}`) }),
 }) as unknown as KnowledgeBundle;
 const configured: KnowledgeAccess = { getBundle: async () => fakeBundle };
+/** A READER-shaped bundle (no publishRevision) whose #30 searches answer nothing. */
+const searchable: KnowledgeAccess = {
+  getBundle: async () => ({
+    publication: {},
+    context: { searchKnowledgeKeyword: async () => ({ match: "ngram", scan_reason: null, hits: [] }) },
+  }) as unknown as KnowledgeBundle,
+};
 
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "arra-v3-frame-"));
@@ -133,16 +140,19 @@ describe("V0 #2: grants decide the family; not-carried tools do not exist", () =
 describe("V0 #3 and #4: availability is data-driven (V3-PARITY §2.1 rules b and c)", () => {
   test("a tool whose requires names a missing registry method is not listed; calling it is not_yet_available", async () => {
     const { V3_CATALOGUE } = await import("../src/mcp/legacy-v3/catalogue");
-    const search = V3_CATALOGUE.find((t) => t.name === "oracle_search")!;
-    expect(search.requires.some((m) => !(m in KNOWLEDGE_METHODS))).toBe(true);
+    // Any tool still waiting on a kernel slice (oracle_search was the example
+    // until R18 V5 wired the real #30 names; the rule is what is pinned).
+    const pending = V3_CATALOGUE.find((t) => t.requires.some((m) => !(m in KNOWLEDGE_METHODS)));
+    expect(pending).toBeDefined();
     configureKnowledgeAccess(configured);
-    expect(await list(true, "rw")).not.toContain("oracle_search");
-    const res = await call(true, "rw", "oracle_search", { query: "x" });
+    expect(await list(true, "rw")).not.toContain(pending!.name);
+    const res = await call(true, "rw", pending!.name, {});
     expect(res.status).toBe(200);
     expect(res.json.result.isError).toBe(true);
     const body = JSON.parse(toolText(res));
     expect(body.success).toBe(false);
-    expect(body.compat).toMatchObject({ version: "arra-v3-compat/1", code: "not_yet_available", tool: "oracle_search" });
+    expect(body.compat).toMatchObject({ version: "arra-v3-compat/1", code: "not_yet_available", tool: pending!.name });
+    expect(calls).toEqual([]);
   });
 
   test("with no dataset configured, neither the v3 family nor kb_* is listed (defect 5)", async () => {
@@ -159,13 +169,16 @@ describe("V0 #3 and #4: availability is data-driven (V3-PARITY §2.1 rules b and
 
 describe("V0 #5: inbound arra_* aliases (D6)", () => {
   test("arra_search runs as oracle_search under oracle_search's action, is never listed, and is audited canonically", async () => {
-    configureKnowledgeAccess(configured);
+    configureKnowledgeAccess(searchable);
     const names = await list(true, "ro");
     expect(names.filter((n) => n.startsWith("arra_"))).toEqual([]);
     const res = await call(true, "ro", "arra_search", { query: "x" });
+    const direct = await call(true, "ro", "oracle_search", { query: "x" });
     expect(res.status).toBe(200);
-    expect(JSON.parse(toolText(res)).compat).toMatchObject({ code: "not_yet_available", tool: "oracle_search" });
-    expect(audit.at(-1)).toMatchObject({ tool: "oracle_search", requested_as: "arra_search", status: "error" });
+    expect(res.json.result.isError).toBeUndefined();
+    const timeless = (text: string) => ({ ...JSON.parse(text), metadata: { ...JSON.parse(text).metadata, searchTime: 0 } });
+    expect(timeless(toolText(res))).toEqual(timeless(toolText(direct)));
+    expect(audit[0]).toMatchObject({ tool: "oracle_search", requested_as: "arra_search", status: "ok" });
   });
 
   test("an alias never widens a grant, and muninn_* stays unknown", async () => {
@@ -255,7 +268,8 @@ describe("V0 #8: kb() is the only capability, and it is bounded", () => {
 describe("V0 #9 and #10: errors, audit and the speaker header", () => {
   test("a CompatError crosses runMcp as exact JSON with isError, and the audit row says error", async () => {
     configureKnowledgeAccess(configured);
-    const res = await call(true, "rw", "oracle_search", { query: "x" });
+    // No query: oracle_search refuses before any kernel call.
+    const res = await call(true, "rw", "oracle_search", {});
     const body = JSON.parse(toolText(res));
     expect(Object.keys(body).sort()).toEqual(["compat", "error", "success", "v4_error"]);
     expect(body.v4_error).toBeNull();
