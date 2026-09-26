@@ -38,11 +38,12 @@ import { join } from "node:path";
 import { createFixture, PYTHON, revisionEnvelope, runGated, type Fixture, type RunResult } from "./helpers/publication-fixture";
 import { FIXTURES_DIR, loadSession } from "./helpers/v3-compat-shapes";
 import { judgeStep, type SessionRun, type Verdict } from "./helpers/v3-compat-verdict";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const session = loadSession();
 const SEED_CHILD = join(FIXTURES_DIR, "core", "gated-session.ts");
 const SESSION_CHILD = join(FIXTURES_DIR, "core", "session-child.ts");
-const SESSION_DEADLINE_MS = 240_000;
+const SESSION_DEADLINE_MS = scaledMs(240_000);
 
 const pad = (seed: string) => `${seed}${"0".repeat(Math.max(0, 21 - seed.length))}`.slice(0, 21);
 const lastLine = (result: RunResult) => result.stdout.trim().split("\n").filter(Boolean).at(-1);

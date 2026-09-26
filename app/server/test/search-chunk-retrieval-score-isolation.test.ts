@@ -45,9 +45,10 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createFixture, PYTHON, revisionEnvelope, runGated, type Fixture } from "./helpers/publication-fixture";
 import { CHUNKER_VERSION, activeEmbeddingProfileId } from "../src/publication/search-chunk";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = join(import.meta.dir, "fixtures", "search-chunk-v1", "core", "gated-score-isolation.ts");
-const TIMEOUT_MS = 120_000;
+const TIMEOUT_MS = testTimeout(120_000);
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
 // #30 R7 (search-embed, R20): the closed profile registry accepts only its

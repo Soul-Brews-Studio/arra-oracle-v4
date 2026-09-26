@@ -34,9 +34,10 @@
 // already has to write here at all.
 import { chmodSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { readArgPayload } from "../../helpers/argv.readArgPayload";
 
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   scenario: "fresh_read" | "fresh_write" | "orphan" | "control";
   first: unknown;
   second: unknown;

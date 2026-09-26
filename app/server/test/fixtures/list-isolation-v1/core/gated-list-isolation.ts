@@ -29,8 +29,9 @@
 // Bun process per HTTP-shaped request, which at five methods x five page
 // sizes x two workspaces x up to twenty pages is hundreds of process spawns
 // for what is otherwise a few milliseconds of in-process work.
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   ops: Array<
     | { kind: "call"; methodNames: string[]; request: unknown }
     | { kind: "seed"; table: string; rows: Record<string, unknown>[]; epochMsFields?: string[] }

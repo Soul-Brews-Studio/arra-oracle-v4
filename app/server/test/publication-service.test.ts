@@ -22,6 +22,7 @@ import {
   type SeededWorkspace,
 } from "./helpers/publication-fixture";
 import { openPublicationReader } from "../src/publication/service";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/publication-v1/gated-publish.ts", import.meta.url).pathname;
 const ALPHA = "alpha-workspace";
@@ -54,7 +55,7 @@ beforeAll(async () => {
   fixture = await createFixture([ALPHA, BETA]);
   alpha = fixture.workspaces[ALPHA]!;
   beta = fixture.workspaces[BETA]!;
-}, 180_000);
+}, testTimeout(180_000));
 
 afterAll(async () => {
   await fixture?.cleanup();
@@ -108,7 +109,7 @@ describe("first-node publication round trip", () => {
     // The five JSON columns stay as stored canonical STRINGS.
     expect(typeof head.revision.term_snapshot_json).toBe("string");
     expect(head.revision.link_snapshot_json).toBe("[]");
-  }, 180_000);
+  }, testTimeout(180_000));
 
   test("history for a single revision is exactly one row, oldest first", async () => {
     const reader = await openPublicationReader(fixture.datasetRoot);
@@ -136,7 +137,7 @@ describe("replay and collision matrix", () => {
     expect(replay.outcome!.revision_id).toBe(revision);
     expect(replay.outcome!.revision_no).toBe(first.outcome!.revision_no);
     expect(replay.outcome!.revision_created_at).toBe(first.outcome!.revision_created_at);
-  }, 180_000);
+  }, testTimeout(180_000));
 
   test("the same operation with a CHANGED payload is an operation_digest conflict", async () => {
     const node = nodeId("digestnodeA");
@@ -147,7 +148,7 @@ describe("replay and collision matrix", () => {
       [revId("digestrevB")],
     );
     expect(changed.outcome).toEqual({ outcome: "conflict", reason: "operation_digest" });
-  }, 180_000);
+  }, testTimeout(180_000));
 
   test("a second first-publication for a taken node id is a node_id conflict", async () => {
     const node = nodeId("collidenodeA");
@@ -159,7 +160,7 @@ describe("replay and collision matrix", () => {
       [revId("colliderevB")],
     );
     expect(second.outcome).toEqual({ outcome: "conflict", reason: "node_id" });
-  }, 180_000);
+  }, testTimeout(180_000));
 
   test("a nonnull base against an absent node is not_found", async () => {
     const result = await publish(
@@ -173,7 +174,7 @@ describe("replay and collision matrix", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.code).toBe("not_found");
-  }, 180_000);
+  }, testTimeout(180_000));
 
   test("a stale base against a live node is a stale_base conflict", async () => {
     const node = nodeId("stalenodeA");
@@ -188,7 +189,7 @@ describe("replay and collision matrix", () => {
       [revId("stalerevB")],
     );
     expect(stale.outcome).toEqual({ outcome: "conflict", reason: "stale_base" });
-  }, 180_000);
+  }, testTimeout(180_000));
 });
 
 describe("successive revisions build real ancestry", () => {
@@ -217,7 +218,7 @@ describe("successive revisions build real ancestry", () => {
     expect(history.revisions[0]!.base_revision_id).toBeNull();
     expect(history.revisions[1]!.base_revision_id).toBe(first);
     expect(history.snapshot_head_revision_id).toBe(second);
-  }, 180_000);
+  }, testTimeout(180_000));
 });
 
 describe("scoped references are validated against real seeded rows", () => {
@@ -233,7 +234,7 @@ describe("scoped references are validated against real seeded rows", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.code).toBe("invalid_reference");
-  }, 180_000);
+  }, testTimeout(180_000));
 
   test("a peer from ANOTHER workspace is rejected — seeds really are separate", async () => {
     const result = await publish(
@@ -247,7 +248,7 @@ describe("scoped references are validated against real seeded rows", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.code).toBe("invalid_reference");
-  }, 180_000);
+  }, testTimeout(180_000));
 
   test("a RETIRED term cannot be newly assigned", async () => {
     const retired = alpha.term_ids.topic.retired_topic;
@@ -280,7 +281,7 @@ describe("scoped references are validated against real seeded rows", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.code).toBe("invalid_reference");
-  }, 180_000);
+  }, testTimeout(180_000));
 
   test("an ACTIVE term from a SEALED vocabulary IS assignable", async () => {
     // Sealing governs term CREATION, not assignment. A test asserting blanket
@@ -315,7 +316,7 @@ describe("scoped references are validated against real seeded rows", () => {
     );
     expect(result.ok).toBe(true);
     expect(result.outcome!.outcome).toBe("accepted");
-  }, 180_000);
+  }, testTimeout(180_000));
 
   test("a nonnull label_snapshot is refused for NEW content", async () => {
     const typeTerm = alpha.term_ids.type.note;
@@ -339,7 +340,7 @@ describe("scoped references are validated against real seeded rows", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.code).toBe("invalid_request");
-  }, 180_000);
+  }, testTimeout(180_000));
 
   test("a cross-workspace session reference is rejected", async () => {
     const result = await publish(
@@ -353,7 +354,7 @@ describe("scoped references are validated against real seeded rows", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.code).toBe("invalid_reference");
-  }, 180_000);
+  }, testTimeout(180_000));
 });
 
 describe("requests are raw bytes and strictly bounded", () => {
@@ -445,7 +446,7 @@ describe("post-write readback failure poisons the owner", () => {
     } finally {
       await local.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });
 
 async function publishInto(
@@ -531,7 +532,7 @@ describe("a failure at the HEAD write also fail-stops the owner", () => {
     } finally {
       await local.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });
 
 describe("internal link targets use the codec's canonical key names", () => {
@@ -572,7 +573,7 @@ describe("internal link targets use the codec's canonical key names", () => {
     );
     expect(result.ok).toBe(true);
     expect(result.outcome!.outcome).toBe("accepted");
-  }, 180_000);
+  }, testTimeout(180_000));
 
   test("a trace link resolves by trace_id, and a session link by session_name", async () => {
     const result = await publish(
@@ -607,7 +608,7 @@ describe("internal link targets use the codec's canonical key names", () => {
     );
     expect(result.ok).toBe(true);
     expect(result.outcome!.outcome).toBe("accepted");
-  }, 180_000);
+  }, testTimeout(180_000));
 
   test("a SAME-NODE link to an earlier ACCEPTED revision is allowed", async () => {
     // There is no blanket self-node ban in the contract: ancestry membership
@@ -646,7 +647,7 @@ describe("internal link targets use the codec's canonical key names", () => {
     );
     expect(second.ok).toBe(true);
     expect(second.outcome!.outcome).toBe("accepted");
-  }, 300_000);
+  }, testTimeout(300_000));
 });
 
 describe("a bounded storage failure around the head step fail-stops the owner", () => {
@@ -731,7 +732,7 @@ describe("a bounded storage failure around the head step fail-stops the owner", 
     } finally {
       await local.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a rejected node APPEND on a readable-but-unwritable table fail-stops", async () => {
     // Discriminates from the case above: reads still succeed, so the service
@@ -762,7 +763,7 @@ describe("a bounded storage failure around the head step fail-stops the owner", 
     } finally {
       await local.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("an orphan RESUME whose head append is rejected fail-stops", async () => {
     // Orphan resumption gets its own discriminating coverage rather than
@@ -806,7 +807,7 @@ describe("a bounded storage failure around the head step fail-stops the owner", 
     } finally {
       await local.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a pre-write validation error leaves the owner USABLE", async () => {
     // The positive control. Fail-stop must be scoped to the ambiguous window;
@@ -839,7 +840,7 @@ describe("a bounded storage failure around the head step fail-stops the owner", 
     } finally {
       await local.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });
 
 describe("closing the writer releases the inherited gate EXACTLY once", () => {
@@ -923,7 +924,7 @@ describe("closing the writer releases the inherited gate EXACTLY once", () => {
     } finally {
       await local.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("repeated concurrent close drains once and preserves surrounding behaviour", async () => {
     const local = await createFixture([ALPHA]);
@@ -965,5 +966,5 @@ describe("closing the writer releases the inherited gate EXACTLY once", () => {
     } finally {
       await local.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });

@@ -44,10 +44,12 @@ import {
   type Fixture,
   type SeededWorkspace,
 } from "../../helpers/publication-fixture";
+import { scaledMs } from "../../helpers/timing.scaledMs";
+import { testTimeout } from "../../helpers/timing.testTimeout";
 
 const CHILD = new URL("./limits-integrity-child.ts", import.meta.url).pathname;
-const SEED_DEADLINE_MS = 300_000;
-const TEST_TIMEOUT_MS = 600_000;
+const SEED_DEADLINE_MS = scaledMs(300_000);
+const TEST_TIMEOUT_MS = testTimeout(600_000);
 
 /** Contract §4, restated independently of `rows.ts`. */
 const LIMIT_BYTES = 16 * 1024 * 1024;

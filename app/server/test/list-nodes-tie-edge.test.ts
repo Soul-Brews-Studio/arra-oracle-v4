@@ -45,6 +45,7 @@ import {
 import { openPrivateConnection } from "../src/publication/service.openPrivateConnection";
 import { makeAdapter } from "../src/publication/service.makeAdapter";
 import { listNodes as rawListNodes } from "../src/publication/service.listNodes";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/publication-v1/gated-publish.ts", import.meta.url).pathname;
 const WS = "tie-edge-workspace";
@@ -112,7 +113,7 @@ beforeAll(async () => {
       clockMs,
     );
   }
-}, 180_000);
+}, testTimeout(180_000));
 
 afterAll(async () => {
   await fixture?.cleanup();

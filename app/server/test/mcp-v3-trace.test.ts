@@ -17,6 +17,8 @@ import { join } from "node:path";
 import { createFixture, runGated, type Fixture } from "./helpers/publication-fixture";
 import { openEvidenceReader } from "../src/publication/service";
 import { V3_CATALOGUE } from "../src/mcp/legacy-v3/catalogue";
+import { scaledMs } from "./helpers/timing.scaledMs";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = join(import.meta.dir, "fixtures", "v3-compat-v1", "core", "writes-child.ts");
 const WS = "ws-trace";
@@ -30,7 +32,7 @@ let out: Record<string, any> = {};
 
 async function runChild(steps: unknown[]) {
   const result = await runGated(fixture.datasetRoot, CHILD, [fixture.datasetRoot, work, JSON.stringify({ banks: [WS], steps })], {
-    deadlineMs: 180_000,
+    deadlineMs: scaledMs(180_000),
     env: { ARRA_DATA_DIR: join(work, "legacy"), ARRA_KNOWLEDGE_DATASET_ROOT: fixture.datasetRoot },
   });
   const line = result.stdout.trim().split("\n").filter(Boolean).at(-1);
@@ -143,7 +145,7 @@ beforeAll(async () => {
     { label: "chain_from_a_three_way", bank: WS, tool: "oracle_trace_chain", args: { traceId: { $ref: "A" } } },
     { label: "distill_v3_args", bank: WS, tool: "oracle_trace_distill", args: { traceId: { $ref: "T1B" }, awakening: "v3 extras ride along.", oracle: "thor", source: "stormforge", finding: { a: 1 }, metadata: { b: 2 } } },
   ]);
-}, 300_000);
+}, testTimeout(300_000));
 
 type Head = { revision: { term_snapshot_json: string; link_snapshot_json: string } } | null;
 async function headOf(nodeId: string): Promise<{ type: string | undefined; links: { relation: string; target_kind: string; target: unknown }[] }> {

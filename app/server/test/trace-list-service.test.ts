@@ -21,6 +21,7 @@ import { configureKnowledgeAccess, createMcpAdapter } from "../src/mcp";
 import { openEvidenceReader } from "../src/publication/service";
 import { createFixture, runGated, type Fixture } from "./helpers/publication-fixture";
 import { createTraceRequest, traceId } from "./helpers/trace-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
@@ -83,7 +84,7 @@ beforeAll(async () => {
     }),
     { encoding: "utf-8", mode: 0o600 },
   );
-}, 120_000);
+}, testTimeout(120_000));
 
 afterAll(async () => {
   configureKnowledgeAccess(null);

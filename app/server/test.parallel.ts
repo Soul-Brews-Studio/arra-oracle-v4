@@ -17,9 +17,16 @@
 //
 // Usage: bun test.parallel.ts [shards]   (default: TEST_SHARDS or 6)
 // Logs:  .tmp/test-parallel/shard-<i>.log
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+//
+// R13 (docs/overnight/DECISIONS.md), CI matrix: TEST_GROUPS=G and
+// TEST_GROUP=g (0-based) first split the file list into G groups by the same
+// LPT rule, and this process runs only group g, in TEST_SHARDS shards. Every
+// job computes the identical partition from the same inputs, and checks that
+// the groups are disjoint and cover every file, so G jobs together still run
+// each file exactly once. Unset, it is one group: the whole suite.
+import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { availableParallelism, tmpdir } from "node:os";
 
 const here = import.meta.dir;
 
@@ -50,25 +57,44 @@ for (const line of readFileSync(join(here, "test.census.tsv"), "utf8").split("\n
 // Unmeasured files are assumed slow so they cannot pile into one shard unseen.
 const weight = (f: string) => census.get(f) ?? 60;
 
-const shardCount = Math.max(1, Number(process.argv[2] ?? process.env.TEST_SHARDS ?? 6));
-const shards: { files: string[]; load: number }[] = Array.from({ length: shardCount }, () => ({
-  files: [],
-  load: 0,
-}));
-// Longest-processing-time-first: heaviest file into the lightest shard.
-for (const f of [...files].sort((a, b) => weight(b) - weight(a))) {
-  const lightest = shards.reduce((min, s) => (s.load < min.load ? s : min));
-  lightest.files.push(f);
-  lightest.load += weight(f);
+/** Longest-processing-time-first: heaviest file into the lightest bin. */
+function lpt(list: string[], bins: number): { files: string[]; load: number }[] {
+  const out = Array.from({ length: bins }, () => ({ files: [] as string[], load: 0 }));
+  for (const f of [...list].sort((a, b) => weight(b) - weight(a) || a.localeCompare(b))) {
+    const lightest = out.reduce((min, s) => (s.load < min.load ? s : min));
+    lightest.files.push(f);
+    lightest.load += weight(f);
+  }
+  return out;
 }
+
+const positiveInt = (name: string, raw: string | undefined, fallback: number, min: number): number => {
+  if (raw === undefined || raw === "") return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < min) throw new Error(`test.parallel.ts: ${name} must be an integer >= ${min}, got ${JSON.stringify(raw)}`);
+  return n;
+};
+const groupCount = positiveInt("TEST_GROUPS", process.env.TEST_GROUPS, 1, 1);
+const groupIndex = positiveInt("TEST_GROUP", process.env.TEST_GROUP, 0, 0);
+if (groupIndex >= groupCount) throw new Error(`test.parallel.ts: TEST_GROUP=${groupIndex} is outside TEST_GROUPS=${groupCount}`);
+const groups = lpt(files, groupCount);
+const grouped = groups.flatMap((g) => g.files);
+if (grouped.length !== files.length || new Set(grouped).size !== files.length || files.some((f) => !grouped.includes(f))) {
+  throw new Error("test.parallel.ts: the group partition does not cover every file exactly once");
+}
+const groupFiles = groups[groupIndex]!.files;
+
+const shardCount = Math.max(1, Number(process.argv[2] ?? process.env.TEST_SHARDS ?? 6));
+const shards = lpt(groupFiles, shardCount);
 
 const logDir = join(here, ".tmp", "test-parallel");
 mkdirSync(logDir, { recursive: true });
 const started = performance.now();
+const cores = availableParallelism();
 console.log(
-  `test.parallel: ${files.length} files in ${shardCount} shards (census load ${shards
+  `test.parallel: ${groupCount > 1 ? `group ${groupIndex + 1}/${groupCount}, ${groupFiles.length} of ${files.length}` : files.length} files in ${shardCount} shards on ${cores} cores (census load ${shards
     .map((s) => s.load.toFixed(0) + "s")
-    .join(" / ")})`,
+    .join(" / ")}); TEST_TIMEOUT_MS=${process.env.TEST_TIMEOUT_MS ?? "unset"} TEST_TIME_SCALE=${process.env.TEST_TIME_SCALE ?? "unset"}`,
 );
 
 type ShardResult = {
@@ -78,8 +104,45 @@ type ShardResult = {
   fail: number | null;
   ranFiles: number | null;
   seconds: number;
+  /** User+system CPU of the shard AND every descendant it reaped (python, gated bun children). */
+  cpuSeconds: number | null;
   failures: string[];
+  /** Failures bun cannot name -- a hook that threw, an error between tests -- with the file they came from. */
+  unnamed: string[];
 };
+
+/**
+ * Attribute every "(fail) (unnamed)" and "# Unhandled error between tests" to
+ * the test file it came from, with the error lines bun printed just before.
+ * bun marks files as `::group::<file>:` under GitHub Actions and `<file>:`
+ * otherwise. Without this, CI said only "(unnamed) [13712.60ms]" three times
+ * and the cause (E2BIG in three different files) had to be dug out of logs.
+ */
+function unnamedFailures(text: string): string[] {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  let file = "(before any file)";
+  let fileStart = 0;
+  for (const [i, line] of lines.entries()) {
+    // bun repeats every failure in a closing "N tests failed:" summary;
+    // those repeats belong to no file and must not be attributed again.
+    if (/^\d+ tests? failed:$/.test(line)) break;
+    const header = line.match(/^(?:::group::)?(\S+\.test\.ts):$/);
+    if (header) {
+      file = header[1]!;
+      fileStart = i + 1;
+    }
+    if (line === "::endgroup::") file = "(between files)";
+    if (/^\(fail\) \(unnamed\)/.test(line) || /^# Unhandled error between tests/.test(line)) {
+      // A thrown hook prints its error BEFORE the fail line, a timed-out hook
+      // AFTER it, an error between tests after its banner.
+      const window = /^#/.test(line) ? lines.slice(i + 2, i + 14) : lines.slice(Math.max(fileStart, i - 14), i + 3);
+      const cause = window.filter((l) => /error|Error|E2BIG|timed out|Timeout/.test(l)).slice(0, 3);
+      out.push(`${file}: ${line.trim()}${cause.length ? ` <- ${cause.map((l) => l.trim().slice(0, 200)).join(" | ")}` : ""}`);
+    }
+  }
+  return out;
+}
 
 const results: ShardResult[] = await Promise.all(
   shards.map(async (shard, index) => {
@@ -95,10 +158,25 @@ const results: ShardResult[] = await Promise.all(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+    // Streamed to the log AS IT ARRIVES (R13): a job cancelled at its
+    // timeout-minutes still uploads what every shard printed so far, which
+    // names the file that was running. The parse below reads out + err.
+    const logPath = join(logDir, `shard-${index}.log`);
+    writeFileSync(logPath, "");
+    const pump = async (stream: ReadableStream<Uint8Array>): Promise<string> => {
+      const decoder = new TextDecoder();
+      let all = "";
+      for await (const chunk of stream) {
+        const piece = decoder.decode(chunk, { stream: true });
+        all += piece;
+        appendFileSync(logPath, piece);
+      }
+      return all + decoder.decode();
+    };
+    const [out, err] = await Promise.all([pump(proc.stdout), pump(proc.stderr)]);
     const exitCode = await proc.exited;
     const text = out + err;
-    writeFileSync(join(logDir, `shard-${index}.log`), text);
+    const cpu = proc.resourceUsage()?.cpuTime.total;
     const num = (re: RegExp) => {
       const m = text.match(re);
       return m ? Number(m[1]) : null;
@@ -110,10 +188,12 @@ const results: ShardResult[] = await Promise.all(
       fail: num(/^\s*(\d+) fail\s*$/m),
       ranFiles: num(/^Ran \d+ tests? across (\d+) files?\./m),
       seconds: (performance.now() - t0) / 1000,
+      cpuSeconds: cpu === undefined ? null : Number(cpu) / 1e6,
       failures: text.split("\n").filter((l) => /^\s*(✗|\(fail\))/.test(l)),
+      unnamed: unnamedFailures(text),
     };
     console.log(
-      `  shard ${index}: ${result.pass ?? "?"} pass, ${result.fail ?? "?"} fail, ${result.ranFiles ?? "?"}/${shard.files.length} files, rc=${exitCode}, ${result.seconds.toFixed(1)}s`,
+      `  shard ${index}: ${result.pass ?? "?"} pass, ${result.fail ?? "?"} fail, ${result.ranFiles ?? "?"}/${shard.files.length} files, rc=${exitCode}, ${result.seconds.toFixed(1)}s wall, ${result.cpuSeconds?.toFixed(1) ?? "?"}s cpu`,
     );
     return result;
   }),
@@ -131,6 +211,7 @@ for (const r of results) {
 if (sum("fail") > 0) problems.push(`${sum("fail")} failing test(s)`);
 
 for (const r of results) for (const f of r.failures) console.log(`  [shard ${r.index}] ${f.trim()}`);
+for (const r of results) for (const u of r.unnamed) console.log(`  [shard ${r.index}] UNNAMED in ${u}`);
 // A shard can fail with no named test (a hook timeout, a crash before the
 // summary). Print its log tail so the cause is visible in CI output, not only
 // in a .tmp file the runner throws away.
@@ -140,9 +221,14 @@ for (const r of results) {
     console.log(`  [shard ${r.index}] exited ${r.exitCode} with no named failure; last 40 log lines:\n${tail}`);
   }
 }
+const wall = (performance.now() - started) / 1000;
+const cpuTotal = results.reduce((a, r) => a + (r.cpuSeconds ?? 0), 0);
 console.log(
-  `\n ${sum("pass")} pass\n ${sum("fail")} fail\nRan ${sum("pass") + sum("fail")} tests across ${sum("ranFiles")}/${files.length} files in ${shardCount} shards. [${((performance.now() - started) / 1000).toFixed(2)}s]`,
+  `\n ${sum("pass")} pass\n ${sum("fail")} fail\nRan ${sum("pass") + sum("fail")} tests across ${sum("ranFiles")}/${groupFiles.length} files in ${shardCount} shards. [${wall.toFixed(2)}s]`,
 );
+// Is the runner CPU-bound? cpu / (wall x cores) near 1 means more shards on
+// the same machine cannot help; only more machines (TEST_GROUPS) can.
+console.log(`CPU ${cpuTotal.toFixed(1)}s over ${wall.toFixed(1)}s wall on ${cores} cores: utilisation ${((cpuTotal / (wall * cores)) * 100).toFixed(0)}%`);
 if (problems.length > 0) {
   console.log(`PARALLEL SUITE FAILED: ${problems.join("; ")}`);
   process.exit(1);

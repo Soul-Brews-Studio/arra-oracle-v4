@@ -37,11 +37,13 @@ import { join, resolve } from "node:path";
 import { targetOp } from "../src/contracts/evidence-v1";
 import { parseStrict } from "../src/contracts/jcs";
 import { PYTHON, revisionEnvelope, runGated, runOwnedChild, spawnGatedChild } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const TEST_DIR = import.meta.dir;
 const SERVER_DIR = resolve(TEST_DIR, "..");
 const OWNERSHIP_CHILD = join(TEST_DIR, "fixtures", "association-v1", "ownership", "evidence-child.ts");
-const TEST_TIMEOUT_MS = 180_000;
+const TEST_TIMEOUT_MS = testTimeout(180_000);
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
 
@@ -441,7 +443,7 @@ describe.skipIf(!READY)(`shared owner exclusion and close [${PENDING}]`, () => {
             ].join("\n"),
             root,
           ],
-          { deadlineMs: 30_000 },
+          { deadlineMs: scaledMs(30_000) },
         );
         expect({ code: contender.code, events: eventsOf(contender.stdout) }).toEqual({
           code: 0,

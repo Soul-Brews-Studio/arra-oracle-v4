@@ -15,6 +15,8 @@ import { join } from "node:path";
 import { createFixture, runGated, type Fixture } from "./helpers/publication-fixture";
 import { createTaxonomyFixture, type TaxonomyFixture } from "./helpers/taxonomy-fixture";
 import { activeEmbeddingProfileId } from "../src/publication/search-chunk";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const CHILD = join(import.meta.dir, "fixtures", "v3-compat-v1", "core", "writes-child.ts");
 const FRESH = "ws-fresh";
@@ -39,8 +41,9 @@ let outSeeded: Record<string, any> = {};
 
 async function runChild(root: string, banks: string[], steps: unknown[], operator: unknown[] = []) {
   const result = await runGated(root, CHILD, [root, work, JSON.stringify({ banks, operator, steps, cwd })], {
-    deadlineMs: 180_000,
-    env: { ARRA_DATA_DIR: join(work, "legacy"), ARRA_KNOWLEDGE_DATASET_ROOT: root, HOME: home },
+    deadlineMs: scaledMs(180_000),
+    // No runtime transpiler cache: it would be the only file in HOME (R13).
+    env: { ARRA_DATA_DIR: join(work, "legacy"), ARRA_KNOWLEDGE_DATASET_ROOT: root, HOME: home, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0" },
   });
   const line = result.stdout.trim().split("\n").filter(Boolean).at(-1);
   if (result.code !== 0 || line === undefined) throw new Error(`writes-child exited ${result.code}: ${result.stderr.slice(0, 2000)}`);
@@ -125,7 +128,7 @@ beforeAll(async () => {
     { label: "learn", bank: SEEDED, tool: "oracle_learn", args: { pattern: "works on a workspace another writer seeded", concepts: ["seeded"] }, capture: { name: "learn", path: ["id"] } },
     HEAD("head_learn", SEEDED),
   ]);
-}, 300_000);
+}, testTimeout(300_000));
 
 afterAll(async () => {
   await taxonomy?.cleanup();
@@ -270,12 +273,11 @@ describe("oracle_handoff (V1 #7) and no server files (V1 #8)", () => {
   });
 
   test("the child's HOME and cwd are untouched: nothing is written outside the dataset", async () => {
-    // Bun's own transpiler cache (measured: HOME/Library/Caches/bun/...) is
-    // the runtime's, not the adapter's; it is the only thing excluded.
-    const files = (await readdir(home, { recursive: true })).filter((f) => !`${f}/`.startsWith("Library/"));
-    const bunCache = (await readdir(home, { recursive: true })).filter((f) => f.startsWith("Library/") && !/^Library(\/Caches(\/bun(\/.*)?)?)?$/.test(f));
-    expect(files).toEqual([]);
-    expect(bunCache).toEqual([]);
+    // R13: nothing is excluded. Bun's runtime transpiler cache used to be
+    // (HOME/Library/Caches/bun on macOS), but on Linux it lands in
+    // HOME/.bun/install/cache/@t@ and failed the GitHub run (36269825188).
+    // runChild now turns that cache off, so ANY file here is a real write.
+    expect(await readdir(home, { recursive: true })).toEqual([]);
     expect(await readdir(cwd)).toEqual([]);
   });
 });

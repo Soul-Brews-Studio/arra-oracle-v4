@@ -11,9 +11,13 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     # Default is 360 minutes; without this a hung shard burns exactly the
-    # private-repo Actions minutes R13 exists to save. 25 is generous headroom
-    # over the ~500s measured single-process full-suite wall time.
-    timeout-minutes: 25
+    # private-repo Actions minutes R13 exists to save. Measured on GitHub: the
+    # suite step takes 977-1369 s depending on the runner, and run 36271049858
+    # passed in 24 min 39 s, 21 s under the old cap of 25 (2470 CPU-s against
+    # 1757 on run 36269825188 for the same work). 40 leaves 1.6x headroom over
+    # the slowest measured job. Shard logs stream to disk and upload on
+    # cancellation, so a hang is still named.
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -81,11 +85,12 @@ jobs:
       # 114% CPU — almost serial). test.parallel.ts splits the same file list
       # across TEST_SHARDS `bun test` processes with separate TMPDIRs, balanced
       # by test.census.tsv, and fails if any file is missing from the summary.
-      # TEST_SHARDS=4 per DECISIONS.md R13. Risk, not fact: GitHub's standard
-      # Linux runner is 2 vCPU on a private repo (4 vCPU is the public-repo
-      # runner) — 4 shards over 2 cores may see per-test timeouts or a longer
-      # wall time than 4 real cores would give. Unverified on GitHub itself
-      # (never run there yet); revisit TEST_SHARDS if that shows up.
+      # TEST_SHARDS=4 per DECISIONS.md R13. Measured on GitHub (run
+      # 36269825188): the runner has 2 cores, and 4 shards kept them 90% busy
+      # (1757 s CPU over 977 s wall), so more shards here cannot help. Only
+      # more machines would: test.parallel.ts takes TEST_GROUPS/TEST_GROUP for
+      # a matrix, not used, because it costs more Actions minutes than the one
+      # job and the suite now fits well inside timeout-minutes.
       - name: Test — sharded full suite (app/server)
         working-directory: app/server
         env:
@@ -94,6 +99,13 @@ jobs:
           # box (shards took 914-1036 s in run 36253113031), and two gated tests
           # crossed 5 s there.
           TEST_TIMEOUT_MS: 60000
+          # R13: multiplies every wall-clock window and explicit timeout that
+          # goes through test/helpers/timing.{scaledMs,testTimeout}.ts. Measured:
+          # 4902 s of per-file test time on the runner against 1069 s in
+          # test.census.tsv for the same files (runs 36260049043, 36265042727,
+          # 36265462602), about 4.6x. Ordering claims never depend on it; they
+          # are proven with handshakes.
+          TEST_TIME_SCALE: 5
         run: bun run test:parallel
 
       # Keeps the overnight capstone demo (app/just/demo.sh, docs/overnight/
@@ -107,6 +119,10 @@ jobs:
       # header: it only scans app/server/test).
       - name: Test — demo.sh, stubbed Ollama (app/just/demo.test.ts)
         working-directory: app
+        env:
+          # R13: demo.test.ts's per-test budgets go through testTimeout, like
+          # the sharded suite's; same runner, same scale.
+          TEST_TIME_SCALE: 5
         run: bun test just/demo.test.ts
 
       # app/migrate-py has no pytest.ini/pyproject [tool.pytest] section and no
@@ -115,7 +131,9 @@ jobs:
       # unittest discover (app/docs/contracts/v1-codecs.md:59-62), which this
       # slice ran clean: 139 tests, 1 skipped, OK, ~8s.
       - name: Upload shard logs when the suite fails
-        if: failure()
+        # cancelled() too: a job that hits timeout-minutes is cancelled, not
+        # failed, and its logs are exactly the ones needed.
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: test-parallel-shard-logs

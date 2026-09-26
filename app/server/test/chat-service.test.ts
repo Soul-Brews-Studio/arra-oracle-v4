@@ -28,6 +28,7 @@ import { ContractError } from "../src/contracts/errors";
 import { parseAnswerChat, parseGetContext } from "../src/publication/chat";
 import { createContextFixture } from "./helpers/context-fixture";
 import { runGated } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 
@@ -63,7 +64,7 @@ describe("chat request grammar is closed, and keeps the GOVERNED envelope", () =
 
 describe("real persistence: getContext and answerChat inside the real gate", () => {
     const CHILD = new URL("./fixtures/chat-v1/gated-chat.ts", import.meta.url).pathname;
-    const TIMEOUT_MS = 180_000;
+    const TIMEOUT_MS = testTimeout(180_000);
 
     const drive = async (payload: Record<string, unknown>) => {
       const fixture = await createContextFixture(["alpha-workspace"]);

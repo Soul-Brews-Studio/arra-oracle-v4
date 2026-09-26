@@ -29,9 +29,11 @@ import { join } from "node:path";
 import { startChatModelStub, type ChatModelStub } from "./helpers/chat-model-stub";
 import { createContextFixture } from "./helpers/context-fixture";
 import { runGated } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const CHILD = new URL("./fixtures/chat-v1/gate-coexistence-child.ts", import.meta.url).pathname;
-const TIMEOUT_MS = 240_000;
+const TIMEOUT_MS = testTimeout(240_000);
 const WS = "alpha-workspace";
 const TOKEN = createHash("sha256").update("chat-gate-coexistence").digest("hex");
 const pad = (seed: string) => `${seed}${"0".repeat(Math.max(0, 21 - seed.length))}`.slice(0, 21);
@@ -49,7 +51,7 @@ let askFirstModelCalls = 0;
 
 async function runPhase(datasetRoot: string, policyPath: string, phase: string): Promise<Run> {
   const run = await runGated(datasetRoot, CHILD, [policyPath, phase], {
-    deadlineMs: 90_000,
+    deadlineMs: scaledMs(90_000),
     env: {
       ARRA_KNOWLEDGE_DATASET_ROOT: datasetRoot,
       ARRA_CHAT_PROVIDER: "ollama",

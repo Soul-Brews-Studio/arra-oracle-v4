@@ -6,8 +6,9 @@
 // It records the boundary trace in firing order AND, separately, the scoped
 // identities actually persisted. Counts alone cannot prove WHICH row was
 // written, so a crash-prefix assertion needs both.
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   ops: Array<{ method: string; request: unknown }>;
   clockMs: number;
   /** Throw from the hook the Nth time this boundary fires (1-based). */

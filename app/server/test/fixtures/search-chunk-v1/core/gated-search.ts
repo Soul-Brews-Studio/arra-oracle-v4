@@ -1,8 +1,9 @@
 // Owned test child for the #30 search-chunk kernel. Runs INSIDE the real
 // gate. Adapted from the #71 read-cursor kernel's gated-cursor.ts: same
 // generic op-dispatch shape, so a driver in the test file looks identical.
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   ops: Array<{ facade?: "context" | "publication" | "taxonomy" | "harness"; method: string; request: any }>;
   clockMs?: number;
   revisionIds?: string[];

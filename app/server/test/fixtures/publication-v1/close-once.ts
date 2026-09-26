@@ -19,9 +19,10 @@
 // demonstrably not yet finished for as long as the park is held.
 import { closeSync, fstatSync, openSync, rmSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
+import { readArgPayload } from "../../helpers/argv.readArgPayload";
 
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   scenario: "reuse" | "concurrent";
   request: unknown;
   queued?: unknown;

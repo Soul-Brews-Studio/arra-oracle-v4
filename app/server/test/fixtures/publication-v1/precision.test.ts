@@ -46,6 +46,7 @@ import {
   runOwnedChild,
   type SeededWorkspace,
 } from "../../helpers/publication-fixture";
+import { testTimeout } from "../../helpers/timing.testTimeout";
 
 // ── dependencies ────────────────────────────────────────────────────────────
 
@@ -68,7 +69,7 @@ const MISSING: string[] = [
 const PENDING = MISSING.length > 0;
 const reason = PENDING ? ` [PENDING: ${MISSING.join(", ")}]` : "";
 /** Each case creates a dataset and runs real gated children; 5s is not enough. */
-const CASE_TIMEOUT_MS = 180_000;
+const CASE_TIMEOUT_MS = testTimeout(180_000);
 type CaseBody = () => void | Promise<unknown>;
 const precisionTest = PENDING
   ? (name: string, fn: CaseBody) => test.skip(name + reason, fn, CASE_TIMEOUT_MS)

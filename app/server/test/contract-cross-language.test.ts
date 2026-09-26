@@ -7,6 +7,8 @@ import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { connect } from "@lancedb/lancedb";
 import { canonicalMessage, messageDigest, formatInt64, validateId } from "../src/contracts/v1";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 test("TS consumes the same proposed target-19 manifest without activating it", async () => {
   const path = fileURLToPath(new URL("../../migrate-py/contracts/target-19-manifest.json", import.meta.url));
@@ -40,7 +42,7 @@ test("Python declares Arrow types and bytes; Bun reads the same scratch Lance ro
   };
   try {
     const result = spawnSync(python, [script, root], {
-      input: JSON.stringify(payload), encoding: "utf8", timeout: 30_000,
+      input: JSON.stringify(payload), encoding: "utf8", timeout: scaledMs(30_000),
       env: { ...process.env, PYTHONPATH: source },
     });
     if (result.error) throw new Error(`Python contract fixture unavailable: ${result.error.message}. Install existing migrate-py dependencies or set ARRA_CONTRACT_PYTHON.`);
@@ -79,7 +81,7 @@ test("Python declares Arrow types and bytes; Bun reads the same scratch Lance ro
     }
     // The exporter refuses an existing target, even on an otherwise identical retry.
     const retry = spawnSync(python, [script, root], {
-      input: JSON.stringify(payload), encoding: "utf8", timeout: 30_000,
+      input: JSON.stringify(payload), encoding: "utf8", timeout: scaledMs(30_000),
       env: { ...process.env, PYTHONPATH: source },
     });
     expect(retry.status).not.toBe(0);
@@ -87,7 +89,7 @@ test("Python declares Arrow types and bytes; Bun reads the same scratch Lance ro
   } finally {
     await rm(root, { recursive: true, force: true });
   }
-}, 60_000);
+}, testTimeout(60_000));
 
 test("Python and TS accept/reject the same message corpus with identical bytes", () => {
   const base = { source_namespace: "relic://bank/provider/session/transcript", source_message_id: "1", peer_name: "neo", role: null, content: "ภาษาไทย 🌱", source_created_at: null, in_reply_to: null };
@@ -110,7 +112,7 @@ for item in json.load(sys.stdin):
     except (ValueError, TypeError):
         results.append({"rejected": True})
 print(json.dumps(results))
-`], { input: JSON.stringify(corpus), encoding: "utf8", timeout: 30_000, env: { ...process.env, PYTHONPATH: source } });
+`], { input: JSON.stringify(corpus), encoding: "utf8", timeout: scaledMs(30_000), env: { ...process.env, PYTHONPATH: source } });
   expect(result.error).toBeUndefined();
   expect(result.status).toBe(0);
   const expected = JSON.parse(result.stdout);

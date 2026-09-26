@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { loadPolicy, MAX_POLICY_BYTES } from "../src/auth/loader";
 import { admit } from "../src/auth/policy";
 import { bearer, defaultPolicyDocument, NOW_MS, TOKENS } from "./helpers/auth-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 let dir: string;
 const policyAt = (name = "policy.json") => join(dir, name);
@@ -155,7 +156,7 @@ describe("every rejection is the same opaque failure", () => {
       child.kill();
     }
     expect(stdout).toBe("policy_unavailable");
-  }, 20_000);
+  }, testTimeout(20_000));
 
   test("a directory is refused", () => {
     const sub = join(dir, "adir");

@@ -23,6 +23,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTaxonomyFixture, type TaxonomyFixture } from "./helpers/taxonomy-fixture";
 import { runGated } from "./helpers/publication-fixture";
+import { scaledMs } from "./helpers/timing.scaledMs";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = join(import.meta.dir, "fixtures", "v3-compat-v1", "core", "writes-child.ts");
 const MIXED = "ws-elig-mixed";
@@ -125,13 +127,13 @@ beforeAll(async () => {
   ];
 
   const result = await runGated(taxonomy.datasetRoot, CHILD, [taxonomy.datasetRoot, work, JSON.stringify({ banks: [MIXED, ALLBAD], operator: [], steps })], {
-    deadlineMs: 240_000,
+    deadlineMs: scaledMs(240_000),
     env: { ARRA_DATA_DIR: join(work, "legacy"), ARRA_KNOWLEDGE_DATASET_ROOT: taxonomy.datasetRoot, HOME: home },
   });
   const line = result.stdout.trim().split("\n").filter(Boolean).at(-1);
   if (result.code !== 0 || line === undefined) throw new Error(`writes-child exited ${result.code}: ${result.stderr.slice(0, 2000)}`);
   out = JSON.parse(line);
-}, 300_000);
+}, testTimeout(300_000));
 
 afterAll(async () => {
   await taxonomy?.cleanup();

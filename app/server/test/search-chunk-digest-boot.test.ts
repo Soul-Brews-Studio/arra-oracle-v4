@@ -29,10 +29,12 @@ import { createFixture, revisionEnvelope, runGated, type Fixture } from "./helpe
 import { knowledgeErrorResponse } from "../src/knowledge/transport";
 import { CHUNKER_VERSION, activeEmbeddingProfileId, fetchOllamaModelDigest } from "../src/publication/search-chunk";
 import { failEmbeddingProfileMismatch } from "../src/publication/search-chunk.failEmbeddingProfileMismatch";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const CHILD = new URL("./fixtures/search-chunk-v1/embed/composed-child.ts", import.meta.url).pathname;
 const ALPHA = "alpha-workspace";
-const TEST_TIMEOUT_MS = 300_000;
+const TEST_TIMEOUT_MS = testTimeout(300_000);
 const PROFILE_ID = activeEmbeddingProfileId();
 const PIN_FILE = ".embedding-profile-pins.json";
 const DIGEST_A = "aaaaaaaaaaaa1111111111111111111111111111111111111111111111111111";
@@ -227,7 +229,7 @@ describe("fetchOllamaModelDigest: bounded, and only a recognisable digest counts
     const started = Bun.nanoseconds();
     const digest = await fetchOllamaModelDigest({ url: `http://127.0.0.1:${server.port}`, signal: AbortSignal.timeout(100) });
     expect(digest).toBeNull();
-    expect((Bun.nanoseconds() - started) / 1_000_000).toBeLessThan(5_000);
+    expect((Bun.nanoseconds() - started) / 1_000_000).toBeLessThan(scaledMs(5_000));
   });
 
   test("a digest outside the measured 64-hex shape is not a measurement", async () => {

@@ -14,8 +14,9 @@
 // inserts (does the ENGINE accept an out-of-Gregorian-range timestamp or a
 // NaN/Infinity float, independent of what the kernel would do with it), a
 // generic `readRawRows`, and a `snapshot` for before/after write proofs.
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   ops: Array<{ facade?: "context" | "publication" | "taxonomy" | "harness"; method: string; request: any }>;
   clockMs?: number | number[] | "throw";
 };

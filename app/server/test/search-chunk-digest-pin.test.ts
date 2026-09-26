@@ -23,11 +23,12 @@
 import { describe, expect, test } from "bun:test";
 import { createFixture, revisionEnvelope, runGated, type SeededWorkspace } from "./helpers/publication-fixture";
 import { CHUNKER_VERSION, activeEmbeddingProfileId } from "../src/publication/search-chunk";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/search-chunk-v1/embed/gated-embed.ts", import.meta.url).pathname;
 const ALPHA = "alpha-workspace";
 const CLOCK = Date.parse("2026-09-26T00:00:00.000Z");
-const TEST_TIMEOUT_MS = 300_000;
+const TEST_TIMEOUT_MS = testTimeout(300_000);
 const PROFILE_ID = activeEmbeddingProfileId();
 
 /** Two distinct digests in the measured `/api/tags` shape (64 lowercase hex). */

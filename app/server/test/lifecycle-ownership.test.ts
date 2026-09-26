@@ -43,11 +43,12 @@ import {
   spawnGatedChild,
   type Fixture,
 } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const TEST_DIR = import.meta.dir;
 const SERVER_DIR = resolve(TEST_DIR, "..");
 const CHILD = join(TEST_DIR, "fixtures", "lifecycle-v1", "ownership", "lifecycle-child.ts");
-const TEST_TIMEOUT_MS = 180_000;
+const TEST_TIMEOUT_MS = testTimeout(180_000);
 const ALPHA = "alpha-workspace";
 
 // ── independent oracles, derived from the merged service.ts (see header) ────

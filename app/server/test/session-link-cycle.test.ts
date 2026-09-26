@@ -27,6 +27,7 @@ import {
   createSessionLinkRequest,
   sessionLinkId,
 } from "./helpers/session-link-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 describe("real persistence: mixed-relation cycle refusal (#28 Unit B)", () => {
   const CHILD = new URL("./fixtures/session-link-v1/core/gated-session-link.ts", import.meta.url).pathname;
@@ -91,7 +92,7 @@ describe("real persistence: mixed-relation cycle refusal (#28 Unit B)", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a legal diamond across continues AND forked_from stays accepted", async () => {
     // X --continues--> Y --continues--> W, and X --forked_from--> Z
@@ -132,7 +133,7 @@ describe("real persistence: mixed-relation cycle refusal (#28 Unit B)", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("related_to stays exempt from the cycle walk even facing a directed loop", async () => {
     // sess-a --continues--> sess-b exists; the reverse edge sess-b
@@ -158,7 +159,7 @@ describe("real persistence: mixed-relation cycle refusal (#28 Unit B)", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a stored forked_from edge closes a loop against a reverse continues request", async () => {
     // The mirror image of the first case above: sess-a --forked_from-->
@@ -187,7 +188,7 @@ describe("real persistence: mixed-relation cycle refusal (#28 Unit B)", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a same-relation forked_from reverse edge is still refused", async () => {
     // Same-relation control: sess-a --forked_from--> sess-b stored, then
@@ -215,7 +216,7 @@ describe("real persistence: mixed-relation cycle refusal (#28 Unit B)", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a 3-node loop closed across continues and forked_from is refused", async () => {
     // a --continues--> b, b --forked_from--> c, then c --continues--> a
@@ -253,5 +254,5 @@ describe("real persistence: mixed-relation cycle refusal (#28 Unit B)", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });

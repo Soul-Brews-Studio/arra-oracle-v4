@@ -34,6 +34,8 @@ import { join } from "node:path";
 import { createTaxonomyFixture, type TaxonomyFixture } from "./helpers/taxonomy-fixture";
 import { runGated } from "./helpers/publication-fixture";
 import { loadShape, matchesShape, PRIMARY_KEY } from "./helpers/v3-compat-shapes";
+import { scaledMs } from "./helpers/timing.scaledMs";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = join(import.meta.dir, "fixtures", "v3-compat-v1", "core", "writes-child.ts");
 const BANK_A = "ws-stats-a";
@@ -72,7 +74,7 @@ function rawContent(workspace: string, nodeId: string, termSnapshot: unknown) {
 
 async function runChild(root: string, banks: string[], steps: unknown[]) {
   const result = await runGated(root, CHILD, [root, work, JSON.stringify({ banks, operator: [], steps })], {
-    deadlineMs: 180_000,
+    deadlineMs: scaledMs(180_000),
     env: { ARRA_DATA_DIR: join(work, "legacy"), ARRA_KNOWLEDGE_DATASET_ROOT: root },
   });
   const line = result.stdout.trim().split("\n").filter(Boolean).at(-1);
@@ -104,7 +106,7 @@ beforeAll(async () => {
     { label: "concepts_b", bank: BANK_B, tool: "oracle_concepts", args: {} },
     { label: "stats_b", bank: BANK_B, tool: "oracle_stats", args: {} },
   ]);
-}, 300_000);
+}, testTimeout(300_000));
 
 afterAll(async () => {
   await taxonomy?.cleanup();

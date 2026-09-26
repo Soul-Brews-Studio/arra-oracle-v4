@@ -27,10 +27,11 @@ import { parseListMessages, parseListSessionMembers, parseListSessions } from ".
 import { appendRequest, contextId, createContextFixture, messageItem, type ContextFixture } from "./helpers/context-fixture";
 import { runGated } from "./helpers/publication-fixture";
 import { OPERATOR, READER, bound, driveContext, op } from "./helpers/read-boundary-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
-const TIMEOUT = 300_000;
+const TIMEOUT = testTimeout(300_000);
 const RAW_MUTATE = new URL("./fixtures/context-v1/ownership/raw-mutate.ts", import.meta.url).pathname;
 
 const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));

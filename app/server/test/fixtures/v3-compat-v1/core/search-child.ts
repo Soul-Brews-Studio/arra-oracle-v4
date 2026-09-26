@@ -23,6 +23,7 @@
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 
 type Who = "rw" | "ro" | "other" | "wo";
 type Step = {
@@ -38,7 +39,7 @@ type Step = {
   capture?: { name: string; path: (string | number)[] }[];
 };
 const [, , datasetRoot, workDir, payloadJson] = process.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as { banks: { a: string; b: string }; steps: Step[] };
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as { banks: { a: string; b: string }; steps: Step[] };
 const { a: BANK_A, b: BANK_B } = payload.banks;
 
 const DIMS = 384;

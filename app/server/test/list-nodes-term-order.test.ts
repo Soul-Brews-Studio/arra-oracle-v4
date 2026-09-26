@@ -24,6 +24,7 @@ import {
 } from "./helpers/publication-fixture";
 import { openPublicationReader } from "../src/publication/service";
 import { LIST_NODES_ORDERS } from "../src/publication/service.parseListNodes";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/publication-v1/gated-publish.ts", import.meta.url).pathname;
 const BETA = "beta-workspace";
@@ -87,7 +88,7 @@ async function listNodes(request: {
 beforeAll(async () => {
   fixture = await createFixture([BETA]);
   beta = fixture.workspaces[BETA]!;
-}, 180_000);
+}, testTimeout(180_000));
 
 afterAll(async () => {
   await fixture?.cleanup();
@@ -146,7 +147,7 @@ describe("listNodes: all_term_ids / any_term_ids filter (K3)", () => {
       const result = await publish({ operation_id: `op-k3-filter-${i}`, content }, [revId(`k3filterrev${i}`)]);
       expect(result.ok).toBe(true);
     }
-  }, 180_000);
+  }, testTimeout(180_000));
 
   test("any_term_ids: at least one of the listed ids must be assigned", async () => {
     const storage = beta.term_ids.topic.storage;
@@ -350,7 +351,7 @@ describe("listNodes: order (K4)", () => {
         );
         expect(result.ok).toBe(true);
       }
-    }, 180_000);
+    }, testTimeout(180_000));
 
     const isolatingFilter = () => ({ type_term: "decision" as const, all_term_ids: [storage().id, horizon().id] });
 
@@ -384,7 +385,7 @@ describe("listNodes: order (K4)", () => {
       }
       expect(seen).toEqual([k4Newest, k4Mid, k4TieA, k4TieB, k4Oldest]);
       expect(new Set(seen).size).toBe(seen.length);
-    }, 180_000);
+    }, testTimeout(180_000));
 
     test("next_after_updated_at is null once the walk is exhausted", async () => {
       const page = await listNodes({

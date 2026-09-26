@@ -23,6 +23,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { openEvidenceReader } from "../src/publication/service";
 import { createFixture, runGated, type Fixture } from "./helpers/publication-fixture";
 import { traceId } from "./helpers/trace-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const STRADDLE = "ws-tie-straddle";
 const WIDE = "ws-tie-wide";
@@ -33,7 +34,7 @@ const BASE = 1_790_000_000_000;
 const NEWER = 998;
 const TIE_SIZE = 8;
 const WIDE_SIZE = 1003;
-const WALK_TIMEOUT_MS = 30_000; // same sizing as trace-list-cursor.test.ts
+const WALK_TIMEOUT_MS = testTimeout(30_000); // same sizing as trace-list-cursor.test.ts
 
 // Fixed-width seeds, as in trace-list-cursor.test.ts: `traceId` pads with
 // trailing zeros, so seeds of different lengths could collide once padded.
@@ -115,7 +116,7 @@ beforeAll(async () => {
   const parsed = JSON.parse(line ?? "{}");
   if (parsed.op0?.ok !== true) throw new Error(`bulk plant failed: ${JSON.stringify(parsed.op0)}`);
   reader = await openEvidenceReader(fixture.datasetRoot);
-}, 120_000);
+}, testTimeout(120_000));
 
 afterAll(async () => {
   await fixture?.cleanup();

@@ -43,10 +43,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFixture, PYTHON, runGated } from "./helpers/publication-fixture";
 import { buildExpose13LiveSteps, SESSION_1_NAME, SESSION_2_NAME } from "./helpers/expose13-live-steps";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const TEST_DIR = import.meta.dir;
 const CHILD = join(TEST_DIR, "fixtures", "transport-v1", "expose13", "child.ts");
-const TEST_TIMEOUT_MS = 120_000;
+const TEST_TIMEOUT_MS = testTimeout(120_000);
 
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";

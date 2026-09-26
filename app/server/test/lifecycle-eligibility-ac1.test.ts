@@ -14,6 +14,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { createFixture, revisionEnvelope, runGated, type Fixture } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/lifecycle-v1/core/gated-lifecycle.ts", import.meta.url).pathname;
 const ALPHA = "alpha-workspace";
@@ -101,7 +102,7 @@ describe("#29 AC1: a correction-typed node, and a corrects link, leave eligibili
     } finally {
       await fixture.cleanup();
     }
-  }, 180_000);
+  }, testTimeout(180_000));
 
   test("a corrects link into A's accepted revision leaves A eligible, with zero supersede_log rows, still in listNodes' default view", async () => {
     const NODE_A = idOf("ac1NodeA");
@@ -157,5 +158,5 @@ describe("#29 AC1: a correction-typed node, and a corrects link, leave eligibili
     } finally {
       await fixture.cleanup();
     }
-  }, 180_000);
+  }, testTimeout(180_000));
 });

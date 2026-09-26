@@ -18,17 +18,19 @@
 
 import { describe, expect, test } from "bun:test";
 import { createFixture, revisionEnvelope, runGated, type SeededWorkspace } from "./helpers/publication-fixture";
+import { scaledMs } from "./helpers/timing.scaledMs";
 import {
   CHUNKER_VERSION,
   MAX_EMBED_ATTEMPTS,
   activeEmbeddingProfileId,
   deriveChunkId,
 } from "../src/publication/search-chunk";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/search-chunk-v1/embed/gated-embed.ts", import.meta.url).pathname;
 const ALPHA = "alpha-workspace";
 const CLOCK = Date.parse("2026-09-21T00:00:00.000Z");
-const TEST_TIMEOUT_MS = 300_000;
+const TEST_TIMEOUT_MS = testTimeout(300_000);
 const PROFILE_ID = activeEmbeddingProfileId();
 
 const pad = (seed: string) => `${seed}${"0".repeat(Math.max(0, 21 - seed.length))}`.slice(0, 21);
@@ -98,12 +100,13 @@ describe("embedPendingChunks: criterion 1, a hung embedder never blocks a concur
 
       const [embedResult, publishResult] = parsed.op2.concurrent;
       // The load-bearing property: publishRevision is NOT queued behind the
-      // hung embedder call (which is still "hanging" from the stub's own
-      // perspective -- it never resolves on its own). It completes in a
-      // normal few milliseconds, nowhere near the embed timeout.
+      // hung embedder call (which never resolves on its own). It SETTLES
+      // FIRST; the embed call, which can only end by timing out, after it.
+      // R13: observed order (`settledSeq`), no longer `elapsedMs < 250`,
+      // which a slow runner broke with the order intact (search-chunk-v1 §19).
       expect(publishResult.ok, JSON.stringify(publishResult)).toBe(true);
       expect(publishResult.value.outcome).toBe("accepted");
-      expect(publishResult.elapsedMs).toBeLessThan(250);
+      expect(publishResult.settledSeq).toBeLessThan(embedResult.settledSeq);
 
       // The embed call itself resolves once ITS OWN timeout fires, not
       // instantly and not forever.
@@ -111,7 +114,7 @@ describe("embedPendingChunks: criterion 1, a hung embedder never blocks a concur
       expect(embedResult.value.attempted).toBe(1);
       expect(embedResult.value.failed).toBe(1);
       expect(embedResult.elapsedMs).toBeGreaterThanOrEqual(280);
-      expect(embedResult.elapsedMs).toBeLessThan(5000);
+      expect(embedResult.elapsedMs).toBeLessThan(scaledMs(5000));
 
       const listed = parsed.op3;
       expect(listed.value).toHaveLength(1);
@@ -136,6 +139,10 @@ describe("embedPendingChunks: criterion 1, a hung embedder never blocks a concur
    * flight, not a hope about ordering. A handshake-ordered version of this
    * exact test passes at HEAD (publish ~ms) and fails under M4 (publish
    * >1s, over the embed timeout) -- see the fix-round PR description.
+   * R13 (search-chunk-v1 §19): that clock (`elapsedMs < 250`) broke on a slow
+   * runner, and settle order alone lets M4 pass (2/0), so the embedder is HELD
+   * until the publish settles; under M4 the publish runs only after the
+   * timeout abandons the held call (`abortedWhileHeld`). Timeout path: above.
    */
   test("(deterministic handshake) publishRevision proceeds while the embedder is CONFIRMED in flight", async () => {
     const fixture = await createFixture([ALPHA]);
@@ -153,25 +160,27 @@ describe("embedPendingChunks: criterion 1, a hung embedder never blocks a concur
           { handshake: { first: embed(), second: publish(seeded, nodeB, "op-ew-hs-b1") } },
           listChunks(revA),
         ],
-        { revisionIds: [revA, revB], embedderMode: "hang", embedTimeoutMs: 300 },
+        // The timeout matters only under M4: it is what finally lets the publish run.
+        { revisionIds: [revA, revB], embedderMode: "hold", embedTimeoutMs: scaledMs(10_000) },
       );
       expect(parsed.op0.value.outcome).toBe("accepted");
       expect(parsed.op1.value.rows).toHaveLength(1);
 
-      const { first: embedResult, second: publishResult } = parsed.op2;
-      // The embedder call was CONFIRMED already in flight (the handshake)
-      // before this write even started.
+      const { first: embedResult, second: publishResult, abortedWhileHeld } = parsed.op2;
+      // CONFIRMED in flight before this write started (the handshake), and
+      // still held, unanswered and not abandoned, when the write settled.
       expect(publishResult.ok, JSON.stringify(publishResult)).toBe(true);
       expect(publishResult.value.outcome).toBe("accepted");
-      expect(publishResult.elapsedMs).toBeLessThan(250);
+      expect(abortedWhileHeld).toBe(false);
+      expect(publishResult.settledSeq).toBeLessThan(embedResult.settledSeq);
 
+      // Released only then, the held call completes normally.
       expect(embedResult.ok, JSON.stringify(embedResult)).toBe(true);
-      expect(embedResult.value.failed).toBe(1);
-      expect(embedResult.elapsedMs).toBeGreaterThanOrEqual(280);
+      expect(embedResult.value).toMatchObject({ attempted: 1, embedded: 1, failed: 0, skipped: 0 });
 
       const listed = parsed.op3.value;
-      expect(listed[0].status).toBe("failed");
-      expect(listed[0].error_code).toBe("embedder_timeout");
+      expect(listed[0].status).toBe("ready");
+      expect(listed[0].error_code).toBeNull();
     } finally {
       await fixture.cleanup();
     }

@@ -10,6 +10,7 @@ import { runGated } from "./helpers/publication-fixture";
 import { createTraceFixture, createTraceRequest, hitInput, traceId } from "./helpers/trace-fixture";
 import { parseCreateTrace } from "../src/publication/trace";
 import { ContractError } from "../src/contracts/errors";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 describe("real persistence: trace + trace_hit inside the real gate", () => {
   const CHILD = new URL("./fixtures/trace-v1/core/gated-trace.ts", import.meta.url).pathname;
@@ -119,7 +120,7 @@ describe("real persistence: trace + trace_hit inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a different payload under the SAME id conflicts, not overwrites", async () => {
     const fixture = await createTraceFixture([ALPHA]);
@@ -134,7 +135,7 @@ describe("real persistence: trace + trace_hit inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("TR-1: a year-0000 captured_at is refused at its field pointer, writes nothing, and does NOT poison the owner", async () => {
     const fixture = await createTraceFixture([ALPHA]);
@@ -166,7 +167,7 @@ describe("real persistence: trace + trace_hit inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("TR-3: a non-contiguous stored position is refused on the read path", async () => {
     const fixture = await createTraceFixture([ALPHA]);
@@ -195,7 +196,7 @@ describe("real persistence: trace + trace_hit inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("TR-2: a prefix-matching retry after a simulated ambiguous partial write recovers, not conflicts", async () => {
     const fixture = await createTraceFixture([ALPHA]);
@@ -218,7 +219,7 @@ describe("real persistence: trace + trace_hit inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("TR-4: a stored parent_id outside the nanoid21 namespace is refused on read", async () => {
     const fixture = await createTraceFixture([ALPHA]);
@@ -234,7 +235,7 @@ describe("real persistence: trace + trace_hit inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("TR-7: a stored negative position is refused, distinctly from a mere gap", async () => {
     const fixture = await createTraceFixture([ALPHA]);
@@ -271,7 +272,7 @@ describe("real persistence: trace + trace_hit inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("TR-11: a stored empty-string nullable text column is refused, not served as legitimate", async () => {
     const fixture = await createTraceFixture([ALPHA]);
@@ -299,7 +300,7 @@ describe("real persistence: trace + trace_hit inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   describe("K13 (v3-parity hygiene review): depth must be parent.depth + 1, or 0 with no parent", () => {
     // .tmp/understand/analysis-28.json / docs/overnight/V3-PARITY.md K13:
@@ -322,7 +323,7 @@ describe("real persistence: trace + trace_hit inside the real gate", () => {
       } finally {
         await fixture.cleanup();
       }
-    }, 300_000);
+    }, testTimeout(300_000));
 
     test("a child whose depth disagrees with parent.depth + 1 is refused", async () => {
       const fixture = await createTraceFixture([ALPHA]);
@@ -343,7 +344,7 @@ describe("real persistence: trace + trace_hit inside the real gate", () => {
       } finally {
         await fixture.cleanup();
       }
-    }, 300_000);
+    }, testTimeout(300_000));
 
     test("depth exactly one more than the resolved parent's depth is accepted", async () => {
       const fixture = await createTraceFixture([ALPHA]);
@@ -365,7 +366,7 @@ describe("real persistence: trace + trace_hit inside the real gate", () => {
       } finally {
         await fixture.cleanup();
       }
-    }, 300_000);
+    }, testTimeout(300_000));
   });
 });
 

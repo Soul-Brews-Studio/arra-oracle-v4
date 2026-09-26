@@ -18,6 +18,7 @@
 import { describe, expect, test } from "bun:test";
 import { createFixture, revisionEnvelope, runGated, type Fixture } from "./helpers/publication-fixture";
 import { activeEmbeddingProfileId } from "../src/publication/search-chunk";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/lifecycle-v1/core/gated-lifecycle.ts", import.meta.url).pathname;
 const ALPHA = "alpha-workspace";
@@ -145,7 +146,7 @@ describe("#29 slice B: superseding into an already-terminal successor is refused
     } finally {
       await fixture.cleanup();
     }
-  }, 180_000);
+  }, testTimeout(180_000));
 });
 
 describe("#29 slice B: search-chunk read paths never treat a terminal node as ordinary", () => {
@@ -205,5 +206,5 @@ describe("#29 slice B: search-chunk read paths never treat a terminal node as or
     } finally {
       await fixture.cleanup();
     }
-  }, 180_000);
+  }, testTimeout(180_000));
 });

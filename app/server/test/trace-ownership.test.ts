@@ -31,11 +31,13 @@ import { join, resolve } from "node:path";
 import { createContextFixture } from "./helpers/context-fixture";
 import { PYTHON, runGated, runOwnedChild, spawnGatedChild } from "./helpers/publication-fixture";
 import { traceId, hitInput } from "./helpers/trace-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const TEST_DIR = import.meta.dir;
 const SERVER_DIR = resolve(TEST_DIR, "..");
 const OWNERSHIP_CHILD = join(TEST_DIR, "fixtures", "trace-v1", "ownership", "trace-child.ts");
-const TEST_TIMEOUT_MS = 180_000;
+const TEST_TIMEOUT_MS = testTimeout(180_000);
 const ALPHA = "alpha-workspace";
 
 // ── independent oracles, authored from the contract ──────────────────────────
@@ -432,7 +434,7 @@ describe("shared owner: queue, poison in both directions, one-shot close", () =>
             ].join("\n"),
             root,
           ],
-          { deadlineMs: 30_000 },
+          { deadlineMs: scaledMs(30_000) },
         );
         expect({ code: contender.code, events: eventsOf(contender.stdout) }).toEqual({
           code: 0,

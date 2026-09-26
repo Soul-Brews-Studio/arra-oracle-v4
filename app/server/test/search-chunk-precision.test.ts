@@ -36,11 +36,12 @@ import {
 } from "../src/publication/search-chunk";
 import { ContractError } from "../src/contracts/errors";
 import { PublicationError } from "../src/publication/errors";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/search-chunk-v1/precision/seed-child.ts", import.meta.url).pathname;
 const ALPHA = "alpha-workspace";
 const CLOCK = Date.parse("2026-09-21T00:00:00.000Z");
-const TEST_TIMEOUT_MS = 600_000;
+const TEST_TIMEOUT_MS = testTimeout(600_000);
 const INT64_CEILING = 9223372036854775807n; // 2^63 - 1
 // #30 R7: `indexRevisionChunks`/`listSearchChunks` now refuse any
 // `embedding_profile` name outside the closed registry -- this file plants

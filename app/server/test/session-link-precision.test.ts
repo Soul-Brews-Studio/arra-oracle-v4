@@ -32,10 +32,12 @@ import {
   listSessionLinksRequest,
   sessionLinkId,
 } from "./helpers/session-link-fixture";
+import { scaledMs } from "./helpers/timing.scaledMs";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/session-link-v1/precision/seed-child.ts", import.meta.url).pathname;
-const SEED_DEADLINE_MS = 300_000;
-const TEST_TIMEOUT_MS = 600_000;
+const SEED_DEADLINE_MS = scaledMs(300_000);
+const TEST_TIMEOUT_MS = testTimeout(600_000);
 
 const W1 = "alpha-workspace";
 const PEER = "peer-a";

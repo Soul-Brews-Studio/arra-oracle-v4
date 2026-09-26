@@ -14,6 +14,7 @@ import {
   runGated,
   type Fixture,
 } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/lifecycle-v1/core/gated-lifecycle.ts", import.meta.url).pathname;
 const ALPHA = "alpha-workspace";
@@ -192,7 +193,7 @@ describe("real persistence: lifecycle events inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a retired node refuses a new revision, but a pre-retirement publish replay still returns idempotent", async () => {
     const fixture = await createFixture([ALPHA]);
@@ -228,7 +229,7 @@ describe("real persistence: lifecycle events inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   // LC-1 regression: the replay classification must run BEFORE any successor
   // state is read, so a byte-identical retry of an already-accepted
@@ -281,7 +282,7 @@ describe("real persistence: lifecycle events inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   // LC-2 regression: resumeOrphan must consult supersede_log too, not only
   // publishFresh -- a resuming orphan is still new publication for reference
@@ -341,5 +342,5 @@ describe("real persistence: lifecycle events inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });

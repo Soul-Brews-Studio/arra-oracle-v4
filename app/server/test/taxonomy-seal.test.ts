@@ -39,9 +39,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PYTHON, runGated } from "./helpers/publication-fixture";
 import { createTaxonomyFixture } from "./helpers/taxonomy-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const CHILD = join(import.meta.dir, "fixtures", "taxonomy-v1", "seal", "seal-child.ts");
-const TEST_TIMEOUT_MS = 180_000;
+const TEST_TIMEOUT_MS = testTimeout(180_000);
 
 const MISSING: string[] = [];
 if (!existsSync(PYTHON)) MISSING.push(`python interpreter at ${PYTHON} (set ARRA_CONTRACT_PYTHON)`);
@@ -73,7 +75,7 @@ type Events = Map<string, any>;
 async function drive(root: string, mode: string): Promise<Events> {
   const workDir = await mkdtemp(join(tmpdir(), "arra-v4-taxonomy-seal-"));
   cleanups.push(() => rm(workDir, { recursive: true, force: true }));
-  const result = await runGated(root, CHILD, [mode, root, workDir], { deadlineMs: 120_000 });
+  const result = await runGated(root, CHILD, [mode, root, workDir], { deadlineMs: scaledMs(120_000) });
   expect({ mode, code: result.code, stderr: result.stderr.slice(-800) }).toEqual({ mode, code: 0, stderr: "" });
   const events: Events = new Map();
   for (const line of result.stdout.split("\n")) {

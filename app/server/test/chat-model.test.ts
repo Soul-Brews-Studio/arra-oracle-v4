@@ -18,12 +18,16 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { createChatModel, createOllamaChatModel, readChatConfig, renderChatPrompt } from "../src/chat-model";
 import type { ChatContextItem } from "../src/publication/chat";
 import { startChatModelStub } from "./helpers/chat-model-stub";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const stub = startChatModelStub("ok");
-// The "hang" test leaves one request open until the client aborts it; a forced
-// stop can outlast bun's 5 s hook default on a loaded machine (it did once in
-// the overnight integration suite). The generous bound is for the hook only.
-afterAll(() => stub.stop(), 30_000);
+// The "hang" test leaves one request open until the client aborts it. That
+// used to make `stop()` wait for an event-loop wakeup that an afterAll never
+// gets: it outlasted 5 s once locally and 30 s on the GitHub runner (run
+// 36268048901). R13: the stub now settles what it holds before stopping
+// (harness-chat-model-stub.test.ts); the bound stays, scaled, for the hook.
+afterAll(() => stub.stop(), testTimeout(30_000));
 
 const item = (public_id: string, content: string, session_name = "main", peer_name = "peer-a"): ChatContextItem => ({
   public_id,
@@ -157,7 +161,7 @@ describe("createOllamaChatModel: one bounded POST to /api/chat", () => {
     } finally {
       stub.mode = "ok";
     }
-    expect(performance.now() - started).toBeLessThan(5000);
+    expect(performance.now() - started).toBeLessThan(scaledMs(5000));
   });
 
   test("a reply with no message content rejects rather than answering empty", async () => {

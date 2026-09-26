@@ -35,9 +35,10 @@ import { configureKnowledgeAccess, createMcpAdapter } from "../src/mcp";
 import { MAX_CONTEXT_WIRE_BYTES } from "../src/publication/chat";
 import { createContextFixture } from "./helpers/context-fixture";
 import { runGated } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/chat-v1/gated-coverage.ts", import.meta.url).pathname;
-const TIMEOUT_MS = 300_000;
+const TIMEOUT_MS = testTimeout(300_000);
 const WS = "alpha-workspace";
 const ORIGIN = "http://127.0.0.1:3939";
 const TOKEN = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";

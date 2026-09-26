@@ -29,6 +29,8 @@ import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { PYTHON, revisionEnvelope, runGated, runOwnedChild, spawnGatedChild } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const TEST_DIR = import.meta.dir;
 const SERVER_DIR = resolve(TEST_DIR, "..");
@@ -37,7 +39,7 @@ const KNOWLEDGE_CHILD = join(OWNERSHIP_DIR, "knowledge-child.ts");
 const STRUCTURE_CHILD = join(OWNERSHIP_DIR, "structure-child.ts");
 const STAGE_CHAIN = join(OWNERSHIP_DIR, "stage-chain.py");
 
-const TEST_TIMEOUT_MS = 180_000;
+const TEST_TIMEOUT_MS = testTimeout(180_000);
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
 
@@ -436,7 +438,7 @@ describe.skipIf(!READY)(`one-shot close lifetime [${PENDING}]`, () => {
             ].join("\n"),
             root,
           ],
-          { deadlineMs: 30_000 },
+          { deadlineMs: scaledMs(30_000) },
         );
         expect(eventsOf(contender.stdout)).toContain("gate:acquired");
       } finally {
@@ -495,7 +497,7 @@ describe.skipIf(!READY)(`scoped references and policy refusals [${PENDING}]`, ()
         // Setup only: the chain is staged directly because reaching 1024 through
         // the kernel would be 1024 writes. The kernel decides only the boundary.
         const staged = await runOwnedChild(PYTHON, [STAGE_CHAIN, root, ALPHA, vocabularyId, String(depth), moverId], {
-          deadlineMs: 120_000,
+          deadlineMs: scaledMs(120_000),
         });
         expect({ depth, code: staged.code, stderr: staged.stderr.slice(-200) }).toEqual({
           depth,

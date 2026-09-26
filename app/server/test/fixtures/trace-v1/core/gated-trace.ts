@@ -7,8 +7,9 @@
 // `trace_hits.position` (TR-3), a negative stored `position` (TR-7), a
 // stored empty-string nullable text column (TR-11), and a stored
 // `parent_id`/`prev_id` outside the nanoid21 namespace (TR-4).
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   ops: Array<{ facade?: "context" | "publication" | "taxonomy" | "harness"; method: string; request: any }>;
   clockMs?: number | number[] | "throw";
 };

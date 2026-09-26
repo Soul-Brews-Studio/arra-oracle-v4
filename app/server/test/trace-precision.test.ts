@@ -31,12 +31,13 @@ import {
 } from "../src/publication/trace";
 import { microsToTimestamp } from "../src/publication/rows";
 import { ContractError } from "../src/contracts/errors";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/trace-v1/precision/seed-child.ts", import.meta.url).pathname;
 const ALPHA = "alpha-workspace";
 const CLOCK_MS = Date.parse("2026-09-21T00:00:00.000Z");
 const CLOCK_ISO = new Date(CLOCK_MS).toISOString();
-const TEST_TIMEOUT_MS = 600_000;
+const TEST_TIMEOUT_MS = testTimeout(600_000);
 
 const MIN_EPOCH_MS = -62135596800000n; // 0001-01-01T00:00:00.000Z
 const MAX_EPOCH_MS = 253402300799999n; // 9999-12-31T23:59:59.999Z

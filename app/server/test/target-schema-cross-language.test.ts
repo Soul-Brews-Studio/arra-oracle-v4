@@ -12,6 +12,8 @@ import { connect } from "@lancedb/lancedb";
 import { Type } from "apache-arrow";
 import { createHash } from "node:crypto";
 import { formatInt64, formatTimestamp, validateId } from "../src/contracts/v1";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 // The literal expected target, written out here rather than derived, so a
 // rename on the Python side shows up as a failure on the TypeScript side.
@@ -181,7 +183,7 @@ test("Bun reads the persisted Arrow schema of all 19 Python-created tables", asy
   const root = await mkdtemp(join(tmpdir(), "arra-target-schema-"));
   try {
     const result = spawnSync(pythonPath, [scriptPath, root], {
-      encoding: "utf8", timeout: 120_000, env: { ...process.env, PYTHONPATH: sourcePath },
+      encoding: "utf8", timeout: scaledMs(120_000), env: { ...process.env, PYTHONPATH: sourcePath },
     });
     if (result.error) throw new Error(`Python fixture unavailable: ${result.error.message}. Install migrate-py dependencies or set ARRA_CONTRACT_PYTHON.`);
     expect(result.stderr).toBe("");
@@ -278,11 +280,11 @@ test("Bun reads the persisted Arrow schema of all 19 Python-created tables", asy
 
     // The exporter refuses to reuse a root, even on an identical retry.
     const retry = spawnSync(pythonPath, [scriptPath, root], {
-      encoding: "utf8", timeout: 120_000, env: { ...process.env, PYTHONPATH: sourcePath },
+      encoding: "utf8", timeout: scaledMs(120_000), env: { ...process.env, PYTHONPATH: sourcePath },
     });
     expect(retry.status).not.toBe(0);
     expect(retry.stderr).toContain("FileExistsError");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
-}, 180_000);
+}, testTimeout(180_000));

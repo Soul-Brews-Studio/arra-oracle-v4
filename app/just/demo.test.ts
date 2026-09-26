@@ -13,6 +13,7 @@
 // unit-level chat tests. `docs/overnight/DEMO.md` is the real-model
 // transcript; this is the one that runs without a GPU.
 import { afterAll, describe, expect, test } from "bun:test";
+import { testTimeout } from "../server/test/helpers/timing.testTimeout";
 
 const DEMO_SH = new URL("./demo.sh", import.meta.url).pathname;
 const APP_ROOT = new URL("..", import.meta.url).pathname; // .../app/
@@ -165,7 +166,7 @@ describe("app/just/demo.sh (stubbed Ollama)", () => {
     } finally {
       stub.stop();
     }
-  }, 60_000);
+  }, testTimeout(60_000));
 
   test("R20 fix round: a stub with NO models listed blocks the embed, never reports it OK", async () => {
     // Reproduces the verifier's scenario (a) exactly: `/api/tags` answers
@@ -186,7 +187,7 @@ describe("app/just/demo.sh (stubbed Ollama)", () => {
     } finally {
       stub.stop();
     }
-  }, 60_000);
+  }, testTimeout(60_000));
 
   test("model steps SKIP with an honest reason when Ollama is unreachable -- nothing is faked", async () => {
     // A closed local port: nothing in this suite ever binds it, so the
@@ -203,7 +204,7 @@ describe("app/just/demo.sh (stubbed Ollama)", () => {
     for (const name of EVERY_STEP) {
       expect(out, out).toContain(`STEP_OK ${name}`);
     }
-  }, 60_000);
+  }, testTimeout(60_000));
 
   test("fix round finding 2: v3.sh's peer_args expansion survives an empty array under set -u", async () => {
     // The verifier's exact repro: `/bin/bash` on macOS is the system 3.2.57,
@@ -219,5 +220,5 @@ describe("app/just/demo.sh (stubbed Ollama)", () => {
     expect(exitCode, out).toBe(0);
     expect(out).toContain("STEP_OK v3-oracle-search");
     expect(out).toContain("DEMO_DONE");
-  }, 60_000);
+  }, testTimeout(60_000));
 });

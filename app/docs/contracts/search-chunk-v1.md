@@ -966,3 +966,32 @@ suites were run before and after the split: `bun test test/lifecycle-*.test.ts` 
 0 fail / 416 `expect()` calls on both sides, identical — no test or assertion dropped. §12's
 paragraph itself is left as written (frozen contracts are not rewritten); this amendment is the
 correction.
+
+## 19. Amendment 2026-09-26 (overnight R13 (CI must actually pass))
+
+Appended; section C and its Proof bullet above are left as recorded. Ruling: [`docs/overnight/DECISIONS.md`](../../../docs/overnight/DECISIONS.md) R13.
+
+**What changed.** Only how `search-chunk-embed-worker.test.ts` proves section C's "a hung embedder
+never blocks a concurrent write". No kernel file changed; section C's four steps stand as written.
+
+- The concurrent test asserted `publishResult.elapsedMs < 250` against a 300 ms embed timeout. It
+  now asserts the publish SETTLED before the embed call (`settledSeq`, recorded by
+  `fixtures/search-chunk-v1/embed/gated-embed.ts`). Its timeout claims are unchanged: `failed: 1`,
+  `embedder_timeout`, elapsed at least 280 ms, and under `scaledMs(5000)`.
+- The handshake test (the one that discriminates mutation M4, the embedder call moved inside
+  `core.serial`) now HOLDS the embedder (`embedderMode: "hold"`): the stub answers only after the
+  publish has settled, and records whether the service abandoned the held call first. It asserts
+  the publish is accepted, `abortedWhileHeld` is false, the publish settled first, and the released
+  call then embeds (`embedded: 1`, row `ready`). The timeout path's own assertions stay in the
+  concurrent test.
+
+**Why.** On the GitHub runner the publish took 351 and 324 ms (run 36265462602) and 260 ms (run
+36268048901) with nothing wrong, and the same failure reproduced locally under CPU contention
+(322-727 ms, 4/4 red). Settle order alone is not enough: under M4 the worker's write-back also
+queues behind the publish, so the publish still settles first (measured, M4 passed 2/0). With the
+held embedder, a publish that settles at all never waited for the embedder, at any machine speed.
+
+**Evidence.** M4 applied to `service.embedPendingChunks.ts`: the handshake test is red
+(`abortedWhileHeld: true`); reverted: 11/0 for the file. Under the same local contention after
+the change, the criterion-1 tests passed; one loaded run failed earlier, inside `createFixture`, when
+the Python exporter hit the then-unscaled 60 s child deadline, which R13's `scaledMs` now scales.

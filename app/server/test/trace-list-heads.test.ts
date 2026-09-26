@@ -13,6 +13,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { openEvidenceReader } from "../src/publication/service";
 import { assocId, reconcileRequest } from "./helpers/association-fixture";
 import { createFixture, revisionEnvelope, runGated, type Fixture, type SeededWorkspace } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/association-v1/core/gated-association.ts", import.meta.url).pathname;
 const CLOCK = Date.parse("2026-09-21T00:00:00.000Z");
@@ -63,7 +64,7 @@ beforeAll(async () => {
   for (let i = 0; i < 6; i++) {
     if (run[`op${i}`]?.ok !== true) throw new Error(`op${i} failed: ${JSON.stringify(run[`op${i}`])}`);
   }
-}, 180_000);
+}, testTimeout(180_000));
 
 afterAll(async () => {
   await fixture?.cleanup();

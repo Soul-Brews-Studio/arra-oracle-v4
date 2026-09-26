@@ -14,8 +14,9 @@
 //            clockMs?: number | number[] | "throw" }
 //
 // stdout: one JSON line { op0: {ok,value}|{ok:false,...error}, op1: ..., clockCalls }
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   ops: Array<{ facade?: "context" | "publication" | "taxonomy"; method: string; request: unknown }>;
   clockMs?: number | number[] | "throw";
 };

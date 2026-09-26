@@ -18,6 +18,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { openEvidenceReader } from "../src/publication/service";
 import { createFixture, runGated, type Fixture } from "./helpers/publication-fixture";
 import { traceId } from "./helpers/trace-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const WS = "ws-cursor-scale";
 const CHILD = new URL("./fixtures/trace-v1/core/gated-trace.ts", import.meta.url).pathname;
@@ -39,7 +40,7 @@ const idFor = (i: number) => traceId(`bulk${i.toString().padStart(4, "0")}`);
 // page's rows read in one `IN (...)` batch it takes ~0.09 s at load ~6. 30 s
 // is two orders of magnitude of headroom over that, and still fails fast
 // on a real hang.
-const WALK_TIMEOUT_MS = 30_000;
+const WALK_TIMEOUT_MS = testTimeout(30_000);
 
 type Row = { id: string; created_at: string; derived_from_count: number };
 type ListTracesReader = {
@@ -85,7 +86,7 @@ beforeAll(async () => {
   if (parsed.op0?.ok !== true) throw new Error(`bulk plant failed: ${JSON.stringify(parsed.op0)}`);
 
   reader = await openEvidenceReader(fixture.datasetRoot);
-}, 120_000);
+}, testTimeout(120_000));
 
 afterAll(async () => {
   await fixture?.cleanup();

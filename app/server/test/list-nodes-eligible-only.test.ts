@@ -29,6 +29,7 @@ import {
   type Fixture,
 } from "./helpers/publication-fixture";
 import { openContextReader } from "../src/publication/service";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/lifecycle-v1/core/gated-lifecycle.ts", import.meta.url).pathname;
 const WS = "alpha-workspace";
@@ -112,7 +113,7 @@ beforeAll(async () => {
   for (let i = 0; i < 7; i += 1) {
     expect(parsed[`op${i}`]?.ok, `op${i}: ${JSON.stringify(parsed[`op${i}`]).slice(0, 400)}`).toBe(true);
   }
-}, 180_000);
+}, testTimeout(180_000));
 
 afterAll(async () => {
   await fixture?.cleanup();

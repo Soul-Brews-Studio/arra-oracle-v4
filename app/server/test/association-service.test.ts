@@ -44,6 +44,7 @@ import {
   parseReconcileRevisionAssociations,
   parseScanDependents,
 } from "../src/publication/association";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const WS = "alpha-workspace";
 const id = (seed: string) => `${seed}${"0".repeat(Math.max(0, 21 - seed.length))}`.slice(0, 21);
@@ -445,7 +446,7 @@ describe("real persistence: evidence reads, materialization and the scan", () =>
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("an absent node reads as exactly null, not an error", async () => {
     const fixture = await createSeededRevisionFixture([ALPHA]);
@@ -458,7 +459,7 @@ describe("real persistence: evidence reads, materialization and the scan", () =>
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("PUBLICATION leaves the derived projections EMPTY", async () => {
     // The accepted publisher is projection-free. If this ever writes rows, the
@@ -480,7 +481,7 @@ describe("real persistence: evidence reads, materialization and the scan", () =>
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("associations derive from the SNAPSHOT while projections are still absent", async () => {
     const fixture = await createSeededRevisionFixture([ALPHA]);
@@ -507,7 +508,7 @@ describe("real persistence: evidence reads, materialization and the scan", () =>
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("reconcile materializes, then reports already_satisfied with NO boundaries", async () => {
     const fixture = await createSeededRevisionFixture([ALPHA]);
@@ -545,7 +546,7 @@ describe("real persistence: evidence reads, materialization and the scan", () =>
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a NONNULL captured_at survives materialization losslessly", async () => {
     /**
@@ -606,7 +607,7 @@ describe("real persistence: evidence reads, materialization and the scan", () =>
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a scan finds the citation by target, and current mode marks it as head", async () => {
     const fixture = await createSeededRevisionFixture([ALPHA]);
@@ -639,7 +640,7 @@ describe("real persistence: evidence reads, materialization and the scan", () =>
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a scan for an UNCITED target returns an empty page with a null cursor", async () => {
     const fixture = await createSeededRevisionFixture([ALPHA]);
@@ -660,7 +661,7 @@ describe("real persistence: evidence reads, materialization and the scan", () =>
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a cursor from a DIFFERENT nodes version forces restart_required", async () => {
     const fixture = await createSeededRevisionFixture([ALPHA]);
@@ -704,7 +705,7 @@ describe("real persistence: evidence reads, materialization and the scan", () =>
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a SUB-MILLISECOND derived capture time is rebuilt, not a hard failure", async () => {
     /**
@@ -768,7 +769,7 @@ describe("real persistence: evidence reads, materialization and the scan", () =>
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a missing NODE and an orphan revision report DIFFERENT pointers", async () => {
     // Both were previously invalid_reference /revision_id, which told a caller
@@ -812,7 +813,7 @@ describe("real persistence: evidence reads, materialization and the scan", () =>
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a DUPLICATE selected node is caught by the equality probe, not the page", async () => {
     /**
@@ -852,7 +853,7 @@ describe("real persistence: evidence reads, materialization and the scan", () =>
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a nodes version that moved BETWEEN pages forces restart_required", async () => {
     /**
@@ -905,7 +906,7 @@ describe("real persistence: evidence reads, materialization and the scan", () =>
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("at an UNCHANGED witness a cursor naming a vanished node is still blamed", async () => {
     /**
@@ -955,7 +956,7 @@ describe("real persistence: evidence reads, materialization and the scan", () =>
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
   test("a version that moves WITHIN the page, at the capture itself, restarts", async () => {
     /**
      * The re-check exists for a window a between-page test cannot reach: the
@@ -1005,7 +1006,7 @@ describe("real persistence: evidence reads, materialization and the scan", () =>
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a cursor valid AT CAPTURE, invalidated before validation, restarts rather than being blamed", async () => {
     /**
@@ -1060,7 +1061,7 @@ describe("real persistence: evidence reads, materialization and the scan", () =>
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
   test("accepted history survives a term RENAME and RETIREMENT unchanged", async () => {
     /**
      * Section 7. An association is derived from the revision's SNAPSHOT, never
@@ -1128,7 +1129,7 @@ describe("real persistence: evidence reads, materialization and the scan", () =>
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a REAL interrupted publication stays invisible, then resumes with its retained identity", async () => {
     /**
@@ -1253,5 +1254,5 @@ describe("real persistence: evidence reads, materialization and the scan", () =>
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });

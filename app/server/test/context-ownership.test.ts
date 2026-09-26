@@ -31,6 +31,8 @@ import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { PYTHON, runGated, runOwnedChild, spawnGatedChild } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const TEST_DIR = import.meta.dir;
 const SERVER_DIR = resolve(TEST_DIR, "..");
@@ -38,7 +40,7 @@ const OWNERSHIP_CHILD = join(TEST_DIR, "fixtures", "context-v1", "ownership", "c
 const RAW_MUTATE = join(TEST_DIR, "fixtures", "context-v1", "ownership", "raw-mutate.ts");
 /** Trusted operator configuration for the sourced writer instance, never request data. */
 const SOURCE_NAMESPACE = "ownership-probe";
-const TEST_TIMEOUT_MS = 180_000;
+const TEST_TIMEOUT_MS = testTimeout(180_000);
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
 
@@ -619,7 +621,7 @@ describe.skipIf(!READY)(`shared owner lifecycle [${PENDING}]`, () => {
             ].join("\n"),
             root,
           ],
-          { deadlineMs: 30_000 },
+          { deadlineMs: scaledMs(30_000) },
         );
         expect(eventsOf(contender.stdout)).toContain("gate:acquired");
       } finally {

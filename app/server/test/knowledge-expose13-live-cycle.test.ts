@@ -20,10 +20,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFixture, PYTHON, runGated, type Fixture } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const TEST_DIR = import.meta.dir;
 const CHILD = join(TEST_DIR, "fixtures", "transport-v1", "expose13", "child.ts");
-const TEST_TIMEOUT_MS = 120_000;
+const TEST_TIMEOUT_MS = testTimeout(120_000);
 
 const ALPHA = "alpha-workspace";
 // The transport child's policy fixture always writes a `beta-write`

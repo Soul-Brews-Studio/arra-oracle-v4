@@ -46,14 +46,16 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { join, resolve } from "node:path";
 import { connect } from "@lancedb/lancedb";
 import { createFixture, revisionEnvelope, runGated, spawnGatedChild, type Fixture } from "./helpers/publication-fixture";
+import { scaledMs } from "./helpers/timing.scaledMs";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const TEST_DIR = import.meta.dir;
 const SERVER_DIR = resolve(TEST_DIR, "..");
 const OPS_CHILD = join(TEST_DIR, "fixtures", "lifecycle-v1", "core", "gated-lifecycle.ts");
 const RECOVERY_CHILD = join(TEST_DIR, "fixtures", "lifecycle-v1", "recovery", "lifecycle-child.ts");
-const TEST_TIMEOUT_MS = 180_000;
+const TEST_TIMEOUT_MS = testTimeout(180_000);
 const ALPHA = "alpha-workspace";
-const KILL_DEADLINE_MS = 60_000;
+const KILL_DEADLINE_MS = scaledMs(60_000);
 
 const idOf = (seed: string) => `${seed}${"0".repeat(Math.max(0, 21 - seed.length))}`.slice(0, 21);
 

@@ -31,11 +31,13 @@ import {
   deriveChunkId,
   deriveContentHash,
 } from "../src/publication/search-chunk";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const TEST_DIR = import.meta.dir;
 const SERVER_DIR = resolve(TEST_DIR, "..");
 const OWNERSHIP_CHILD = join(TEST_DIR, "fixtures", "search-chunk-v1", "ownership", "search-chunk-child.ts");
-const TEST_TIMEOUT_MS = 180_000;
+const TEST_TIMEOUT_MS = testTimeout(180_000);
 const ALPHA = "alpha-workspace";
 const CLOCK_MS = 1_790_300_000_000;
 const CLOCK_TEXT = new Date(CLOCK_MS).toISOString();
@@ -430,7 +432,7 @@ describe("shared owner: queue, poison in both directions, one-shot close", () =>
             ].join("\n"),
             root,
           ],
-          { deadlineMs: 30_000 },
+          { deadlineMs: scaledMs(30_000) },
         );
         expect({ code: contender.code, events: eventsOf(contender.stdout) }).toEqual({
           code: 0,

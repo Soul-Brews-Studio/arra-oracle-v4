@@ -17,6 +17,7 @@ import {
 } from "apache-arrow";
 
 import { bearer, TOKENS } from "./helpers/auth-fixture";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const HOST = "127.0.0.1:3939";
 const ORIGIN = `http://${HOST}`;
@@ -396,7 +397,7 @@ describe("memory correctness", () => {
       });
     const response = await Promise.race([
       operation,
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("remember waited on embedder")), 2000)),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("remember waited on embedder")), scaledMs(2000))),
     ]);
     const value = await toolValue(response);
     expect(embedCalls).toBe(0);

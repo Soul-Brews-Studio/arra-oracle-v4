@@ -19,8 +19,9 @@
 //   harness              -> test-side dataset inspection/surgery on
 //                           search_chunks_v1's rows and indexes (never
 //                           product code)
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   ops: Array<{ label: string; facade: "publication" | "context" | "reader" | "reader_other" | "harness"; method: string; request?: any }>;
   revisionIds: string[];
   clockMs?: number;

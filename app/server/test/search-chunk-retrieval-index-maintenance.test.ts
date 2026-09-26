@@ -20,9 +20,10 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createFixture, PYTHON, revisionEnvelope, runGated } from "./helpers/publication-fixture";
 import { CHUNKER_VERSION, activeEmbeddingProfileId } from "../src/publication/search-chunk";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = join(import.meta.dir, "fixtures", "search-chunk-v1", "core", "gated-retrieval.ts");
-const TIMEOUT_MS = 180_000;
+const TIMEOUT_MS = testTimeout(180_000);
 const ALPHA = "alpha-workspace";
 // #30 R7 (search-embed): the closed registry accepts only its active id.
 const PROFILE = activeEmbeddingProfileId();

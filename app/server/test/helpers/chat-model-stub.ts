@@ -10,6 +10,14 @@
  *
  * `mode` is mutable so one stub can play "answers", "fails with 500" and
  * "never answers" in turn.
+ *
+ * R13 (docs/overnight/DECISIONS.md): "never answers" means for as long as
+ * the client waits. A held request is settled (503) when its client aborts
+ * and, at the latest, by `stop()` before the server stops. Measured on Bun
+ * 1.3.14: with a never-settling handler in flight, `server.stop(true)` only
+ * resolves if something else wakes the event loop -- with nothing else
+ * scheduled it never does (4/4 locally), which is how chat-model.test.ts's
+ * `afterAll` timed out at 30 s on the GitHub runner (run 36268048901).
  */
 
 export type StubChatRequest = { readonly path: string; readonly text: string; readonly body: any };
@@ -19,7 +27,9 @@ export type ChatModelStub = {
   readonly url: string;
   readonly requests: StubChatRequest[];
   mode: StubMode;
-  stop(): void;
+  /** Requests currently held by "hang" mode, not yet settled. */
+  readonly held: number;
+  stop(): Promise<void>;
 };
 
 /** Every 21-character id the prompt shows in square brackets, in order. */
@@ -28,6 +38,7 @@ const citedIds = (text: string): string[] => [...text.matchAll(/\[([A-Za-z0-9_-]
 export function startChatModelStub(initial: StubMode = "ok"): ChatModelStub {
   const requests: StubChatRequest[] = [];
   const state = { mode: initial };
+  const held = new Set<() => void>();
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
@@ -40,7 +51,16 @@ export function startChatModelStub(initial: StubMode = "ok"): ChatModelStub {
         body = null;
       }
       requests.push({ path: new URL(request.url).pathname, text, body });
-      if (state.mode === "hang") return new Promise<Response>(() => {});
+      if (state.mode === "hang") {
+        return new Promise<Response>((resolve) => {
+          const release = () => {
+            if (!held.delete(release)) return;
+            resolve(new Response("stub released a held request", { status: 503 }));
+          };
+          held.add(release);
+          request.signal.addEventListener("abort", release, { once: true });
+        });
+      }
       if (state.mode === "error") return new Response("model exploded", { status: 500 });
       const user = Array.isArray(body?.messages) ? String(body.messages.at(-1)?.content ?? "") : "";
       const ids = [...new Set(citedIds(user))];
@@ -57,6 +77,12 @@ export function startChatModelStub(initial: StubMode = "ok"): ChatModelStub {
     set mode(value: StubMode) {
       state.mode = value;
     },
-    stop: () => server.stop(true),
+    get held() {
+      return held.size;
+    },
+    stop: async () => {
+      for (const release of [...held]) release();
+      await server.stop(true);
+    },
   };
 }

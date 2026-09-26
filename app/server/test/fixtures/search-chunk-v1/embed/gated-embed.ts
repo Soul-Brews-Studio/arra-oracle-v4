@@ -11,12 +11,18 @@
 //  - `payload.embedderMode` selects a STUB embedder, never a real network
 //    call: "none" (omit the option entirely), "fixed" (deterministic
 //    per-text vectors, call args recorded), "hang" (a promise that never
-//    settles), "reject-once" (the first call rejects, every later call
+//    settles), "hold" (in flight until a `handshake` releases it, see
+//    `held` below), "reject-once" (the first call rejects, every later call
 //    succeeds with a fixed vector).
 //  - `op.concurrent: Op[]` runs every listed op via `Promise.all` and
 //    records each sub-result under its own index -- how the hang test
 //    proves `publishRevision` is never blocked by a concurrent
 //    `embedPendingChunks` call stuck in its embedder.
+//  - R13 (CI must actually pass): every sub-result of `concurrent` and
+//    `handshake` carries `settledSeq`, the order in which it SETTLED (0
+//    first). "The write finished while the embed call was still in flight"
+//    is then an observed order, not a wall-clock bound that a slow runner
+//    breaks (it did: publish took 323-351 ms against `< 250` on GitHub).
 //  - R20 (docs/overnight/DECISIONS.md): `payload.digests` scripts the STUB
 //    model-digest probe, one entry per probe call (the last entry repeats):
 //    a digest string is a measurement, `null` is "Ollama answered nothing
@@ -25,10 +31,12 @@
 //    `"none"` omits the probe option entirely. `payload.digestTimeoutMs`
 //    sets `ARRA_EMBED_DIGEST_TIMEOUT_MS` before import, like
 //    `embedTimeoutMs`. Never a real network call.
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
+
 type Op = { facade?: "context" | "publication" | "taxonomy" | "harness"; method: string; request: any };
 
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   ops: Array<
     | Op
     | { concurrent: Op[] }
@@ -41,7 +49,7 @@ const payload = JSON.parse(payloadJson ?? "{}") as {
   clockMs?: number;
   revisionIds?: string[];
   embedTimeoutMs?: number;
-  embedderMode?: "none" | "fixed" | "hang" | "reject-once" | "always-fail" | "short-batch" | "wrong-dims" | "nan-values";
+  embedderMode?: "none" | "fixed" | "hang" | "hold" | "reject-once" | "always-fail" | "short-batch" | "wrong-dims" | "nan-values";
   embedDims?: number;
   digests?: Array<string | null> | "none";
   digestTimeoutMs?: number;
@@ -101,6 +109,18 @@ const embedderInvokedPromise = new Promise<void>((resolve) => {
   embedderInvokedResolve = resolve;
 });
 
+/**
+ * R13 (CI must actually pass): `hold` mode. The stub stays in flight until
+ * the child releases it, which a `handshake` op does only AFTER `second` has
+ * settled; it then answers fixed vectors. A write that settles while the
+ * embedder is held never waited for the embedder, and no clock is involved.
+ * If the SERVICE abandons the held call first (it aborts the signal once its
+ * own timeout fires -- what happens when something queues the write behind
+ * the embedder, mutation M4), `held.aborted` records it and the handshake
+ * reports it as `abortedWhileHeld`.
+ */
+const held: { release: (() => void) | null; aborted: boolean } = { release: null, aborted: false };
+
 function fixedVector(seed: number): number[] {
   return Array.from({ length: DIMS }, (_, i) => ((seed + i) % 97) / 97);
 }
@@ -108,9 +128,21 @@ function fixedVector(seed: number): number[] {
 const embedder =
   payload.embedderMode === undefined || payload.embedderMode === "none"
     ? undefined
-    : async (texts: string[], _signal?: AbortSignal): Promise<number[][]> => {
+    : async (texts: string[], signal?: AbortSignal): Promise<number[][]> => {
         embedCalls.push(texts);
         embedderInvokedResolve?.();
+        if (payload.embedderMode === "hold") {
+          return new Promise<number[][]>((resolve) => {
+            let released = false;
+            signal?.addEventListener("abort", () => {
+              if (!released) held.aborted = true;
+            });
+            held.release = () => {
+              released = true;
+              resolve(texts.map((text, i) => fixedVector(text.length + i)));
+            };
+          });
+        }
         if (payload.embedderMode === "hang") {
           return new Promise<number[][]>(() => {
             /* never resolves */
@@ -250,6 +282,10 @@ async function runOp(op: Op): Promise<Record<string, unknown>> {
   }
 }
 
+// Taken in the continuation that runs when an op's promise settles, so the
+// numbers follow settle order exactly (continuations run FIFO).
+let settleCount = 0;
+
 try {
   for (const [index, op] of payload.ops.entries()) {
     const label = `op${index}`;
@@ -259,7 +295,8 @@ try {
         op.concurrent.map(async (sub) => {
           const subStarted = Bun.nanoseconds();
           const outcome = await runOp(sub);
-          return { ...outcome, elapsedMs: (Bun.nanoseconds() - subStarted) / 1_000_000 };
+          const settledSeq = settleCount++;
+          return { ...outcome, settledSeq, elapsedMs: (Bun.nanoseconds() - subStarted) / 1_000_000 };
         }),
       );
       results[label] = { concurrent: settled, elapsedMs: (Bun.nanoseconds() - batchStarted) / 1_000_000 };
@@ -270,6 +307,7 @@ try {
       const firstStarted = Bun.nanoseconds();
       const firstPromise = runOp(op.handshake.first).then((outcome) => ({
         ...outcome,
+        settledSeq: settleCount++,
         elapsedMs: (Bun.nanoseconds() - firstStarted) / 1_000_000,
       }));
       // The load-bearing wait: `second` never starts until the stub
@@ -277,9 +315,22 @@ try {
       await embedderInvokedPromise;
       const secondStarted = Bun.nanoseconds();
       const secondOutcome = await runOp(op.handshake.second);
-      const second = { ...secondOutcome, elapsedMs: (Bun.nanoseconds() - secondStarted) / 1_000_000 };
+      const secondSettledSeq = settleCount++;
+      const second = {
+        ...secondOutcome,
+        settledSeq: secondSettledSeq,
+        elapsedMs: (Bun.nanoseconds() - secondStarted) / 1_000_000,
+      };
+      // `hold`: only now, with `second` settled, may the embedder answer.
+      const heldAbortedBeforeRelease = held.aborted;
+      held.release?.();
       const first = await firstPromise;
-      results[label] = { first, second, elapsedMs: (Bun.nanoseconds() - batchStarted) / 1_000_000 };
+      results[label] = {
+        first,
+        second,
+        ...(payload.embedderMode === "hold" ? { abortedWhileHeld: heldAbortedBeforeRelease } : {}),
+        elapsedMs: (Bun.nanoseconds() - batchStarted) / 1_000_000,
+      };
       continue;
     }
     results[label] = await runOp(op);

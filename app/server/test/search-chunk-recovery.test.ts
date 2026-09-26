@@ -70,6 +70,8 @@ import {
   deriveChunkId,
   deriveContentHash,
 } from "../src/publication/search-chunk";
+import { scaledMs } from "./helpers/timing.scaledMs";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 // ── dependencies ────────────────────────────────────────────────────────────
 
@@ -98,7 +100,7 @@ if (existsSync(SERVICE_MODULE)) {
 
 const PENDING = MISSING.length > 0;
 const reason = PENDING ? ` [PENDING: ${MISSING.join(", ")}]` : "";
-const CASE_TIMEOUT_MS = 300_000;
+const CASE_TIMEOUT_MS = testTimeout(300_000);
 type CaseBody = () => void | Promise<unknown>;
 const recoveryTest = PENDING
   ? (name: string, fn: CaseBody) => test.skip(name + reason, fn, CASE_TIMEOUT_MS)
@@ -162,7 +164,7 @@ type Plan = {
   steps: Step[];
 };
 
-const HANDSHAKE_DEADLINE_MS = 60_000;
+const HANDSHAKE_DEADLINE_MS = scaledMs(60_000);
 const MAX_CAPTURED_STDERR_UNITS = 64 * 1024;
 
 const LAUNCHER_SOURCE = [
@@ -928,6 +930,6 @@ recoveryTest("G1 the parent deadline fires: a silent child is killed and reaped"
   const elapsedMs = (Bun.nanoseconds() - started) / 1_000_000;
   expect(String((failure as Error)?.message)).toContain("parent deadline exceeded");
   expect(elapsedMs).toBeGreaterThan(configuredMs * 0.9);
-  expect(elapsedMs).toBeLessThan(30_000);
+  expect(elapsedMs).toBeLessThan(scaledMs(30_000));
   await child.killAndReap(5_000);
 });

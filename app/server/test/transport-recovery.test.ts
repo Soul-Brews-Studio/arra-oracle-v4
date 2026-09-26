@@ -38,10 +38,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createContextFixture } from "./helpers/context-fixture";
 import { PYTHON, runGated } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const TEST_DIR = import.meta.dir;
 const CHILD = join(TEST_DIR, "fixtures", "transport-v1", "recovery", "transport-child.ts");
-const TEST_TIMEOUT_MS = 120_000;
+const TEST_TIMEOUT_MS = testTimeout(120_000);
 const WORKSPACE = "alpha-workspace";
 
 const MISSING: string[] = [];
@@ -104,7 +106,7 @@ runIt(
     const workDir = await mkdtemp(join(tmpdir(), "arra-v4-transport-recovery-"));
     cleanups.push(() => rm(workDir, { recursive: true, force: true }));
 
-    const result = await runGated(root, CHILD, ["poison", root, workDir], { deadlineMs: 60_000 });
+    const result = await runGated(root, CHILD, ["poison", root, workDir], { deadlineMs: scaledMs(60_000) });
     // A locked table left un-restored would make this assertion itself wrong,
     // so cleanup and the load-bearing check are the same fact.
     if (result.code !== 0) unlockTree(join(root, "peers.lance"));
@@ -164,7 +166,7 @@ runIt(
     const workDir = await mkdtemp(join(tmpdir(), "arra-v4-transport-recovery-fresh-"));
     cleanups.push(() => rm(workDir, { recursive: true, force: true }));
 
-    const result = await runGated(root, CHILD, ["fresh", root, workDir], { deadlineMs: 30_000 });
+    const result = await runGated(root, CHILD, ["fresh", root, workDir], { deadlineMs: scaledMs(30_000) });
     expect({ code: result.code, stderr: result.stderr.slice(-500) }).toEqual({ code: 0, stderr: "" });
     const events = eventsOf(result.stdout);
     const write = eventValue(events, "write:fresh-owner") as { status: number; body: { outcome?: string; row?: { name?: string } } };
@@ -182,7 +184,7 @@ runIt(
     const workDir = await mkdtemp(join(tmpdir(), "arra-v4-transport-recovery-serialize-"));
     cleanups.push(() => rm(workDir, { recursive: true, force: true }));
 
-    const result = await runGated(root, CHILD, ["serialize", root, workDir], { deadlineMs: 60_000 });
+    const result = await runGated(root, CHILD, ["serialize", root, workDir], { deadlineMs: scaledMs(60_000) });
     expect({ code: result.code, stderr: result.stderr.slice(-500) }).toEqual({ code: 0, stderr: "" });
     const events = eventsOf(result.stdout);
 

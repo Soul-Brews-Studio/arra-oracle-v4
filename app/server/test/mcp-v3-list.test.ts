@@ -18,6 +18,8 @@ import { join } from "node:path";
 import { createTaxonomyFixture, type TaxonomyFixture } from "./helpers/taxonomy-fixture";
 import { runGated } from "./helpers/publication-fixture";
 import { derivedId } from "../src/mcp/legacy-v3/ids.derivedId";
+import { scaledMs } from "./helpers/timing.scaledMs";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = join(import.meta.dir, "fixtures", "v3-compat-v1", "core", "writes-child.ts");
 const FRESH = "ws-v6-fresh";
@@ -44,7 +46,7 @@ let outEmpty: Record<string, any> = {};
 
 async function runChild(root: string, banks: string[], steps: unknown[]) {
   const result = await runGated(root, CHILD, [root, work, JSON.stringify({ banks, operator: [], steps })], {
-    deadlineMs: 180_000,
+    deadlineMs: scaledMs(180_000),
     env: { ARRA_DATA_DIR: join(work, "legacy"), ARRA_KNOWLEDGE_DATASET_ROOT: root, HOME: home },
   });
   const line = result.stdout.trim().split("\n").filter(Boolean).at(-1);
@@ -155,7 +157,7 @@ beforeAll(async () => {
     { label: "list_empty", bank: EMPTY, tool: "oracle_list", args: {} },
     { label: "recap_empty", bank: EMPTY, tool: "oracle_recap", args: {} },
   ]);
-}, 300_000);
+}, testTimeout(300_000));
 
 afterAll(async () => {
   await taxonomy?.cleanup();

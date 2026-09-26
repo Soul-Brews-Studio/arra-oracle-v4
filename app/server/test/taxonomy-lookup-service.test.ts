@@ -24,6 +24,7 @@ import { createKnowledgeAccess } from "../src/knowledge/transport";
 import { configureKnowledgeAccess, createMcpAdapter } from "../src/mcp";
 import { openEvidenceReader } from "../src/publication/service";
 import { createFixture, type Fixture } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
@@ -54,7 +55,7 @@ beforeAll(async () => {
       not_before: "2020-01-01T00:00:00.000Z", expires_at: "2099-01-01T00:00:00.000Z", revoked: false,
     }],
   }), { encoding: "utf-8", mode: 0o600 });
-}, 60_000);
+}, testTimeout(60_000));
 
 afterAll(async () => {
   configureKnowledgeAccess(null);

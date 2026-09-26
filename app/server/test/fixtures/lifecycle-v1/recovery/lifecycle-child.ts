@@ -19,8 +19,9 @@
 //   {"event":"done"}
 //
 // argv: <datasetRoot> <payloadJson>
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   ops: Array<{ facade: "context" | "publication" | "harness"; method: string; request: any }>;
   revisionIds?: string[];
   clockMs?: number | number[];
