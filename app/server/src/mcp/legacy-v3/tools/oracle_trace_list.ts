@@ -64,6 +64,13 @@ export async function oracle_trace_list(args: Record<string, unknown>, context: 
       exhausted = true;
       break;
     }
+    // K5 (`listTraces`) promises a non-null cursor whenever `has_more` is
+    // true (docs/overnight/V3-PARITY.md §5). Copying a null cursor into the
+    // next request would restart the walk from the newest trace: rows
+    // already matched come back a second time, and later matches past this
+    // page are never reached. Stop honestly instead -- an under-reported
+    // "might be more" is never silently truncated OR duplicated.
+    if (result.next_after_created_at === null || result.next_after_id === null) break;
     after_created_at = result.next_after_created_at;
     after_id = result.next_after_id;
   }
