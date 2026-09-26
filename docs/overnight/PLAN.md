@@ -63,11 +63,11 @@ are part of done.
 |---|---|---|
 | P0 | baseline: full suite, typecheck, build on `f919369` | done: 1123/0, 496.65s, typecheck + build clean |
 | P1 | Understand: 18 issues re-verified, 4 maps, rulings R1–R17 | done |
-| P2 | wave 1 + 1.5: 12 slices in parallel worktrees (see log) | running |
-| P3 | wave 2 (on merged wave 1): #29 lifecycle semantics · #30 chunk search (ngram, keyword + semantic, embed backfill) · #32 chat via Ollama · #28 cycles + Relic adapter · #89 close | pending wave 1 merge |
-| P4 | wave 3: #33 UI surfaces · v3 parity (forum, handoff/inbox, trace tools, verify) · style splits over 500 lines · final docs | pending |
-| P5 | proof: live E2E probe across HTTP/MCP/CLI, adversarial review of each slice, `PROOF.md` | continuous |
-| P6 | docs corrected from source; integration PR to `main`; issue comments with evidence | before 07:00 |
+| P2 | waves 1–4 + repairs: 30 slices, 25+ merged (see log) | done |
+| P3 | wave 2: chat, lifecycle, search, sessions, v3 frame | done |
+| P4 | wave 3–4: v3 parity (37/37), UI, demo, CI green, docs, style | done |
+| P5 | proof: PROOF.md, DEMO.md, acceptor 146/0/1, CI green | done |
+| P6 | docs corrected from source; PR #109; issue comments | done |
 
 ## 4 · Team
 
@@ -342,3 +342,9 @@ are part of done.
   **GitHub CI GREEN ON THE INTEGRATION BRANCH: https://github.com/Soul-Brews-Studio/arra-oracle-v4/actions/runs/36275352354** (1985/0, 139 files, Linux).
   MERGED R22 (`debd350`; gated-retrieval payload reader combined: harness spill checked before R22's own @path, because both start with "@") and final-docs
   (`4c78dd2`, then `684cf12` fixing claims that went stale during the night: CI not green; R22 not on base). **FEATURE FREEZE.** Final gate, final CI, final acceptor run.
+- 05:49 **FINAL GATE on the freeze** (app code = `7d03bce`): typecheck OK · **TS 2005 pass / 0 fail, 143/143 files** · Python 268 OK + 17 + 22 + benchmarks OK ·
+  probe 57 × HTTP/MCP/CLI, **isolation 0, payload gaps 0** · **v3 client 37/37** · UI 106/0.
+- 05:49 **ACCEPTOR FINAL (Codex, independent): 146 PASS / 0 FAIL / 1 GAP, isolation 191/0, R22 PASS on HTTP/MCP/CLI, no new defect found.** Its verdict is stricter
+  than mine and wins: it accepts #87, #102 and #103 as done; #75 and #85 as measured repairs; #27–#32 as partial at whole-issue level (bounded probe);
+  #33 as partial (no browser in its probe). PROOF.md §3b records this. PR **#109** says `Fixes` only for #87, #102, #103, #105 and #89, and `Refs` for the rest.
+  19 issues got evidence comments, and the 9 where my label was stronger than the acceptor's got corrections.
