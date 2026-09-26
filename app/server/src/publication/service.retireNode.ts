@@ -1,4 +1,3 @@
-import { type ChatModelFn } from "./chat";
 import { parseRetireNode } from "./lifecycle";
 import { mutateContextWrite } from "./service.mutateContextWrite";
 import { requireContextWorkspaceRow } from "./service.requireContextWorkspaceRow";
@@ -6,7 +5,7 @@ import { type Clock, type DatasetAdapter, type LifecycleWriteOutcome, type Owner
 import { writeContextRow } from "./service.writeContextRow";
 import { writeLifecycleEvent } from "./service.writeLifecycleEvent";
 
-export function retireNode(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn }, requestBytes: Uint8Array): Promise<LifecycleWriteOutcome> {
+export function retireNode(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null }, requestBytes: Uint8Array): Promise<LifecycleWriteOutcome> {
 const request = parseRetireNode(requestBytes);
       return mutateContextWrite(core, () =>
         writeLifecycleEvent(writer, core, options, requireContextWorkspaceRow.bind(null, writer), writeContextRow.bind(null, writer, core), {

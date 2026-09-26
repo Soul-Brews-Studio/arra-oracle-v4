@@ -72,7 +72,7 @@ const RUNTIME_EXPORTS = [
 /** Twenty-two on every context WRITER facade (its own eleven plus the eleven
  *  reader methods it spreads in), eleven on every context READER facade. */
 const CONTEXT_WRITE_METHODS =
-  "advanceReadCursor,answerChat,appendMessages,createSessionLink,createTrace,getContext," +
+  "advanceReadCursor,appendMessages,createSessionLink,createTrace,getContext," +
   "getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
   "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessions,listTraceHits," +
@@ -353,7 +353,8 @@ describe("context facades across all four factories", () => {
       expect(writerMethods).toContain("listSessionLinks");
       expect(readerMethods).toContain("listSessionLinks");
       expect(readerMethods).not.toContain("createSessionLink");
-      expect({ writer: writerMethods.length, reader: readerMethods.length }).toEqual({ writer: 29, reader: 16 });
+      // 28: #32 / R9 moved `answerChat` off the writer onto the reader-side chat facade.
+      expect({ writer: writerMethods.length, reader: readerMethods.length }).toEqual({ writer: 28, reader: 16 });
       expect(writerMethods).not.toContain("close");
       expect(readerMethods).not.toContain("close");
     },

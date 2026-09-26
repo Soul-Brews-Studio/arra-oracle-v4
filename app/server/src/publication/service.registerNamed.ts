@@ -1,4 +1,3 @@
-import { type ChatModelFn } from "./chat";
 import { failPublication } from "./errors";
 import { quote } from "./storage";
 import { contextOne } from "./service.contextOne";
@@ -7,7 +6,7 @@ import { requireContextWorkspaceRow } from "./service.requireContextWorkspaceRow
 import { type Clock, type ContextRegistration, type DatasetAdapter, type OwnerCore } from "./service.types";
 import { writeContextRow } from "./service.writeContextRow";
 
-export async function registerNamed(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn }, table: string, workspace: string, requestedId: string, requestedName: string, build: (createdAt: bigint) => Record<string, unknown>, encode: (row: Record<string, unknown>) => Record<string, unknown>, fields: readonly string[]): Promise<ContextRegistration> {
+export async function registerNamed(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null }, table: string, workspace: string, requestedId: string, requestedName: string, build: (createdAt: bigint) => Record<string, unknown>, encode: (row: Record<string, unknown>) => Record<string, unknown>, fields: readonly string[]): Promise<ContextRegistration> {
 await requireContextWorkspaceRow(writer, workspace);
     await writer.refresh(table);
     const byId = await contextOne(writer, table, `${contextScope(workspace)} AND id = ${quote(requestedId)}`);

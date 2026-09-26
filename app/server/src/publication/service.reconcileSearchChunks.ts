@@ -1,4 +1,3 @@
-import { type ChatModelFn } from "./chat";
 import { failPublication } from "./errors";
 import { MAX_RECONCILE_REVISIONS, parseReconcileSearch } from "./search-chunk";
 import { quote } from "./storage";
@@ -8,7 +7,7 @@ import { requireContextWorkspaceRow } from "./service.requireContextWorkspaceRow
 import { selectAcceptedRevision } from "./service.selectAcceptedRevision";
 import { type Clock, type DatasetAdapter, type OwnerCore } from "./service.types";
 
-export async function reconcileSearchChunks(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn }, requestBytes: Uint8Array): Promise<{
+export async function reconcileSearchChunks(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null }, requestBytes: Uint8Array): Promise<{
       visited: number;
       missing: number;
       missing_revisions: { node_id: string; revision_id: string }[];

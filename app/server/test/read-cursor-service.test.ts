@@ -116,7 +116,7 @@ describe("real persistence: cursors inside the real gate", () => {
         // (`{ ...reads, ...writeOnly }`), so this is that union, not just the
         // thirteen write-only methods.
         expect(parsed.contextMethods).toEqual([
-          "advanceReadCursor", "answerChat", "appendMessages", "createSessionLink", "createTrace", "getContext",
+          "advanceReadCursor", "appendMessages", "createSessionLink", "createTrace", "getContext",
           "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
           "indexRevisionChunks", "joinSession", "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks",
           "listSessionLinks", "listSessions", "listTraceHits", "reconcileSearchChunks", "registerPeer", "registerSession",

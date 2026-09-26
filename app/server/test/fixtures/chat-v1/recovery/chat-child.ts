@@ -65,6 +65,9 @@ const parkUntilReleased = async (): Promise<void> => {
 };
 
 const { openContextWriter } = await import(plan.serviceModule);
+// #32 / R9: `answerChat` lives on the chat facade over a reader's context,
+// not on the writer; it sits beside `service.ts` in the same directory.
+const { createChatService } = await import(plan.serviceModule.replace(/service\.ts$/, "service.createChatService.ts"));
 
 let clockIndex = 0;
 let idIndex = 0;
@@ -90,9 +93,9 @@ const newRevisionId = (): string => {
  * The injected model boundary. `plan.modelMode` decides its behaviour:
  *   - "stub": returns a deterministic answer, never touching fetch.
  *   - "fail": throws, so `answerChat` must map it through `mapModelFailure`.
- *   - "absent" / unset: no `model` option is passed at all, so `answerChat`
- *     is unavailable on first use -- the boundary this file must prove is
- *     STUBBED, not merely present.
+ *   - "absent" / unset: the chat facade is built with no `model` at all, so
+ *     `answerChat` is unavailable on first use -- the boundary this file must
+ *     prove is STUBBED, not merely present.
  */
 const model =
   plan.modelMode === "stub" || plan.modelMode === "fail"
@@ -128,13 +131,22 @@ const service = await openContextWriter(plan.datasetRoot, {
   newRevisionId,
   sourceNamespace: plan.sourceNamespace ?? null,
   onContextBoundary,
-  ...(model === undefined ? {} : { model }),
 });
+// Chat over the SAME owner's context reads, so chat-on-a-poisoned-owner is
+// still exactly that: the owner's reads plus one model call.
+const chat = createChatService(service.context, { model, settings: null });
 
 const encode = (value: unknown): Uint8Array => new TextEncoder().encode(JSON.stringify(value));
 
 const call = async (spec: any): Promise<unknown> => {
-  const facade = spec.facade === "publication" ? service.publication : spec.facade === "taxonomy" ? service.taxonomy : service.context;
+  const facade =
+    spec.facade === "publication"
+      ? service.publication
+      : spec.facade === "taxonomy"
+        ? service.taxonomy
+        : spec.facade === "chat"
+          ? chat
+          : service.context;
   const method = facade[spec.method];
   if (typeof method !== "function") throw new Error(`no such method: ${spec.facade}.${spec.method}`);
   return await method.call(facade, encode(spec.request));

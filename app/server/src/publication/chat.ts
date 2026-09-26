@@ -16,7 +16,7 @@
  * `context.ts`'s own `encodeMessageRow`. This file only shapes the REQUEST
  * and the RESPONSE around that derivation; service.ts owns the retrieval,
  * the per-session authorization (service.getContext.ts, #85) and the model
- * call.
+ * call (service.createChatService.ts, a READER-side facade since #32 / R9).
  */
 
 import { requireBoundedText, requireClosedObject, requireNonemptyString, type Tokens } from "../contracts/common";
@@ -48,6 +48,7 @@ export const MAX_LINKED_SESSIONS = 8;
 
 const GET_CONTEXT_KEYS = ["workspace_name", "peer_name", "session_name", "max_items"] as const;
 const ANSWER_CHAT_KEYS = ["workspace_name", "peer_name", "session_name", "question", "max_items"] as const;
+const GET_CHAT_SETTINGS_KEYS = ["workspace_name"] as const;
 
 export type GetContextRequest = {
   workspace_name: string;
@@ -57,6 +58,8 @@ export type GetContextRequest = {
 };
 
 export type AnswerChatRequest = GetContextRequest & { question: string };
+
+export type GetChatSettingsRequest = { workspace_name: string };
 
 function parseRequest(bytes: Uint8Array, tokens: Tokens = []): JcsObject {
   if (!(bytes instanceof Uint8Array)) {
@@ -110,6 +113,14 @@ export function parseAnswerChat(bytes: Uint8Array): AnswerChatRequest {
     question: question(o.get("question"), ["question"]),
     max_items: maxItems(o.get("max_items"), ["max_items"]),
   };
+}
+
+/** `getChatSettings` names only its scope. The settings are process
+ *  configuration, not workspace data, so the scope is admission's, not a
+ *  lookup key -- but the object is still closed like every other request. */
+export function parseGetChatSettings(bytes: Uint8Array): GetChatSettingsRequest {
+  const o = requireClosedObject(parseRequest(bytes), GET_CHAT_SETTINGS_KEYS, []);
+  return { workspace_name: name(o.get("workspace_name"), ["workspace_name"]) };
 }
 
 /* ------------------------------------------------------------------ *
@@ -215,29 +226,45 @@ export type ChatModelInput = {
 /** The chat model call, injected exactly like `Clock` is injected elsewhere
  *  in this kernel: a real caller supplies a real model, a test supplies a
  *  stub, and NOTHING in this file or in the read-only `getContext` path ever
- *  invokes one on its own. */
+ *  invokes one on its own. Production builds one from env in
+ *  `src/chat-model.ts` (#32 / R9). */
 export type ChatModelFn = (input: ChatModelInput) => Promise<string>;
 
+/** The effective chat settings `getChatSettings` reports (#32 / R9). Never
+ *  the model's address: configuration a caller may see, not where it lives. */
+export type ChatSettings = {
+  provider: string;
+  model: string;
+  max_output_tokens: number;
+  timeout_ms: number;
+};
+
+/** `{model: null}` is the unconfigured answer: no model, nothing to report. */
+export type ChatSettingsResult = ChatSettings | { model: null };
+
+export type AnswerChatResult = {
+  answer: string;
+  coverage: ContextResult["coverage"];
+  excluded: ExcludedContextItem[];
+  excluded_omitted: number;
+  items_used: string[];
+};
+
 /**
- * Map a thrown MODEL failure (timeout, rate limit, truncated stream, or any
- * other model-call exception) onto the CLOSED publication code set.
+ * Map an absent or failed MODEL call onto the closed publication code set:
+ * `model_unavailable` (#32, overnight ruling R9; chat-v1.md amendment).
  *
- * Neither existing envelope was built for this. A governed `ContractError`
- * is about malformed REQUEST bytes -- the request here is fine. The seven
- * `PublicationErrorCode`s are about persistence and stored-state outcomes --
- * nothing was written or read incorrectly; an external generation call
- * simply did not complete.
+ * One code for every way a model can fail to produce an answer -- none
+ * configured, unreachable, timed out, answered non-2xx, answered nothing --
+ * because the caller acts on all of them the same way: nothing was read
+ * wrongly, nothing was written, retry later or configure a model.
  *
- * DECISION: `writer_unavailable`. Its existing meaning in this file --
- * "the thing this call depends on to do its job is not available right now"
- * (see `openContextWriter`'s `OWNERS.has(canonical)` gate check) -- already
- * describes a model timeout, a rate limit or a truncated stream from the
- * caller's side: retry later, nothing was corrupted. `invalid_request` is
- * wrong because the CALLER did nothing wrong. `recovery_required` is wrong
- * because nothing was durably written, so there is no ambiguous window to
- * recover from -- `answerChat` never touches the owner's write queue at all.
- * No new code is added to the closed set; this is a reuse, not an extension.
+ * It used to REUSE `writer_unavailable`, which made "no model", "model
+ * failed" and "the dataset writer is busy" one indistinguishable 503 -- and
+ * the writer case was a real, separate defect (#32 analysis) that the reuse
+ * hid. A model failure is not a writer failure: `answerChat` no longer touches
+ * a writer at all.
  */
 export function mapModelFailure(): never {
-  return failPublication("writer_unavailable", "");
+  return failPublication("model_unavailable", "");
 }

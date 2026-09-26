@@ -1,5 +1,4 @@
 import { prepareNewMessage } from "../contracts/source-ingestion-v1";
-import { type ChatModelFn } from "./chat";
 import { MAX_RESULT_WIRE_BYTES, MESSAGE_FIELDS as MESSAGE_FIELDS_LOCAL, encodeMessageRow, encodeSessionRow, parseAppendMessages, rowWireBytes } from "./context";
 import { failPublication, isContractError } from "./errors";
 import { timestampToMicros } from "./rows";
@@ -16,7 +15,7 @@ import { selectedMaximum } from "./service.selectedMaximum";
 import { type Clock, type DatasetAdapter, type OwnerCore } from "./service.types";
 import { writeContextRow } from "./service.writeContextRow";
 
-export async function appendMessages(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn }, requestBytes: Uint8Array) {
+export async function appendMessages(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null }, requestBytes: Uint8Array) {
 const request = parseAppendMessages(requestBytes);
       const accepted: Array<{ index: number; outcome: "accepted" | "idempotent"; row: Record<string, unknown> }> = [];
       // Brackets, then one comma per row: sum + n + 1, not sum + n.

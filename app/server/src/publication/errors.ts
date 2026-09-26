@@ -30,6 +30,11 @@ export const PUBLICATION_ERROR_CODES = [
   // audit:read operator view, or a caller-asserted peer outside the grant's
   // arra-auth/v1 `peers` binding. HTTP 403. Appended, never reordered.
   "forbidden",
+  // #32 / R9: no chat model is configured, or the configured one could not
+  // produce an answer (unreachable, timed out, failed, empty). Nothing was
+  // read wrongly and nothing was written; the caller did nothing wrong. HTTP
+  // 503. Appended, never reordered.
+  "model_unavailable",
 ] as const;
 
 export type PublicationErrorCode = (typeof PUBLICATION_ERROR_CODES)[number];
@@ -45,6 +50,7 @@ const MESSAGES: Readonly<Record<PublicationErrorCode, string>> = Object.freeze({
   recovery_required: "writer recovery required",
   limit_exceeded: "publication limit exceeded",
   forbidden: "request not permitted for this caller",
+  model_unavailable: "chat model unavailable",
 });
 
 export type PublicationErrorShape = {

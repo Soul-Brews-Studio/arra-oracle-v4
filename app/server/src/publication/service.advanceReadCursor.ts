@@ -1,4 +1,3 @@
-import { type ChatModelFn } from "./chat";
 import { PublicationError, failPublication } from "./errors";
 import { READ_CURSOR_FIELDS, encodeReadCursorRow, parseAdvanceReadCursor } from "./read-cursor";
 import { microsToTimestamp } from "./rows";
@@ -11,7 +10,7 @@ import { selectCursorMessage } from "./service.selectCursorMessage";
 import { selectCursorRow } from "./service.selectCursorRow";
 import { type Clock, type DatasetAdapter, type OwnerCore } from "./service.types";
 
-export function advanceReadCursor(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn }, requestBytes: Uint8Array) {
+export function advanceReadCursor(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null }, requestBytes: Uint8Array) {
 // STATIC validation precedes owner work. Parsing inside the queued turn
       // would make a malformed request an owner event.
       const request = parseAdvanceReadCursor(requestBytes);

@@ -66,6 +66,8 @@ export const PEER_FIELDS: Readonly<Record<string, readonly PeerFieldPath[]>> = O
   registerSession: [],
   listMcpCalls: [],
   listConnections: [],
+  // #32 / R9: process configuration, names no peer at all.
+  getChatSettings: [],
   getRevisionAssociations: [],
   scanDependents: [],
   reconcileRevisionAssociations: [],

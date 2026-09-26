@@ -179,7 +179,7 @@ describe("real persistence: getContext and answerChat inside the real gate", () 
     );
 
     test(
-      "a model failure maps onto the closed publication code set, never a third envelope",
+      "a model failure maps onto the closed publication code set (model_unavailable, #32 / R9), never a third envelope",
       async () => {
         const parsed = await drive({
           modelMode: "fail",
@@ -201,7 +201,7 @@ describe("real persistence: getContext and answerChat inside the real gate", () 
         expect(parsed.answerChat.ok).toBe(false);
         expect(parsed.answerChat).toMatchObject({
           name: "PublicationError",
-          code: "writer_unavailable",
+          code: "model_unavailable",
           path: "",
           version: "arra-publication-error/v1",
         });

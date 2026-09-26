@@ -1,5 +1,4 @@
 import { targetOp } from "../contracts/evidence-v1";
-import { type ChatModelFn } from "./chat";
 import { PublicationError, failPublication } from "./errors";
 import { timestampToMicros } from "./rows";
 import { quote } from "./storage";
@@ -13,7 +12,7 @@ import { requireContextWorkspaceRow } from "./service.requireContextWorkspaceRow
 import { type Clock, type DatasetAdapter, type OwnerCore } from "./service.types";
 import { writeContextRow } from "./service.writeContextRow";
 
-export function createTrace(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn }, requestBytes: Uint8Array) {
+export function createTrace(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null }, requestBytes: Uint8Array) {
 // STATIC validation precedes owner work, as with every other mutation.
       const request = parseCreateTrace(requestBytes);
       // Target normalization is PURE and needs only this request's own

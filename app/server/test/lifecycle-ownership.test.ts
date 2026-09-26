@@ -61,7 +61,7 @@ const RUNTIME_EXPORTS = [
   "openPublicationWriter",
 ].join(",");
 const CONTEXT_WRITE_METHODS =
-  "advanceReadCursor,answerChat,appendMessages,createSessionLink,createTrace,getContext," +
+  "advanceReadCursor,appendMessages,createSessionLink,createTrace,getContext," +
   "getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
   "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessions,listTraceHits," +
