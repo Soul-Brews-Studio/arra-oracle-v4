@@ -309,6 +309,24 @@ v3". Measured usage on this machine: 709 real v3 tool calls; `oracle_search` 46%
     `model_unavailable`, the same as chat after R9.
 - **Reverse by**: a per-workspace index, which would make the score local.
 
+## R22 · Keyword hit ORDER uses workspace-local signals only
+
+- **Ruling**: BM25 over the shared FTS index may select *candidates*, prefiltered to
+  the workspace and overfetched. It must not decide the *order* returned. Order is
+  computed from the workspace's own data:
+  1. occurrences of the query in the node's current head text, case-folded, descending;
+  2. then the head's `accepted_at`, descending;
+  3. then `node_id`.
+
+  `rank` is the position in that order.
+- **Why**: R21 removed the score, but the verifier measured that BETA-only writes
+  still reorder ALPHA's own hits (A3,A1,A2 → A3,A2,A1), because BM25's IDF is
+  corpus-wide. The order was still a cross-tenant side channel.
+- **Known residual**: when the workspace has more matches than the candidate
+  overfetch, *which* candidates enter the set can still depend on global statistics.
+  It is documented with the measured bound. A per-workspace index closes that fully.
+- **Reverse by**: going back to BM25 order, which trades isolation for ranking quality.
+
 ## R12 · Model split tonight (corrects PLAN v0)
 
 - Nat's latest rule (09-21 08:12, c30e0ba2 #14638): Sonnet codes; Opus and Fable plan and check.

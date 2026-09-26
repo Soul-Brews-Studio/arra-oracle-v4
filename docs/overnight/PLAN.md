@@ -307,3 +307,12 @@ are part of done.
 - 03:21 v3-trace ACCEPTED after repair: the tie-safe K5 cursor (red: 6 of 8 tied rows lost; green: 1004/1004 visited once), v3 project and depth filters honoured (never silently dropped), D4 pinned, the flaky walk bounded. Merge in progress via the parameterised merge workflow (`wf_f0a5ce37-b58`).
 - 03:28 Wave 4 final: v3-search, v3-reads and search-polish (R21) ACCEPTED. **v3-list REFUTED twice**: its recall tools (reflect, recap, inbox) filtered only through listNodes' default view, so nodes the eligibility check calls ineligible (inactive head, outside the validity window) could come back. Repair (`wf_78ab45de-db3`, Opus) routes recall through the full #29 eligibility evaluation at request time; browse (oracle_list) stays flagged history.
 - 03:36 **v3-trace merge ACCEPTED** (`bbf4bb1`): facades are reader 21 and writer 33; registry and PEER_FIELDS both 57; **suite 1898 pass / 0 fail, 127/127 files · Python 268 OK · v3 harness PASS 35 / FAIL 0 / GAP 2** (oracle_list and oracle_inbox, in v3-list repair).
+- 03:40 MERGED search-polish (R21) as `7a3bb3d`. **GATE 8 caught 5 integration failures** (1896/5, 128 files): R21's byte-identical ALPHA isolation tests fail
+  on the integrated keyword path, and 3 v3-search tests pin pre-R21 behaviour (a raw score, writer_unavailable on a down embedder). R21 is authoritative:
+  an Opus fixer plus an independent verifier (`wf_42f191ac-8ac`) are making R21 hold on the product, with no test weakened. Probe 57 methods ×4, isolation 0;
+  v3 harness 35/0/2.
+- 03:55 **R21 integration fix ACCEPTED** (`5cc9270`, `ddfeb47`): a stale bare profile name in the R21 tests, plus a real adapter bug (the v3 adapter still expected
+  `writer_unavailable` for a down embedder). Tests were made stricter, not weaker. **Suite 1902 pass / 0 fail, 128/128 files · Python 268 OK · v3 harness 35/0/2.**
+  The verifier confirmed ALPHA's keyword bytes are identical over HTTP and MCP after 24 BETA-only writes.
+  **Honest note**: my fixer prompt said R21 forbids BM25-dependent *ordering*; the written ruling only removes the score, and the fixer rightly followed the
+  ruling. The residual is measured: BETA-only writes can reorder ALPHA's own hits (A3,A1,A2 → A3,A2,A1). **R22** launched to close it.
