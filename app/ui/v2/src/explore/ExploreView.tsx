@@ -151,6 +151,8 @@ export function ExploreView({
             onSelect: onSelectNode,
             typeTerm: listing.typeTerm as TypeTerm | null,
             onTypeTerm: listing.setTypeTerm,
+            includeInactive: listing.includeInactive,
+            onIncludeInactive: listing.setIncludeInactive,
             loading: listing.nodes.state.loading,
             error: listing.nodes.state.error,
             supported: listing.nodes.state.supported,

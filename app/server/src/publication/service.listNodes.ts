@@ -2,8 +2,9 @@ import { failPublication } from "./errors";
 import { encodeNodeRow, encodeRevisionRow, MAX_CHAIN_WIRE_BYTES } from "./rows";
 import { quote } from "./storage";
 import { contextOne } from "./service.contextOne";
-import { NODE_REVISIONS, NODES, scopeOf } from "./service.constants";
+import { NODE_REVISIONS, NODES, SUPERSEDE_LOG, scopeOf } from "./service.constants";
 import { deriveNodeType } from "./service.deriveNodeType";
+import { terminalEventsFor } from "./service.terminalEventsFor";
 import { parseListNodes } from "./service.parseListNodes";
 import { requireWorkspace } from "./service.requireWorkspace";
 import { type DatasetAdapter } from "./service.types";
@@ -49,7 +50,15 @@ export async function listNodes(
   // `type_term` filter breaks that equivalence -- matches can be sparse
   // across the id order -- so it widens the window to MAX_SCANNED_NODES
   // instead and the loop below stops on MATCH count, not window position.
-  const scanLimit = request.type_term === null ? request.limit + 1 : MAX_SCANNED_NODES;
+  //
+  // #29 slice B (overnight R7): `include_inactive: false` (the ordinary
+  // default) is exactly the same kind of filter -- a retired or superseded
+  // node drops out of the id-ordered window just like a wrong `type_term`
+  // does -- so it widens the scan window the SAME way. Only the fully
+  // unfiltered case (no type_term, history mode) keeps the tight limit+1
+  // window.
+  const filtered = request.type_term !== null || !request.include_inactive;
+  const scanLimit = filtered ? MAX_SCANNED_NODES : request.limit + 1;
 
   const selected = await reader.orderedProjection(
     NODES,
@@ -71,6 +80,10 @@ export async function listNodes(
 
   await reader.refresh(NODE_REVISIONS);
 
+  // #29 slice B: ONE `supersede_log` query for the whole scanned window
+  // (`old_id IN (...)`), never one per node -- analysis-29.json fix plan B1.
+  const terminal = await terminalEventsFor(reader, request.workspace_name, ids);
+
   const rows: Record<string, unknown>[] = [];
   // Brackets plus one comma per row: sum + n + 1.
   let budget = 1;
@@ -80,6 +93,14 @@ export async function listNodes(
   for (const id of ids) {
     consumed += 1;
     lastExaminedId = id;
+
+    const lifecycle = terminal.get(id) ?? null;
+    // The "current" default excludes a node with its own terminal event
+    // BEFORE the node/revision point-reads below -- cheaper (the lookup
+    // already ran, batched, above) and it keeps a retired/superseded node
+    // out of the `type_term` derivation entirely, matching the same
+    // "examined but not matched" bookkeeping `type_term` filtering uses.
+    if (!request.include_inactive && lifecycle !== null) continue;
 
     const node = await contextOne(reader, NODES, `${scope} AND id = ${quote(id)}`);
     if (node === null) failPublication("integrity_failure", "");
@@ -123,6 +144,11 @@ export async function listNodes(
       title: encodedRevision.title,
       revision_no: encodedRevision.revision_no,
       content_digest: encodedRevision.content_digest,
+      // #29 slice B: every row carries this, in both modes -- "active" is
+      // not an absence of information, it is the answer, the same way
+      // `eligible: true` is a real answer on `getRecallEligibility`.
+      lifecycle_state: lifecycle === null ? "active" : lifecycle.kind,
+      new_id: lifecycle?.new_id ?? null,
     };
     budget += wireBytesOf(encoded) + 1;
     // Cumulative wire budget. Over budget fails; it never truncates, which
@@ -145,7 +171,31 @@ export async function listNodes(
     if (request.type_term === null) {
       // Native, predicate-scoped count -- never materializes a row into JS.
       const n = await reader.count(NODES, scope);
-      total = n.toString(10);
+      if (request.include_inactive) {
+        total = n.toString(10);
+      } else {
+        // #29 slice B (overnight R7, amending the PRs #99/#100 frozen
+        // `total` semantics -- see lifecycle-v1.md's amendment): the
+        // "current" default's `total` counts the FILTERED set, i.e. every
+        // node minus every node with its own terminal `supersede_log` row.
+        // This is an EXACT identity, not an approximation or a scan-and-
+        // count: `old_id` is scoped-unique (`writeLifecycleEventFresh`'s
+        // `already_terminal` rule) and every event names a node that exists
+        // in THIS workspace (`invalid_reference` refuses any other), so
+        // `count(supersede_log, scope)` is precisely the number of terminal
+        // nodes in scope -- two native counts, no join, no row read.
+        //
+        // Deliberately NOT extended to `is_active`/the validity window:
+        // those live inside `node_revisions`, so a native subtraction like
+        // this one does not exist for them, and this kernel already refuses
+        // to fake an exact total with a full scan (the same rule `type_term`
+        // above states). Those two predicates stay additive-only, surfaced
+        // through `getRecallEligibility`'s `reasons`, `getAcceptedHead` and
+        // `listAcceptedHistory`'s `lifecycle` label -- never silently folded
+        // into this count.
+        const terminalCount = await reader.count(SUPERSEDE_LOG, scope);
+        total = (n - terminalCount).toString(10);
+      }
     }
     // A `type_term` total has no equivalent native shape: the type lives in
     // JSON text on each revision, not a physical/indexed column, so the only

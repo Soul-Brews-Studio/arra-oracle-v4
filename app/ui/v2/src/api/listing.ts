@@ -55,6 +55,11 @@ export type NodeRow = {
   content_digest: string;
   created_at: string;
   updated_at: string;
+  /** #29 slice B (lifecycle-v1.md amendment 2026-09-26): additive on every
+   *  row, in both modes -- "active" is a real answer, not an absence of one. */
+  lifecycle_state: "active" | "retired" | "superseded";
+  /** The successor's node id when `lifecycle_state === "superseded"`, else null. */
+  new_id: string | null;
 };
 
 /** One page of a keyset-paginated list.
@@ -157,6 +162,7 @@ export async function listNodes(
   limit: number,
   includeTotal: boolean,
   typeTerm: string | null,
+  includeInactive: boolean,
 ): Promise<Page<NodeRow>> {
   const result = await call(b, "listNodes", {
     after_id: afterId,
@@ -168,6 +174,10 @@ export async function listNodes(
     // empty list: "no nodes" over a server holding five. The count strip
     // said "— NODES" at the same time, which was the only visible hint.
     type_term: typeTerm,
+    // #29 slice B (lifecycle-v1.md amendment 2026-09-26): closed, required,
+    // same rule. `false` is the ordinary view (retired/superseded excluded);
+    // `true` is history mode, wired to the EXPLORE "show history" toggle.
+    include_inactive: includeInactive,
   });
   return toPage<NodeRow>(result, "next_after_id");
 }

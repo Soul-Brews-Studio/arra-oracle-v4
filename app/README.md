@@ -197,6 +197,7 @@ bun app/cli.ts peer add --bank example --name nat
 bun app/cli.ts session add --bank example --name standup
 bun app/cli.ts message append --bank example --session standup --peer nat --content 'hello'
 bun app/cli.ts nodes list --bank example --limit 20
+bun app/cli.ts nodes list --bank example --limit 20 --history   # include retired/superseded, labelled
 bun app/cli.ts context get --bank example --peer nat --session standup
 bun app/cli.ts chat ask --bank example --peer nat --session standup --question 'what happened?'
 ```

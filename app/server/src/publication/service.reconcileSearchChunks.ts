@@ -3,6 +3,7 @@ import { MAX_RECONCILE_REVISIONS, parseReconcileSearch } from "./search-chunk";
 import { quote } from "./storage";
 import { SEARCH_CHUNKS } from "./service.constants";
 import { contextScope } from "./service.contextScope";
+import { terminalEventsFor } from "./service.terminalEventsFor";
 import { requireContextWorkspaceRow } from "./service.requireContextWorkspaceRow";
 import { selectAcceptedRevision } from "./service.selectAcceptedRevision";
 import { type Clock, type DatasetAdapter, type OwnerCore } from "./service.types";
@@ -13,6 +14,12 @@ export async function reconcileSearchChunks(writer: DatasetAdapter, core: OwnerC
       missing_revisions: { node_id: string; revision_id: string }[];
       stale: number;
       exhausted: boolean;
+      /** #29 slice B (overnight R7): retired or superseded nodes visited on
+       *  this page, counted SEPARATELY from `missing` -- DESIGN.md:1119's
+       *  "stale vectors never present superseded content as current truth"
+       *  means a terminal node's absent chunks are not a gap to backfill,
+       *  they are correctly not indexed. Never queued via `missing_revisions`. */
+      ineligible: number;
     }> {
 const request = parseReconcileSearch(requestBytes);
       await requireContextWorkspaceRow(writer, request.workspace_name);
@@ -33,12 +40,28 @@ const request = parseReconcileSearch(requestBytes);
 
       await writer.refresh("node_revisions");
       await writer.refresh(SEARCH_CHUNKS);
+
+      const visitedIds = visited.map((row) => {
+        const nodeId = row.id;
+        if (typeof nodeId !== "string") failPublication("integrity_failure", "");
+        return nodeId;
+      });
+      // ONE `supersede_log` query for the whole visited page, not one per
+      // node (same batching rule as `listNodes`, analysis-29.json fix plan
+      // B1/B5).
+      const terminal = await terminalEventsFor(writer, request.workspace_name, visitedIds);
+
       let missing = 0;
       let stale = 0;
+      let ineligible = 0;
       const missingRevisions: { node_id: string; revision_id: string }[] = [];
       for (const row of visited) {
         const nodeId = row.id;
         if (typeof nodeId !== "string") failPublication("integrity_failure", "");
+        if (terminal.has(nodeId)) {
+          ineligible += 1;
+          continue;
+        }
         const resolved = await selectAcceptedRevision(writer, request.workspace_name, nodeId, null);
         // Every node reached here was just selected FROM the nodes table, so
         // an unresolvable head is stored corruption, not a caller mistake.
@@ -71,5 +94,6 @@ const request = parseReconcileSearch(requestBytes);
         missing_revisions: missingRevisions,
         stale,
         exhausted: fetched.length <= request.limit,
+        ineligible,
       };
 }

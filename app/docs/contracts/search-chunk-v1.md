@@ -257,3 +257,46 @@ own real parsers), and `app/server/test/knowledge-expose13-live.test.ts`
 round-tripped over both HTTP and MCP against a real writer-gated target-19 dataset, using two
 distinct indexed nodes — one over each transport — since a `pending` chunk row cannot be
 re-embedded, so an idempotent replay is not the right proof for `writeChunkEmbedding`).
+
+## 12. Amendment 2026-09-26 (overnight R7 (#29 part))
+
+**What changed.** §5 and §6 are amended: a retired or superseded node is no longer treated as an
+ordinary node by either write path.
+
+- `indexRevisionChunks` (§5) now resolves the target node's own terminal `supersede_log` event
+  (via `service.terminalEventsFor.ts`, one query, immediately after the node reference itself
+  resolves and before the revision is selected) and, if one exists, refuses outright with
+  `{outcome: "ineligible", reason: "retired"|"superseded"}` — a returned value, the same shape
+  this method already uses for `"already_satisfied"`/`"indexed"`, never a thrown reference fault:
+  the node reference is valid, only its lifecycle STATE is refused.
+- `reconcileSearchChunks` (§6) now resolves the whole visited page's terminal events in one
+  `old_id IN (...)` query (the same batching §6 already required for everything else on that
+  page) and counts a terminal node under a new, additive `ineligible` field, separate from
+  `missing`/`stale`: its absent chunks are never added to `missing_revisions`. §6's own
+  `missing`/`stale` counting is otherwise unchanged.
+
+**Why.** DESIGN.md:1119, "stale vectors never present superseded content as current truth."
+Indexing a retired or superseded node's content, or reporting its absent chunks as a backfill
+gap (`missing`), would let stale or newly-produced vectors stand in for current truth after a
+node has been explicitly replaced or withdrawn. `docs/overnight/DECISIONS.md` R7's `#29` bullets
+require this centralized normal-read eligibility rule (DESIGN.md §9) applied everywhere a node's
+lifecycle state is relevant to a read or a write, not only at `listNodes`/`getRecallEligibility`.
+
+**Not changed here.** §5's write path, idempotency mechanism and readback comparison are
+unchanged for a NON-terminal node. §6's `missing`/`stale` definitions, its bounded/non-pageable
+sweep shape, and its measured gaps (§9, §10 — `stale`'s undercounting relative to a differently
+migrated dataset, and its lack of profile-scoping) are unchanged. #30's own missing piece — *(fix
+round 2 correction, 2026-09-26: this previously read "§30", a section-mark typo for issue #30)* —
+filtering retrieval at query time for a terminal node's chunks that were written before it became
+terminal — is explicitly **not** addressed here: `indexRevisionChunks` refuses NEW indexing of a
+terminal node, but chunks already written before retirement/supersession stay in
+`search_chunks_v1`, and `reconcileSearchChunks` no longer reports them as stale either (they
+belong to a node this sweep now skips entirely on the `terminal.has(nodeId)` branch). This is a
+disclosed gap for the not-yet-landed search-query slice to close, not a claim that superseded
+content is unreachable through every path today.
+
+**Evidence.** `app/server/test/lifecycle-eligibility.test.ts`'s "search-chunk read paths never
+treat a terminal node as ordinary" test: `reconcileSearchChunks` reports a retired node as
+`ineligible`, never `missing`; `indexRevisionChunks` on the same node returns `{outcome:
+"ineligible", reason: "retired"}`. Both red on `99a576d` (a terminal node's absent chunks
+counted as an ordinary `missing` gap; indexing one silently succeeded).

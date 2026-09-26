@@ -82,7 +82,9 @@ export function useOverview(b: Bank) {
         // show a subline the server cannot compute (active count, revision
         // sum), and the same request carries both the total and the rows.
         countWithSample<SessionRow>("listSessions", (limit, inc) => listSessions(b, null, limit, inc)),
-        countWithSample<NodeRow>("listNodes", (limit, inc) => listNodes(b, null, limit, inc, null)),
+        // `include_inactive: false`: the overview counts the ordinary,
+        // current view (#29 slice B) -- history mode is an EXPLORE-only toggle.
+        countWithSample<NodeRow>("listNodes", (limit, inc) => listNodes(b, null, limit, inc, null, false)),
         countOnly("listMcpCalls", (limit, inc) => listMcpCalls(b, null, limit, inc, null, null)),
         countOnly("listConnections", (limit, inc) => listConnections(b, null, limit, inc)),
         Promise.all(TYPE_TERMS.map((term) => countByType(b, term))),

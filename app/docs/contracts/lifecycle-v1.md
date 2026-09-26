@@ -189,11 +189,14 @@ poisons.
   touched atomically with it.
 - No live dataset or retained-compatibility inspection beyond what the stored-row codec
   checks on read.
-- **Ownership, recovery and precision test lanes do not exist for this kernel.** Only
-  `lifecycle-service.test.ts` (core behavior) exists. Queue-exclusion-under-contention,
-  poison-both-directions, kill-after-write recovery, and an Int64/boundary precision sweep
-  are not covered by any test file today — this is a real, disclosed gap, not an oversight
-  glossed over.
+- **Ownership, recovery and precision test lanes exist**: `lifecycle-ownership.test.ts`,
+  `lifecycle-recovery.test.ts` and `lifecycle-precision.test.ts` cover queue-exclusion-under-
+  contention/poison-both-directions, kill-after-write recovery, and an Int64/boundary precision
+  sweep, respectively, alongside `lifecycle-service.test.ts`'s core behavior. *(Fix round 2
+  correction, 2026-09-26: this bullet previously said none of that coverage existed anywhere;
+  `.tmp/understand/analysis-29.json`'s fix plan B7 measured the claim false — all three files
+  predate this slice (`a9a6ed0`) — and §12's "Not changed here" line below had re-affirmed the
+  false claim instead of correcting it.)*
 
 ## 9. Places code and expectation disagreed
 
@@ -268,3 +271,204 @@ Appended, not rewritten. Ruling: [`docs/overnight/DECISIONS.md`](../../../docs/o
 **Why.** R17: the target requires a reason, and the legacy log allowed none. Inventing a plausible reason would be worse than a fixed, searchable marker.
 
 **Fix round, same night.** Appended. A legacy `memories.superseded_by` with NO `supersede_log` row gets ONE synthesized supersede event at the legacy `superseded_at`, with the R17 reason `"legacy: reason not recorded"`, counted in `policies.missing_log_row_backfilled`. This path now has a fixture row and a test that pins the stored event. Before, a mutation that skipped it still passed.
+
+## 12. Amendment 2026-09-26 (overnight R7 (#29 part))
+
+*(Fix round, 2026-09-26: this section was originally spliced in BEFORE §11's own closing
+"Not changed here" paragraph above, which pushed that paragraph to the end of the file, after
+this section's own content, and left §11 appearing to end without it. It is now properly
+appended after §11, as the file's next numbered section. No wording in §11's paragraph or in
+this section's own text changed -- only its position moved back to where it belongs.)*
+
+Implements `docs/overnight/DECISIONS.md` R7's `#29` bullets on top of R7/R8's exposure amendment
+(§10) and the #10 peer-reference amendment (§11): the centralized normal-read eligibility rule
+DESIGN.md §9 describes, `listNodes`'s default view, and the terminal-successor supersede
+question the #29 reopen comment and `.tmp/understand/analysis-29.json`'s fix plan B named as
+still open after exposure alone. §§1-4 and §§6-11 above are unchanged. **§5 is not**: point 2
+below replaces §5's definition of `eligible`, it does not merely add to it -- see point 2 for
+exactly what changed and why.
+
+**1. Centralized eligibility.** New module `app/server/src/publication/service.evaluateNodeEligibility.ts`
+exports `evaluateNodeEligibility(reader, workspace, nodeId, asOf)`, which resolves the node, its
+head revision and its own terminal `supersede_log` event (if any) and returns
+`{eligible, reasons, head_revision_id, lifecycle}`. `reasons` is a subset of `["retired",
+"superseded", "inactive", "not_yet_valid", "expired"]`, evaluated against DESIGN.md §9's five
+predicates (authorized workspace and accepted current revision are the caller's own resolution;
+`is_active`, the `[valid_from, valid_to)` window at `asOf`, and "not replaced or retired" are
+decided here). The validity window is HALF-OPEN: valid AT `valid_from`, no longer valid AT (not
+after) `valid_to`. The module is write-free (AC4): it only ever reads `nodes`, `node_revisions`
+and `supersede_log`.
+
+A sibling module, `app/server/src/publication/service.terminalEventsFor.ts`, exports the batch
+helper `terminalEventsFor(reader, workspace, ids[])`: one `supersede_log` query per PAGE (`old_id
+IN (...)`), not one per node, shared by `listNodes`, `getAcceptedHead`, `listAcceptedHistory`,
+`supersedeNode`'s successor check, `reconcileSearchChunks` and `indexRevisionChunks`.
+`evaluateNodeEligibility` itself calls it. *(Fix round correction, 2026-09-26: both functions
+originally lived together in one `service.evaluateEligibility.ts` file, which broke this
+package's "one exported function per file, named after the file" rule -- the only file under
+`publication/service.*.ts` that did. Split into the two files named above; no behaviour
+changed.)*
+
+**2. `getRecallEligibility` gains `reasons`; `eligible` REPLACES its §5 meaning, `witness_event_id`
+does not.** `witness_event_id` keeps its exact §5 meaning. `eligible` does **not**: fix round
+correction, a prior version of this section claimed it did, which is false. §5 defines `eligible`
+as solely "no `supersede_log` row exists with `old_id = node_id`" -- a node "that has itself never
+been superseded or retired is eligible regardless of" anything else. This section replaces that
+definition with DESIGN.md §9's five predicates: a node with `is_active: false`, or whose head falls
+outside its `[valid_from, valid_to)` window at `as_of`, is now ineligible even with zero
+`supersede_log` rows. This is a disclosed, deliberate behaviour change, not an additive one --
+`reasons` is the additive part, `eligible`'s widened meaning is not.
+
+Readers still take no clock in the sense §4 states it (the kernel is never the thing that SAMPLES
+one): `evaluateNodeEligibility` never calls `Date.now()`, on any path. **`getRecallEligibility`
+does**, on one path -- fix round correction, a prior version of this section (and matching source
+comments in `service.evaluateEligibility.ts`, now split into `service.terminalEventsFor.ts` /
+`service.evaluateNodeEligibility.ts`, and in `registry.ts`) claimed neither ever does, which is
+false. The validity-window `as_of` is a plain argument the caller supplies --
+`app/server/src/knowledge/registry.ts`, the one dispatch point HTTP and MCP both call through,
+supplies real request time (`Date.now()`) explicitly on every live call, which is the intended one
+place a clock enters this kernel's read path. But `service.getRecallEligibility.ts`'s own
+`requestTimeMs` parameter is optional, with `const asOf = requestTimeMs ?? Date.now();` -- so
+`getRecallEligibility` itself also calls `Date.now()` whenever a caller omits the parameter. That
+fallback exists purely so a handful of pre-existing generic in-process test harnesses (one argument
+per call) keep working; none of them assert on `reasons`, so the difference is invisible to them,
+and every LIVE call goes through the registry's explicit value, never the fallback -- but the
+fallback is real code that runs, not a hypothetical, and this document should not have said
+otherwise.
+
+**3. `getAcceptedHead` / `listAcceptedHistory` gain `lifecycle`, additively.** `null` when the node
+carries no terminal event, else `{event_id, kind: "retired"|"superseded", new_id, new_revision_id,
+reason, superseded_at}` -- the same shape §9's "no event-kind column" rule already describes,
+decoded once. Both methods remain direct-read/history surfaces: a retired or superseded node stays
+readable here exactly as before, now labelled instead of indistinguishable from an active one.
+
+**4. `listNodes`'s default view excludes retired and superseded nodes; `total` is amended.**
+This is the breaking, closed-grammar change R7 calls for. `parseListNodes` gains a new required
+key, `include_inactive: boolean` (closed, like every other key on this request -- there is no
+default for an omitted key). `false` (ordinary use) excludes a node with its own terminal
+`supersede_log` event; `true` is history mode and includes it, with an additive `lifecycle_state:
+"active"|"retired"|"superseded"` and `new_id` on every row (not just the terminal ones).
+
+This is a narrower filter than eligibility's five predicates on purpose: `is_active` and the
+validity window live inside `node_revisions`, so unlike the retired/superseded predicate (an exact
+set-subtraction over two native counts, below) there is no native way to count them without reading
+every candidate revision -- precisely the full-materialize-to-fake-a-total this kernel already
+refuses for `type_term` (§"type_term filter" in `service.listNodes.ts`). Rather than make `total`
+lie or silently degrade to an approximation, `listNodes`'s default filter stays scoped to
+"replaced or retired," and `is_active`/the validity window stay additive-only, surfaced through
+`getRecallEligibility`'s `reasons` and the `lifecycle` label above. **This is a deliberate,
+disclosed narrowing of the brief's fuller "inactive head, outside validity window" phrasing**, not
+an oversight -- the reasoning is the paragraph above: no native, join-free way exists to count
+`is_active`/the validity window exactly, and this kernel refuses to fake an exact total with a full
+scan the way it refuses one for `type_term`.
+
+*Fix round 2 correction, 2026-09-26 (R7, `docs/overnight/DECISIONS.md`).* The paragraph above
+originally said `include_inactive` was a new REQUIRED key, "closed, like every other key on this
+request -- there is no default for an omitted key." That broke the in-repo daily-loop alias
+(`app/cli/kb.aliases.ts`'s `nodes list`, documented at `app/README.md`'s `bun app/cli.ts nodes list
+--bank example --limit 20`) and any other caller built against the pre-#29 grammar: none of them
+ever sent this key, so every call was refused `invalid_request`. The ruling itself only ever
+required the DEFAULT to exclude retired/superseded nodes -- "`listNodes` excludes retired and
+superseded nodes by default" -- not that every caller assert that default explicitly, and a
+required key with no default cannot express a default at all. `include_inactive` is now OPTIONAL:
+omitted means `false` (the same ordinary "current" view described above), present still means
+STRICTLY boolean (an explicit `include_inactive: null` is refused `invalid_request`, not treated as
+omitted -- "optional" changes only whether the key may be absent, never what it may hold once
+present). Every caller that already sent the key explicitly (`app/ui/v2/src/api/listing.ts`) is
+unaffected. The alias itself gains a `--history` flag mapping to `include_inactive: true`; without
+it, the alias sends the exact five-key body it always has, byte-for-byte.
+
+**`total` (amending PRs #99/#100's frozen "native, predicate-scoped count" semantics
+at `service.listNodes.ts`):** with `include_total: true` and `type_term: null`,
+- `include_inactive: true` (history mode): unchanged, `count(nodes, scope)`.
+- `include_inactive: false`, INCLUDING omitted (default, fix round 2): `count(nodes, scope) -
+  count(supersede_log, scope)`. This is an EXACT identity, not a scan-and-count: `old_id` is
+  scoped-unique (`writeLifecycleEventFresh`'s `already_terminal` rule) and every event names a node
+  that exists in the same workspace (`invalid_reference` refuses any other), so
+  `count(supersede_log, scope)` is precisely the number of terminal nodes in scope. Two native
+  counts, no join, no row read.
+- `type_term` set: unchanged, `null` (no native scoped count exists for a JSON-embedded field).
+
+`app/ui/v2/src/api/listing.ts`'s `listNodes` sends `include_inactive` on every call in the SAME
+change (the closed-key rule turns a missing key into `invalid_request`, which the UI would show as
+an empty list -- `listing.ts`'s own comment already documents exactly this failure mode for
+`type_term`/`include_total`). The EXPLORE node list defaults to `include_inactive: false`; a new
+"show history" toggle sets it `true`.
+
+**5. Search-chunk read paths never treat a terminal node as ordinary.** `reconcileSearchChunks`
+gains an additive `ineligible` count: a retired or superseded node visited on a page is counted
+there, never under `missing` and never added to `missing_revisions` -- its absent chunks are not a
+backfill gap, they are correctly-absent superseded/retired content (DESIGN.md:1119, "stale vectors
+never present superseded content as current truth"). `indexRevisionChunks` refuses a terminal node
+outright, returning `{outcome: "ineligible", reason: "retired"|"superseded"}` -- a returned value,
+the same shape this method already uses for `"already_satisfied"`/`"indexed"`, never a thrown
+reference fault (the node reference is valid; only its lifecycle state is refused).
+
+**6. Superseding into an already-terminal successor is refused.** `supersedeNode` now refuses, as a
+returned conflict (never thrown, matching `stale_pin`/`already_terminal`/`operation_digest`'s own
+shape): `{outcome: "conflict", reason: "successor_terminal", row: null}` when `new_node_id` already
+carries its own terminal `supersede_log` event (retired, or itself already superseded by something
+else). Checked once the successor reference itself has resolved (after `/new_node_id`'s existence
+and its head-revision pin, both unchanged from §1), and AFTER classification (§2) already ran, so a
+byte-identical replay of a request accepted before the successor became terminal still returns
+`idempotent` with the originally retained row -- the same "classification outranks later state"
+rule §2 states for the pin and the forward-chain walk. `LifecycleWriteOutcome`'s conflict `reason`
+union gains `"successor_terminal"` alongside the three existing values.
+
+*Fix round correction, 2026-09-26.* The first version of this check lived entirely in
+`service.supersedeNode.ts`, running before `writeLifecycleEventFresh` was ever called -- meaning
+it ran before THIS request's own `/node_id` and `/peer_name` even resolved, and broke §11's frozen
+precedence in exactly the way §11 states for peer references: "a caller naming a node [or peer]
+that does not exist is told there is a conflict, as if the node existed." It now runs inside
+`writeLifecycleEventFresh`, immediately after the `/peer_name` check §11 describes -- so a
+nonexistent `/node_id`, a `/peer_name` that resolves nowhere, or a `/peer_name` that resolves only
+in another workspace are each still told their OWN problem first. This does **not** reorder
+`successor_terminal` relative to `stale_pin`/`already_terminal`: `successor_terminal` still runs
+BEFORE those two, exactly as it always has (the successor's own pre-existing `/new_node_id`
+existence and `/new_revision_id` match checks have likewise always run before this node's
+`stale_pin`, unchanged) -- only its position relative to `/node_id` and `/peer_name` moved. See
+`app/server/test/lifecycle-supersede-terminal-order.test.ts`, red against the original placement,
+green after the move.
+
+**Not changed here.** §§1-3 (identity, replay, conflict classification) and §7 (the closed error
+code set: no new thrown code was needed; every new refusal above is a returned value) stand exactly
+as before. §8's ownership/recovery/precision bullet is **corrected above, not left standing** --
+*fix round 2, 2026-09-26*: it previously claimed no test lane existed for any of the three; that was
+already false when this section was first written, and this section had re-affirmed the false claim
+instead of fixing it (`.tmp/understand/analysis-29.json` fix plan B7).
+
+**Evidence.** `app/server/test/lifecycle-eligibility.test.ts` (new): default exclusion and
+history-mode labelling with the amended `total`, across a page boundary; the validity window at a
+controlled `as_of`; superseding into an already-retired and an already-superseded successor, both
+refused with no side effect on the refused caller's own eligibility; `reconcileSearchChunks`/
+`indexRevisionChunks` on a terminal node. All red on `99a576d` before this slice (missing
+`include_inactive` fails closed-grammar `invalid_request`; `reasons`/`ineligible` fields absent; a
+terminal successor was silently `accepted`; an `is_active: false` head still read `eligible:
+true`). `app/server/test/list-nodes-service.test.ts`, `list-pagination-isolation.test.ts`,
+`lifecycle-ownership.test.ts` and `search-chunk-recovery.test.ts` were updated for the new required
+key and the two additive fields their existing assertions pin exactly.
+
+**Fix round evidence, 2026-09-26.** `lifecycle-supersede-terminal-order.test.ts` (new): red against
+the original successor_terminal placement (a nonexistent `/node_id` returned `successor_terminal`
+instead of `invalid_reference`), green after the move described under point 6 above; also proves
+`successor_terminal` still legitimately outranks `stale_pin` once the reference issues are ruled
+out. `lifecycle-eligibility-window-boundary.test.ts` (new): pins the exact `[valid_from, valid_to)`
+half-open boundary instants (a mutation flipping either comparison operator now fails), and the new
+non-finite-`as_of` guard in `service.evaluateNodeEligibility.ts` (red without the guard: a `NaN`
+`as_of` silently read as eligible; green with it: refused `invalid_request`).
+`lifecycle-eligibility-ac1.test.ts` (new): #29 AC1, a `correction`-typed node and a `corrects` link
+into another node's accepted revision are ordinary content, not lifecycle events, and change
+nothing about eligibility -- untracked by any test before this round.
+
+**Fix round 2 evidence, 2026-09-26.** `app/server/test/list-nodes-service.test.ts` (new): red on
+this round's HEAD before the fix (a `listNodes` request with no `include_inactive` key at all
+raised `PublicationError{code: "invalid_request", path: "/include_inactive"}`), green after --
+omitting the key now behaves exactly like an explicit `include_inactive: false`; a companion test
+pins that an explicit `include_inactive: null` is still refused, proving "optional" did not also
+mean "any type accepted." `app/server/test/lifecycle-eligibility.test.ts` (new): the same red/green,
+this time through the gated writer with a real retired node, proving the omitted-key default
+actually excludes retired/superseded content end-to-end, not just that parsing succeeds.
+`app/cli.test.ts` (new): `nodes list --history` maps to `include_inactive: true`; the pre-existing
+`nodes list` alias test (unchanged assertion, now the fix-round regression pin) proves the alias's
+wire body without `--history` is byte-for-byte identical to what it always sent -- this is the
+`invalid_request` regression the verifier measured on the alias's real HTTP/MCP path, now closed.

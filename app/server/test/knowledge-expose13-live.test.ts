@@ -380,6 +380,8 @@ runIt(
     // ahead of the run, which is exactly why `child.ts`'s `capture`/`"@name"`
     // substitution exists (see the `Step["capture"]` doc comment above).
     const revA = out.pub_A.body.revision_id as string;
+    const revB = out.pub_B.body.revision_id as string;
+    const revC = out.pub_C.body.revision_id as string;
     const revX = out.pub_X.body.revision_id as string;
     const revY = out.pub_Y.body.revision_id as string;
     const chunkXId = out.index_X_http.body.rows[0].id as string;
@@ -468,10 +470,17 @@ runIt(
     const missingHttp = out.reconcile_http.body.missing_revisions as { revision_id: string }[];
     expect(missingHttp.some((m) => m.revision_id === revX)).toBe(false);
     expect(missingHttp.some((m) => m.revision_id === revY)).toBe(false);
-    // A, B and C were never indexed, so they DO show up as missing -- this
+    // A (superseded by B, above) and C (retired, above) are both terminal by
+    // this point in the run: #29 slice B reports a terminal node's absent
+    // chunks as `ineligible`, never `missing` -- its content is superseded
+    // or retired, not a backfill gap (DESIGN.md:1119). B, A's un-indexed
+    // successor, is still live and DOES show up as missing -- proving this
     // reconcile call genuinely visited and distinguished real rows, it did
     // not just echo an empty report.
-    expect(missingHttp.some((m) => m.revision_id === revA)).toBe(true);
+    expect(missingHttp.some((m) => m.revision_id === revA)).toBe(false);
+    expect(missingHttp.some((m) => m.revision_id === revC)).toBe(false);
+    expect(missingHttp.some((m) => m.revision_id === revB)).toBe(true);
+    expect(out.reconcile_http.body.ineligible).toBeGreaterThanOrEqual(2);
 
     expect(out.reconcile_mcp.ok, JSON.stringify(out.reconcile_mcp)).toBe(true);
     expect(typeof out.reconcile_mcp.value.visited).toBe("number");

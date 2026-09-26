@@ -246,7 +246,12 @@ export type LifecycleWriteOutcome =
   | { outcome: "idempotent"; row: Record<string, unknown> }
   | {
       outcome: "conflict";
-      reason: "operation_digest" | "stale_pin" | "already_terminal";
+      // "successor_terminal" (#29 slice B, overnight R7): `supersedeNode`'s
+      // named successor already carries its own terminal `supersede_log`
+      // event -- refused the same way `already_terminal` refuses a second
+      // event on the OLD node, just checked on the NEW one. See
+      // `service.supersedeNode.ts` and `lifecycle-v1.md`'s amendment.
+      reason: "operation_digest" | "stale_pin" | "already_terminal" | "successor_terminal";
       row: Record<string, unknown> | null;
     };
 

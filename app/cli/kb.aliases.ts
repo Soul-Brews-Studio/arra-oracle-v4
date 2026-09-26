@@ -9,7 +9,10 @@
  * already shape `remember`/`recall` arguments. Every field the underlying
  * method requires is supplied explicitly (including nulls), matching this
  * codebase's closed-key discipline (`service.parseListNodes.ts`'s own
- * comment on `include_total`).
+ * comment on `include_total`) -- the ONE exception is `nodes list`'s
+ * `include_inactive`, which `service.parseListNodes.ts` (#29 fix round)
+ * makes OPTIONAL specifically so this alias's daily-loop body never has to
+ * change: the alias omits the key unless `--history` asks for history mode.
  *
  * Deliberately NOT here: `node create` / `node revise` (`publishRevision`).
  * Its request is a governed revision envelope (operation id, content union,
@@ -82,14 +85,21 @@ export const KB_ALIASES: Readonly<Record<string, KbAlias>> = Object.freeze({
   },
   "nodes list": {
     method: "listNodes",
-    flags: ["after", "limit", "include-total", "type"],
-    booleanFlags: ["include-total"],
+    flags: ["after", "limit", "include-total", "type", "history"],
+    booleanFlags: ["include-total", "history"],
     build: (options, bank) => ({
       workspace_name: bank,
       after_id: orNull(options, "after"),
       limit: positiveInt(options.limit, "limit", 20),
       include_total: options["include-total"] === "true",
       type_term: orNull(options, "type"),
+      // `include_inactive` is OPTIONAL server-side (#29 fix round: default
+      // false, ordinary recall) -- this alias mirrors that by omitting the
+      // key entirely unless `--history` asks for it, so the documented
+      // daily-loop command (`bun app/cli.ts nodes list --bank example
+      // --limit 20`, README.md) keeps sending the EXACT body it always has,
+      // byte-for-byte. `--history` is the only way this alias sends the key.
+      ...(options["history"] === "true" ? { include_inactive: true } : {}),
     }),
   },
   "context get": {

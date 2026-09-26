@@ -281,7 +281,7 @@ describe("shared owner lifecycle", () => {
         expect(await readUntil("lifecycle:parked")).toBe("lifecycle:parked");
         // The retire hasn't landed yet: still eligible.
         const parkedGet = await envelopeUntil("parked:get");
-        expect(parkedGet).toEqual({ ok: true, value: { eligible: true, witness_event_id: "0" } });
+        expect(parkedGet).toEqual({ ok: true, value: { eligible: true, witness_event_id: "0", reasons: [] } });
         expect(await readUntil("write:first-resuming")).toBe("write:first-resuming");
 
         await expectPoisoned("write:first");
@@ -293,7 +293,10 @@ describe("shared owner lifecycle", () => {
         // its row (the boundary threw AFTER the append), so eligibility now
         // reads false with witness "1" -- attempted means reached the store.
         const poisonedGet = await envelopeUntil("poisoned:get");
-        expect(poisonedGet).toEqual({ ok: true, value: { eligible: false, witness_event_id: "1" } });
+        expect(poisonedGet).toEqual({
+          ok: true,
+          value: { eligible: false, witness_event_id: "1", reasons: ["retired"] },
+        });
         await expectPoisoned("released:get");
         expect(await readUntil("owner:alive")).toBe("owner:alive");
       } finally {
@@ -371,7 +374,7 @@ describe("shared owner lifecycle", () => {
       try {
         expect(await readUntil("lifecycle:parked")).toBe("lifecycle:parked");
         const parkedGet = await envelopeUntil("parked:get");
-        expect(parkedGet).toEqual({ ok: true, value: { eligible: true, witness_event_id: "0" } });
+        expect(parkedGet).toEqual({ ok: true, value: { eligible: true, witness_event_id: "0", reasons: [] } });
         expect(await readUntil("write:first-resuming")).toBe("write:first-resuming");
 
         await expectPoisoned("write:first");
@@ -380,7 +383,7 @@ describe("shared owner lifecycle", () => {
         await expectPoisoned("context:write-after");
         // The queued retireNode never ran: still eligible, witness still "0".
         const poisonedGet = await envelopeUntil("poisoned:get");
-        expect(poisonedGet).toEqual({ ok: true, value: { eligible: true, witness_event_id: "0" } });
+        expect(poisonedGet).toEqual({ ok: true, value: { eligible: true, witness_event_id: "0", reasons: [] } });
         // The peer write DID land before its boundary threw.
         const peerGet = await envelopeUntil("poisoned:peer-get");
         expect(peerGet.ok).toBe(true);
