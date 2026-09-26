@@ -546,3 +546,62 @@ change (every new key was an unrecognized field, `invalid_request` from `closedK
 including a real tie (two nodes published under the identical instant) walked, one row per page, to
 prove the `(updated_at desc, id asc)` tie-break is deterministic and the keyset pair skips and
 repeats nothing across a page boundary.
+
+## 14. Amendment 2026-09-26 (overnight R18 (K3 + K4 + V6 + list/reflect)) — fix round
+
+An independent Opus verifier refuted §13's K4 claim and one of its citations. Both are
+corrected here, append-only, per `docs/overnight/DECISIONS.md` R18; §13 itself is left
+exactly as written.
+
+**1. The K4 tie-break was wrong, not just under-scoped.** §13 point 2 and the code
+comment it quoted both said the only risk was "a tie wider than `MAX_SCANNED_NODES`". That
+is false. The bug was not a window too narrow for a wide tie — it was that a
+SINGLE-column `ORDER BY updated_at DESC LIMIT n` makes no promise about WHICH members of a
+tie group sitting at the `LIMIT` cutoff are the ones the engine actually returns. Re-sorting
+the already-fetched window afterward (what §13's code did) cannot recover a row that was
+never fetched at all: MEASURED on this stack, two strictly-newer rows sharing a 3-row scan
+window with a 3-way tie beneath them was already enough to permanently drop two of the
+three tied rows — a tie no "wider" than the window, combined with unrelated rows crowding
+the same window from above. Plausible on a migrated corpus, since the copy migration (#34)
+copies epoch-ms `updated_at` directly, and unrelated nodes routinely share a scan window
+with a genuine tie.
+
+**The fix**: `service.listNodes.ts`'s `updated_desc` branch now asks the storage adapter
+for a COMPOUND order, `(updated_at desc, id asc)`, instead of a single column — the same
+shape `mcp/calls.ts`'s own `(created_at desc, id desc)` order already uses for the identical
+reason. `id` is a nanoid21 primary key, so this pair is a genuine total order with no ties
+left for the engine to break arbitrarily: "the first `scanLimit` rows in this exact total
+order" is unambiguous, and `LIMIT` can only cut at a row boundary, never through a tie
+group. `DatasetAdapter.orderedProjection`'s `ordering` parameter is additive-widened to
+accept either one column or an array of them; every other caller still passes a single
+column and is byte-identical.
+
+**Evidence.** `app/server/test/list-nodes-tie-edge.test.ts` (new file): red on this fix
+round's pre-fix HEAD (a 3-way tie plus two newer rows, walked with a page size equal to a
+narrowed scan window, returns 3 of 5 rows and reports the walk as complete), green after.
+The narrowed scan window is a documented test-only 3rd argument to `listNodes`
+(`scanWindowForTests`), never sent by any production caller, so `MAX_SCANNED_NODES` itself
+is unchanged and the boundary is reachable without publishing 1000+ nodes.
+
+**2. Citation correction.** §13's Evidence paragraph names `list-nodes-service.test.ts` for
+the K3/K4 `describe` blocks it quotes; they are in `list-nodes-term-order.test.ts` (split
+out for the 500-line-per-file cap, exactly as this file's own §9-era splits were). This
+file is itself 548 lines as of §13, over the 500-line style guideline for CODE files; since
+this is a descriptive, append-only CONTRACT document rather than a source file, and the
+project rule forbids rewriting a frozen section to shrink it, splitting is left as a future
+housekeeping task rather than done here mid-fix-round.
+
+**3. V6 tool upgrades in this same round**, for completeness (`docs/overnight/V3-PARITY.md`
+§2.5, §4.3, §7):
+- `oracle_list`'s `type:"all"` (v3's own documented default value) is treated as "no
+  filter", matching an omitted `type` — it was previously looked up as a `legacy_type` NAME,
+  found none, and silently returned an empty page.
+- `oracle_list`'s `asOf` now returns `unsupported_argument`, per §4.3, instead of being
+  read nowhere.
+- `oracle_recap`'s whole tool result is now the markdown STRING itself (v3 parity, §2.5),
+  not a JSON object wrapping one; its own warnings (and `dispatchLegacyV3.ts`'s generic
+  ones, e.g. `cwd`) travel as a plain-text footer on that same string, the only channel a
+  string-shaped result has. `maxTokens` is accepted and named `argument_ignored`.
+- `oracle_reflect` now samples the K3 `legacy_type:principle` pool alongside `learning`,
+  closing the gap §7's "V6 upgrades oracle_list, oracle_reflect" line named and this round's
+  verifier found undisclosed.

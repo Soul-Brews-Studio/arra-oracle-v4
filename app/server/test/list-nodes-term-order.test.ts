@@ -23,6 +23,7 @@ import {
   type SeededWorkspace,
 } from "./helpers/publication-fixture";
 import { openPublicationReader } from "../src/publication/service";
+import { LIST_NODES_ORDERS } from "../src/publication/service.parseListNodes";
 
 const CHILD = new URL("./fixtures/publication-v1/gated-publish.ts", import.meta.url).pathname;
 const BETA = "beta-workspace";
@@ -254,6 +255,14 @@ describe("listNodes: order (K4)", () => {
     const caught = await captureError(reader.listNodes(encodeRequest({ workspace_name: BETA, after_id: null, limit: 10, include_total: false, type_term: null, order: "bogus" })));
     expect(caught?.code).toBe("invalid_request");
     expect(caught?.path).toBe("/order");
+  });
+
+  // `LIST_NODES_ORDERS` is the closed set `parseListNodes` validates `order`
+  // against; pinning it here (rather than leaving it an unreferenced export)
+  // means a change to the set is caught at the SAME place this file already
+  // asserts each individual value's behaviour.
+  test("LIST_NODES_ORDERS is exactly the two orders this grammar accepts", () => {
+    expect(LIST_NODES_ORDERS).toEqual(["id_asc", "updated_desc"]);
   });
 
   test("grammar: after_updated_at is refused under the default (id_asc) order", async () => {

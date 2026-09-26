@@ -21,7 +21,7 @@ import { wireBytesOf } from "./service.wireBytesOf";
  * `MAX_PAGE_LIMIT` because examining one node here is cheap (two point
  * reads and a JSON parse), unlike `scanDependents`' full ancestry+link walk.
  */
-const MAX_SCANNED_NODES = 1000;
+export const MAX_SCANNED_NODES = 1000;
 
 /**
  * Workspace-scoped, keyset-paginated node listing (#88).
@@ -33,6 +33,15 @@ const MAX_SCANNED_NODES = 1000;
 export async function listNodes(
   reader: DatasetAdapter,
   requestBytes: Uint8Array,
+  /**
+   * Test-only: overrides `MAX_SCANNED_NODES`. No production caller passes a
+   * 3rd argument (`service.makeReadMethods.ts` calls with exactly 2), and
+   * this is not part of the wire request grammar `parseListNodes` closes over
+   * -- it exists so a test can reach the scan-window-edge boundary with a
+   * handful of published nodes instead of `MAX_SCANNED_NODES` of them (K4 fix
+   * round, overnight R18; see `test/list-nodes-tie-edge.test.ts`).
+   */
+  scanWindowForTests?: number,
 ): Promise<{
   rows: Record<string, unknown>[];
   next_after_id: string | null;
@@ -67,7 +76,8 @@ export async function listNodes(
   // boundary -- see the sort below. Only the fully unfiltered `id_asc` case
   // (no term filter, history mode) keeps the tight limit+1 window.
   const filtered = request.type_term !== null || request.all_term_ids !== null || request.any_term_ids !== null || !request.include_inactive;
-  const scanLimit = filtered || request.order === "updated_desc" ? MAX_SCANNED_NODES : request.limit + 1;
+  const scanLimit =
+    filtered || request.order === "updated_desc" ? (scanWindowForTests ?? MAX_SCANNED_NODES) : request.limit + 1;
 
   const ids: string[] = [];
   // K4: populated only in `updated_desc` mode, keyed by id, so `hasMore`'s
@@ -88,11 +98,32 @@ export async function listNodes(
       // larger id (the tie-break direction the sort below also uses).
       boundary += ` AND (updated_at < ${cast} OR (updated_at = ${cast} AND id > ${quote(request.after_id)}))`;
     }
+    // K4 fix round (overnight R18): a SINGLE-column `ORDER BY updated_at
+    // DESC LIMIT n` does not just leave a tie's INTERNAL order unspecified --
+    // MEASURED on this stack (`test/list-nodes-tie-edge.test.ts`), the
+    // engine's own top-k pushdown can select a DIFFERENT subset of a tie
+    // group than a full, untruncated sort of the same predicate would, so a
+    // JS-side re-sort of the already-fetched window cannot recover a row
+    // that path never fetched at all -- this is a real data-loss bug, not a
+    // cosmetic ordering one, and it needs as few as one tie group whose size
+    // exceeds the ROOM LEFT in the window after strictly-newer rows (never
+    // "a tie wider than MAX_SCANNED_NODES", the narrower claim the previous
+    // comment here made). The fix is a COMPOUND `ORDER BY updated_at DESC,
+    // id ASC` at the SQL layer itself: `id` is a nanoid21 primary key, so
+    // this pair is a genuine total order with no ties left for the engine to
+    // break arbitrarily -- "the first `scanLimit` rows in this exact total
+    // order" is then unambiguous, and `LIMIT` can only ever cut at a row
+    // boundary, never through a tie group. Same shape `mcp/calls.ts`'s own
+    // `(created_at desc, id desc)` compound order already uses for the same
+    // reason.
     const selected = await reader.orderedProjection(
       NODES,
       boundary,
       ["id", "updated_at"],
-      { column: "updated_at", ascending: false },
+      [
+        { column: "updated_at", ascending: false },
+        { column: "id", ascending: true },
+      ],
       scanLimit,
     );
     const decoded: { id: string; updatedAt: bigint }[] = [];
@@ -105,14 +136,11 @@ export async function listNodes(
       updatedAtMicrosById.set(id, updatedAt);
       decoded.push({ id, updatedAt });
     }
-    // A single-column `ORDER BY` cannot promise a stable tie order for equal
-    // `updated_at` values, so this window's delivery order is re-sorted here,
-    // deterministically, to (updated_at desc, id asc) -- the SAME pair the
-    // boundary predicate above excludes by. Within one `MAX_SCANNED_NODES`
-    // window this is exact; a tie wider than that window (an improbable
-    // number of nodes sharing one microsecond) is the same documented,
-    // bounded-scan trade-off `MAX_SCANNED_NODES` already states for a rare
-    // `type_term` value.
+    // Defense in depth, not the fix itself: the adapter is now ASKED for
+    // exactly this order, but re-asserting it here costs nothing and keeps
+    // this loop's own invariant (`ids` is (updated_at desc, id asc)) true by
+    // construction even if a future adapter change stopped honouring compound
+    // `orderBy` faithfully.
     decoded.sort((a, b) => {
       if (a.updatedAt !== b.updatedAt) return a.updatedAt > b.updatedAt ? -1 : 1;
       return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;

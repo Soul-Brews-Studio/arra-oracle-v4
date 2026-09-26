@@ -195,11 +195,16 @@ export function makeAdapter(connection: Connection, onRelease: () => void): Data
     async orderedProjection(table, predicate, columns, ordering, limit) {
       const tbl = await handle(table);
       await tbl.checkoutLatest();
+      // A single ordering object OR an already-compound array, normalized to
+      // the array shape `.orderBy` (and the SDK's own `mcp/calls.ts:174`
+      // precedent) takes -- see the type's own doc comment for why a caller
+      // wanting a deterministic tie-break passes more than one column here.
+      const columnOrdering = Array.isArray(ordering) ? ordering : [ordering];
       const arrow = await tbl
         .query()
         .where(predicate)
         .select(columns)
-        .orderBy([{ columnName: ordering.column, ascending: ordering.ascending }])
+        .orderBy(columnOrdering.map((o) => ({ columnName: o.column, ascending: o.ascending })))
         .limit(limit)
         .toArrow();
       // Same decoder as rawRows, deliberately: a second decoding path is how a
