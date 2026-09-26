@@ -98,3 +98,54 @@ Required independent evidence: fresh and partial seed replay/lost ACK with every
 Gates at stable freeze: targeted taxonomy suites with no skips, old publication suites byte-unchanged, full Bun including CLI/nested tests with discovery counts recorded, Python discovery plus explicit new fixture suite with ResourceWarning-as-error, typecheck/build, changed-file Ruff, tracked/untracked whitespace, exact protected-path comparison and before/after hashes. Evidence is SDK-committed/read-back state and owned process death, not power-loss proof.
 
 No commit/push/PR/merge is authorized by this document. Those require a bounded acceptance/packaging dispatch. Parent #27 remains open until the named later admin/default/projection integration criteria are delivered; #25/#26 deployment and other remaining parent criteria are not silently closed.
+
+## Amendment 2026-09-26 (overnight R6)
+
+v4-overnight, sealed-vocab slice (Claude Opus 5.5, AI). Ruling: `docs/overnight/DECISIONS.md` R6, for #27 reopened ("a sealed vocabulary is not sealed"). The text above is not rewritten. Where it conflicts with this section, this section governs. The SHA256 quoted in the taxonomy test headers is the SHA of the text above this section.
+
+**Why.** #31 put every taxonomy mutator on the HTTP and MCP transports under plain `content:write`. This contract had assumed operator-only callers: its "Not in this dispatch" section excludes route, CLI and MCP activation and any ordinary-user admin grant, and `authorization-v1.md` §2 says ordinary content write must not silently become policy administration. The result was measured live: a content writer created `invented_type` inside the sealed `type` vocabulary, then renamed and retired reserved terms. #27 AC1, "unauthorized term invention is rejected", was false.
+
+**Change.**
+
+- `createTerm`, `renameTerm`, `retireTerm` and `reparentTerm` refuse any vocabulary whose stored `term_policy` is `sealed`. That covers both reserved bootstrap vocabularies and any caller-created sealed vocabulary.
+- The refusal is `invalid_request`, which is this contract's existing semantic-policy refusal family (reserved vocabulary creation, retired-term mutation, last-required-term retirement). No error code is added. For `createTerm` the path is `/vocabulary_id`. For the other three it is `/term_id`, because the term's own stored vocabulary decides.
+- The transports carry it unchanged: HTTP 400 with the `arra-taxonomy-error/v1` envelope, and the same envelope as an MCP tool error.
+- The sentence "Operator creation may extend a sealed vocabulary; no ordinary-caller authorization claim" now means an operator in-process only. A writer factory (`openKnowledgeWriter`, `openContextWriter`, `openEvidenceWriter`) opened with the trusted option `taxonomyOperator: true` may create, rename, retire and reparent terms in a sealed vocabulary. This is the lifecycle described above.
+- `taxonomyOperator` is configuration, like `clock` or `sourceNamespace`. It is never request data: the request grammar is unchanged, so a `taxonomyOperator` key in request bytes is `unexpected_field`.
+- Absent or false means refuse, so the default fails closed. `createKnowledgeAccess` (HTTP and MCP) never sets it, and there is no CLI or other transport path. No policy action is added, and the closed action set in `authorization-v1.md` is unchanged.
+- `renameTerm` now resolves the term's vocabulary. A term whose vocabulary is missing is `integrity_failure` at the root path, which is what `retireTerm` and `reparentTerm` already did.
+- Unchanged:
+  - `seedReservedVocabularies` still writes only the literal manifest rows. Any other id for a reserved name is still a conflict, so the seed cannot add a sixth type term. It stays the only non-operator way to create reserved terms, and it stays transport-reachable.
+  - `createVocabulary` is unchanged. It still refuses the reserved names, and a caller may still create a new, empty sealed vocabulary. Only the operator can then add terms to it.
+  - Publication may still assign an existing active term of a sealed vocabulary. The seal governs a vocabulary's term set, not assignment.
+  - Reads are unchanged.
+- A seal refusal happens before any write, so it never poisons the owner.
+
+**Precedence.** This replaces the single "Use this precedence" sentence above for these four methods. `app/server/test/taxonomy-seal.test.ts` pins it:
+
+1. Request validity. Strict parse and closed shape give `arra-error/v1`, and an operator flag in the bytes is `unexpected_field`.
+2. Workspace: `invalid_reference /workspace_name`.
+3. The scoped target. For `createTerm` that is its vocabulary: `invalid_reference /vocabulary_id`. For the lifecycle methods it is the term: `not_found /term_id`. The existing retired-term refusal of `renameTerm`/`reparentTerm` (`invalid_request /term_id`) keeps its place here.
+4. Stored-state integrity of the target's vocabulary: `integrity_failure` at the root path.
+5. Requested references and structure: the `createTerm`/`reparentTerm` parent. A non-null parent in a flat vocabulary is `invalid_request /parent_id`. Then self or cycle, then scoped ancestry: `invalid_reference`, `integrity_failure` or `limit_exceeded`.
+6. **The seal**: `invalid_request /vocabulary_id` (`createTerm`) or `/term_id`.
+7. Collisions and expected values: `conflict` at `/name`, `/term_id`, `/expected_name` or `/expected_parent_id`. Then `retireTerm`'s last-required-term refusal.
+8. `already_satisfied`. Without the operator flag this is never reached for a sealed vocabulary. An exact replay of a seeded row is therefore refused, not reported as satisfied.
+9. Persistence.
+
+The transport layers run first and are unchanged:
+
+- route, method, encoding and size checks;
+- body well-formedness and route-scope equality (`knowledge/transport.ts`);
+- admission. A missing or invalid bearer gets 401. A principal without `content:write` gets 403, on HTTP and on MCP.
+
+All of these come before any seal refusal, so an unauthorized caller never learns a vocabulary's policy.
+
+**Tests changed.** Two groups exercise the operator lifecycle on reserved `type` terms: the `retirement` and `aba` modes of `taxonomy-ownership.test.ts`, and two cases in `taxonomy-service.test.ts` (changed-seed-row conflict, last-required-term retirement). They now open the writer with `taxonomyOperator: true`. Their expected values are unchanged, including `taxonomy-ownership.test.ts` "reuse-retired-name conflict /name". The `references` and `tree-boundary` modes stay ordinary owners and still pass unchanged, which pins steps 2 to 5 above.
+
+**Still open for #27.**
+
+- An authorized admin tier over the wire. That would be a new policy action, and R6 adds none.
+- Ordinary omitted type defaulting to `note`.
+- `node_revision_terms` projection after publish.
+- Cleanup of datasets that already hold terms invented before this change. Those terms are now sealed like any other, so only the operator can rename or retire them. Revisions already typed with them remain valid history, because the snapshot is the authority.
