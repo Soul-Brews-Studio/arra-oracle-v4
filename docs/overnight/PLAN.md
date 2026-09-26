@@ -149,3 +149,5 @@ are part of done.
   compositions, 8 need new kernel reads, 1 is static text, 5 are not carried. Of 709 real v3 calls, 52% are
   servable before any new kernel work; #30 chunk search alone unlocks 46%. R18 records rulings D1–D11;
   the R17 `distilled_at` column error it caught is corrected.
+- 22:00 VA launched (`wf_52ab6e40-0b9`): the v3-client acceptance harness, built from REAL recorded v3 calls found
+  via relic, scrubbed. It must be all red before any adapter code exists; an Opus reviewer then tries to refute it.
