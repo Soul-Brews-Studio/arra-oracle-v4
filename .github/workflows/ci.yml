@@ -11,9 +11,13 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     # Default is 360 minutes; without this a hung shard burns exactly the
-    # private-repo Actions minutes R13 exists to save. 25 is generous headroom
-    # over the ~500s measured single-process full-suite wall time.
-    timeout-minutes: 25
+    # private-repo Actions minutes R13 exists to save. Measured on GitHub: the
+    # suite step takes 977-1369 s depending on the runner, and run 36271049858
+    # passed in 24 min 39 s, 21 s under the old cap of 25 (2470 CPU-s against
+    # 1757 on run 36269825188 for the same work). 40 leaves 1.6x headroom over
+    # the slowest measured job. Shard logs stream to disk and upload on
+    # cancellation, so a hang is still named.
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v7
