@@ -220,6 +220,12 @@ THIS dataset stay declared — `TARGET_SCHEMA` in `app/server/src/publication/st
 still verifies their shape — but they stay **empty** until #34 migrates the
 operations tables over. Do not read an empty `mcp_calls`/`connections` in a
 19-table dataset as evidence nothing was recorded; check `ARRA_DATA_DIR`.
+The operations root was written before the target-19 codec existed, so it can
+hold rows that codec rejects. The two readers withhold such a row and report
+its id in `unreadable` rather than failing the page. The call-log writer now
+records `session_name`/`peer_name` only in the reader's grammar, and anything
+else as null, flagged in `h_metadata.invalid_fields`. See the R5 amendment in
+`app/docs/contracts/authorization-integration-v1.md`.
 
 ---
 
