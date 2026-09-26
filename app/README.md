@@ -100,10 +100,13 @@ regression suite.
 
 ## Current interfaces
 
-Every route needs `Authorization: Bearer <64 lowercase hex>` except `/health`. The
-bearer's policy grants (`content:read`/`write`, `audit:read`, `diagnostics:read`,
-`maintenance:backfill`/`reindex`) gate every method; see `write_dev_policy.py` above for
-the dev shape.
+Every route needs `Authorization: Bearer <64 lowercase hex>` except `/health` and the
+static UI (`GET /`, `/knowledge.html`, `/v2/*`), which are deliberately public and skip
+policy admission — not the Host/Origin gate, which still runs on every request
+(`app.ts:414-444`; `authorization-integration-v1.md:34`). Measured: `GET /` and
+`GET /v2/index.html` both return 200 with no token. The bearer's policy grants
+(`content:read`/`write`, `audit:read`, `diagnostics:read`, `maintenance:backfill`/`reindex`)
+gate every protected method; see `write_dev_policy.py` above for the dev shape.
 
 MCP endpoint: `/mcp/:bank`, with bank = `workspaces.name` (not credentials). `tools/list`
 returns **39 tools**, filtered to what the caller's token grants: 8 legacy memory tools
@@ -156,8 +159,10 @@ bun app/cli.ts remember --bank default --content 'A reviewed fact' --peer neo --
 bun app/cli.ts recall --bank default --query 'reviewed' --mode text
 ```
 
-Every command except `health` needs `ARRA_TOKEN` (or a bearer via `--url`'s target) —
-measured: with no token, `ARRA_TOKEN must be exactly 64 lowercase hex characters`, exit 1.
+Every command except `health` needs `ARRA_TOKEN` — it is the **only** credential source;
+there is no `--url`-carried credential and no config-file lookup (`cli.ts:23`), and
+`--url` is rejected outright if it carries a username/password (`cli.ts:90`). Measured:
+with no token, `ARRA_TOKEN must be exactly 64 lowercase hex characters`, exit 1.
 The CLI covers the 13 legacy backend commands plus help; it does not wrap the 31
 `/api/knowledge` / `kb_*` methods above (call those over HTTP or MCP; #31 tracks giving
 the CLI a knowledge leg). It validates arguments, forwards subject attribution, and exits
@@ -181,11 +186,28 @@ bun test app/cli.test.ts
 uv sync --project app/migrate-py --frozen
 PYTHONPATH=app/migrate-py/src app/migrate-py/.venv/bin/python \
   -m unittest discover -s app/migrate-py/tests -v
+
+# `discover` does NOT reach tests/fixtures/*-v1/ (neither directory has an
+# __init__.py; both files document this and give this exact command). Run
+# them explicitly, with the ResourceWarning-as-error the fixture-lane contract
+# requires (app/docs/contracts/taxonomy-write-v1.md:98). Measured: 139 OK
+# (discover) + 17 OK (publication) + 22 OK (taxonomy).
+cd app/migrate-py
+PYTHONPATH=src:tests .venv/bin/python -W error::ResourceWarning \
+  tests/fixtures/publication-v1/test_export_publication_fixture.py -v
+PYTHONPATH=src:tests .venv/bin/python -W error::ResourceWarning \
+  tests/fixtures/taxonomy-v1/test_export_taxonomy_fixture.py -v
 ```
 
+`app/benchmarks` has its own 88 Python tests (`test_harness_corpus.py`,
+`test_harness_metrics.py`, `test_harness_runner.py`, `test_retrieval_metrics.py`) outside
+both discovery roots above. They are **not** run in CI and are not exercised by anything
+in this section — run them manually with the same venv if you touch that directory.
+
 `.github/workflows/ci.yml` runs this same set (typecheck, build, `test:parallel` with
-`TEST_SHARDS=4`, the Python suite, and the `app/ui/v2` build) on every push and pull
-request.
+`TEST_SHARDS=4`, the Python `unittest discover` suite plus the two explicit fixture
+suites above, and the `app/ui/v2` build) on every push and pull request. It does not run
+`app/benchmarks`.
 
 `bun run typecheck` shells out to a bare `tsc` on PATH; `package.json` intentionally
 carries no `typescript` devDependency (measured: `tsc --version` only resolves because a
