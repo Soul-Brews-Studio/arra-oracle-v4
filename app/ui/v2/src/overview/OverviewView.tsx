@@ -20,15 +20,17 @@ import { TypeBreakdown, type TypeCounts } from "./TypeBreakdown";
  * zero that can never move.
  */
 
-// Two measured zeros that need a sentence, and it has to be on the card: both
-// numbers are real, and both answer a different question than their label
-// implies -- without this a reader takes "0 mcp calls" as "nobody used the
-// tools", and acts on it. Both are worded as claims about a COUNT, so both go
-// through `whenCounted`: they are false the moment nothing counted.
+// What the two audit counts actually count. Until R5 (#103/#102) both were
+// zeros that could never move -- the reads opened a dataset nothing wrote to --
+// and these lines said so. The readers now open the operations root the
+// writers fill, so the numbers are live; what still needs saying is their
+// SCOPE: only admitted MCP `tools/call` requests are logged and folded, so HTTP
+// API traffic moves neither. Both are claims about a COUNT, so both go through
+// `whenCounted`: they are false the moment nothing counted.
 const MCP_WHY =
-  "really counted, but mcp_calls are written under ARRA_DATA_DIR while this read opens ARRA_KNOWLEDGE_DATASET_ROOT — it stays 0 however much the server is used";
+  "admitted MCP tools/call requests in this workspace, successes and failures, read from the operations root (ARRA_DATA_DIR) the call log is written to — HTTP API requests are not logged here";
 const CONNECTION_WHY =
-  "really counted, but nothing anywhere in the codebase writes a connection row yet — it stays 0 until a writer exists";
+  "distinct MCP callers in this workspace — one row per credential and client label, folded from each admitted tools/call — HTTP API callers are not counted";
 
 /** `statFromCount` maps the outcome; this only replaces its `meta`, which
  *  would otherwise lead with an em dash standing in for an HTTP status the
@@ -101,16 +103,14 @@ export function OverviewView({ bank, onGo }: { bank: Bank; onGo: (view: Route["v
           <StatCard
             label="mcp calls"
             {...probe(c.mcpCalls)}
-            tone={c.mcpCalls.outcome === "counted" ? "warn" : "normal"}
             hint={c.mcpCalls.note ?? MCP_WHY}
-            sub={whenCounted(c.mcpCalls, "counted, but the writer uses a different data dir")}
+            sub={whenCounted(c.mcpCalls, "admitted MCP tool calls · HTTP API not logged")}
           />
           <StatCard
             label="connections"
             {...probe(c.connections)}
-            tone={c.connections.outcome === "counted" ? "warn" : "normal"}
             hint={c.connections.note ?? CONNECTION_WHY}
-            sub={whenCounted(c.connections, "counted, but no writer exists anywhere yet")}
+            sub={whenCounted(c.connections, "distinct MCP callers · credential + client label")}
           />
         </StatGrid>
 

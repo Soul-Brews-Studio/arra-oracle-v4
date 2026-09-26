@@ -18,13 +18,13 @@ import type { Count } from "../api/overview";
  *
  *   normal -- an ordinary count. 0 means "empty so far", and a write would
  *             change it.
- *   warn   -- really measured, but its meaning is not "no activity yet".
- *             `connections` has no writer anywhere in the codebase, and
- *             `mcp_calls` is written under ARRA_DATA_DIR while this read
- *             opens ARRA_KNOWLEDGE_DATASET_ROOT. Both stay 0 whatever the
- *             user does, so the card carries a glyph and `hint` must say
- *             why. Amber, not red: nothing is broken, the number is just
- *             answering a different question than the label suggests.
+ *   warn   -- really measured, but its meaning is not "no activity yet":
+ *             a zero that stays 0 whatever the user does, so the card
+ *             carries a glyph and `hint` must say why. Amber, not red:
+ *             nothing is broken, the number is just answering a different
+ *             question than the label suggests. No card uses it today --
+ *             the two it was written for, `mcp calls` and `connections`,
+ *             read the tables their writers fill since R5 (#103/#102).
  *   good   -- a number that confirms something, e.g. a cross-check that
  *             agreed.
  *

@@ -6,11 +6,13 @@
  * numbers for a card, this one mirrors two wire row types and the methods
  * that return them.
  *
- * Both are counted on the overview page, and both answer 0 today for reasons
- * that have nothing to do with how much the server is used -- `mcp_calls` is
- * written under ARRA_DATA_DIR while this read opens
- * ARRA_KNOWLEDGE_DATASET_ROOT, and nothing anywhere writes a connection row
- * yet. That is a display problem, handled where the cards are built.
+ * Both are counted on the overview page. Since R5 (#103/#102) the server
+ * answers both from the operations root (ARRA_DATA_DIR) that the call log and
+ * the connection fold write to, so the counts move with MCP traffic; before
+ * that they read a dataset nothing wrote to and stayed 0. A page may also
+ * carry `unreadable: [{id, reason}]` -- stored rows the server could not
+ * encode and withheld rather than fail the page. `toPage` ignores it: a
+ * count needs only `total`, which still includes them.
  */
 import { type ApiResult, callMethod } from "./client";
 import { type Page } from "./listing";

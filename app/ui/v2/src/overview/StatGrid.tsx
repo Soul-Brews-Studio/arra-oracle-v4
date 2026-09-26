@@ -4,8 +4,8 @@ import type { ReactNode } from "react";
  *
  * `auto-fit` + `minmax` rather than a fixed `grid-cols-5`: five cards at a
  * fixed count turn a 900px window into five 150px columns where the number
- * fits and the "why it stays 0" caption does not -- and that caption is the
- * only thing stopping a measured zero from reading as "no activity". The
+ * fits and the caption under it does not -- and that caption is the only
+ * thing saying what a number counts, or why a zero is not "no activity". The
  * honest failure mode is fewer columns, never a truncated explanation.
  *
  * The column width lives in a literal class string because Tailwind extracts
