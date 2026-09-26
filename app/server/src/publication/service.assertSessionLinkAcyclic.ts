@@ -1,9 +1,17 @@
 import { failPublication } from "./errors";
-import { type SessionRelation, MAX_CYCLE_VISITED, encodeSessionLinkRow } from "./session-link";
+import {
+  type SessionRelation,
+  DIRECTED_SESSION_RELATIONS,
+  MAX_CYCLE_VISITED,
+  encodeSessionLinkRow,
+} from "./session-link";
 import { quote } from "./storage";
 import { SESSION_LINKS } from "./service.constants";
 import { contextScope } from "./service.contextScope";
 import { type DatasetAdapter } from "./service.types";
+
+/** `relation IN ('continues', 'forked_from')`, built once from the shared list. */
+const DIRECTED_RELATION_FILTER = DIRECTED_SESSION_RELATIONS.map(quote).join(", ");
 
 /**
  * Bounded FORWARD reachability walk for the `continues`/`forked_from` cycle
@@ -11,16 +19,27 @@ import { type DatasetAdapter } from "./service.types";
  * no bound.
  *
  * Starting from `toSession` (the parent side of the edge being proposed),
- * follow the SAME directed relation FORWARD over its OUT-edges: at each
- * visited session, find its own outgoing edge(s) of this relation
- * (`from_session_name = current`) and continue to their `to_session_name`.
+ * follow EITHER directed relation FORWARD over its OUT-edges: at each
+ * visited session, find its own outgoing edge(s) of `continues` OR
+ * `forked_from` (`from_session_name = current AND relation IN
+ * ('continues','forked_from')`) and continue to their `to_session_name`.
  * This is reachability FROM `toSession`, not ancestry back to it.
  *
- * A session can have MULTIPLE outgoing edges of the same relation, so this is
+ * Amendment 2026-09-26 (overnight R7 (#28 part), Unit B): the walk used to
+ * query only the relation named on the PROPOSED edge, so a loop that mixed
+ * `continues` and `forked_from` (e.g. sess-b --continues--> sess-a, then
+ * sess-a --forked_from--> sess-b) went undetected -- the second create's own
+ * walk queried `relation = 'forked_from'` and never saw the stored
+ * `continues` edge. `session-link-v1.md` Decision 4 is amended to require
+ * the union; see `docs/overnight/DECISIONS.md` R7. `related_to` remains
+ * entirely exempt, unioned or not -- it still returns before any walk runs.
+ *
+ * A session can have MULTIPLE outgoing edges of either relation, so this is
  * a real DAG walk, not a single-parent chain: a revisited node is ordinarily
- * legal (X->Y, X->Z, Y->W, Z->W is a diamond, not a cycle). A proper
- * gray/black DFS -- explicit stack, not recursion, so a frame can be closed
- * on its way back out -- tells the two apart:
+ * legal (X->Y, X->Z, Y->W, Z->W is a diamond, not a cycle, even when the two
+ * branches use different relations). A proper gray/black DFS -- explicit
+ * stack, not recursion, so a frame can be closed on its way back out --
+ * tells the two apart:
  *   - `onPath` (gray) marks a node currently on the active DFS path. Popping
  *     an unexpanded frame already in `onPath` is a BACK EDGE: a real
  *     directed cycle, `integrity_failure` at ROOT, whether it was already
@@ -38,13 +57,14 @@ import { type DatasetAdapter } from "./service.types";
  *
  * Each out-edge query is itself bounded and UNORDERED (`DatasetAdapter.query`
  * has no ordering guarantee): a wide node with more than `MAX_CYCLE_VISITED`
- * out-edges of this relation would let the query return an ARBITRARY subset,
- * silently defeating the walk on exactly the row that would have proven a
- * cycle. That is refused outright rather than walked partially, exactly as
- * `listMessages` never truncates a page it cannot prove complete. 1024
- * distinct finished (`black`) sessions is allowed; the 1025th, or any single
- * node with more than 1024 out-edges of this relation, is `limit_exceeded`
- * at ROOT -- the same bound as reply chains and revision ancestry.
+ * out-edges of EITHER directed relation would let the query return an
+ * ARBITRARY subset, silently defeating the walk on exactly the row that
+ * would have proven a cycle. That is refused outright rather than walked
+ * partially, exactly as `listMessages` never truncates a page it cannot
+ * prove complete. 1024 distinct finished (`black`) sessions is allowed; the
+ * 1025th, or any single node with more than 1024 combined `continues` +
+ * `forked_from` out-edges, is `limit_exceeded` at ROOT -- the same bound as
+ * reply chains and revision ancestry (unchanged by this amendment).
  */
 export async function assertSessionLinkAcyclic(
   writer: DatasetAdapter,
@@ -86,7 +106,8 @@ export async function assertSessionLinkAcyclic(
 
     const rows = await writer.query(
       SESSION_LINKS,
-      `${contextScope(workspace)} AND from_session_name = ${quote(node)} AND relation = ${quote(rel)}`,
+      `${contextScope(workspace)} AND from_session_name = ${quote(node)} ` +
+        `AND relation IN (${DIRECTED_RELATION_FILTER})`,
       MAX_CYCLE_VISITED + 1,
     );
     // UNORDERED and limited: more rows than the bound means the query itself

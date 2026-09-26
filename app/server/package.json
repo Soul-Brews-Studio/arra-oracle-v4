@@ -29,6 +29,7 @@
     "test:migration": "bun test test/migration-*.test.ts",
     "test:publication": "bun test test/publication-*.test.ts test/fixtures/publication-v1/*.test.ts",
     "test:read-cursor": "bun test test/read-cursor-*.test.ts",
+    "test:relic": "bun test test/relic-*.test.ts",
     "test:replay": "bun test test/replay-*.test.ts",
     "test:revision": "bun test test/revision-*.test.ts",
     "test:search-chunk": "bun test test/search-chunk-*.test.ts",

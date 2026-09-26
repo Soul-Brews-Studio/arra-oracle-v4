@@ -262,6 +262,11 @@ describe("real persistence: session links inside the real gate", () => {
     }
   }, 300_000);
 
+  // The mixed continues/forked_from cycle-refusal cases (#28 Unit B) live in
+  // `session-link-cycle.test.ts`, split out to stay under the 500-line cap;
+  // they exercise this SAME `describe` block's `drive`/`ctx`/`seedOps`
+  // pattern against the same fixture, just in their own file.
+
   test("a STORED back-edge cycle is caught as integrity_failure at root", async () => {
     // sess-b->sess-c and sess-c->sess-b (both `continues`) are planted
     // DIRECTLY, bypassing every service check -- a well-behaved writer could

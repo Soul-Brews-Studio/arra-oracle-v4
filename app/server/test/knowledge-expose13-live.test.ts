@@ -26,6 +26,11 @@
 // proved exhaustively (all 13 methods) at the fake-bundle level in
 // `knowledge-expose13-transport.test.ts`; this file adds a same-shape spot
 // check against the real writer gate and real admission, not a full repeat.
+//
+// #28 Unit B's live mixed continues/forked_from cycle-refusal proof lives in
+// `knowledge-expose13-live-cycle.test.ts`, split out to stay under the
+// 500-line cap -- its own gated child run, against the same shared
+// `fixtures/transport-v1/expose13/child.ts` transport driver.
 
 import { afterAll, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
@@ -279,6 +284,9 @@ function buildSteps(seededAlpha: Fixture["workspaces"][string]): Step[] {
       cursor: null,
       limit: 10,
     }),
+    // #28 Unit B's mixed continues/forked_from cycle-refusal live proof moved
+    // to `knowledge-expose13-live-cycle.test.ts` (500-line cap), its own
+    // gated child run against the same shared `child.ts` transport driver.
 
     // ── #29 lifecycle: retireNode/supersedeNode -> listLifecycleHistory -> getRecallEligibility ──
     s("supersede_http", "http", "write", "supersedeNode", supersedeRequest()),

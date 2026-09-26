@@ -87,3 +87,95 @@ describe("expose-13 actors are bound like every other asserted peer", () => {
     );
   });
 });
+
+// R7 (#28 part), docs/overnight/DECISIONS.md: "Caller-asserted attribution
+// (created_by_peer_name, traces.peer_name) is checked against the R3 peers
+// binding when one is configured." These five methods were exposed to
+// transport by the #28/#31 expose-13 slice but never classified here, so
+// EVERY call to them was refused outright (`forbidden` at the request root)
+// under any bound grant -- fails closed, but not usefully: the binding
+// should validate the asserted peer and let a bound caller through, not
+// disable the method entirely. This describe block is scoped to the five
+// methods THIS slice owns; getRecallEligibility, listLifecycleHistory,
+// retireNode, supersedeNode (#29) and listSearchChunks,
+// indexRevisionChunks, writeChunkEmbedding, reconcileSearchChunks (#30)
+// are classified by their own dispatched slices. (Merged into the overnight
+// integration branch after all of them landed: the equality test is green.)
+describe("#28: session-link and trace methods are classified and enforced", () => {
+  const bound = { operator: false, peers: ["peer-a"] };
+  const unbound = { operator: false, peers: null };
+
+  test("createSessionLink asserts created_by_peer_name", () => {
+    expect(PEER_FIELDS.createSessionLink).toEqual([["created_by_peer_name"]]);
+  });
+  test("createTrace asserts peer_name", () => {
+    expect(PEER_FIELDS.createTrace).toEqual([["peer_name"]]);
+  });
+  test("getTrace, listTraceHits and listSessionLinks assert no acting peer", () => {
+    expect(PEER_FIELDS.getTrace).toEqual([]);
+    expect(PEER_FIELDS.listTraceHits).toEqual([]);
+    expect(PEER_FIELDS.listSessionLinks).toEqual([]);
+  });
+
+  test("bound: createSessionLink with an UNLISTED created_by_peer_name is refused at its own pointer", () => {
+    expect(
+      codeOf(() =>
+        requireBoundPeers(
+          "createSessionLink",
+          bytes({ id: "x", workspace_name: "w", from_session_name: "a", to_session_name: "b", relation: "continues", evidence_ref: null, created_by_peer_name: "peer-z" }),
+          bound,
+        ),
+      ),
+    ).toEqual({ code: "forbidden", path: "/created_by_peer_name" });
+  });
+
+  test("bound: createSessionLink with a LISTED created_by_peer_name passes, and so does a null one", () => {
+    expect(
+      codeOf(() =>
+        requireBoundPeers(
+          "createSessionLink",
+          bytes({ id: "x", workspace_name: "w", from_session_name: "a", to_session_name: "b", relation: "continues", evidence_ref: null, created_by_peer_name: "peer-a" }),
+          bound,
+        ),
+      ),
+    ).toBe("NO_THROW");
+    expect(
+      codeOf(() =>
+        requireBoundPeers(
+          "createSessionLink",
+          bytes({ id: "x", workspace_name: "w", from_session_name: "a", to_session_name: "b", relation: "continues", evidence_ref: null, created_by_peer_name: null }),
+          bound,
+        ),
+      ),
+    ).toBe("NO_THROW");
+  });
+
+  test("bound: createTrace with an UNLISTED peer_name is refused at its own pointer", () => {
+    expect(
+      codeOf(() => requireBoundPeers("createTrace", bytes({ workspace_name: "w", peer_name: "peer-z" }), bound)),
+    ).toEqual({ code: "forbidden", path: "/peer_name" });
+  });
+
+  test("bound: createTrace with a LISTED peer_name passes", () => {
+    expect(
+      codeOf(() => requireBoundPeers("createTrace", bytes({ workspace_name: "w", peer_name: "peer-a" }), bound)),
+    ).toBe("NO_THROW");
+  });
+
+  test("unbound: nothing is consulted for createSessionLink or createTrace either", () => {
+    expect(
+      codeOf(() => requireBoundPeers("createTrace", bytes({ workspace_name: "w", peer_name: "anyone" }), unbound)),
+    ).toBe("NO_THROW");
+    expect(
+      codeOf(() =>
+        requireBoundPeers("createSessionLink", bytes({ created_by_peer_name: "anyone" }), unbound),
+      ),
+    ).toBe("NO_THROW");
+  });
+
+  test("bound: getTrace, listTraceHits, listSessionLinks pass any body -- they assert no peer", () => {
+    for (const method of ["getTrace", "listTraceHits", "listSessionLinks"]) {
+      expect(codeOf(() => requireBoundPeers(method, bytes({ workspace_name: "w", id: "x" }), bound))).toBe("NO_THROW");
+    }
+  });
+});
