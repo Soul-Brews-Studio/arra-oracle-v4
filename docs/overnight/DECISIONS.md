@@ -268,6 +268,16 @@ v3". Measured usage on this machine: 709 real v3 tool calls; `oracle_search` 46%
 - **Never carried**: `oracle_mcp_call` and `oracle_mcp_list_tools`, because they run a
   caller-chosen command on the server.
 
+## R19 · `connections.method` is the auth method, `bearer` today
+
+- **Ruling**: SPEC §7.2 defines `connections.method` as the authentication method
+  (`bearer | oauth | owner-session`), not the transport. Every request that reaches
+  the fold was admitted by an arra-auth/v1 bearer credential, so the value is `"bearer"`.
+  It used to be `"unknown"` for every row, because nothing passed a transport.
+- The acceptor's #102 check required `"mcp"`, which is a transport. That check
+  follows this ruling, or refutes it.
+- **Reverse by**: making `method` carry the transport and amending SPEC §7.2.
+
 ## R12 · Model split tonight (corrects PLAN v0)
 
 - Nat's latest rule (09-21 08:12, c30e0ba2 #14638): Sonnet codes; Opus and Fable plan and check.

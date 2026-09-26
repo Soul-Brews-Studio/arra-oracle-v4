@@ -143,11 +143,11 @@ export async function composeService(config: RuntimeConfig): Promise<OperationSe
       void connections
         .foldConnection({
           workspace_name: entry.workspace_name,
-          // "unknown" rather than a guess: `method` is NOT NULL and the read
-          // validates it as nonempty text, so a transport that did not say
-          // must still round-trip as something a human can read as "we were
-          // not told" -- never silently attributed to http or mcp.
-          method: entry.transport?.trim() ? entry.transport : "unknown",
+          // DECISIONS.md R19: SPEC §7.2 defines `method` as the AUTH method
+          // (bearer | oauth | owner-session), not the transport. Every request
+          // that reaches this fold was admitted by an arra-auth/v1 bearer
+          // credential (auth/http.ts); oauth and owner sessions do not exist yet.
+          method: "bearer",
           // DECISIONS.md R5: `principal` is the CREDENTIAL id, matching
           // SPEC §7.2 ("token id or oauth client_id") -- never `principal_id`,
           // which names the PERSON/service the credential belongs to, not the

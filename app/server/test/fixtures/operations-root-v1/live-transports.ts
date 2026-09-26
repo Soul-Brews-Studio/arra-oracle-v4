@@ -126,6 +126,10 @@ export function registerLiveTransportTests(fx: OperationsRootFixture): void {
       // the principal id ("person-a") the credential belongs to.
       expect(row.principal).toBe("cred-a");
       expect(row.principal).not.toBe("person-a");
+      // DECISIONS.md R19: `method` is the AUTH method of SPEC §7.2 (bearer | oauth |
+      // owner-session). Every admitted request today came through an arra-auth/v1
+      // bearer credential, so it is "bearer" -- never "unknown", never a transport.
+      expect(row.method).toBe("bearer");
       expect(row.label).toBe("test-client/1.0");
       expect(row.requests).toBe("2");
       expect(row.tool_calls).toBe("2");
