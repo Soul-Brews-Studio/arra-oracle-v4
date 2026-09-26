@@ -92,18 +92,42 @@ export type ListTracesResult = {
  * kernel's ordering contract is the COMPOUND `(created_at desc, id asc)` --
  * two traces can share a millisecond, and `id` alone breaks that tie. This
  * fetches a widened window ordered by `created_at desc`, then finishes the
- * compound sort, the cursor comparison and the `query_contains` substring
- * filter in JS -- the same "widen then filter in memory" tradeoff
- * `listNodes` makes for its `type_term` filter.
+ * compound sort and the `query_contains` substring filter in JS -- the same
+ * "widen then filter in memory" tradeoff `listNodes` makes for its
+ * `type_term` filter.
+ *
+ * The cursor, by contrast, IS pushed into the SQL predicate (`created_at <
+ * X OR (created_at = X AND id > Y)`), the same shape `listNodes`' `idScope`
+ * uses for `after_id` -- without it every page would re-scan the same
+ * newest `MAX_SCANNED_TRACES` rows regardless of how far the caller had
+ * already paged, which is a dead end past that many stored rows.
+ *
+ * The cursor returned to the caller is the LAST ROW EXAMINED walking the
+ * sorted window (stopping at the row that filled the page, same as every
+ * other row before it), never merely the last MATCH: exactly `listNodes`'
+ * `lastExaminedId`, which advances on every id looked at, whether or not it
+ * passed that kernel's own `type_term` filter. A cursor derived only from
+ * matches has two failure shapes here -- resuming from the middle of an
+ * ALREADY-FETCHED window (unfiltered case, `MAX_SCANNED_TRACES` bigger than
+ * `limit`) would re-derive the wrong "last returned row" and skip everything
+ * between the page and the window's tail; and a `query_contains` filter
+ * sparse enough that an entire widened window matches nothing would come
+ * back with a null cursor while `has_more` stays true -- a dead end.
  */
 export async function listTraces(reader: DatasetAdapter, requestBytes: Uint8Array): Promise<ListTracesResult> {
   const request = parseListTraces(requestBytes);
   await requireWorkspace(reader, request.workspace_name);
   await reader.refresh(TRACES);
 
+  const afterCreatedAt = request.after_created_at === null ? null : timestampToMillis(request.after_created_at);
+  const afterId = request.after_id;
+
   const filters = [contextScope(request.workspace_name)];
   if (request.parent_id !== null) filters.push(`parent_id = ${quote(request.parent_id)}`);
   if (request.prev_id !== null) filters.push(`prev_id = ${quote(request.prev_id)}`);
+  if (afterCreatedAt !== null && afterId !== null) {
+    filters.push(`(created_at < ${afterCreatedAt.toString(10)} OR (created_at = ${afterCreatedAt.toString(10)} AND id > ${quote(afterId)}))`);
+  }
   const predicate = filters.join(" AND ");
 
   const scanned = await reader.orderedProjection(
@@ -132,8 +156,11 @@ export async function listTraces(reader: DatasetAdapter, requestBytes: Uint8Arra
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   });
 
-  const afterCreatedAt = request.after_created_at === null ? null : timestampToMillis(request.after_created_at);
-  const afterId = request.after_id;
+  // Defense in depth, not the only guard: the SQL predicate above already
+  // restricts `scanned` to rows past the cursor, so this should always be
+  // true. Kept so a future predicate edit that silently loses the cursor
+  // clause fails on an assertion here rather than on a silent duplicate
+  // page at the wire.
   const pastCursor = (c: Candidate): boolean => {
     if (afterCreatedAt === null) return true;
     if (c.created_at !== afterCreatedAt) return c.created_at < afterCreatedAt;
@@ -142,13 +169,32 @@ export async function listTraces(reader: DatasetAdapter, requestBytes: Uint8Arra
   const containsQuery = (c: Candidate): boolean =>
     request.query_contains === null || c.query.includes(request.query_contains);
 
-  const matched = candidates.filter((c) => pastCursor(c) && containsQuery(c));
-  const page = matched.slice(0, request.limit);
+  // Walk the sorted window IN ORDER, exactly `listNodes`' shape: `lastExamined`
+  // advances on every candidate looked at (match or not), and the walk stops
+  // the instant the page fills -- so a stop mid-window leaves `lastExamined`
+  // at the row that just filled the page (resume right after it, nothing
+  // skipped), while running off the end of the window leaves it at the very
+  // last candidate examined (resume past the whole window, even if that
+  // window held no matches at all).
+  const page: Candidate[] = [];
+  let lastExamined: Candidate | null = null;
+  let stoppedEarly = false;
+  for (const c of candidates) {
+    lastExamined = c;
+    if (!pastCursor(c) || !containsQuery(c)) continue;
+    page.push(c);
+    if (page.length >= request.limit) {
+      stoppedEarly = true;
+      break;
+    }
+  }
   // The window might not have reached every stored trace matching the SQL
-  // predicate (there could be more, older than the window's tail): an honest
-  // "not proven exhaustive", never a page presented as if it were complete.
+  // predicate (there could be more, older than the window's tail), OR the
+  // walk stopped early with the window itself unexamined past that point:
+  // an honest "not proven exhaustive", never a page presented as if it were
+  // complete.
   const windowExhausted = scanned.length < MAX_SCANNED_TRACES;
-  const hasMore = matched.length > request.limit || !windowExhausted;
+  const hasMore = stoppedEarly || !windowExhausted;
   const coverage: "full" | "partial" = windowExhausted ? "full" : "partial";
 
   // Sequential, deliberately: `rowFor` shares this ONE adapter's per-table
@@ -157,12 +203,12 @@ export async function listTraces(reader: DatasetAdapter, requestBytes: Uint8Arra
   // loops with `await` instead of `Promise.all`.
   const rows: (Record<string, unknown> & { derived_from_count: number })[] = [];
   for (const c of page) rows.push(await rowFor(reader, request.workspace_name, c.id));
-  const last = page[page.length - 1] ?? null;
 
   return {
     rows,
-    next_after_created_at: hasMore && last !== null ? new Date(Number(last.created_at)).toISOString() : null,
-    next_after_id: hasMore && last !== null ? last.id : null,
+    next_after_created_at:
+      hasMore && lastExamined !== null ? new Date(Number(lastExamined.created_at)).toISOString() : null,
+    next_after_id: hasMore && lastExamined !== null ? lastExamined.id : null,
     has_more: hasMore,
     coverage,
   };
