@@ -2,7 +2,7 @@ import { PublicationError, failPublication } from "./errors";
 import { SUPERSEDE_LOG_FIELDS, encodeSupersedeLogRow } from "./lifecycle";
 import { encodeNodeRow, encodeRevisionRow, microsToTimestamp } from "./rows";
 import { quote } from "./storage";
-import { INT64_CEILING, NODES, NODE_REVISIONS, SUPERSEDE_LOG } from "./service.constants";
+import { INT64_CEILING, NODES, NODE_REVISIONS, PEERS, SUPERSEDE_LOG } from "./service.constants";
 import { contextOne } from "./service.contextOne";
 import { deriveNodeType } from "./service.deriveNodeType";
 import { selectedMaximum } from "./service.selectedMaximum";
@@ -17,6 +17,12 @@ import { type Clock, type DatasetAdapter, type LifecycleEventInput, type Lifecyc
  * (`expected_revision_id`) must equal the node's CURRENT accepted head, else
  * a returned conflict -- and a node that already carries a terminal event
  * refuses a second one, append-only.
+ *
+ * A non-null `peer_name` is a reference like any other peer field: it must be
+ * exactly one `peers` row in THIS workspace, else `invalid_reference` at
+ * `/peer_name` (lifecycle-v1 amendment 2026-09-26, #10). It is checked here,
+ * on the fresh path only, so an exact replay of an event accepted before the
+ * rule -- or of one whose peer was later renamed away -- stays idempotent.
  */
 export async function writeLifecycleEventFresh(
   writer: DatasetAdapter,
@@ -39,6 +45,18 @@ export async function writeLifecycleEventFresh(
     `workspace_name = ${quote(input.workspace_name)} AND id = ${quote(input.node_id)}`,
   );
   if (node === null) failPublication("invalid_reference", "/node_id");
+  // Request references resolve before any state is classified, as supersede's
+  // successor does: a caller naming a peer that does not exist here is told
+  // so, not handed a stale_pin/already_terminal conflict to retry into it.
+  if (input.peer_name !== null) {
+    await writer.refresh(PEERS);
+    const peer = await contextOne(
+      writer,
+      PEERS,
+      `workspace_name = ${quote(input.workspace_name)} AND name = ${quote(input.peer_name)}`,
+    );
+    if (peer === null) failPublication("invalid_reference", "/peer_name");
+  }
   const encodedNode = encodeNodeRow(node);
   const headId = encodedNode.current_revision_id;
   if (typeof headId !== "string") failPublication("integrity_failure", "");

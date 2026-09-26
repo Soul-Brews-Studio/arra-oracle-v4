@@ -95,7 +95,9 @@ describe("all sixteen physical columns wire exactly", () => {
         ctx("supersedeNode", {
           workspace_name: ALPHA, node_id: nodeA, expected_revision_id: revA,
           new_node_id: nodeB, new_revision_id: revB, reason: "superseded",
-          peer_name: "peer-a", operation_id: "op-supersede",
+          // A seeded peer of ALPHA: peer_name is a scoped reference since the
+          // lifecycle-v1 amendment of 2026-09-26 (#10).
+          peer_name: alpha.peer_names[0], operation_id: "op-supersede",
         }),
         ctx("listLifecycleHistory", { workspace_name: ALPHA, node_id: nodeA, after_event_id: null, limit: 10 }),
       ], [revA, revB]);
@@ -110,7 +112,7 @@ describe("all sixteen physical columns wire exactly", () => {
         workspace_name: ALPHA, old_id: nodeA, old_revision_id: revA,
         old_title: "a title", old_type: alpha.term_ids.type.note.name, old_source: null,
         new_id: nodeB, new_revision_id: revB, new_title: "a title", new_source: null,
-        reason: "superseded", peer_name: "peer-a", superseded_at: CLOCK_ISO,
+        reason: "superseded", peer_name: alpha.peer_names[0], superseded_at: CLOCK_ISO,
         operation_id: "op-supersede", h_metadata: null,
       });
 

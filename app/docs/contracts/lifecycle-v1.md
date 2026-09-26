@@ -206,3 +206,26 @@ poisons.
   rule can never actually need to page — a single node can only ever have zero or one
   lifecycle event. This is deliberate future-proofing already present in shipped code, not a
   gap.
+
+## Amendment 2026-09-26 (overnight R14 (+ R7 tokenizer))
+
+This section amends §1's `peer_name:W|null` and §2's fresh-path steps. The text above is left as written.
+
+**Authority, stated precisely.** This amendment was made in the overnight #10 slice, the slice that implements R14. It is **not** an R-numbered ruling: `docs/overnight/DECISIONS.md` rules nothing about lifecycle. It implements fix plan B of the independent #10 re-verification (`.tmp/understand/analysis-10.json` in the integration worktree). That plan measured `supersedeNode` and `retireNode` accepting, and writing to `supersede_log`, a `peer_name` that exists only in another workspace or nowhere. It is recorded in its own commit so it can be reverted without touching R14.
+
+**What changed.**
+
+- A non-null `peer_name` on `supersedeNode` or `retireNode` must resolve to exactly one `peers` row in the request's own workspace, the same rule every other peer reference in the context kernel follows (for example `createTrace`).
+  - None: `invalid_reference` at `/peer_name`.
+  - More than one: `integrity_failure`.
+  - `null` is still accepted and means no actor was named.
+- The check runs in `writeLifecycleEventFresh`, the fresh path only, so replay classification still runs first (§2).
+  - An exact replay of an event accepted before this amendment, or of one whose peer no longer resolves, still returns `idempotent` with the retained row.
+  - A refused request writes nothing and consumes nothing, so its `operation_id` stays free for a corrected retry.
+- Position in the fresh path: after the node resolves (`/node_id`), before the pin and already-terminal checks. A request naming a nonexistent peer is told so rather than handed a `stale_pin`/`already_terminal` conflict to retry into. For `supersedeNode` the successor references (`/new_node_id`, `/new_revision_id`) still resolve first, as before.
+
+**Why.** `supersede_log` is audit-shaped: v3's equivalent leaked across tenants (#10 defect 2). A caller-supplied actor name that is never checked against the workspace's peers lets alpha's audit row name a beta-only peer. That is not a read leak, but it is an integrity gap in the one table that records what changed and who did it.
+
+**Evidence.** `app/server/test/workspace-isolation-supersede.test.ts` covers a beta-only peer and a peer that exists nowhere, both refused from alpha and both leaving history empty; alpha's own peer is accepted and replays idempotently; `null` is accepted; and a refused operation id is reusable. The test was red on `aff9c65` (the beta-only peer was accepted). `lifecycle-precision.test.ts` previously named an unregistered `"peer-a"` and now names the fixture's seeded alpha peer.
+
+**Not changed here.** Lifecycle has no transport on this base: `knowledge/registry.ts` does not list `supersedeNode`, `retireNode`, `listLifecycleHistory` or `getRecallEligibility`. Another slice owns that file tonight. Transport-level authorization of these methods is therefore still unproven by this amendment.
