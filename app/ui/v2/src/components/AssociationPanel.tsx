@@ -80,9 +80,9 @@ export function AssociationPanel({
                       </span>
                       <span className="text-muted">{l.relation}</span>
                     </div>
-                    <p className="truncate font-mono text-muted" title={l.target}>
-                      {l.target}
-                    </p>
+                    {/* Wrapped, not truncated: a code target's path is the part a
+                        reviewer needs, and it sits at the END of the JSON. */}
+                    <p className="break-all font-mono text-muted">{l.target}</p>
                     <EvidenceBadges labels={directEvidenceLabels(l, citedStatus)} />
                   </li>
                 ))}
