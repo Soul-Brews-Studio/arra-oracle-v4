@@ -198,7 +198,9 @@ export function composeKnowledgeAccess(env: NodeJS.ProcessEnv = process.env): Kn
     // stores via `indexRevisionChunks` -- from THIS `env`, blank meaning
     // `DEFAULT_EMBEDDING_PROFILE`; and that same name is the model it calls,
     // so the profile a search reports can never differ from the model that
-    // embedded its query. SEAM: the concurrent profile registry replaces this
+    // embedded its query. Only the model name comes from THIS `env`:
+    // `embed.ts` reads OLLAMA_URL and EMBEDDING_DIMENSIONS from `process.env`
+    // when it loads. SEAM: the concurrent profile registry replaces this
     // pairing with a registry entry.
     embedder: {
       profile: embeddingProfile,

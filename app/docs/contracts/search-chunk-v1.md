@@ -306,9 +306,14 @@ It is checked on that text, never on one chunk, so an occurrence cut by the
   stop-word removal — R14), the same constant the legacy `memories` index is built from. The
   query is a `MatchQuery`, whose terms are OR-ed (measured: `หลงลืม` returns a chunk holding
   only `งลืม…`), so every chunk that holds three or more code points of an occurrence is a
-  candidate, in BM25 order. The whole-text re-check removes the measured trigram over-matches
-  (หลงทาง does not match หลงลืม). `score` is the node's best chunk score; order is score
-  descending, then node id.
+  candidate, in BM25 order. Trigram over-matches are removed in two steps. First the
+  chunk-local pre-filter (`chunkMayHoldQuery`, below) drops a chunk that can hold no part of an
+  occurrence, which already removes an over-match lying inside one chunk (หลงทาง vs หลงลืม).
+  Then the whole-head-text check decides every node that is left. Only that check can refuse
+  an over-match cut at a seam: for ความทรงจำ, a full chunk ending `ความ` passes the pre-filter,
+  because it may be the first half of a cut occurrence. If the next chunk starts `รัก`, the
+  head text holds every trigram of ความทรงจำ but not the word, and the node is refused. `score`
+  is the node's best chunk score; order is score descending, then node id.
 - The seam case: a query of 3 or 4 code points can be cut so that neither chunk keeps a
   trigram of it (หล|ง, wx|yz), and the index cannot see it. When the index answers fewer than
   `limit` nodes, a seam scan adds them: non-first chunks that start with a proper suffix of the
@@ -362,7 +367,9 @@ is not 384 finite float32 values is `writer_unavailable` (503), reusing `chat.ts
 `status = 'ready'` chunks of that profile and `chunker/v1`, flat L2 search with the workspace
 predicate as a prefilter; `distance` is LanceDB's `l2`, the SQUARED Euclidean distance,
 reported as stored (measured: orthogonal unit vectors give 2). Pending and failed chunks have
-no vector and are never candidates. One table holds several profiles, as built (R7); a chunk
+no vector and are never candidates. The `status = 'ready'` predicate does not rely on that: a
+chunk that keeps a stored vector but is not `ready` is refused too. No product writer makes
+such a row today; the test makes one by surgery. One table holds several profiles, as built (R7); a chunk
 of another profile is never a candidate. Order is distance ascending, then node id. Keyword and
 semantic answers are never fused (R7: fusing measured worse than either alone in relic's
 evaluation).
@@ -384,9 +391,17 @@ keyword|semantic`.
 - The seam scan is a workspace-scoped scan (`chunk_index > 0` plus one escaped prefix clause per
   cut position, 2 or 3 of them), not an index lookup: a 3-4 code point query whose index answer is short of `limit`
   pays it, in the same way a query under 3 code points pays the short-query scan.
-- BM25 `score` comes from one index shared by every workspace, so its value can depend on other
-  workspaces' text (ranking only; the answer SET is workspace-scoped). The legacy path exposes
-  `score` the same way.
+- BM25 `score` comes from one index shared by every workspace, and the raw number is returned.
+  The answer SET is workspace-scoped, but the score VALUE depends on every workspace's text, so
+  a caller can observe another workspace's term statistics. Measured by the verifier on a live
+  gated server: one workspace's score for `หลงลืม` fell from 5.65 to 2.38 after a second
+  workspace indexed 12 nodes holding it, with the same hit set. The legacy path exposes `score`
+  the same way. The fix is Nat's decision (a per-workspace index, no `score`, or rank only), so
+  this amendment leaves it open.
+- `writeChunkEmbedding` rewrites the chunk row (`mergeInsert`), so after an embedding backfill
+  most rows can sit outside the text index until the next `indexRevisionChunks` call triggers
+  the refresh. Answers are unchanged, because LanceDB still searches unindexed rows; only speed
+  is affected.
 - No embedding-profile registry: `DEFAULT_EMBEDDING_PROFILE` and the composition's
   profile/model pairing are the seam a registry replaces.
 - Eligibility is today's `getRecallEligibility` rule (no `supersede_log` row naming the node).
@@ -400,15 +415,18 @@ keyword|semantic`.
 Proof: `app/server/test/search-chunk-retrieval-grammar.test.ts` (grammar, snippet window, the
 pre-filter's seam rules and a cut-position property, the scan predicate, total hit order),
 `app/server/test/search-chunk-retrieval.test.ts` (real gated dataset: the inside-word Thai
-case, the หลงทาง false positive removed, the 2-code-point scan, retired / superseded /
-stale-revision / other-workspace / pending chunks never surfacing, the candidate query itself
+case, the หลงทาง false positive removed (there, by the pre-filter), the 2-code-point scan,
+retired / superseded / stale-revision / other-workspace / pending chunks never surfacing, a
+chunk that keeps a vector but is not `ready` never a semantic candidate, the candidate query itself
 scoped (a spying adapter), stable order and bounded limit, the reader never building the
 index while the writer builds and repairs it, squared-L2 ranking over stub vectors, a node
 indexed only under another profile never answering, the default profile being the
 embedder's, profile mismatch and embedder failure),
 `app/server/test/search-chunk-retrieval-straddle.test.ts` (occurrences cut by a chunk
-boundary, a 1100-character query and its 999-character prefix, on the index and on the
-scan), `app/server/test/search-chunk-retrieval-index-maintenance.test.ts` (a real index-build
+boundary, a 1100-character query and its 999-character prefix, a query only the title holds,
+and the seam over-match above (ความ|รัก for ความทรงจำ), which a spying adapter shows is a
+candidate on both paths and which only the whole-head-text check refuses, all on the index
+and on the scan), `app/server/test/search-chunk-retrieval-index-maintenance.test.ts` (a real index-build
 failure answers `writer_unavailable` without poisoning the owner, a replay repairs it, the
 refresh keeps unindexed rows below indexed ones),
 `app/server/test/search-chunk-retrieval-live.test.ts` (publish → `indexRevisionChunks` →
