@@ -39,17 +39,57 @@ const request = parseGetContext(requestBytes);
         { column: "id", ascending: true },
         MAX_LINKED_SESSIONS + 1,
       );
+      // The `+ 1` lookahead row is how a truncated link list is DETECTED
+      // (#85). It used to be fetched and then dropped with no signal, so a
+      // ninth linked session was never searched while `coverage` said "full".
+      // Conservative on purpose: a ninth row that duplicates an earlier
+      // target (duplicate from/to pairs are allowed by id) still reports the
+      // bound, because refusing to guess beats a silent omission.
+      const linksTruncated = linkRows.length > MAX_LINKED_SESSIONS;
       const linkedSessions = new Set<string>();
       for (const row of linkRows.slice(0, MAX_LINKED_SESSIONS)) {
         const encodedLink = encodeSessionLinkRow(row);
         linkedSessions.add(encodedLink.to_session_name as string);
       }
-      const candidateSessions = [request.session_name, ...linkedSessions];
+
+      // Authorization is decided PER SESSION, once, BEFORE any message row
+      // of that session is read -- never merge-then-filter. The anchor was
+      // proven above. This used to run per candidate, AFTER the max_items
+      // gate, so an unauthorized candidate past the cap was recorded as
+      // `budget_exceeded` with its public_id attached (#85, repro C), and a
+      // call could cost up to 459 membership lookups instead of 9.
+      const authorizedSessions = [request.session_name];
+      const unauthorizedSessions: string[] = [];
+      for (const sessionName of linkedSessions) {
+        try {
+          await requireCurrentMembership(reader, request.workspace_name, sessionName, request.peer_name, "/peer_name");
+          authorizedSessions.push(sessionName);
+        } catch (error) {
+          if (!(error instanceof PublicationError) || error.code !== "invalid_reference") throw error;
+          unauthorizedSessions.push(sessionName);
+        }
+      }
 
       await reader.refresh(MESSAGES);
+      // An unauthorized session is COUNTED, never read: the projection is the
+      // ordering column alone, so no content and no identifier of a message
+      // the requester may not see enters this process. The bound is the same
+      // `max_items + 1` lookahead an authorized session gets.
+      let unauthorizedCount = 0;
+      for (const sessionName of unauthorizedSessions) {
+        const rows = await reader.orderedProjection(
+          MESSAGES,
+          `${contextScope(request.workspace_name)} AND session_name = ${quote(sessionName)}`,
+          ["seq_in_session"],
+          { column: "seq_in_session", ascending: false },
+          request.max_items + 1,
+        );
+        unauthorizedCount += rows.length;
+      }
+
       type Candidate = { row: Record<string, unknown>; sessionName: string };
       const candidates: Candidate[] = [];
-      for (const sessionName of candidateSessions) {
+      for (const sessionName of authorizedSessions) {
         const rows = await reader.orderedProjection(
           MESSAGES,
           `${contextScope(request.workspace_name)} AND session_name = ${quote(sessionName)}`,
@@ -73,63 +113,49 @@ const request = parseGetContext(requestBytes);
         return ap < bp ? -1 : ap > bp ? 1 : 0;
       });
 
-      const items: ChatContextItem[] = [];
+      // `excluded` has its OWN byte bound: the same-sized MAX_CONTEXT_WIRE_BYTES
+      // constant as `items`, but a separate budget (#85). `excluded` never
+      // reaches the model (service.answerChat.ts renders `items` only); the
+      // bound exists because the response itself must stay bounded -- it used
+      // to reach ~156 KB (1 anchor + 8 linked sessions x (max_items+1) entries).
+      //
+      // Recording STOPS at the bound rather than throwing: `limit_exceeded` is
+      // right for the sibling list reads, which owe the caller a complete page
+      // or nothing, but this result is allowed to "keep going with what it
+      // has" -- a diagnostic list must not destroy the payload it describes.
+      // Entries past the bound are COUNTED in `excluded_omitted`, the list's
+      // own truncation signal; it no longer borrows `coverage` for that.
+      //
+      // The two fixed entries go first, so they can never be the ones
+      // omitted: one anonymous unauthorized count (R4: listing those items by
+      // public_id/session_name was the leak), then the link bound.
       const excluded: ExcludedContextItem[] = [];
-      let budget = 2; // brackets, matching the rest of this file's convention.
-      let budgetExceeded = false;
-      // `excluded` is measured against the SAME wire budget as `items` (#85).
-      // It was previously unbounded: `items` is capped twice -- by `max_items`
-      // and by MAX_CONTEXT_WIRE_BYTES -- while `excluded` was capped by
-      // neither, so a response could carry ~459 entries (1 anchor + 8 linked
-      // sessions x (max_items+1)) at roughly 340 bytes each. That is ~156 KB
-      // against a 65536-byte cap: 2.4x the bound this module exists to hold.
-      //
-      // Recording an exclusion STOPS at the bound rather than throwing:
-      // `limit_exceeded` is right for the sibling list reads, which owe the
-      // caller a complete page or nothing, but this result is explicitly
-      // allowed to "keep going with what it has". Refusing the whole answer
-      // because the REPORT of what was dropped grew too large would let a
-      // diagnostic field destroy the payload it describes.
-      //
-      // The truncation is not silent: reaching the bound sets `budgetExceeded`,
-      // so `coverage` is already `"partial"` whenever the list is incomplete.
-      let excludedBudget = 2;
+      let excludedBytes = 2; // brackets, matching the rest of this file's convention.
+      let excludedOmitted = 0;
       const recordExcluded = (entry: ExcludedContextItem): void => {
         const entryBytes = new TextEncoder().encode(JSON.stringify(entry)).length + 1;
-        if (excludedBudget + entryBytes > MAX_CONTEXT_WIRE_BYTES) {
-          budgetExceeded = true;
+        if (excludedBytes + entryBytes > MAX_CONTEXT_WIRE_BYTES) {
+          excludedOmitted++;
           return;
         }
-        excludedBudget += entryBytes;
+        excludedBytes += entryBytes;
         excluded.push(entry);
       };
+      if (unauthorizedCount > 0) recordExcluded({ reason: "unauthorized", count: unauthorizedCount });
+      if (linksTruncated) recordExcluded({ reason: "budget_exceeded", session_name: null, public_id: null });
+
+      const items: ChatContextItem[] = [];
+      let budget = 2; // brackets, matching the rest of this file's convention.
       for (const candidate of candidates) {
         const encoded = encodeMessageRow(candidate.row);
         const publicId = encoded.public_id as string;
         if (items.length >= request.max_items) {
-          budgetExceeded = true;
           recordExcluded({ reason: "budget_exceeded", session_name: candidate.sessionName, public_id: publicId });
-          continue;
-        }
-        // PER-ITEM authorization, BEFORE this candidate is ever added to
-        // `items` -- never merge-then-filter.
-        try {
-          await requireCurrentMembership(
-            reader,
-            request.workspace_name,
-            candidate.sessionName,
-            request.peer_name,
-            "/peer_name",
-          );
-        } catch (error) {
-          if (!(error instanceof PublicationError) || error.code !== "invalid_reference") throw error;
-          recordExcluded({ reason: "unauthorized", session_name: candidate.sessionName, public_id: publicId });
           continue;
         }
         const item = projectContextItem(encoded);
         const wireBytes = contextItemWireBytes(item) + 1;
         if (budget + wireBytes > MAX_CONTEXT_WIRE_BYTES) {
-          budgetExceeded = true;
           recordExcluded({ reason: "budget_exceeded", session_name: candidate.sessionName, public_id: publicId });
           continue;
         }
@@ -137,5 +163,8 @@ const request = parseGetContext(requestBytes);
         items.push(item);
       }
 
-      return { items, coverage: budgetExceeded ? "partial" : "full", excluded };
+      // #85, overnight ruling R4 (docs/overnight/DECISIONS.md): "full" means
+      // COMPLETE -- nothing excluded for any reason, authorization included.
+      const complete = excluded.length === 0 && excludedOmitted === 0;
+      return { items, coverage: complete ? "full" : "partial", excluded, excluded_omitted: excludedOmitted };
 }
