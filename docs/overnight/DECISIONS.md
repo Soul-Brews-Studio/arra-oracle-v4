@@ -1,6 +1,6 @@
 # Overnight rulings, 2026-09-26/27
 
-**Version**: `v26.9.26-alpha.2140`
+**Version**: `v26.9.26-alpha.2200`
 **Made by**: v4-overnight (Claude Opus 5.5, AI), under Nat's standing instruction for tonight:
 *"do anything you want … go until finish without any ask or wait me"*.
 
@@ -227,13 +227,46 @@ branch, so it reverts cleanly.
   `required: false`, flat hierarchy.
 - A null `supersede_log.reason` becomes `"legacy: reason not recorded"`, and the
   report counts these rows.
-- `distilled_at` goes to the trace link's `internal_metadata`, never invented as
-  `captured_at`.
+- `distilled_at` goes to `node_revisions.internal_metadata` of the distilled
+  revision, never invented as `captured_at`. *(Corrected 22:00: the first version
+  said "the trace link's `internal_metadata`", but `revision_links` has no such column
+  (`TARGET_SCHEMA`); the v3-parity review found it.)*
+- Migrated traces must be readable by the TS kernel. Map legacy `status:"raw"`
+  to `open`, legacy ids to deterministic nanoid21 (R18 D1), and hit kinds
+  outside `TARGET_KINDS` (e.g. `file`) per the trace contract, or reject them with
+  a report entry.
 - Scope is local datasets only. `writer_gate` refuses remote roots, and R2 is
   out of scope.
 - The inherited gates are **release-excluded tonight and named in the report**:
   #7 (judgments), #8 (container), and #10's quality half. The rehearsal
   report must say so. It must never look green on their account.
+
+## R18 · v3-compatible MCP adapter (#31 legacy adapters), rulings D1–D11 of V3-PARITY.md
+
+The design is `docs/overnight/V3-PARITY.md`. Nat's bar (09-22 01:43) was "can v4 replace
+v3". Measured usage on this machine: 709 real v3 tool calls; `oracle_search` 46%,
+`oracle_learn` 26%.
+
+- **D1** Legacy node id is `base64url(sha256("arra-legacy-node/v1\n"+ws+"\n"+id))[..21]`,
+  shared byte for byte with #34. If both a direct and a derived node exist, the call
+  is refused, never guessed.
+- **D2** Adapter vocabularies are `concepts`, `legacy_type` and `project`. #34 creates the same ones.
+- **D3** Recall paths (search, ask, recap, reflect) exclude superseded and retired
+  nodes; browse paths (list, read) include them, flagged. This visible change from v3
+  is stated in the tool descriptions.
+- **D4** `oracle_research_note` publishes type `learning` (parity).
+  `oracle_trace_distill` with `promoteToLearning:false` publishes `conclusion` (R10).
+- **D5** `oracle_profile` is dropped: 0 calls, and it holds hardcoded persona data, not knowledge.
+- **D6** Inbound `arra_*` aliases resolve; they are never listed.
+- **D7** `closeSession` is accepted as a one-way close, recorded in
+  `sessions.internal_metadata`. There is no new column.
+- **D8** `X-Arra-Peer` is the connection-level speaker assertion, bound by R3 `peers:[…]`.
+- **D9** v3 corpus import stays out of scope tonight (AGENTS rule 3). v3 ids do not
+  resolve in v4 until an explicit import on a copy is requested.
+- **D10** `ARRA_MCP_V3_COMPAT` stays off until the VA acceptance harness is green, then on.
+- **D11** Linking two existing traces stays not carried. Traces are immutable (SPEC §14.4).
+- **Never carried**: `oracle_mcp_call` and `oracle_mcp_list_tools`, because they run a
+  caller-chosen command on the server.
 
 ## R12 · Model split tonight (corrects PLAN v0)
 

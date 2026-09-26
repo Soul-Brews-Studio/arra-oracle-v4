@@ -145,3 +145,7 @@ are part of done.
   New #75 evidence, live: the unchanged dev seed wrote `created_at=…14:36:55.260248`, and both advanceReadCursor
   and getReadCursor returned 500 `integrity_failure`; the ms-aligned control workspace succeeded. This confirms R1/R2.
   Remaining GAPs: #87 CLI requester (needs the kb grammar), #29 recall query fixture, #33 browser workflows.
+- 21:59 v3-parity design landed: `docs/overnight/V3-PARITY.md`, 1100 lines. 30 tools: 5 map 1:1, 11 are thin
+  compositions, 8 need new kernel reads, 1 is static text, 5 are not carried. Of 709 real v3 calls, 52% are
+  servable before any new kernel work; #30 chunk search alone unlocks 46%. R18 records rulings D1–D11;
+  the R17 `distilled_at` column error it caught is corrected.
