@@ -37,8 +37,8 @@ Python LanceModel registries                 local LanceDB, two roots
 | `just/scripts/create_target19_dataset.py` | Dev-only stopgap that creates a target19 dataset and seeds its first `workspaces` row |
 | `just/scripts/write_dev_policy.py` | Dev-only auth policy + bearer token writer (`arra-auth/v1` shape) |
 | `just/scripts/run_dev_server.py` | Execs the server as the sole target19 writer, holding the fd-42 gate |
-| `server/src/` | Elysia HTTP/MCP, storage and application behavior. `src/knowledge/registry.ts` is the 44-method target19 method table; `src/mcp/tools.ts` is the MCP catalogue (8 memory + 44 `kb_*` = 52 tools) |
-| `cli.ts`, `cli/` | CLI: 13 legacy memory commands plus `kb <method>` for every registry method, and daily-loop aliases (#31) |
+| `server/src/` | Elysia HTTP/MCP, storage and application behavior. `src/knowledge/registry.ts` is the 46-method target19 method table; `src/mcp/tools.ts` is the MCP catalogue (8 memory + 46 `kb_*` = 54 tools) |
+| `cli.ts`, `cli/` | CLI: 13 legacy memory commands plus `kb <method>` for every registry method, and daily-loop aliases (#31), including `search` over the knowledge tier (#30) |
 | `cli.test.ts`, `server/test/` | Regression tests; isolated fixtures/stubs; run per-kernel with `bun run test:<kernel>` (see Verification below) |
 | ~~`migrate-rs/`, root `migrate-rust/`~~ | Rust experiments, removed — never schema owners. Recoverable from git history |
 | ~~root `index-ts/`, `query-ts/`~~ | Spikes over the removed Rust dataset, removed — no producer, no importer. Recoverable from git history |
@@ -111,10 +111,11 @@ policy admission — not the Host/Origin gate, which still runs on every request
 gate every protected method; see `write_dev_policy.py` above for the dev shape.
 
 MCP endpoint: `/mcp/:bank`, with bank = `workspaces.name` (not credentials). `tools/list`
-returns up to **52 tools**, filtered to what the caller's token grants: 8 legacy memory tools
-plus 44 `kb_<method>` tools generated from `src/knowledge/registry.ts`, one per knowledge
+returns up to **54 tools**, filtered to what the caller's token grants: 8 legacy memory tools
+plus 46 `kb_<method>` tools generated from `src/knowledge/registry.ts`, one per knowledge
 kernel method. The 13 session-link, trace, lifecycle and search-chunk methods were exposed on
-2026-09-26 (overnight R7/R8); before that they had no route.
+2026-09-26 (overnight R7/R8); before that they had no route. The two knowledge search methods
+(#30, R7/R14) were added the same night.
 
 ```text
 remember recall get_memory list_memories
@@ -129,9 +130,18 @@ kb_advanceReadCursor kb_getContext kb_listMcpCalls kb_listConnections kb_answerC
 kb_listSessionLinks kb_createSessionLink kb_getTrace kb_listTraceHits kb_createTrace
 kb_getRecallEligibility kb_listLifecycleHistory kb_retireNode kb_supersedeNode
 kb_listSearchChunks kb_indexRevisionChunks kb_writeChunkEmbedding
-kb_reconcileSearchChunks kb_getRevisionAssociations kb_scanDependents
-kb_reconcileRevisionAssociations
+kb_reconcileSearchChunks kb_searchKnowledgeKeyword kb_searchKnowledgeSemantic
+kb_getRevisionAssociations kb_scanDependents kb_reconcileRevisionAssociations
 ```
+
+Knowledge search (#30; `app/docs/contracts/search-chunk-v1.md` §12) answers NODES of the
+target-19 tier at their current head revision, never retired or superseded ones, one hit per
+node: `kb_searchKnowledgeKeyword` uses the same shared `ngram(3,3)` substring contract as the
+legacy path (`match: "ngram"` or `"substring_scan"`), over `search_chunks_v1.text`, whose index
+the writer builds in `indexRevisionChunks`; `kb_searchKnowledgeSemantic` embeds the query with
+the configured Ollama model and ranks READY chunk vectors of one embedding profile by squared
+L2 `distance`. The two are never fused. CLI: `search --bank B --query Q [--mode keyword|semantic]`
+(legacy memories search: `--mode text|vector`).
 
 HTTP surface:
 
@@ -144,7 +154,7 @@ POST /mcp/:bank                           POST /mcp/:bank/:workspace  (always 40
 GET  /  /knowledge.html  /v2/*            static assets
 ```
 
-`POST /api/knowledge/:bank/:method` is the HTTP leg of the 44 `kb_*` methods above — one
+`POST /api/knowledge/:bank/:method` is the HTTP leg of the 46 `kb_*` methods above — one
 RPC-style route per method, body `workspace_name` must equal `:bank`, capped at 1 MiB
 (the MCP leg caps at 256 KiB). Backfill and reindex are global maintenance operations in
 this prototype; a `?bank` on either gives 400. Do not infer bank isolation from an
