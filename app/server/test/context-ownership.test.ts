@@ -64,8 +64,10 @@ const CONTEXT_READ_METHODS =
 const PUBLICATION_WRITE_METHODS = "getAcceptedHead,listAcceptedHistory,listNodes,publishRevision";
 const PUBLICATION_READ_METHODS = "getAcceptedHead,listAcceptedHistory,listNodes";
 const TAXONOMY_WRITE_METHODS =
-  "createTerm,createVocabulary,getTerm,getVocabulary,renameTerm,reparentTerm,retireTerm,seedReservedVocabularies";
-const TAXONOMY_READ_METHODS = "getTerm,getVocabulary";
+  "createTerm,createVocabulary,getTerm,getVocabulary,lookupTermByName,lookupVocabularyByName," +
+  "renameTerm,reparentTerm,retireTerm,seedReservedVocabularies";
+// K2 (R18): the two by-name reads are on every taxonomy reader and writer facade.
+const TAXONOMY_READ_METHODS = "getTerm,getVocabulary,lookupTermByName,lookupVocabularyByName";
 
 /** §6: persistence/reference/state failures reuse the publication envelope, unchanged. */
 const PUB_ERR = "PublicationError arra-publication-error/v1";
