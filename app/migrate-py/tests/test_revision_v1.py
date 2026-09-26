@@ -669,6 +669,29 @@ class IsolationTests(unittest.TestCase):
         TS_ROOT / "migration" / "seedWorkspaceTaxonomy.ts",
     )
 
+    #: Read-side consumers added by the overnight slices of 2026-09-26, reviewed
+    #: at the integration merge (docs/overnight/PLAN.md). None of them opens a
+    #: writer or reaches the writer gate:
+    #:   - chat-model.*: TYPE-only imports of the chat contract (#32 / R9); erased
+    #:     at build, no runtime edge into the kernel.
+    #:   - mcp/calls.listMcpCalls, mcp/connections.listConnections,
+    #:     mcp/operations.listPage, mcp/calls.recordableName: the operations-root
+    #:     readers and the audit writer's name check (#103 / #102, R5), reusing
+    #:     the kernel's PURE codecs (row encoders, storedName, decodeArrowRows)
+    #:     so the operations tables validate exactly like target19.
+    #:   - knowledge/transport.requireBoundPeers: split out of transport.ts (an
+    #:     existing reviewed consumer) for R3; imports only the error class.
+    OVERNIGHT_READ_CONSUMERS = (
+        TS_ROOT / "chat-model.createOllamaChatModel.ts",
+        TS_ROOT / "chat-model.renderChatPrompt.ts",
+        TS_ROOT / "chat-model.types.ts",
+        TS_ROOT / "mcp" / "calls.listMcpCalls.ts",
+        TS_ROOT / "mcp" / "calls.recordableName.ts",
+        TS_ROOT / "mcp" / "connections.listConnections.ts",
+        TS_ROOT / "mcp" / "operations.listPage.ts",
+        TS_ROOT / "knowledge" / "transport.requireBoundPeers.ts",
+    )
+
     def test_no_active_server_source_imports_the_publication_kernel(self):
         """Only the kernel files and its reviewed consumers may import it.
 
@@ -676,10 +699,13 @@ class IsolationTests(unittest.TestCase):
         absence of enumerated substrings. It is NOT module resolution and does
         not prove a dynamic `import(expr)` is impossible.
         """
-        for path in self.PUBLICATION_CONSUMERS + self.MIGRATION_PUBLICATION_CONSUMERS:
+        for path in self.PUBLICATION_CONSUMERS + self.MIGRATION_PUBLICATION_CONSUMERS + self.OVERNIGHT_READ_CONSUMERS:
             self.assertTrue(path.is_file(), f"stale publication consumer entry: {path}")
         publication = (
-            set(self.PUBLICATION_FILES) | set(self.PUBLICATION_CONSUMERS) | set(self.MIGRATION_PUBLICATION_CONSUMERS)
+            set(self.PUBLICATION_FILES)
+            | set(self.PUBLICATION_CONSUMERS)
+            | set(self.MIGRATION_PUBLICATION_CONSUMERS)
+            | set(self.OVERNIGHT_READ_CONSUMERS)
         )
         scanned = [p for p in self.TS_ROOT.rglob("*.ts") if p not in publication] + [self.CLI]
         self.assertGreaterEqual(len(scanned), 8, f"scan collapsed: {len(scanned)} files")
