@@ -104,14 +104,19 @@ export function auditFailureCount(): number {
   return auditFailures;
 }
 
-async function table() {
+/**
+ * Exported so `calls.listMcpCalls.ts` (#103, DECISIONS.md R5) can page the
+ * SAME operations-root table this writer fills, through the SAME cached
+ * connection -- rather than opening a second handle to the identical store.
+ */
+export async function openCallLogTable() {
   handle ??= await connect(DATA_DIR, { storageOptions: storageOptions() });
   return handle.openTable(TABLE);
 }
 
 export async function logCall(rec: CallRecord): Promise<void> {
   try {
-    const tbl = await table();
+    const tbl = await openCallLogTable();
     await tbl.add([
       {
         id: `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
@@ -154,7 +159,7 @@ export async function logCall(rec: CallRecord): Promise<void> {
 
 export async function recent(bank: string, limit = 20, status?: string) {
   const scopedBank = requiredBank(bank);
-  const tbl = await table();
+  const tbl = await openCallLogTable();
   await tbl.checkoutLatest(); // a Table handle pins a version — see db.ts
   const predicates = [`workspace_name = ${quote(scopedBank)}`];
   if (status) predicates.push(`status = ${quote(status)}`);
@@ -180,7 +185,7 @@ export async function recent(bank: string, limit = 20, status?: string) {
 
 export async function aggregate(bank: string) {
   const scopedBank = requiredBank(bank);
-  const tbl = await table();
+  const tbl = await openCallLogTable();
   await tbl.checkoutLatest();
   const rows = await tbl.query().where(`workspace_name = ${quote(scopedBank)}`).toArray();
   const byTool: Record<string, { calls: number; errors: number; total_ms: number }> = {};

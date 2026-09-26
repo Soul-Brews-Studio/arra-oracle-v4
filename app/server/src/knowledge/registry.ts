@@ -34,6 +34,8 @@
  * against a real dataset, not as a batch.
  */
 
+import { listMcpCalls as listMcpCallsFromOperationsRoot } from "../mcp/calls.listMcpCalls";
+import { listConnections as listConnectionsFromOperationsRoot } from "../mcp/connections.listConnections";
 import type { EvidenceReaderBundle, EvidenceWriterBundle } from "../publication/service";
 
 /**
@@ -70,6 +72,18 @@ export type KnowledgeMethod = {
    * ordinary cached-writer path, unchanged for every other write method.
    */
   readonly ephemeralWrite?: boolean;
+  /**
+   * Operations-root methods (#103 / #102, DECISIONS.md R5): `mcp_calls` and
+   * `connections` are written straight to `ARRA_DATA_DIR` on every admitted
+   * request (`mcp/calls.ts`, `mcp/connections.ts`), never through the gated
+   * `ARRA_KNOWLEDGE_DATASET_ROOT` writer. When present, the transport
+   * (`knowledge/transport.ts`'s `handleKnowledgeRequest`, `mcp/index.ts`'s
+   * `dispatchKnowledgeTool`) calls THIS instead of opening a knowledge
+   * bundle -- `call` above is never invoked and
+   * `ARRA_KNOWLEDGE_DATASET_ROOT` need not even be configured for the method
+   * to answer. Admission (`action` above) is unchanged either way.
+   */
+  readonly operations?: (bytes: Uint8Array) => Promise<unknown>;
 };
 
 /** A reader bundle's `publication` facade has no `publishRevision`. */
@@ -172,8 +186,24 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
   // Audit data, not content: entitles the caller to `h_metadata.auth.credential_id`
   // (see `context.encodeMcpCallRow.ts`), which `content:read` callers must
   // never see.
-  listMcpCalls: { action: "audit:read", scopePath: [], call: (b, x) => b.context.listMcpCalls(x) },
-  listConnections: { action: "audit:read", scopePath: [], call: (b, x) => b.context.listConnections(x) },
+  //
+  // `call` still names the target19 facade method -- frozen by the ownership
+  // tests (`context-ownership.test.ts`, `context-service.test.ts`) and the
+  // #34 cutover's eventual reader -- but `operations` below is what actually
+  // answers today (R5): the target19 copies of these two tables are empty
+  // until #34 migrates them, so `call` is unroutable until then.
+  listMcpCalls: {
+    action: "audit:read",
+    scopePath: [],
+    call: (b, x) => b.context.listMcpCalls(x),
+    operations: (x) => listMcpCallsFromOperationsRoot(x),
+  },
+  listConnections: {
+    action: "audit:read",
+    scopePath: [],
+    call: (b, x) => b.context.listConnections(x),
+    operations: (x) => listConnectionsFromOperationsRoot(x),
+  },
   answerChat: {
     action: "content:write",
     scopePath: [],

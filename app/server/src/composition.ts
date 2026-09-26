@@ -148,9 +148,18 @@ export async function composeService(config: RuntimeConfig): Promise<OperationSe
           // must still round-trip as something a human can read as "we were
           // not told" -- never silently attributed to http or mcp.
           method: entry.transport?.trim() ? entry.transport : "unknown",
-          principal: entry.auth.principal_id,
+          // DECISIONS.md R5: `principal` is the CREDENTIAL id, matching
+          // SPEC §7.2 ("token id or oauth client_id") -- never `principal_id`,
+          // which names the PERSON/service the credential belongs to, not the
+          // credential itself. One principal can hold several credentials,
+          // each a distinct caller from this table's point of view.
+          principal: entry.auth.credential_id,
           label: entry.client_label?.trim() ? entry.client_label : "unlabelled",
           user_agent: entry.client_label ?? null,
+          // DECISIONS.md R5: stays null. No caller of `logCall` ever sets
+          // `entry.remote_ip` today (`appendAudit` in `auth/service.ts` does
+          // not collect it) -- capturing it is a privacy decision left for a
+          // later slice, not silently done here.
           remote_ip: entry.remote_ip ?? null,
           tool: entry.tool,
         })

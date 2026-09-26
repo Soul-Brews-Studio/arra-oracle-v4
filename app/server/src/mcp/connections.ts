@@ -102,7 +102,13 @@ export function resetConnectionFoldState(): void {
   foldFailures = 0;
 }
 
-async function table() {
+/**
+ * Exported so `connections.listConnections.ts` (#102, DECISIONS.md R5) can
+ * page the SAME operations-root table this writer fills, through the SAME
+ * cached connection -- rather than opening a second handle to the identical
+ * store.
+ */
+export async function openConnectionsTable() {
   handle ??= await connect(DATA_DIR, { storageOptions: storageOptions() });
   return handle.openTable(TABLE);
 }
@@ -125,7 +131,7 @@ async function table() {
 export async function foldConnection(event: ConnectionEvent): Promise<void> {
   if (tableAbsent) return;
   try {
-    const tbl = await table();
+    const tbl = await openConnectionsTable();
     await tbl.checkoutLatest(); // a Table handle pins a version — see db.ts
     // Truncate BEFORE the key, not after. `label` is client-supplied and
     // unbounded; storing a trimmed value while keying on the full one would
