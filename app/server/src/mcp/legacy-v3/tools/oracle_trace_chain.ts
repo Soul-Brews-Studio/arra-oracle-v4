@@ -3,6 +3,9 @@ import { resolveTraceId } from "../ids.resolveTraceId";
 
 type TraceRow = Record<string, unknown>;
 const MAX_STEPS = 1024;
+/** Successors read per hop: one page of K5, so a fork names every branch
+ *  up to this many (fix round 2; it used to read 2 and name only 2). */
+const MAX_BRANCHES = 100;
 
 /**
  * `oracle_trace_chain` (0 real calls; V3-PARITY.md §4.3; v3 `src/trace/
@@ -52,13 +55,14 @@ export async function oracle_trace_chain(args: Record<string, unknown>, context:
   const position = known.length - 1;
 
   // Forward-continuation: one successor PAST `start` at a time, the only
-  // segment the backward walk above never visited. `limit:2` is the
-  // cheapest way to tell "exactly one" from "a fork" without reading a
-  // third row.
+  // segment the backward walk above never visited. One page of successors
+  // per hop tells "exactly one" from "a fork" and, on a fork, names its
+  // branches -- all of them up to `MAX_BRANCHES`, `truncated` beyond.
   const rows: TraceRow[] = known.slice();
   const seenForward = new Set<string>(rows.map((row) => row.id as string));
   let forked = false;
   let branches: string[] = [];
+  let branchesTruncated = false;
   let cursor = rows[rows.length - 1]!;
   for (let steps = 0; steps < MAX_STEPS; steps++) {
     const successors = (await context.kb("listTraces", {
@@ -68,12 +72,13 @@ export async function oracle_trace_chain(args: Record<string, unknown>, context:
       query_contains: null,
       after_created_at: null,
       after_id: null,
-      limit: 2,
-    })) as { rows: TraceRow[] };
+      limit: MAX_BRANCHES,
+    })) as { rows: TraceRow[]; has_more: boolean };
     if (successors.rows.length === 0) break;
     if (successors.rows.length > 1) {
       forked = true;
       branches = successors.rows.map((row) => row.id as string);
+      branchesTruncated = successors.has_more;
       break;
     }
     const next = successors.rows[0]!;
@@ -99,5 +104,8 @@ export async function oracle_trace_chain(args: Record<string, unknown>, context:
     position,
     chain_length: chain.length,
     ...(forked ? { forked: true, branches } : {}),
+    ...(branchesTruncated
+      ? { compat_warnings: [{ code: "truncated", field: "branches", detail: `more than ${MAX_BRANCHES} traces continue from the fork` }] }
+      : {}),
   };
 }

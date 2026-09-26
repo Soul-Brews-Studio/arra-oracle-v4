@@ -17,11 +17,12 @@ import { describe, expect, test } from "bun:test";
 import { oracle_trace_list } from "../src/mcp/legacy-v3/tools/oracle_trace_list";
 import type { V3ToolContext } from "../src/mcp/legacy-v3/handlers";
 
-const row = (id: string, created_at: string) => ({
+const row = (id: string, created_at: string, h_metadata: string | null = null) => ({
   id,
   query: `row ${id}`,
   depth: "0",
   derived_from_count: 0,
+  h_metadata,
   created_at,
 });
 
@@ -92,5 +93,70 @@ describe("oracle_trace_list walk: never restarts on a null-cursor has_more:true 
 
     expect(result.traces.map((t) => t.trace_id)).toEqual([rowA.id, rowB.id]);
     expect(result.has_more).toBe(false);
+  });
+});
+
+// Fix round 2 (overnight R18): v3's `project` and `depth` filters (v3
+// src/trace/list.ts:17-19) were silently dropped, and a walk that ran out of
+// budget said nothing about it. Unit level against a stubbed kernel, as above.
+describe("oracle_trace_list filters and walk budget (V7 fix round 2)", () => {
+  const meta = (project: string | null) => JSON.stringify({ project, query_type: null, scope: null, agent_count: null, duration_ms: null, legacy: {} });
+
+  test("depth goes to the kernel as int64 decimal text; absent depth goes as null", async () => {
+    const seen: unknown[] = [];
+    const kb: V3ToolContext["kb"] = async (_method, payload) => {
+      seen.push((payload as { depth: unknown }).depth);
+      return { rows: [], next_after_created_at: null, next_after_id: null, has_more: false };
+    };
+    await oracle_trace_list({ depth: 3 }, fakeContext(kb));
+    await oracle_trace_list({}, fakeContext(kb));
+    expect(seen).toEqual(["3", null]);
+  });
+
+  test("project keeps only traces whose recorded h_metadata.project is exactly that project", async () => {
+    const kb: V3ToolContext["kb"] = async () => ({
+      rows: [
+        row("projA000000000000000a", "2026-01-03T00:00:00.000Z", meta("github.com/o/r")),
+        row("projB000000000000000b", "2026-01-02T00:00:00.000Z", meta("github.com/o/other")),
+        row("projC000000000000000c", "2026-01-01T00:00:00.000Z", null),
+        row("projD000000000000000d", "2025-12-31T00:00:00.000Z", "not json at all"),
+      ],
+      next_after_created_at: null, next_after_id: null, has_more: false,
+    });
+    const result = (await oracle_trace_list({ project: "github.com/o/r" }, fakeContext(kb))) as { traces: { trace_id: string }[]; has_more: boolean };
+    expect(result.traces.map((t) => t.trace_id)).toEqual(["projA000000000000000a"]);
+    expect(result.has_more).toBe(false);
+  });
+
+  test("a walk that runs out of budget before the predicate is exhausted says truncated, never a silent short page", async () => {
+    let calls = 0;
+    const kb: V3ToolContext["kb"] = async () => {
+      calls += 1;
+      const id = `miss${String(calls).padStart(17, "0")}`;
+      return { rows: [row(id, "2026-01-01T00:00:00.000Z", meta("github.com/o/other"))], next_after_created_at: "2026-01-01T00:00:00.000Z", next_after_id: id, has_more: true };
+    };
+    const result = (await oracle_trace_list({ project: "github.com/o/r" }, fakeContext(kb))) as {
+      traces: unknown[]; has_more: boolean; compat_warnings: { code: string; field: string }[];
+    };
+    expect(result.traces).toEqual([]);
+    expect(result.has_more).toBe(true);
+    expect(result.compat_warnings).toContainEqual(expect.objectContaining({ code: "truncated", field: "traces" }));
+  });
+
+  test("an offset past the walk's reach is an empty page that says truncated, not a silent end", async () => {
+    let calls = 0;
+    const kb: V3ToolContext["kb"] = async () => {
+      calls += 1;
+      const rows = Array.from({ length: 100 }, (_, i) => row(`off${String(calls * 1000 + i).padStart(18, "0")}`, "2026-01-01T00:00:00.000Z"));
+      return { rows, next_after_created_at: "2026-01-01T00:00:00.000Z", next_after_id: rows.at(-1)!.id, has_more: true };
+    };
+    // v3 clamps offset at 10000 (src/trace/list.ts:13); 50000 behaves as that.
+    const result = (await oracle_trace_list({ offset: 50_000 }, fakeContext(kb))) as {
+      traces: unknown[]; has_more: boolean; compat_warnings: { code: string; field: string }[];
+    };
+    expect(calls).toBe(10);
+    expect(result.traces).toEqual([]);
+    expect(result.has_more).toBe(true);
+    expect(result.compat_warnings).toContainEqual(expect.objectContaining({ code: "truncated", field: "traces" }));
   });
 });

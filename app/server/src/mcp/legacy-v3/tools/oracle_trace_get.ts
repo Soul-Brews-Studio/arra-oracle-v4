@@ -71,7 +71,7 @@ const MAX_CHILDREN = 100;
 export async function oracle_trace_get(args: Record<string, unknown>, context: V3ToolContext): Promise<unknown> {
   const trace = await resolveTraceId(context.kb, args.traceId, context.tool);
   if (trace === null) {
-    throw new CompatError(context.tool, "kernel_error", `Trace ${String(args.traceId)} not found`, "no trace with this id exists in this bank", { path: "/traceId" });
+    throw new CompatError(context.tool, "no_results", `Trace ${String(args.traceId)} not found`, "no trace with this id exists in this bank", { path: "/traceId" });
   }
   const id = trace.id as string;
 

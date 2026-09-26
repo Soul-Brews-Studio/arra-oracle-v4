@@ -7,6 +7,9 @@ import { normalizeProject } from "../normalizeProject";
 import { publish } from "../publish";
 import { titleOf } from "../titleOf";
 
+/** v3 arguments with no v4 home (v3 `src/tools/oracle.ts:21-37`). */
+const V3_PROFILE_ARGS = ["finding", "metadata", "oracle", "source"] as const;
+
 /**
  * `oracle_trace_distill` (0 real calls; V3-PARITY.md §4.3, DECISIONS.md R18
  * D4; v3 `src/tools/oracle.ts:20-38`, `src/trace/distill.ts:93-130`).
@@ -24,6 +27,10 @@ import { titleOf } from "../titleOf";
  * the bound speaking peer; otherwise it is kept, informational only, in the
  * new node's `fields.origin` -- never silently discarded.
  *
+ * v3's `oracle`, `source`, `finding` and `metadata` arguments fed the
+ * Thor/Stormforge profile and artifact paths, which are not carried; each
+ * one present is named `argument_ignored`, never dropped silently.
+ *
  * FIX (overnight R18 fix round): the distilled node's `project` term comes
  * from the TRACE's own `h_metadata.project` (v3's `distill.ts` used
  * `trace.project`, the row it was distilling FROM), never from
@@ -35,7 +42,7 @@ import { titleOf } from "../titleOf";
 export async function oracle_trace_distill(args: Record<string, unknown>, context: V3ToolContext): Promise<unknown> {
   const trace = await resolveTraceId(context.kb, args.traceId, context.tool);
   if (trace === null) {
-    throw new CompatError(context.tool, "kernel_error", `Trace ${String(args.traceId)} not found`, "no trace with this id exists in this bank", { path: "/traceId" });
+    throw new CompatError(context.tool, "no_results", `Trace ${String(args.traceId)} not found`, "no trace with this id exists in this bank", { path: "/traceId" });
   }
   const awakening = typeof args.awakening === "string" ? args.awakening.trim() : "";
   if (awakening === "") {
@@ -86,6 +93,14 @@ export async function oracle_trace_distill(args: Record<string, unknown>, contex
     result.learningId = done.node_id;
     result.origin = originArg ?? author ?? "arra-v3-compat/1";
     result.concepts = concepts;
+  }
+  const ignored = V3_PROFILE_ARGS.filter((key) => Object.hasOwn(args, key));
+  if (ignored.length > 0) {
+    result.compat_warnings = ignored.map((field) => ({
+      code: "argument_ignored",
+      field,
+      detail: "v3's Thor/Stormforge profile and artifact arguments are not carried (V3-PARITY.md §4.3)",
+    }));
   }
   return result;
 }

@@ -328,15 +328,26 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
     action: "content:read",
     uses: ["listTraces"],
     requires: ["listTraces"],
-    description: "List traces, newest first.",
-    inputSchema: obj({ query: str(""), status: str(""), limit: int(""), offset: int("") }),
+    description:
+      "List traces, newest first. query is a case-sensitive substring match (v3 used SQL LIKE). status is raw or distilled only:" +
+      " a trace is immutable, so reviewed and distilling do not exist. total is not computed.",
+    inputSchema: obj({
+      query: str("Case-sensitive substring of the trace query."),
+      project: str("Only traces recorded under exactly this project."),
+      status: str("raw or distilled."),
+      depth: int("Only traces at this depth (0 = top-level)."),
+      limit: int(""),
+      offset: int(""),
+    }),
   }),
   spec({
     name: "oracle_trace_chain",
     action: "content:read",
     uses: ["getTrace", "listTraces"],
     requires: ["getTrace"],
-    description: "Walk a trace chain backward along prevTraceId; forward walking needs trace listing.",
+    description:
+      "Walk a trace chain backward along prevTraceId, then forward. Several traces may continue from one trace (a fork);" +
+      " the forward walk stops there and names the branches.",
     inputSchema: obj({ traceId: str("Required.") }, ["traceId"]),
   }),
   spec({

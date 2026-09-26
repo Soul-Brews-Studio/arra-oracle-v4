@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFixture, runGated, type Fixture } from "./helpers/publication-fixture";
 import { openEvidenceReader } from "../src/publication/service";
+import { V3_CATALOGUE } from "../src/mcp/legacy-v3/catalogue";
 
 const CHILD = join(import.meta.dir, "fixtures", "v3-compat-v1", "core", "writes-child.ts");
 const WS = "ws-trace";
@@ -115,8 +116,48 @@ beforeAll(async () => {
     { label: "list_raw", bank: WS, tool: "oracle_trace_list", args: { status: "raw", limit: 50 } },
     { label: "list_reviewed", bank: WS, tool: "oracle_trace_list", args: { status: "reviewed", limit: 50 } },
     { label: "get_t1_children", bank: WS, tool: "oracle_trace_get", args: { traceId: { $ref: "T1" } } },
+
+    // 10 (fix round 2). v3's `project` and `depth` filters (v3 src/trace/
+    //    list.ts:17-19) were dropped silently: `{project:"github.com/nobody/
+    //    none", depth:5}` came back with the depth-0, project-less traces.
+    { label: "list_project", bank: WS, tool: "oracle_trace_list", args: { project: "github.com/laris-co/example-fw", limit: 50 } },
+    { label: "list_project_depth_miss", bank: WS, tool: "oracle_trace_list", args: { project: "github.com/nobody/none", depth: 5, limit: 5 } },
+    { label: "list_depth_1", bank: WS, tool: "oracle_trace_list", args: { depth: 1, limit: 50 } },
+    { label: "list_depth_0", bank: WS, tool: "oracle_trace_list", args: { depth: 0, limit: 50 } },
+    { label: "list_depth_negative", bank: WS, tool: "oracle_trace_list", args: { depth: -1 } },
+    { label: "list_depth_fraction", bank: WS, tool: "oracle_trace_list", args: { depth: 1.5 } },
+    { label: "list_project_not_string", bank: WS, tool: "oracle_trace_list", args: { project: 42 } },
+    { label: "list_unknown_arg", bank: WS, tool: "oracle_trace_list", args: { limit: 5, sortBy: "oldest" } },
+
+    // 11 (fix round 2). V7's next_trace_id: S1 has exactly one successor
+    //    (S2); R has two (S1 and F), a fork.
+    { label: "get_s1_next", bank: WS, tool: "oracle_trace_get", args: { traceId: { $ref: "S1" } } },
+    { label: "get_r_next_fork", bank: WS, tool: "oracle_trace_get", args: { traceId: { $ref: "R" } } },
+
+    // 12 (fix round 2). A well-formed id that names no trace is an ordinary
+    //    "not found" (`no_results`), not a wrapped kernel envelope.
+    { label: "get_missing", bank: WS, tool: "oracle_trace_get", args: { traceId: pad("nosuchtraceforget") } },
+    { label: "distill_missing", bank: WS, tool: "oracle_trace_distill", args: { traceId: pad("nosuchtracedistill"), awakening: "x" } },
+    // 13 (fix round 2). A three-way fork names all three branches, not 2.
+    { label: "chain_d_fork", bank: WS, tool: "oracle_trace", args: { query: "chain third branch", prevTraceId: { $ref: "A" } }, capture: { name: "D", path: ["trace_id"] } },
+    { label: "chain_from_a_three_way", bank: WS, tool: "oracle_trace_chain", args: { traceId: { $ref: "A" } } },
+    { label: "distill_v3_args", bank: WS, tool: "oracle_trace_distill", args: { traceId: { $ref: "T1B" }, awakening: "v3 extras ride along.", oracle: "thor", source: "stormforge", finding: { a: 1 }, metadata: { b: 2 } } },
   ]);
 }, 300_000);
+
+type Head = { revision: { term_snapshot_json: string; link_snapshot_json: string } } | null;
+async function headOf(nodeId: string): Promise<{ type: string | undefined; links: { relation: string; target_kind: string; target: unknown }[] }> {
+  const reader = await openEvidenceReader(fixture.datasetRoot);
+  const head = (await reader.publication.getAcceptedHead(
+    new TextEncoder().encode(JSON.stringify({ workspace_name: WS, node_id: nodeId })),
+  )) as Head;
+  expect(head).not.toBeNull();
+  const terms = JSON.parse(head!.revision.term_snapshot_json) as { vocabulary_name_snapshot: string; term_name_snapshot: string }[];
+  return {
+    type: terms.find((t) => t.vocabulary_name_snapshot === "type")?.term_name_snapshot,
+    links: JSON.parse(head!.revision.link_snapshot_json),
+  };
+}
 
 afterAll(async () => {
   await fixture?.cleanup();
@@ -196,6 +237,15 @@ describe("oracle_trace_chain (V3 #6, V7 forward)", () => {
     expect(out.chain_from_a_forked.value.branches.sort()).toEqual([out.chain_b.value.trace_id, out.chain_c_fork.value.trace_id].sort());
   });
 
+  test("a three-way fork names every branch (fix round 2; it used to read 2)", () => {
+    expect(out.chain_from_a_three_way.isError).toBe(false);
+    expect(out.chain_from_a_three_way.value.forked).toBe(true);
+    expect(out.chain_from_a_three_way.value.branches.sort()).toEqual(
+      [out.chain_b.value.trace_id, out.chain_c_fork.value.trace_id, out.chain_d_fork.value.trace_id].sort(),
+    );
+    expect(out.chain_from_a_three_way.value.compat_warnings).toBeUndefined();
+  });
+
   test("a fork upstream of the requested trace never drops it from its own chain (fix round)", () => {
     // Before the fork exists: R <- S1 <- S2, asking about S2 sees all three.
     expect(out.chain_from_s2_before_fork.isError).toBe(false);
@@ -257,6 +307,41 @@ describe("oracle_trace_distill (V3 #7, R18 D4)", () => {
     expect(out.distill_again.value.learningId).not.toBe(out.distill_promoted.value.learningId);
   });
 
+  test("R18 D4 pinned (fix round 2): promoted is type learning, unpromoted is type conclusion, both derived_from the trace", async () => {
+    // The two tests above only saw `success`/`learningId`; swapping the
+    // mapping in oracle_trace_distill.ts left them green. Read the published
+    // heads back and check the type term and the link themselves.
+    const t1 = out.t1.value.trace_id as string;
+    const promotedIds = [out.distill_promoted.value.learningId, out.distill_again.value.learningId] as string[];
+    // The unpromoted distill returns no id (v3's shape); it is the one
+    // distillation of T1 that is not one of the two promoted ids.
+    const all = out.get_t1_after_distill.value.distilled_to_ids as string[];
+    const conclusionIds = all.filter((id) => !promotedIds.includes(id));
+    expect(conclusionIds).toHaveLength(1);
+
+    for (const id of promotedIds) {
+      const head = await headOf(id);
+      expect(head.type).toBe("learning");
+      expect(head.links).toHaveLength(1);
+      expect(head.links[0]).toMatchObject({ relation: "derived_from", target_kind: "trace", target: { trace_id: t1 } });
+    }
+    const conclusion = await headOf(conclusionIds[0]!);
+    expect(conclusion.type).toBe("conclusion");
+    expect(conclusion.links[0]).toMatchObject({ relation: "derived_from", target_kind: "trace", target: { trace_id: t1 } });
+  });
+
+  test("an unknown well-formed traceId is no_results, and v3-only extras are named argument_ignored (fix round 2)", () => {
+    expect(out.distill_missing.isError).toBe(true);
+    expect(out.distill_missing.value.compat.code).toBe("no_results");
+    expect(out.distill_missing.value.error).toBe(`Trace ${pad("nosuchtracedistill")} not found`);
+    expect(out.distill_v3_args.isError).toBe(false);
+    const ignored = (out.distill_v3_args.value.compat_warnings ?? [])
+      .filter((w: any) => w.code === "argument_ignored")
+      .map((w: any) => w.field)
+      .sort();
+    expect(ignored).toEqual(["finding", "metadata", "oracle", "source"]);
+  });
+
   test("the distilled node's project term is the TRACE's own project, never args.project (fix round)", async () => {
     // T1 was traced with `project: "github.com/laris-co/example-fw"`. Neither
     // v3's real call shape nor this tool's `inputSchema` has a `project`
@@ -312,10 +397,84 @@ describe("oracle_trace_list (K5, V7)", () => {
     expect(out.list_reviewed.isError).toBe(true);
     expect(out.list_reviewed.value.compat.code).toBe("semantic_refusal");
   });
+
+  test("project filters to traces recorded under exactly that project, as v3's eq(trace_log.project) did (fix round 2)", () => {
+    expect(out.list_project.isError).toBe(false);
+    expect(out.list_project.value.traces.map((t: any) => t.trace_id)).toEqual([out.t1.value.trace_id]);
+    expect(out.list_project.value.has_more).toBe(false);
+  });
+
+  test("the verifier's exact call: an unmatched project + depth is an empty page, never the unfiltered list (fix round 2)", () => {
+    expect(out.list_project_depth_miss.isError).toBe(false);
+    expect(out.list_project_depth_miss.value.traces).toEqual([]);
+    expect(out.list_project_depth_miss.value.has_more).toBe(false);
+    const codes = out.list_project_depth_miss.value.compat_warnings.map((w: any) => w.code);
+    expect(codes).not.toContain("argument_ignored");
+  });
+
+  test("depth filters on the trace's own depth (fix round 2)", () => {
+    expect(out.list_depth_1.isError).toBe(false);
+    expect(out.list_depth_1.value.traces.map((t: any) => t.trace_id)).toEqual([out.t1b.value.trace_id]);
+    const depth0 = out.list_depth_0.value.traces.map((t: any) => t.trace_id);
+    expect(depth0).toContain(out.t1.value.trace_id);
+    expect(depth0).not.toContain(out.t1b.value.trace_id);
+    for (const t of out.list_depth_0.value.traces) expect(t.depth).toBe(0);
+  });
+
+  test("a depth or project v4 cannot express is refused as unsupported_argument, never dropped (fix round 2)", () => {
+    for (const label of ["list_depth_negative", "list_depth_fraction"]) {
+      expect(out[label].isError).toBe(true);
+      expect(out[label].value.compat.code).toBe("unsupported_argument");
+      expect(out[label].value.compat.path).toBe("/depth");
+    }
+    expect(out.list_project_not_string.isError).toBe(true);
+    expect(out.list_project_not_string.value.compat.code).toBe("unsupported_argument");
+    expect(out.list_project_not_string.value.compat.path).toBe("/project");
+  });
+
+  test("an argument v3 never had is named argument_ignored, never silently dropped (fix round 2)", () => {
+    expect(out.list_unknown_arg.isError).toBe(false);
+    expect(out.list_unknown_arg.value.compat_warnings).toContainEqual(expect.objectContaining({ code: "argument_ignored", field: "sortBy" }));
+  });
+
+  test("scope is v3's own value: the recorded scope, else v3's default 'project' (fix round 2)", () => {
+    const t1Row = out.list_all.value.traces.find((t: any) => t.trace_id === out.t1.value.trace_id);
+    expect(t1Row.scope).toBe("project");
+  });
 });
 
 describe("oracle_trace_get children (V7, K5)", () => {
   test("child_trace_ids includes the parentTraceId child", () => {
     expect(out.get_t1_children.value.child_trace_ids).toContain(out.t1b.value.trace_id);
+  });
+
+  test("next_trace_id names the single successor, and is null with semantic_change on a fork (fix round 2)", () => {
+    expect(out.get_s1_next.isError).toBe(false);
+    expect(out.get_s1_next.value.next_trace_id).toBe(out.chain_s2.value.trace_id);
+    expect(out.get_s1_next.value.prev_trace_id).toBe(out.chain_r.value.trace_id);
+    expect(out.get_r_next_fork.isError).toBe(false);
+    expect(out.get_r_next_fork.value.next_trace_id).toBeNull();
+    expect(out.get_r_next_fork.value.compat_warnings).toContainEqual(expect.objectContaining({ code: "semantic_change", field: "next_trace_id" }));
+  });
+
+  test("an unknown well-formed traceId is no_results with v3's text (fix round 2)", () => {
+    expect(out.get_missing.isError).toBe(true);
+    expect(out.get_missing.value.compat.code).toBe("no_results");
+    expect(out.get_missing.value.error).toBe(`Trace ${pad("nosuchtraceforget")} not found`);
+  });
+});
+
+describe("catalogue (fix round 2)", () => {
+  test("oracle_trace_list advertises v3's project and depth, and says what changed", () => {
+    const spec = V3_CATALOGUE.find((t) => t.name === "oracle_trace_list")!;
+    const props = (spec.inputSchema as { properties: Record<string, unknown> }).properties;
+    expect(Object.keys(props).sort()).toEqual(["depth", "limit", "offset", "project", "query", "status"]);
+    expect(spec.description).toContain("case-sensitive");
+    expect(spec.description).toContain("raw or distilled");
+  });
+
+  test("oracle_trace_chain no longer claims forward walking is missing", () => {
+    const spec = V3_CATALOGUE.find((t) => t.name === "oracle_trace_chain")!;
+    expect(spec.description).not.toContain("needs trace listing");
   });
 });
