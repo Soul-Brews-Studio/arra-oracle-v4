@@ -14,9 +14,10 @@ import { type DatasetAdapter, type QueryEmbedder } from "./service.types";
  *
  * `embedder` is the trusted query embedder semantic search uses
  * (`composition.ts` -> `createKnowledgeAccess` -> `openEvidenceReader`),
- * never request data and never a writer option. Absent, semantic search
- * answers `writer_unavailable` (`service.embedSearchQuery.ts`); keyword
- * search does not use it.
+ * never request data and never a writer option. Absent, or on any embedder
+ * failure, semantic search answers the closed `model_unavailable` code
+ * (`service.embedSearchQuery.ts`; overnight R21, aligned with #32 / R9's
+ * chat code); keyword search does not use it.
  *
  * `requestTimeMs` is the #29 validity-window `as_of` the recall-eligibility
  * check uses, supplied by the transport as real request time (R7 #29), the

@@ -17,11 +17,12 @@ import { type DatasetAdapter, type QueryEmbedder } from "./service.types";
  * - The query is embedded by the injected `embedder` (composition: `embed.ts`
  *   over local Ollama; tests: a stub). A request naming no profile reads the
  *   embedder's own (`DEFAULT_EMBEDDING_PROFILE` only when none is composed,
- *   which then answers `writer_unavailable` anyway). A profile the embedder
- *   does not serve is refused (`invalid_value` at `/embedding_profile`)
- *   BEFORE any model call: comparing one model's query vector with another
- *   model's stored vectors answers nothing meaningful, so vector spaces are
- *   never mixed.
+ *   which then answers the closed `model_unavailable` code anyway -- overnight
+ *   R21, aligned with #32 / R9's chat code). A profile the embedder does not
+ *   serve is refused (`invalid_value` at `/embedding_profile`) BEFORE any
+ *   model call: comparing one model's query vector with another model's
+ *   stored vectors answers nothing meaningful, so vector spaces are never
+ *   mixed.
  * - Candidates are `status = 'ready'` chunks of that profile and the one
  *   implemented chunker, nearest first by LanceDB `l2`, which is the SQUARED
  *   Euclidean distance -- reported as stored (`metric: "l2_squared"`).
@@ -30,6 +31,10 @@ import { type DatasetAdapter, type QueryEmbedder } from "./service.types";
  *   recall-eligible nodes only (`currentEligibleChunks`), one hit per node at
  *   its nearest chunk, workspace-scoped reads, ordered by distance then node
  *   id, bounded by the shared overfetch loop. Never fused with keyword (R7).
+ *   Unlike keyword's `rank` (R21), `distance` stays a raw number: it is the L2
+ *   distance between the query vector and one stored row's OWN vector, a
+ *   per-row quantity, never a corpus-wide statistic like BM25's document
+ *   frequency, so it carries no cross-workspace leak.
  */
 export async function searchKnowledgeSemantic(
   reader: DatasetAdapter,

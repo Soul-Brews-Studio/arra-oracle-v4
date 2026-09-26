@@ -153,7 +153,9 @@ const SEARCH_NOTES: Readonly<Record<string, string>> = Object.freeze({
     " current head revision whose text (title and body, across chunk boundaries) contains the query," +
     ' case-insensitive; retired and superseded nodes are excluded. match is "ngram" (trigram index, every hit' +
     ' re-checked as a substring) or "substring_scan" (a query under 3 characters, or no index built yet); a' +
-    ' hit with match "substring_scan" and score null in an ngram answer was found at a chunk seam.' +
+    ' hit with match "substring_scan" in an ngram answer was found at a chunk seam. hits[].rank is this' +
+    " answer's 1-based position, never a raw score: the trigram index is shared by every workspace, so a raw" +
+    " BM25 number would leak another workspace's term statistics." +
     " Never fused with semantic results.",
   searchKnowledgeSemantic:
     " Semantic recall: payload {workspace_name, query, limit?, embedding_profile?} (profile defaults to the" +

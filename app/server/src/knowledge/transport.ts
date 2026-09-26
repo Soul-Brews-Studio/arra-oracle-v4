@@ -255,8 +255,9 @@ export type KnowledgeDatasetConfig = {
    * #30: the trusted query embedder semantic search is composed with
    * (`composition.ts`: local Ollama; tests: a stub), handed to the READER only
    * (`openEvidenceReader(root, {embedder})`), like the chat model above --
-   * never a writer option. Absent means `searchKnowledgeSemantic` answers
-   * `writer_unavailable`.
+   * never a writer option. Absent, or on any embedder failure, means
+   * `searchKnowledgeSemantic` answers the closed `model_unavailable` code
+   * (overnight R21, aligned with #32 / R9's chat code).
    */
   readonly embedder?: QueryEmbedder;
 };

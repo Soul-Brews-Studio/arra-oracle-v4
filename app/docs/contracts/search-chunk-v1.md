@@ -498,3 +498,96 @@ refresh keeps unindexed rows below indexed ones),
 occurrence found on both, cross-workspace credential refused, beta's identical text never in
 alpha's answer), and `app/server/test/cli-search.test.ts` (bare `search` stays legacy;
 `--mode keyword|semantic` reaches the registry route).
+
+## Amendment 2026-09-26 (overnight R21 (search-polish slice) + R9 consistency)
+
+Source: `docs/overnight/DECISIONS.md` **R21**, ruling on `Soul-Brews-Studio/arra-oracle-v4#30`
+and `#10` (the search-polish slice). The sections above are left as written, including their
+`score` and `writer_unavailable` wording, which described shipped code at the time; this
+amendment records what changed and why. Where they disagree with this amendment, this
+amendment wins.
+
+### 1 · Keyword search never returns the raw BM25 score
+
+The "Still NOT claimed" list above already measured the defect this closes: `search_chunks_v1`
+has ONE FTS index shared by every workspace, so a raw BM25 `score` for an UNCHANGED hit set
+moves when ANY workspace's corpus changes -- measured live at 5.65 → 2.38 after a second
+workspace indexed 12 nodes holding the same term. The answer SET was already workspace-scoped;
+only the score VALUE leaked another workspace's term statistics.
+
+**What changed:** `searchKnowledgeKeyword`'s `hits[]` no longer carries `score`. Each hit
+instead carries `rank`, an integer, 1-based, its position in THIS answer, in the exact order
+`score` used to produce -- BM25 descending, a seam or scan hit after every scored one, ties (and
+every unscored hit) broken by node id ascending. `match` is unchanged: `"ngram"` for an index
+hit, `"substring_scan"` for a scan or seam hit. Every occurrence of `score` in sections above
+(the keyword shape, the ordering rule, the seam-hit shape, the scan-path shape) reads `rank`
+instead, with the same ordering guarantee and no null case -- every hit has a rank.
+
+```
+searchKnowledgeKeyword -> { match, scan_reason, hits: [{ node_id, revision_id, title, snippet,
+                            chunk_ids, rank, match }] }   // was: ..., score, match }] }
+```
+
+**Why not a per-workspace index instead:** the "Still NOT claimed" list posed this as Nat's open
+decision (a per-workspace index, no score, or rank only). A per-workspace index multiplies the
+index count with every workspace and was not measured; dropping the score to a position costs
+nothing extra to compute (the hits are already in that order) and removes the leak completely,
+so R21 takes it.
+
+**Semantic search's `distance` is unaffected, and the claim is verified, not assumed:**
+`distance` is LanceDB's `l2`, the squared Euclidean distance between the query's OWN embedded
+vector and one stored chunk row's OWN vector. Both operands are per-row/per-request quantities;
+the computation touches no aggregate over other rows, so no other workspace's data can appear in
+the number regardless of what any workspace's corpus holds. This is a property of the vector
+metric itself (unlike BM25, whose score is defined in terms of corpus-wide document frequency),
+so no equivalent index-sharing measurement is needed to confirm it holds for every dataset shape.
+
+**Proof:** `app/server/test/search-chunk-retrieval-score-isolation.test.ts`, failing-first
+against the unfixed code (a raw, moving `score` on the wire) and green after: two workspaces,
+change ONLY workspace B's corpus (12 nodes repeating workspace A's search term, indexed between
+the two searches), and workspace A's `searchKnowledgeKeyword` response for the identical request
+is byte-for-byte identical before and after. The existing suites
+(`search-chunk-retrieval.test.ts`, `-straddle.test.ts`, `-live.test.ts`) were updated from
+pinning `score` to pinning `rank`, the same way `#32` chat tests were updated off
+`writer_unavailable` below.
+
+### 2 · Semantic search's embedder failure is `model_unavailable`, not `writer_unavailable`
+
+The semantic paragraph above already named this as "Aligning the two is an open decision" once
+`#32` / R9 gave chat its own `model_unavailable` code. R21 makes that alignment: no chat model
+configured and no query embedder configured (or either failing) are the same KIND of outcome --
+an external model this call depends on did not answer usably, nothing was read or written wrongly
+-- so both now answer the one closed `model_unavailable` code (`arra-publication-error/v1`, HTTP
+503, MCP `isError` carrying the same envelope; message `"chat model unavailable"`, the fixed
+literal the code already carries for chat -- callers key off `code`, never `message`).
+
+**What changed:** `service.embedSearchQuery.ts`'s three failure exits (no embedder composed, the
+embed call throwing, rejecting or exceeding `QUERY_EMBED_TIMEOUT_MS`, or answering a vector that
+is not exactly `EMBEDDING_DIMENSION` finite float32-representable numbers) now call
+`failPublication("model_unavailable", "")` where they called `failPublication("writer_unavailable", "")`.
+Nothing else in `searchKnowledgeSemantic` changed: the profile-mismatch refusal is still
+`invalid_value` at `/embedding_profile`, decided BEFORE any model call, and every other section
+above (candidates, ordering, eligibility) is unchanged.
+
+```
+searchKnowledgeSemantic, no/failed embedder -> 503 { code: "model_unavailable" }   // was: "writer_unavailable"
+```
+
+**MCP/CLI parity, not separately implemented:** both transports and the CLI already carry any
+`PublicationError` through unchanged by its `.toJSON()` shape (`auth/service.ts`'s `runMcp`,
+`knowledge/transport.ts`'s `knowledgeErrorResponse`, and the CLI's `search` command printing the
+HTTP body verbatim on a non-2xx status). Changing the one thrown code was sufficient; no
+transport-specific mapping needed updating.
+
+**Proof:** `app/server/test/search-chunk-retrieval.test.ts`'s embedder-down case and
+`app/server/test/search-chunk-retrieval-live.test.ts`'s HTTP/MCP embedder-down case now assert
+`model_unavailable` (previously `writer_unavailable`).
+
+### Caller impact
+
+- A client reading `searchKnowledgeKeyword`'s `hits[].score` must read `hits[].rank` instead. The
+  field is always present; there is no `null` case (the substring scan used to report `score:
+  null`, and now reports its position like every other hit).
+- A client that read `searchKnowledgeSemantic`'s `writer_unavailable` as "no model" should read
+  `model_unavailable` (the same code `answerChat` already uses for the same reason).
+- `hits[].match` and `hits[].distance` (semantic) are unchanged.
