@@ -76,8 +76,12 @@ export function LifecyclePanel({
             </span>
           ) : null}
 
-          {error !== null && <p className="text-[11px] text-rose-300">{error}</p>}
-          {history.length === 0 ? (
+          {/* A failed history read is NOT "never superseded or retired" (fix-round
+              2 finding): the error replaces the empty state, it does not sit
+              beside a claim the failed read cannot support. */}
+          {error !== null ? (
+            <p className="text-[11px] text-rose-300">lifecycle history could not be read: {error}</p>
+          ) : history.length === 0 ? (
             <EmptyState title="no lifecycle events" detail="never superseded or retired" />
           ) : (
             <ul className="flex flex-col gap-1">

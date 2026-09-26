@@ -161,7 +161,9 @@ export type LifecycleEventRow = {
 
 export const isSupersedeEvent = (row: LifecycleEventRow): boolean => row.new_id !== null;
 
-export const MAX_LIFECYCLE_PAGE = 200;
+// No MAX_LIFECYCLE_PAGE here (fix-round 2): the old value, 200, was unused
+// and wrong -- the server's MAX_HISTORY_LIMIT is 100 and answers 200 with
+// `invalid_value` at `/limit`. `useEvidenceReview` asks for 50.
 
 export const listLifecycleHistory = (b: Bank, node_id: string, after_event_id: string | null, limit: number) =>
   call(b, "listLifecycleHistory", { node_id, after_event_id, limit });
