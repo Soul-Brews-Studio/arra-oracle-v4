@@ -13,20 +13,36 @@ const MAX_BODY_CHARS = 8000;
 type Entry = { id: string; title: string; project: string; longTerm: boolean; body: string };
 
 /**
- * `oracle_recap` (0 real calls; content:read; V3-PARITY.md §5/§7 K3+K4, V6).
- * A markdown recap: an identity line, then the newest eligible entries (K4's
- * `order: "updated_desc"`; `listNodes`'s default view already excludes
+ * `oracle_recap` (0 real calls; content:read; V3-PARITY.md §2.5/§5/§7 K3+K4,
+ * V6). A markdown recap: an identity line, then the newest eligible entries
+ * (K4's `order: "updated_desc"`; `listNodes`'s default view already excludes
  * retired/superseded, D3), grouped by `project`, with `memory_horizon:
  * long_term` entries listed before short-term/unset ones within the overall
  * newest-first order. Heat ranking is not carried (no popularity/decay
  * columns exist, AGENTS.md rule). The token budget is fitted HERE, in the
  * adapter: v4's kernels take no token count, only byte/row bounds.
+ *
+ * Fix round (Opus verifier): §2.5 says "oracle_recap returns a markdown
+ * string, as v3 did; text() passes strings through", and v3's own
+ * `recap.ts:52` returns raw markdown text -- so the WHOLE tool result IS the
+ * markdown string, never a JSON object wrapping one. That leaves no `{...,
+ * compat_warnings}` field to carry this tool's own warnings (heat,
+ * truncated, and now v3's `maxTokens`, accepted but ignored -- v4 has no
+ * token count, only the fixed character budget above): they are appended as
+ * a plain-text footer to the SAME string instead, the only channel a
+ * string-shaped v3 response has.
  */
-export async function oracle_recap(args: Record<string, unknown>, context: V3ToolContext): Promise<unknown> {
+export async function oracle_recap(args: Record<string, unknown>, context: V3ToolContext): Promise<string> {
   const { bank, kb, tool } = context;
   const rawLimit = args.limit === undefined || args.limit === null ? DEFAULT_LIMIT : args.limit;
   if (typeof rawLimit !== "number" || !Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > MAX_LIMIT) {
     throw new CompatError(tool, "unsupported_argument", "Invalid input at /limit", `limit must be an integer between 1 and ${MAX_LIMIT}`, { path: "/limit" });
+  }
+  const warnings: { code: string; field: string; detail: string }[] = [
+    { code: "field_unavailable", field: "heat", detail: "heat ranking is not carried; v4 has no popularity/decay columns" },
+  ];
+  if (args.maxTokens !== undefined && args.maxTokens !== null) {
+    warnings.push({ code: "argument_ignored", field: "maxTokens", detail: "the adapter fits a fixed character budget instead; v3's token count has no v4 equivalent" });
   }
 
   const page = (await kb("listNodes", {
@@ -88,12 +104,14 @@ export async function oracle_recap(args: Record<string, unknown>, context: V3Too
     }
   }
 
-  return {
-    recap: lines.join(""),
-    entries: entries.length,
-    compat_warnings: [
-      { code: "field_unavailable", field: "heat", detail: "heat ranking is not carried; v4 has no popularity/decay columns" },
-      ...(truncated ? [{ code: "truncated", field: "recap", detail: "the token budget was reached; later entries were dropped" }] : []),
-    ],
-  };
+  if (truncated) {
+    warnings.push({ code: "truncated", field: "recap", detail: "the token budget was reached; later entries were dropped" });
+  }
+
+  // Footer, not a JSON field: this tool's whole result IS the markdown
+  // string (see the doc comment above), so a warning has nowhere else to
+  // travel. `dispatchLegacyV3.ts` appends its OWN generic warnings (e.g.
+  // `cwd`) the same way, onto this same string, when there are any.
+  const footer = `\n---\n${warnings.map((w) => `_compat(${w.code}): ${w.field} — ${w.detail}_`).join("\n")}\n`;
+  return lines.join("") + footer;
 }

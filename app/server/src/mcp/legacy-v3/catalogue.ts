@@ -181,8 +181,11 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
     action: "content:read",
     uses: ["listNodes", "getAcceptedHead", "listLifecycleHistory", ...TAXONOMY_READS],
     requires: ["listNodes", "getAcceptedHead"],
-    description: "Browse entries, including superseded ones (flagged). Paged with next_cursor.",
-    inputSchema: obj({ type: str(""), limit: int(""), offset: int("") }),
+    // Fix round: this used to say "Paged with next_cursor", a field the
+    // implementation never emitted -- corrected to name the field it
+    // actually returns (`total`/`offset`/`limit`) rather than one it does not.
+    description: "Browse entries, including superseded ones (flagged). Paged with offset/limit; total is exact when reachable.",
+    inputSchema: obj({ type: str(""), limit: int(""), offset: int(""), asOf: str("Refused: there is no historical browse in v4.") }),
   }),
   spec({
     name: "oracle_stats",
@@ -203,9 +206,11 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
   spec({
     name: "oracle_reflect",
     action: "content:read",
-    uses: ["listNodes", "getAcceptedHead"],
+    // K3 fix round: samples the legacy_type:principle pool too, so it needs
+    // the SAME by-name lookups `oracle_list`'s `type` filter already uses.
+    uses: ["listNodes", "getAcceptedHead", ...TAXONOMY_READS],
     requires: ["listNodes", "getAcceptedHead"],
-    description: "One random learning from this bank." + RECALL,
+    description: "One random learning or principle from this bank." + RECALL,
     inputSchema: obj({}),
   }),
   spec({
@@ -213,8 +218,10 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
     action: "content:read",
     uses: ["listNodes", "getAcceptedHead", ...TAXONOMY_READS],
     requires: ["listNodes", "getAcceptedHead"],
+    // Fix round: returns the markdown STRING itself (v3 parity), not a JSON
+    // object wrapping one.
     description: "A markdown recap of the newest entries, grouped by project. Heat ranking is not carried." + RECALL,
-    inputSchema: obj({ limit: int("") }),
+    inputSchema: obj({ limit: int(""), maxTokens: int("Accepted, ignored: v4 fits a fixed character budget instead.") }),
   }),
   spec({
     name: "oracle_inbox",

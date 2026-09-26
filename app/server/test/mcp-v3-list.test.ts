@@ -17,10 +17,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTaxonomyFixture, type TaxonomyFixture } from "./helpers/taxonomy-fixture";
 import { runGated } from "./helpers/publication-fixture";
+import { derivedId } from "../src/mcp/legacy-v3/ids.derivedId";
 
 const CHILD = join(import.meta.dir, "fixtures", "v3-compat-v1", "core", "writes-child.ts");
 const FRESH = "ws-v6-fresh";
 const EMPTY = "ws-v6-empty";
+/** A valid nanoid21-shaped id for the hand-built "principle" node below. */
+const PRINCIPLE_NODE_ID = `${"k3reflectprinciple"}${"0".repeat(21)}`.slice(0, 21);
+/** Enough repeated draws that BOTH the `learning` and `principle` pools show
+ *  up at least once with overwhelming probability (each is a 50/50 coin
+ *  flip when both pools are nonempty; P(missing one for 12 draws) < 0.03%). */
+const REFLECT_REPEATS = 12;
 
 const HEAD = (label: string, bank = FRESH) => ({
   label, bank, tool: "kb_getAcceptedHead",
@@ -64,13 +71,66 @@ beforeAll(async () => {
       args: { payload: { workspace_name: FRESH, node_id: { $ref: "l1" }, expected_revision_id: { $ref: "l1_rev" }, reason: "v6 test: put one node into history", peer_name: null, operation_id: "op-v6-retire-l1" } },
     },
 
+    // K3 upgrade to oracle_reflect (fix round): a "note"+`legacy_type:
+    // principle` node, built directly through the generic kb_ facade --
+    // no existing v3 write tool produces this shape yet (oracle_learn/
+    // oracle_research_note both hardcode type:"learning", D4). Ids are
+    // DERIVED the same deterministic way taxonomy.ensureVocabulary.ts/
+    // ensureTerm.ts create them, so this is exactly the row a real
+    // principle-writing tool would leave behind. `author_peer_name`/
+    // `session_name` null, the same as every other node this file's own
+    // v3 tools (oracle_learn et al.) already write with no X-Arra-Peer set.
+    {
+      label: "principle_vocab", bank: FRESH, tool: "kb_createVocabulary",
+      args: { payload: {
+        workspace_name: FRESH, vocabulary_id: derivedId(FRESH, "vocabulary", "legacy_type"),
+        name: "legacy_type", label: "legacy_type", description: null, kind: "tags",
+        term_policy: "open", cardinality: "many", required: false, hierarchy: "flat",
+      } },
+    },
+    {
+      label: "principle_term", bank: FRESH, tool: "kb_createTerm",
+      args: { payload: {
+        workspace_name: FRESH, term_id: derivedId(FRESH, "term", "legacy_type", "principle"),
+        vocabulary_id: derivedId(FRESH, "vocabulary", "legacy_type"),
+        name: "principle", description: null, parent_id: null,
+      } },
+    },
+    {
+      label: "p1", bank: FRESH, tool: "kb_publishRevision",
+      args: { payload: { operation_id: "op-k3-reflect-principle", content: {
+        workspace_name: FRESH, node_id: PRINCIPLE_NODE_ID, base_revision_id: null,
+        title: "measure twice", body: "measure twice, cut once", body_format: "markdown", fields: "{}",
+        author_peer_name: null, observer_peer_name: null, subject_peer_name: null,
+        session_name: null, is_active: true, valid_from: null, valid_to: null,
+        change_reason: null, schema_version: "1", canonical_version: "arra-revision/v1",
+        term_snapshot_json: JSON.stringify([
+          { term_id: derivedId(FRESH, "term", "type", "note"), vocabulary_id: derivedId(FRESH, "vocabulary", "type"),
+            vocabulary_name_snapshot: "type", term_name_snapshot: "note", label_snapshot: null, position: "0" },
+          { term_id: derivedId(FRESH, "term", "legacy_type", "principle"), vocabulary_id: derivedId(FRESH, "vocabulary", "legacy_type"),
+            vocabulary_name_snapshot: "legacy_type", term_name_snapshot: "principle", label_snapshot: null, position: "1" },
+        ]),
+        link_snapshot_json: "[]", h_metadata: null, internal_metadata: null,
+      } } },
+      capture: { name: "p1", path: ["node_id"] },
+    },
+
     // oracle_list
     { label: "list_learning", bank: FRESH, tool: "oracle_list", args: { type: "learning", limit: 30 } },
     { label: "list_all", bank: FRESH, tool: "oracle_list", args: { limit: 30 } },
+    { label: "list_type_all", bank: FRESH, tool: "oracle_list", args: { type: "all", limit: 30 } },
     { label: "list_no_such_legacy_type", bank: FRESH, tool: "oracle_list", args: { type: "no-such-legacy-type" } },
+    { label: "list_asOf", bank: FRESH, tool: "oracle_list", args: { asOf: "2026-06-17T00:00:00Z" } },
+    // A REAL legacy_type filter (test strength: the only prior legacy_type
+    // coverage was the not-found case above) -- p1 is the one node tagged
+    // legacy_type:principle.
+    { label: "list_principle", bank: FRESH, tool: "oracle_list", args: { type: "principle" } },
 
-    // oracle_reflect
+    // oracle_reflect: one plain draw, plus enough repeats that both the
+    // `learning` and the new `principle` pool (K3) are proven reachable
+    // (`REFLECT_REPEATS`'s doc comment explains the bound).
     { label: "reflect", bank: FRESH, tool: "oracle_reflect", args: {} },
+    ...Array.from({ length: REFLECT_REPEATS }, (_, i) => ({ label: `reflect_r${i}`, bank: FRESH, tool: "oracle_reflect", args: {} })),
 
     // oracle_inbox
     { label: "inbox_default", bank: FRESH, tool: "oracle_inbox", args: {} },
@@ -80,6 +140,11 @@ beforeAll(async () => {
 
     // oracle_recap
     { label: "recap", bank: FRESH, tool: "oracle_recap", args: { limit: 30 } },
+    { label: "recap_maxTokens", bank: FRESH, tool: "oracle_recap", args: { limit: 30, maxTokens: 200 } },
+    // A2's `cwd`-ignored warning, on a STRING-returning tool: dispatchLegacyV3's
+    // generic warnings merge must not silently drop it just because recap's
+    // result is a markdown string rather than a JSON object.
+    { label: "recap_cwd", bank: FRESH, tool: "oracle_recap", args: { limit: 5, cwd: "/tmp/wherever" } },
   ]);
 
   outEmpty = await runChild(taxonomy.datasetRoot, [FRESH, EMPTY], [
@@ -96,7 +161,7 @@ afterAll(async () => {
 });
 
 describe("oracle_list (V6)", () => {
-  test("type: learning includes both learnings, EXCLUDES the retired one by default view, but browses it with include_inactive under the hood so a later toggle would find it", () => {
+  test("type: learning includes both learnings, INCLUDES the retired one flagged (browse mode: include_inactive under the hood)", () => {
     const res = out.list_learning.value;
     expect(out.list_learning.isError).toBe(false);
     const ids = res.documents.map((d: any) => d.id);
@@ -114,19 +179,63 @@ describe("oracle_list (V6)", () => {
     expect(res.type).toBe("learning");
   });
 
-  test("no type filter includes the handoffs too, and total is exact (no term filter is active)", () => {
+  test("no type filter includes the handoffs and the principle too, and total is exact (no term filter is active)", () => {
     const res = out.list_all.value;
     const ids = res.documents.map((d: any) => d.id);
-    expect(ids).toEqual(expect.arrayContaining([out.l1.value.id, out.l2.value.id, out.rn1.value.id, out.h1.value.id, out.h2.value.id]));
-    expect(res.total).toBe(5);
+    expect(ids).toEqual(expect.arrayContaining([out.l1.value.id, out.l2.value.id, out.rn1.value.id, out.h1.value.id, out.h2.value.id, out.p1.value.node_id]));
+    expect(res.total).toBe(6);
     expect(res.type).toBe("all");
     expect(res.compat_warnings).toContainEqual(expect.objectContaining({ code: "field_unavailable", field: "source_file" }));
+  });
+
+  // Test strength (fix round): this file previously never asserted
+  // oracle_list's own newest-first (K4) order -- p1 was published after
+  // every other node in this bank's step sequence, so it must sort first.
+  test("K4: browse mode is newest-updated first", () => {
+    const ids = out.list_all.value.documents.map((d: any) => d.id);
+    expect(ids[0]).toBe(out.p1.value.node_id);
+  });
+
+  // Test strength (fix round): the only prior legacy_type coverage was the
+  // NOT-FOUND case; this exercises a real match through the K3 `any_term_ids`
+  // path oracle_list's `type` filter uses for anything other than "learning".
+  test("a real legacy_type filter matches the tagged node, and nothing else", () => {
+    const res = out.list_principle.value;
+    expect(out.list_principle.isError).toBe(false);
+    const ids = res.documents.map((d: any) => d.id);
+    expect(ids).toEqual([out.p1.value.node_id]);
+    expect(res.type).toBe("principle");
+  });
+
+  // Fix round (Opus verifier): v3's `type` enum is `['principle','pattern',
+  // 'learning','retro','all']`, `default:'all'` (arra-oracle-v3@61e5f8b6
+  // src/tools/list.ts) -- 'all' means "no filter", the SAME as omitting the
+  // key, never a legacy_type NAME to look up (there is no vocabulary term
+  // literally named "all"). Before the fix this silently returned an empty
+  // page: v3's own documented default value produced silent data loss.
+  test("type: 'all' is v3's documented default value for 'no filter', not a legacy_type name -- same result as omitting type", () => {
+    const res = out.list_type_all.value;
+    expect(out.list_type_all.isError).toBe(false);
+    const ids = res.documents.map((d: any) => d.id);
+    expect(ids).toEqual(expect.arrayContaining([out.l1.value.id, out.l2.value.id, out.rn1.value.id, out.h1.value.id, out.h2.value.id, out.p1.value.node_id]));
+    expect(res.total).toBe(6);
+    expect(res.type).toBe("all");
   });
 
   test("a type with no matching legacy_type vocabulary is an honest empty page, not an error", () => {
     const res = out.list_no_such_legacy_type.value;
     expect(out.list_no_such_legacy_type.isError).toBe(false);
     expect(res).toMatchObject({ documents: [], total: 0, type: "no-such-legacy-type" });
+  });
+
+  // Fix round: V3-PARITY.md §4.3 -- "asOf returns unsupported_argument,
+  // because there is no historical browse." Before the fix this argument
+  // was never read at all: a caller asking for a historical view silently
+  // got the present one instead.
+  test("asOf is refused with unsupported_argument, never silently ignored", () => {
+    expect(out.list_asOf.isError).toBe(true);
+    expect(out.list_asOf.value.compat.code).toBe("unsupported_argument");
+    expect(out.list_asOf.value.compat.path).toBe("/asOf");
   });
 
   test("an empty workspace returns an empty page", () => {
@@ -136,13 +245,36 @@ describe("oracle_list (V6)", () => {
 });
 
 describe("oracle_reflect (V6)", () => {
-  test("returns a learning, never the retired one (the recall path is eligible-only)", () => {
+  const eligibleIds = () => [out.l2.value.id, out.rn1.value.id, out.p1.value.node_id];
+
+  test("returns an eligible learning or principle, never the retired one (the recall path is eligible-only)", () => {
     expect(out.reflect.isError).toBe(false);
     const principle = out.reflect.value.principle;
-    expect([out.l2.value.id, out.rn1.value.id]).toContain(principle.id);
+    expect(eligibleIds()).toContain(principle.id);
     expect(principle.id).not.toBe(out.l1.value.id);
-    expect(principle.type).toBe("learning");
+    expect(["learning", "principle"]).toContain(principle.type);
     expect(typeof principle.content).toBe("string");
+  });
+
+  // K3 fix round: V3-PARITY §7 lists V6 as "upgrades oracle_list,
+  // oracle_reflect", and v3 sampled BOTH `principle` and `learning`. Before
+  // the fix, reflect sampled `type_term:"learning"` only -- draw the tool
+  // enough times that BOTH pools are proven reachable, not just declared so
+  // in a comment.
+  test("samples BOTH the learning pool and the K3 legacy_type:principle pool across repeated draws, never the retired node", () => {
+    const types = new Set<string>();
+    const ids = new Set<string>();
+    for (let i = 0; i < REFLECT_REPEATS; i++) {
+      const step = out[`reflect_r${i}`];
+      expect(step.isError).toBe(false);
+      const principle = step.value.principle;
+      expect(eligibleIds()).toContain(principle.id);
+      types.add(principle.type);
+      ids.add(principle.id);
+    }
+    expect(types.has("learning")).toBe(true);
+    expect(types.has("principle")).toBe(true);
+    expect(ids.has(out.p1.value.node_id)).toBe(true);
   });
 
   test("an empty workspace answers no_results, not a thrown error (v3 threw)", () => {
@@ -189,24 +321,57 @@ describe("oracle_inbox (V6)", () => {
 });
 
 describe("oracle_recap (V6)", () => {
-  test("a markdown identity line, and the eligible entries -- never the retired one", () => {
-    const res = out.recap.value;
+  // Fix round (Opus verifier): V3-PARITY.md §2.5 says "oracle_recap returns a
+  // markdown string, as v3 did; text() passes strings through", and v3's own
+  // recap.ts:52 returns raw markdown text. Before the fix this tool returned
+  // a JSON object `{recap, entries, compat_warnings}` -- the probe's
+  // `typeof value` was "object", not "string".
+  test("the whole tool result IS the markdown string (not a JSON object wrapping one) -- eligible entries only, never the retired one", () => {
     expect(out.recap.isError).toBe(false);
-    expect(typeof res.recap).toBe("string");
-    expect(res.recap).toContain(`Recap: ${FRESH}`);
-    expect(res.recap).toContain(out.h2.value.id);
-    expect(res.recap).toContain(out.h1.value.id);
-    expect(res.recap).toContain(out.l2.value.id);
-    expect(res.recap).toContain(out.rn1.value.id);
+    const res = out.recap.value;
+    expect(typeof res).toBe("string");
+    expect(res).toContain(`Recap: ${FRESH}`);
+    expect(res).toContain(out.h2.value.id);
+    expect(res).toContain(out.h1.value.id);
+    expect(res).toContain(out.l2.value.id);
+    expect(res).toContain(out.rn1.value.id);
+    expect(res).toContain(out.p1.value.node_id);
     // l1 is retired: excluded from the recall path exactly like reflect.
-    expect(res.recap).not.toContain(out.l1.value.id);
-    expect(res.entries).toBe(4);
-    expect(res.compat_warnings).toContainEqual(expect.objectContaining({ code: "field_unavailable", field: "heat" }));
+    expect(res).not.toContain(out.l1.value.id);
+    expect(res).toContain("heat ranking is not carried");
+  });
+
+  // Fix round: v3's recap.ts also takes `maxTokens` (200-1200); v4 has no
+  // token count and fits a fixed character budget in the adapter instead.
+  // Before the fix, `maxTokens` was read nowhere: `{maxTokens:200}` produced
+  // output identical to `{}`, with no warning that the argument did nothing.
+  test("maxTokens is accepted for v3 compatibility, ignored, and NAMED as ignored -- not silently dropped", () => {
+    expect(out.recap_maxTokens.isError).toBe(false);
+    const res = out.recap_maxTokens.value;
+    expect(typeof res).toBe("string");
+    expect(res).toContain(`Recap: ${FRESH}`);
+    expect(res).toContain("argument_ignored");
+    expect(res).toContain("maxTokens");
+  });
+
+  // Fix round: dispatchLegacyV3's A2 `cwd`-ignored warning must reach a
+  // STRING-returning tool too -- the generic warnings merge only handled an
+  // object result, so this warning would otherwise vanish silently the
+  // moment recap stopped returning one.
+  test("dispatchLegacyV3's cwd-ignored warning reaches a string result too", () => {
+    expect(out.recap_cwd.isError).toBe(false);
+    const res = out.recap_cwd.value;
+    expect(typeof res).toBe("string");
+    expect(res).toContain("argument_ignored");
+    expect(res).toContain("cwd");
   });
 
   test("an empty workspace still answers with the identity line and zero entries", () => {
     expect(outEmpty.recap_empty.isError).toBe(false);
-    expect(outEmpty.recap_empty.value.entries).toBe(0);
-    expect(outEmpty.recap_empty.value.recap).toContain(`Recap: ${EMPTY}`);
+    const res = outEmpty.recap_empty.value;
+    expect(typeof res).toBe("string");
+    expect(res).toContain(`Recap: ${EMPTY}`);
+    expect(res).not.toContain("##");
+    expect(res).not.toContain("- **");
   });
 });

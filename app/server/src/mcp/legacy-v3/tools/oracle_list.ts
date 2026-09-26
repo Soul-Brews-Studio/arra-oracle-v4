@@ -1,3 +1,5 @@
+import { CompatError } from "../compat-error";
+import { countMatches } from "../countMatches";
 import { documentOf, type LifecycleEvent } from "../documentOf";
 import type { V3ToolContext } from "../handlers";
 import { lookupTermIdByName } from "../lookupTermIdByName";
@@ -17,11 +19,27 @@ type Warning = { code: string; field: string; detail: string };
  * K3 `any_term_ids` filter on the matching `legacy_type` term, done INSIDE
  * the kernel's own scan instead of the "applied after the page" degraded
  * behaviour the V2 design used before K3 existed.
+ *
+ * Fix round (Opus verifier): v3's own `type` enum is `['principle','pattern',
+ * 'learning','retro','all']`, `default:'all'` (arra-oracle-v3@61e5f8b6
+ * src/tools/list.ts) -- `'all'` IS v3's spelling of "no filter", the same as
+ * omitting the key, never a `legacy_type` NAME to look up. Before this fix
+ * `'all'` was looked up as a legacy_type term, found null, and returned an
+ * empty page -- silent data loss for a documented, DEFAULT v3 argument.
+ * `asOf` is handled here too: V3-PARITY.md §4.3 says it "returns
+ * unsupported_argument, because there is no historical browse" -- refused,
+ * never silently read-and-ignored.
  */
 export async function oracle_list(args: Record<string, unknown>, context: V3ToolContext): Promise<unknown> {
   const { bank, kb, tool } = context;
   const { limit, offset } = pageArgsOf(tool, args, DEFAULT_LIMIT, MAX_LIMIT);
-  const typeArg = typeof args.type === "string" && args.type.trim() !== "" ? args.type.trim() : null;
+
+  if (args.asOf !== undefined && args.asOf !== null) {
+    throw new CompatError(tool, "unsupported_argument", "Invalid input at /asOf", "there is no historical browse in v4; asOf is refused rather than silently ignored", { path: "/asOf" });
+  }
+
+  const rawType = typeof args.type === "string" && args.type.trim() !== "" ? args.type.trim() : null;
+  const typeArg = rawType === "all" ? null : rawType;
 
   const warnings: Warning[] = [
     { code: "field_unavailable", field: "source_file", detail: "v4 writes no file; there is no path to report" },
@@ -52,8 +70,17 @@ export async function oracle_list(args: Record<string, unknown>, context: V3Tool
   if (truncated) {
     warnings.push({ code: "truncated", field: "offset", detail: "offset walks at most 10 kernel pages of 100; this offset is beyond that reach" });
   }
-  if (total === null) {
-    warnings.push({ code: "partial", field: "total", detail: "no native scoped count exists once a type/legacy_type filter is set" });
+  // `listNodes`'s native total is null under ANY type/legacy_type filter
+  // (K3) -- the SAME gap `oracle_inbox` already closes with a bounded,
+  // exhaustive walk (`countMatches`) instead of reporting `null` whenever an
+  // exact count is actually reachable within that bound.
+  let exactTotal = total;
+  if (exactTotal === null) {
+    const counted = await countMatches(kb, requestBase);
+    if (counted.exhausted) exactTotal = String(counted.total);
+  }
+  if (exactTotal === null) {
+    warnings.push({ code: "partial", field: "total", detail: "more documents exist than the bounded count walk reached; total is not exact" });
   }
 
   const documents: Record<string, unknown>[] = [];
@@ -70,10 +97,12 @@ export async function oracle_list(args: Record<string, unknown>, context: V3Tool
 
   return {
     documents,
-    total: total === null ? null : Number(total),
+    total: exactTotal === null ? null : Number(exactTotal),
     limit,
     offset,
-    type: typeArg ?? "all",
+    // `rawType` (not the "all"-normalized `typeArg`) so an explicit
+    // `type:"all"` still echoes "all", the same as an omitted `type` does.
+    type: rawType ?? "all",
     compat_warnings: warnings,
   };
 }
