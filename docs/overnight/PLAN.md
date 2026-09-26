@@ -235,3 +235,12 @@ are part of done.
   sessions/messages with R3 membership + K12a titles + K9–K11 closeSession/filters, Opus) · v3-stats (K6 listTerms usage + K7
   knowledgeStats + V8, Sonnet) · ui-33 (chat with citations, revision diff, evidence review, screenshots as proof, Sonnet).
   Still waiting on search-query (V5 search, 46% of real v3 calls) and lifecycle (V2 reads).
+- 00:57 WAVE 2 finished. **Live proofs recorded by the slices**:
+  - **chat, against the real local Ollama gemma3:4b**: EN "When is the v4 deploy…" → "moved due to the unfinished
+    migration rehearsal (#34) [rQ2XU-…]"; TH "ประชุมทีมสัปดาห์หน้าวันไหน" → "วันพุธบ่ายสองโมง [xGXdkEQ…]"; coverage partial with
+    {unauthorized, count 1}; the secret HR text never appeared; a write after two answers completed. Answers took about 0.5 s.
+  - **embed backfill, against the real local all-minilm** (digest `1b226e28…`): published TH + EN, indexed 2 chunks, freshness
+    showed pending 2, embedPendingChunks embedded 2, then freshness showed ready 2. Nat's "index first, embed later, like backfill"
+    runs end to end.
+  Verdicts: chat and v3-frame accepted (merged). lifecycle, search-query and sessions are in repair round 3. **search-embed refuted** on the
+  digest pin (never re-probed; an unmeasured-then-measured boot flips the profile) → **R20** ruled and repair launched (`wf_be33b8c3-902`).

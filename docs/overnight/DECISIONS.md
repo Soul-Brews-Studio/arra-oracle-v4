@@ -278,6 +278,25 @@ v3". Measured usage on this machine: 709 real v3 tool calls; `oracle_search` 46%
   follows this ruling, or refutes it.
 - **Reverse by**: making `method` carry the transport and amending SPEC §7.2.
 
+## R20 · The embedding model digest is part of the profile identity, and it is never silently mixed or flipped
+
+- **Ruling**:
+  - The digest is pinned per dataset the first time a vector is actually written,
+    from a real `/api/show` measurement taken in the same embed run.
+  - Every `embedPendingChunks` run probes the live digest before embedding anything:
+    - **unmeasurable** → embed nothing, return `blocked: "digest_unmeasured"`;
+    - **measured and different** → embed nothing, fail closed with
+      `embedding_profile_mismatch` naming both digests;
+    - **equal**, or the first pin → proceed.
+  - Server boot never pins and never flips anything. `getSearchFreshness` reports
+    the pinned digest and the last measured one.
+- **Why**: the verifier showed two failure modes. A model upgraded under the same
+  name would silently mix vectors from two models. A boot that happened before
+  Ollama came up would flip the profile id. Either way, a similarity search
+  compares incomparable vectors. Failing closed makes an operator decide to
+  re-index, which is a deliberate act.
+- **Reverse by**: accepting mixed vectors, which is not recommended.
+
 ## R12 · Model split tonight (corrects PLAN v0)
 
 - Nat's latest rule (09-21 08:12, c30e0ba2 #14638): Sonnet codes; Opus and Fable plan and check.
