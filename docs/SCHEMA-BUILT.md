@@ -345,9 +345,10 @@ surfaces, with screenshots in `docs/overnight/UI-PROOF.md`:
 - traces;
 - chat with citations.
 
-A name scan of the UI's non-test source (`git ls-files app/ui/v2/src`, 87 files, each of
-the 57 `KNOWLEDGE_METHOD_NAMES` matched as a whole word) finds 35 called. The other 22 are
-absent from the UI:
+A name scan of the UI's non-test source (`git ls-files app/ui/v2/src`, 87 files, comments
+stripped, each of the 57 `KNOWLEDGE_METHOD_NAMES` matched as a whole word) finds 30 called.
+The other 27 are absent from the UI. Five of those are named only in comments, never called:
+`getMessage`, `getChatSettings`, `createTrace`, `createSessionLink`, `listTraces`. The other 22:
 
 - search: `searchKnowledgeKeyword`, `searchKnowledgeSemantic`;
 - taxonomy, everything but seeding (`seedReservedVocabularies`), `getVocabulary` and
