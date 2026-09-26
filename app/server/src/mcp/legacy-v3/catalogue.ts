@@ -43,13 +43,8 @@ const RECALL = " Superseded and retired entries are excluded from recall (a v3 c
 const NO_FILE = " Nothing is written to disk; LanceDB is canonical, so `file` is null.";
 const TAXONOMY_READS = ["lookupVocabularyByName", "lookupTermByName"];
 const TAXONOMY_WRITES = ["seedReservedVocabularies", "createVocabulary", "createTerm"];
-// `reconcileRevisionAssociations` (K6's own write path, `publish.ts`) runs
-// inside every PUBLISH tool's write, never called by the tool body directly:
-// a v3 client has no tool of its own that reaches it, so without this the
-// node_revision_terms projection K6 `listTermUsage` reads would never be
-// filled for a v3-created node (see `publish.ts`'s doc comment).
-const PUBLISH = [...TAXONOMY_READS, ...TAXONOMY_WRITES, "getPeer", "registerPeer", "publishRevision", "reconcileRevisionAssociations", "indexRevisionChunks"];
-const PUBLISH_REQUIRES = [...TAXONOMY_READS, ...TAXONOMY_WRITES, "publishRevision", "reconcileRevisionAssociations", "indexRevisionChunks"];
+const PUBLISH = [...TAXONOMY_READS, ...TAXONOMY_WRITES, "getPeer", "registerPeer", "publishRevision", "indexRevisionChunks"];
+const PUBLISH_REQUIRES = [...TAXONOMY_READS, ...TAXONOMY_WRITES, "publishRevision", "indexRevisionChunks"];
 /** K1 chunk search (#30 wave 2), named as V3-PARITY.md §5 designs it. */
 const K1 = ["searchChunksKeyword", "searchChunksSemantic"];
 

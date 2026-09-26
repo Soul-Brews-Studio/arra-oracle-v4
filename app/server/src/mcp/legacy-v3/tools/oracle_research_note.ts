@@ -49,10 +49,7 @@ export async function oracle_research_note(args: Record<string, unknown>, contex
         field,
         detail: `not linked, kept in the body only: v4 refuses this link target (${reason})`,
       })),
-      ...(done.associationsError === undefined
-        ? []
-        : [{ code: "partial", field: "concepts", detail: `this entry's term associations did not reconcile (${done.associationsError}); oracle_concepts/oracle_stats may undercount it until a retry succeeds` }]),
     ],
-    v4: { node_id: done.node_id, revision_id: done.revision_id, ...(done.associationsError === undefined ? {} : { associationsError: done.associationsError }) },
+    v4: { node_id: done.node_id, revision_id: done.revision_id },
   };
 }

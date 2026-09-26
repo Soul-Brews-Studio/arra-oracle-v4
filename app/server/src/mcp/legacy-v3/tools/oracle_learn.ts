@@ -36,16 +36,7 @@ export async function oracle_learn(args: Record<string, unknown>, context: V3Too
     embedding: done.embedding,
     ...(done.embeddingError === undefined ? {} : { embeddingError: done.embeddingError }),
     message: `Learning saved as v4 node ${done.node_id}${done.outcome === "idempotent" ? " (replayed)" : ""}`,
-    compat_warnings: [
-      { code: "field_unavailable", field: "file", detail: "v4 writes no file; the learning is a node in LanceDB" },
-      ...(done.associationsError === undefined
-        ? []
-        : [{ code: "partial", field: "concepts", detail: `this entry's term associations did not reconcile (${done.associationsError}); oracle_concepts/oracle_stats may undercount it until a retry succeeds` }]),
-    ],
-    // `associationsError` has no v3 precedent (unlike `embeddingError`,
-    // which mirrors v3's own field): a pure v4 addition, so it lives inside
-    // `v4`, the "carrying native ids" extension point (V3-PARITY.md §2.5),
-    // not as a bare new top-level key.
-    v4: { node_id: done.node_id, revision_id: done.revision_id, ...(done.associationsError === undefined ? {} : { associationsError: done.associationsError }) },
+    compat_warnings: [{ code: "field_unavailable", field: "file", detail: "v4 writes no file; the learning is a node in LanceDB" }],
+    v4: { node_id: done.node_id, revision_id: done.revision_id },
   };
 }
