@@ -193,7 +193,7 @@ runIt(
     expect(out.kw_straddle_mcp.value).toEqual(out.kw_straddle_http.body);
     expect(out.kw_seam_http.body.match).toBe("ngram");
     expect(out.kw_seam_http.body.hits).toHaveLength(1);
-    expect(out.kw_seam_http.body.hits[0]).toMatchObject({ node_id: NODE_STRADDLE, match: "substring_scan", score: null });
+    expect(out.kw_seam_http.body.hits[0]).toMatchObject({ node_id: NODE_STRADDLE, match: "substring_scan", rank: 1 });
     expect(out.kw_seam_mcp.value).toEqual(out.kw_seam_http.body);
 
     // ── semantic: nearest first, same answer over both transports ─────────
@@ -205,9 +205,14 @@ runIt(
     expect(out.sem_mcp.ok, JSON.stringify(out.sem_mcp)).toBe(true);
     expect(out.sem_mcp.value).toEqual(out.sem_http.body);
     // No model answer: a documented 503 envelope, never a hang or a 500.
+    // R21: model_unavailable, the same closed code chat uses (#32 / R9).
     expect(out.sem_embedder_down_http.status).toBe(503);
-    expect(out.sem_embedder_down_http.body).toMatchObject({ code: "writer_unavailable" });
+    expect(out.sem_embedder_down_http.body).toMatchObject({ code: "model_unavailable" });
     expect(out.sem_embedder_down_mcp.isError).toBe(true);
+    // The MCP envelope carries the same closed code, not just an error flag
+    // (`auth/service.ts`'s `runMcp` puts the PublicationError's `.toJSON()` in
+    // `message`).
+    expect(JSON.parse(out.sem_embedder_down_mcp.message)).toMatchObject({ code: "model_unavailable" });
 
     // ── isolation ─────────────────────────────────────────────────────────
     expect(out.kw_beta_http.status).toBe(200);

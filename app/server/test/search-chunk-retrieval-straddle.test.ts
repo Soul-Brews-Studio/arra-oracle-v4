@@ -92,7 +92,7 @@ const QUERIES = {
   titleOnly: "กุญแจบ้าน",
 } as const;
 
-type Hit = { node_id: string; revision_id: string; snippet: string; chunk_ids: string[]; match: string; score: number | null };
+type Hit = { node_id: string; revision_id: string; snippet: string; chunk_ids: string[]; match: string; rank: number };
 let out: Record<string, any> = {};
 const cleanups: (() => Promise<void>)[] = [];
 afterAll(async () => {
@@ -192,17 +192,16 @@ describe("#30 keyword retrieval across chunk boundaries (real gated dataset)", (
     expect(nodes("ix_inside").sort()).toEqual([NODES.control.id, NODES.straddle.id].sort());
 
     // หลง: no chunk of the straddle node holds a trigram of it. The scored
-    // index hit ranks first; the seam hit follows, unscored, and says it was a scan.
+    // index hit ranks first; the seam hit follows, at rank 2, and says it was a scan.
     const seam3 = ok("ix_seam3");
     expect(seam3.match).toBe("ngram");
     expect(nodes("ix_seam3")).toEqual([NODES.control.id, NODES.straddle.id]);
-    expect(seam3.hits[0]).toMatchObject({ match: "ngram" });
-    expect(typeof seam3.hits[0].score).toBe("number");
-    expect(seam3.hits[1]).toMatchObject({ match: "substring_scan", score: null });
+    expect(seam3.hits[0]).toMatchObject({ match: "ngram", rank: 1 });
+    expect(seam3.hits[1]).toMatchObject({ match: "substring_scan", rank: 2 });
     expect(seam3.hits[1].snippet).toContain("หลงลืม");
 
     expect(nodes("ix_seam4")).toEqual([NODES.seam4.id]);
-    expect(ok("ix_seam4").hits[0]).toMatchObject({ match: "substring_scan", score: null });
+    expect(ok("ix_seam4").hits[0]).toMatchObject({ match: "substring_scan", rank: 1 });
 
     expect(ok("ix_short")).toMatchObject({ match: "substring_scan", scan_reason: "short_query" });
     expect(nodes("ix_short")).toEqual([NODES.control.id, NODES.straddle.id].sort());
@@ -256,6 +255,6 @@ describe("#30 keyword retrieval across chunk boundaries (real gated dataset)", (
     expect(nodes("scan_long")).toEqual([NODES.long.id]);
     expect(nodes("scan_prefix")).toEqual([NODES.long.id]);
     expect(ok("scan_control").hits).toEqual([]);
-    for (const hit of ok("scan_whole").hits as Hit[]) expect(hit).toMatchObject({ match: "substring_scan", score: null });
+    for (const [index, hit] of (ok("scan_whole").hits as Hit[]).entries()) expect(hit).toMatchObject({ match: "substring_scan", rank: index + 1 });
   });
 });

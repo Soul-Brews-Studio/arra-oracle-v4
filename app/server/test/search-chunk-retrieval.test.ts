@@ -269,7 +269,7 @@ type Hit = {
   snippet: string;
   chunk_ids: string[];
   match?: string;
-  score?: number | null;
+  rank?: number;
   distance?: number;
 };
 
@@ -341,7 +341,8 @@ describe("#30 knowledge retrieval on a real gated dataset", () => {
     expect(thai.snippet).toContain("หลงลืม");
     expect(thai.chunk_ids).toEqual([chunk(R.thai)]);
     expect(thai.match).toBe("ngram");
-    expect(typeof thai.score).toBe("number");
+    // R21: an integer position, never the raw BM25 score.
+    expect(typeof thai.rank).toBe("number");
   });
 
   runIt("keyword: หลงทาง shares the trigram หลง but is not contained anywhere -- no false positive", () => {
@@ -355,9 +356,10 @@ describe("#30 knowledge retrieval on a real gated dataset", () => {
     expect(short.match).toBe("substring_scan");
     expect(short.scan_reason).toBe("short_query");
     expect(nodes("kw_short")).toEqual([N.thai, N.pending].sort());
-    for (const hit of short.hits as Hit[]) {
+    // R21: every hit carries its 1-based position, never a null score.
+    for (const [index, hit] of (short.hits as Hit[]).entries()) {
       expect(hit.match).toBe("substring_scan");
-      expect(hit.score).toBeNull();
+      expect(hit.rank).toBe(index + 1);
     }
     expect(ok("kw_short_thai").match).toBe("substring_scan");
     expect(nodes("kw_short_thai")).toEqual([N.mix]);
@@ -384,11 +386,15 @@ describe("#30 knowledge retrieval on a real gated dataset", () => {
     expect(ok("kw_inside_word_again")).toEqual(ok("kw_inside_word"));
     expect(ok("kw_limit_one").hits).toHaveLength(1);
     expect(ok("kw_limit_one").hits[0].node_id).toBe(ok("kw_inside_word").hits[0].node_id);
+    // R21: rank is this answer's own 1-based position -- the ordering
+    // guarantee (score then node id) is stable but no longer observable as a
+    // number, only as position. `rank == index + 1` alone is the shape the
+    // code always produces, so it cannot fail on its own; the explicit
+    // node-id order below is what actually pins BM25 order (a mutant that
+    // reverses or drops score ordering changes THIS, not the rank shape).
     const hits = ok("kw_inside_word").hits as Hit[];
-    for (let i = 1; i < hits.length; i++) {
-      const [a, b] = [hits[i - 1]!, hits[i]!];
-      expect(a.score! > b.score! || (a.score === b.score && a.node_id < b.node_id)).toBe(true);
-    }
+    expect(hits.map((hit) => hit.rank)).toEqual(hits.map((_, index) => index + 1));
+    expect(hits.map((hit) => hit.node_id)).toEqual([N.thai, N.pending]);
     expect(nodes("kw_english_case")).toEqual([N.fox]);
     expect(failed("kw_limit_over")).toMatchObject({ code: "invalid_value", path: "/limit" });
     expect(failed("kw_unknown_workspace")).toMatchObject({ code: "invalid_reference", path: "/workspace_name" });
@@ -476,9 +482,9 @@ describe("#30 knowledge retrieval on a real gated dataset", () => {
     expect(nodes("sem_nearest")).not.toContain(N.other);
   });
 
-  runIt("semantic: a profile the embedder does not serve is refused; an embedder failure is writer_unavailable", () => {
+  runIt("semantic: a profile the embedder does not serve is refused; an embedder failure is model_unavailable (R21)", () => {
     expect(failed("sem_profile_mismatch")).toMatchObject({ code: "invalid_value", path: "/embedding_profile" });
-    expect(failed("sem_embedder_down")).toMatchObject({ code: "writer_unavailable" });
+    expect(failed("sem_embedder_down")).toMatchObject({ code: "model_unavailable" });
     // The refused profile never reached the model; keyword search never does.
     const calls = ok("embed_calls") as string[];
     expect(calls.filter((q) => q === "q-e0")).toHaveLength(5);

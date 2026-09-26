@@ -39,16 +39,37 @@ const SEAM_ONLY_MAX_CODE_POINTS = 2 * (FTS_MIN_QUERY_CODE_POINTS - 1);
  *   is a candidate too. Each node is re-checked against its WHOLE head text,
  *   never against one chunk, which drops the trigram over-matches (หลงทาง vs
  *   หลงลืม) and keeps occurrences that straddle a boundary or outrun a chunk.
- *   `score` is the node's best chunk score. A query of 3-4 code points can be
- *   cut so that no chunk holds a trigram of it; when the index answers fewer
- *   than `limit`, a seam scan (`seamPredicate`) adds those nodes after every
- *   scored one, each marked `match: "substring_scan"`, `score: null`.
+ *   A query of 3-4 code points can be cut so that no chunk holds a trigram of
+ *   it; when the index answers fewer than `limit`, a seam scan
+ *   (`seamPredicate`) adds those nodes after every scored one, each marked
+ *   `match: "substring_scan"`.
  * - `match: "substring_scan"`: a bounded, escaped ILIKE scan in node-id order
- *   (`keywordScanPredicate`, which crosses chunk seams too), `score: null`,
- *   when the query is under 3 code points (`scan_reason: "short_query"`: a
- *   trigram index has nothing to look up and would answer [] silently) or
- *   when the index is absent or not the governed one (`"index_unavailable"`).
- *   The reader never builds it -- the writer does, in `indexRevisionChunks`.
+ *   (`keywordScanPredicate`, which crosses chunk seams too), when the query
+ *   is under 3 code points (`scan_reason: "short_query"`: a trigram index has
+ *   nothing to look up and would answer [] silently) or when the index is
+ *   absent or not the governed one (`"index_unavailable"`). The reader never
+ *   builds it -- the writer does, in `indexRevisionChunks`.
+ *
+ * `hits[].rank` (overnight R21, docs/overnight/DECISIONS.md): a 1-based
+ * position in THIS answer, in the same order the hits already carry -- BM25
+ * score descending, then a seam/scan tie broken by node id -- never the raw
+ * BM25 number. `search_chunks_v1`'s FTS index is one table shared by every
+ * workspace, so that raw score depends on every workspace's text (measured:
+ * one workspace's score for the identical hit set moved from 5.65 to 2.38
+ * once a second workspace indexed 12 nodes holding the same term). The
+ * answer SET stays workspace-scoped either way, and the raw score NUMBER is
+ * never on the wire -- but `rank` is still a position derived from that same
+ * shared, corpus-wide BM25 order, so it does NOT make hit order (or, at a
+ * bounded `limit`, which of this workspace's own nodes come back)
+ * workspace-local: another workspace's writes can still swap which of THIS
+ * workspace's own nodes ranks first (measured and pinned by
+ * `search-chunk-retrieval-score-isolation.test.ts`'s second `describe`).
+ * Closing that fully needs a per-workspace index or per-workspace statistics
+ * (R21's own "reverse by" line) -- out of scope here, and said plainly in
+ * `search-chunk-v1.md`'s amendment rather than claimed away. Semantic
+ * search's `distance` has no such leak (verified in the `search-chunk-v1.md`
+ * amendment: it is the L2 distance between the query vector and one stored
+ * row's own vector, never a corpus-wide statistic) and keeps its raw number.
  *
  * Candidates are chunks; answers are NODES: `chunkMayHoldQuery` first drops,
  * without a read, every chunk no occurrence can touch; each surviving chunk
@@ -100,13 +121,16 @@ export async function searchKnowledgeKeyword(reader: DatasetAdapter, requestByte
   return {
     match,
     scan_reason: scanReason,
-    hits: hits.map((hit) => ({
+    hits: hits.map((hit, index) => ({
       node_id: hit.node_id,
       revision_id: hit.revision_id,
       title: hit.title,
       snippet: hit.snippet,
       chunk_ids: hit.chunk_ids,
-      score: hit.rank,
+      // R21: the hit's 1-based position in this answer, never the raw BM25
+      // score (`hit.rank` above is the internal sort key that produced this
+      // order; it never reaches the wire).
+      rank: index + 1,
       // How THIS hit was found: a ranked index hit, or a scan (the whole
       // answer's scan, or the seam scan of an index answer).
       match: (hit.rank === null ? "substring_scan" : "ngram") as FtsMatch,
