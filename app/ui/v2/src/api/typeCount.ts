@@ -29,8 +29,10 @@ export async function countByType(b: Bank, term: TypeTerm, limit = SAMPLE_LIMIT)
   const started = performance.now();
   // Sent as true even though the answer is a known null: the closed grammar
   // demands the key, and asking makes the by-design null distinguishable from
-  // a count we simply declined to request.
-  const page = await listNodes(b, null, limit, true, term);
+  // a count we simply declined to request. `include_inactive: false`: a
+  // per-type count is about the ordinary, current view, same as the
+  // unfiltered probe it is cross-checked against in `resolveByType`.
+  const page = await listNodes(b, null, limit, true, term, false);
   const durationMs = Math.round(performance.now() - started);
   const exact = page.supported && page.nextCursor === null;
   const empty = exact && page.rows.length === 0;

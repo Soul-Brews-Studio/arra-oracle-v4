@@ -28,6 +28,10 @@ export function DetailTabs(props: {
     onSelect: (id: string) => void;
     typeTerm: TypeTerm | null;
     onTypeTerm: (t: TypeTerm | null) => void;
+    /** #29 slice B: "show history" -- false excludes retired/superseded
+     *  nodes (the ordinary view); true includes them, labelled. */
+    includeInactive: boolean;
+    onIncludeInactive: (v: boolean) => void;
     loading: boolean;
     error: string | null;
     supported: boolean;
@@ -98,15 +102,34 @@ export function DetailTabs(props: {
                 <option key={t} value={t}>{t}</option>
               ))}
             </select>
+            {/* #29 slice B: default excludes retired/superseded nodes;
+                checking this asks for the history view instead. */}
+            <label className="ml-auto flex items-center gap-1.5 text-[11px] text-muted">
+              <input
+                type="checkbox"
+                checked={props.nodes.includeInactive}
+                onChange={(e) => props.nodes.onIncludeInactive(e.target.checked)}
+                className="accent-accent"
+              />
+              show history
+            </label>
           </div>
           {/* Same list shell as the left column's peers/sessions -- one
               node row rendered as "type · title · rev N" since ListPanel's
-              row slot is plain text, not a badge layout. */}
+              row slot is plain text, not a badge layout. A retired or
+              superseded row (only ever seen with "show history" checked)
+              gets its lifecycle state appended, so it never looks like an
+              ordinary active node. */}
           <ListPanel<NodeRow>
             label="nodes"
             rows={props.nodes.rows}
             rowKey={(n) => n.id}
-            renderRow={(n) => `${n.title} · rev ${n.revision_no}`}
+            renderRow={(n) =>
+              n.lifecycle_state === "active"
+                ? `${n.title} · rev ${n.revision_no}`
+                : `${n.title} · rev ${n.revision_no} · ${n.lifecycle_state}` +
+                  (n.new_id !== null ? ` → ${n.new_id}` : "")
+            }
             selectedKey={props.nodes.selectedId}
             onSelect={(n) => props.nodes.onSelect(n.id)}
             loading={props.nodes.loading}
