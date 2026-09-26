@@ -9,6 +9,17 @@ import { contextScope } from "./service.contextScope";
 import { requireWorkspace } from "./service.requireWorkspace";
 import { type DatasetAdapter } from "./service.types";
 
+/**
+ * UNROUTED as of DECISIONS.md R5 (#102) -- see `service.listMcpCalls.ts`'s
+ * comment for the full reasoning, which applies here unchanged. `foldConnection`
+ * (`app/server/src/mcp/connections.ts`) writes into the operations root
+ * (`ARRA_DATA_DIR`); this function reads the DIFFERENT `ARRA_KNOWLEDGE_DATASET_ROOT`
+ * dataset, which nothing folds `connections` into, so it always answers
+ * correctly from an empty table. `knowledge/registry.ts`'s `listConnections`
+ * entry now carries an `operations` field (`mcp/connections.listConnections.ts`)
+ * that the transport calls instead. This function is kept, untouched, for
+ * the #34 cutover.
+ */
 export async function listConnections(reader: DatasetAdapter, requestBytes: Uint8Array): Promise<{ rows: Record<string, unknown>[]; next_after_id: string | null; total: string | null }> {
   const request = parseListConnections(requestBytes);
   await requireWorkspace(reader, request.workspace_name);

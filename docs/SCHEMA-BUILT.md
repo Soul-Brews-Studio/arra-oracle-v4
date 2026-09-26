@@ -207,6 +207,26 @@ trace to a revision cannot compare the two time columns directly.
 convention enforced in application code — which is why `supersede_log` snapshots
 `old_title` and `old_source` instead of pointing at a row that may be gone.
 
+**`mcp_calls` and `connections` are declared here but physically live in the
+operations root, not this dataset.** Overnight R5 (2026-09-26,
+`docs/overnight/DECISIONS.md`, #103/#102): both are written on every admitted
+request straight to `ARRA_DATA_DIR` (`app/server/src/mcp/calls.ts`,
+`app/server/src/mcp/connections.ts`), never through this gated 19-table
+dataset's writer. `listMcpCalls`/`listConnections` read `ARRA_DATA_DIR` for
+the same reason (`app/server/src/mcp/calls.listMcpCalls.ts`,
+`app/server/src/mcp/connections.listConnections.ts`, wired in
+`app/server/src/knowledge/registry.ts`). The copies of these two tables IN
+THIS dataset stay declared — `TARGET_SCHEMA` in `app/server/src/publication/storage.ts`
+still verifies their shape — but they stay **empty** until #34 migrates the
+operations tables over. Do not read an empty `mcp_calls`/`connections` in a
+19-table dataset as evidence nothing was recorded; check `ARRA_DATA_DIR`.
+The operations root was written before the target-19 codec existed, so it can
+hold rows that codec rejects. The two readers withhold such a row and report
+its id in `unreadable` rather than failing the page. The call-log writer now
+records `session_name`/`peer_name` only in the reader's grammar, and anything
+else as null, flagged in `h_metadata.invalid_fields`. See the R5 amendment in
+`app/docs/contracts/authorization-integration-v1.md`.
+
 ---
 
 ## 4 · Three lineages, not one

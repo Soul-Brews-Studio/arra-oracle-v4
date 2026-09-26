@@ -401,6 +401,17 @@ export async function handleKnowledgeRequest(
   // for the rest of the process over a call that cannot durably write.
   let closeEphemeral: (() => Promise<void>) | null = null;
   try {
+    // Operations-root methods (R5) never touch the knowledge bundle at all --
+    // checked BEFORE `getBundle`, which would otherwise throw
+    // `unsupported_dataset` whenever `ARRA_KNOWLEDGE_DATASET_ROOT` is unset,
+    // even though `entry.call` would never have used the bundle it opened.
+    if (entry.operations !== undefined) {
+      const result = await entry.operations(raw.bytes);
+      return new Response(JSON.stringify(result ?? null), {
+        status: 200,
+        headers: { "content-type": "application/json", "cache-control": "no-store" },
+      });
+    }
     let bundle: KnowledgeBundle;
     if (entry.ephemeralWrite === true) {
       if (ctx.access.getEphemeralWriter === undefined) {

@@ -31,6 +31,22 @@ export const INHERITED_FD = 42;
 const ENV_FD = "ARRA_WRITER_FD";
 const ENV_ROOT = "ARRA_WRITER_ROOT";
 
+/**
+ * `mcp_calls` and `connections` below are declared here, part of the
+ * reviewed 19, but are NOT reachable through this dataset today.
+ *
+ * DECISIONS.md R5 (#103, #102): both are operations tables, written on every
+ * admitted request straight to `ARRA_DATA_DIR` (`mcp/calls.ts`,
+ * `mcp/connections.ts`) -- never through this gated knowledge dataset, and
+ * never behind the exclusive writer gate this module enforces. The
+ * `listMcpCalls`/`listConnections` readers (`knowledge/registry.ts`'s
+ * `operations` entries, `mcp/calls.listMcpCalls.ts`,
+ * `mcp/connections.listConnections.ts`) read `ARRA_DATA_DIR` for the same
+ * reason. The copies of these two tables IN THIS dataset stay declared, so
+ * `assertTargetDataset` keeps verifying their shape, but they stay EMPTY
+ * until #34 migrates the operations tables over -- do not read them from
+ * here as evidence that nothing was ever recorded.
+ */
 export const TARGET_SCHEMA: Readonly<Record<string, ReadonlyArray<readonly [string, string, boolean]>>> =
   Object.freeze({
   workspaces: [["id", "utf8", false], ["name", "utf8", false], ["created_at", "timestamp[us]", false], ["h_metadata", "utf8", true], ["internal_metadata", "utf8", true], ["configuration", "utf8", true], ["mission", "utf8", true]],

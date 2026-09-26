@@ -108,11 +108,16 @@ async function dispatchKnowledgeTool(name: string, args: Record<string, unknown>
   if (scoped === null || scoped !== ops.bank) {
     throw new Error("payload workspace_name must match the connected bank");
   }
-  if (knowledgeAccess === null) throw new Error("knowledge transport is not configured");
   const bytes = new TextEncoder().encode(JSON.stringify(payload));
   // #87 / R3: the same peer-binding refusal as HTTP, before any writer opens;
   // it throws the governed `forbidden` envelope, carried out unchanged.
   requireBoundPeers(method, bytes, ops.authority);
+  // Operations-root methods (R5) never touch `knowledgeAccess` at all -- so
+  // `kb_listMcpCalls`/`kb_listConnections` answer even when the knowledge
+  // transport is not configured, matching the HTTP branch in
+  // `knowledge/transport.ts`'s `handleKnowledgeRequest`.
+  if (entry.operations !== undefined) return entry.operations(bytes);
+  if (knowledgeAccess === null) throw new Error("knowledge transport is not configured");
   // Same gate discipline as the HTTP transport (`knowledge/transport.ts`'s
   // `handleKnowledgeRequest`): an `ephemeralWrite` method (currently only
   // `answerChat`) must never share the process-lifetime cached writer, or

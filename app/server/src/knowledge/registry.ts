@@ -34,6 +34,35 @@ import type { EvidenceReaderBundle, EvidenceWriterBundle } from "../publication/
 export type { RequestAuthority };
 
 /**
+ * LAZY, deliberately -- matching `composition.ts`'s own discipline ("these
+ * raw modules are imported lazily inside the builder so that merely
+ * importing the composition graph cannot trigger their import-time
+ * environment reads"). A STATIC top-level import here was tried first and
+ * reverted: `mcp/calls.listMcpCalls.ts` / `mcp/connections.listConnections.ts`
+ * import `./calls.openCallLogTable` / `./connections.openConnectionsTable`
+ * (before fix round 2: `./calls` / `./connections`), which import `../storage`,
+ * whose `DATA_DIR` is a `const` read from `process.env.ARRA_DATA_DIR` at
+ * MODULE LOAD. A static import here pulls `storage.ts` into the STATIC
+ * import graph of `app.ts` (via `knowledge/transport.ts` -> `composition.ts`),
+ * which four test files (`transport-service`, `transport-ownership`,
+ * `knowledge-chat-transport`, `knowledge-chat-writer-gate`) import statically
+ * too -- so whichever of those Bun loads first freezes `DATA_DIR` for every
+ * later file in the same `bun test` process, including ones that set
+ * `ARRA_DATA_DIR` in their own `beforeAll`. Measured regression: `bun test
+ * test/transport-service.test.ts test/mcp-correctness.test.ts` went from
+ * 31 pass / 0 fail to 16 pass / 15 fail, and opened a real `<checkout>/app/data`.
+ * A dynamic `import()` inside the closure below defers module resolution to
+ * FIRST CALL, by which point every test file's own `beforeAll` has already
+ * set `ARRA_DATA_DIR` for its own (fresh, `runOwnedChild`-owned) process.
+ */
+async function listMcpCallsFromOperationsRoot(bytes: Uint8Array): Promise<unknown> {
+  return (await import("../mcp/calls.listMcpCalls")).listMcpCalls(bytes);
+}
+async function listConnectionsFromOperationsRoot(bytes: Uint8Array): Promise<unknown> {
+  return (await import("../mcp/connections.listConnections")).listConnections(bytes);
+}
+
+/**
  * `audit:read` widened in for #94 (`listMcpCalls`/`listConnections`): the
  * runtime `admit()`/policy layer (`auth/policy.types.ts`'s `WorkspaceAction`)
  * already supports all four workspace actions, and `auth/service.ts`'s
@@ -73,6 +102,18 @@ export type KnowledgeMethod = {
    * ordinary cached-writer path, unchanged for every other write method.
    */
   readonly ephemeralWrite?: boolean;
+  /**
+   * Operations-root methods (#103 / #102, DECISIONS.md R5): `mcp_calls` and
+   * `connections` are written straight to `ARRA_DATA_DIR` on every admitted
+   * request (`mcp/calls.ts`, `mcp/connections.ts`), never through the gated
+   * `ARRA_KNOWLEDGE_DATASET_ROOT` writer. When present, the transport
+   * (`knowledge/transport.ts`'s `handleKnowledgeRequest`, `mcp/index.ts`'s
+   * `dispatchKnowledgeTool`) calls THIS instead of opening a knowledge
+   * bundle -- `call` above is never invoked and
+   * `ARRA_KNOWLEDGE_DATASET_ROOT` need not even be configured for the method
+   * to answer. Admission (`action` above) is unchanged either way.
+   */
+  readonly operations?: (bytes: Uint8Array) => Promise<unknown>;
 };
 
 /** A reader bundle's `publication` facade has no `publishRevision`. */
@@ -178,8 +219,24 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
   // Audit data, not content: entitles the caller to `h_metadata.auth.credential_id`
   // (see `context.encodeMcpCallRow.ts`), which `content:read` callers must
   // never see.
-  listMcpCalls: { action: "audit:read", scopePath: [], call: (b, x) => b.context.listMcpCalls(x) },
-  listConnections: { action: "audit:read", scopePath: [], call: (b, x) => b.context.listConnections(x) },
+  //
+  // `call` still names the target19 facade method -- frozen by the ownership
+  // tests (`context-ownership.test.ts`, `context-service.test.ts`) and the
+  // #34 cutover's eventual reader -- but `operations` below is what actually
+  // answers today (R5): the target19 copies of these two tables are empty
+  // until #34 migrates them, so `call` is unroutable until then.
+  listMcpCalls: {
+    action: "audit:read",
+    scopePath: [],
+    call: (b, x) => b.context.listMcpCalls(x),
+    operations: (x) => listMcpCallsFromOperationsRoot(x),
+  },
+  listConnections: {
+    action: "audit:read",
+    scopePath: [],
+    call: (b, x) => b.context.listConnections(x),
+    operations: (x) => listConnectionsFromOperationsRoot(x),
+  },
   answerChat: {
     action: "content:write",
     scopePath: [],

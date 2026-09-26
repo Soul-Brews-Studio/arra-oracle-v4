@@ -10,31 +10,30 @@ import { requireWorkspace } from "./service.requireWorkspace";
 import { type DatasetAdapter } from "./service.types";
 
 /**
- * KNOWN GAP, confirmed by reading the write path (`app/server/src/mcp/calls.ts:108`)
- * rather than inferring it: `logCall` connects to `storage.ts`'s `DATA_DIR`, i.e.
- * `process.env.ARRA_DATA_DIR` (default `../data`) -- the ACTIVE/legacy store. This
- * reader runs against `reader`, which `service.openContextReader` /
- * `service.openEvidenceReader` open against `ARRA_KNOWLEDGE_DATASET_ROOT` (the
- * target19 "knowledge" dataset, `composition.ts`'s `composeKnowledgeAccess`).
- * Both tables are named `mcp_calls`, but they are TWO DIFFERENT PHYSICAL DATASETS
- * unless an operator has deliberately pointed both env vars at the same root --
- * which is not the default; `composeKnowledgeAccess`'s own comment says
- * `ARRA_KNOWLEDGE_DATASET_ROOT` is optional precisely so an existing deployment's
- * active store stays untouched. Measured on a live server: three real MCP
- * `tools/call` invocations produced eight audited rows in the active store and
- * ZERO in the knowledge dataset; `listMcpCalls` against the knowledge dataset
- * correctly answered `{"rows":[],"next_after_id":null}` because, from where it
- * reads, the table genuinely is empty.
+ * UNROUTED as of DECISIONS.md R5 (#103) -- kept for the #34 cutover, not
+ * reachable from any transport today.
  *
- * This function is not wrong -- it reads the dataset it was told to read,
- * completely and correctly. But it cannot currently show a single row of real
- * MCP traffic on a normal deployment, because nothing writes into the dataset it
- * reads from. Schema-ownership call for a human, not decided here: the table
- * lives in the enforced 19 (argues for keeping the read here, on the knowledge
- * dataset, and pointing the WRITER at it instead), but the writer lives on the
- * operational request path next to the store it already audits (argues for
- * moving this READ to the active store instead). Whichever way it goes, `connections`
- * has the identical problem one level worse: nothing writes it in EITHER dataset.
+ * This function reads `reader`, which `service.openContextReader` /
+ * `service.openEvidenceReader` open against `ARRA_KNOWLEDGE_DATASET_ROOT`
+ * (the target19 "knowledge" dataset). `logCall` (`app/server/src/mcp/calls.ts`)
+ * writes every admitted MCP request into a DIFFERENT physical dataset,
+ * `storage.ts`'s `DATA_DIR` (`ARRA_DATA_DIR`, the operations root) -- so this
+ * function, called directly, always answers correctly from an empty table:
+ * measured on a live server, three real MCP `tools/call` invocations produced
+ * three audited rows in the operations root and ZERO here.
+ *
+ * R5 ruled option B: the operations tables (`mcp_calls`, `connections`) stay
+ * in the operations root, and the READS move there instead of the writer
+ * moving here. `knowledge/registry.ts`'s `listMcpCalls` entry now carries an
+ * `operations` field (`mcp/calls.listMcpCalls.ts`) that the transport calls
+ * INSTEAD of this function -- see `knowledge/transport.ts`'s
+ * `handleKnowledgeRequest` and `mcp/index.ts`'s `dispatchKnowledgeTool`. This
+ * function itself is untouched and stays exactly correct for the dataset it
+ * reads; it becomes live again only once #34 migrates `mcp_calls` into the
+ * dataset this reader actually opens, at which point the registry's
+ * `operations` field is the thing to remove. `connections` (sibling
+ * `service.listConnections.ts`) has the identical shape and the identical
+ * ruling.
  */
 export async function listMcpCalls(reader: DatasetAdapter, requestBytes: Uint8Array): Promise<{ rows: Record<string, unknown>[]; next_after_id: string | null; total: string | null }> {
   const request = parseListMcpCalls(requestBytes);
