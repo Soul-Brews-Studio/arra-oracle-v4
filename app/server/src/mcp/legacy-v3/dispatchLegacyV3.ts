@@ -8,6 +8,9 @@ import { fromKernel } from "./compat-error.fromKernel";
 import { createKb } from "./createKb";
 import { V3_HANDLERS } from "./handlers";
 
+/** A trailing `\n---\n` block made only of `_compat(...)_` lines. */
+const COMPAT_FOOTER_TAIL = /\n---\n(?:_compat\([^\n]*_\n)+$/;
+
 /** A2: the route bank is the only scope, so these argument keys are refused. */
 const CARRIERS = ["workspace_name", "bank", "workspace", "tenantId", "tenant_id", "tenant", "orgId", "org_id"] as const;
 
@@ -82,6 +85,10 @@ export async function dispatchLegacyV3(
     // layer instead of one tool's own argument handling.
     if (typeof result === "string") {
       const footer = warnings.map((w) => `_compat(${w.code}): ${w.field} — ${w.detail}_`).join("\n");
+      // A result that already ENDS in a compat footer (`oracle_recap`'s
+      // always does) gets these as more lines of that footer, not a second
+      // `---` block (verifier finding, R18 D3 fix round).
+      if (COMPAT_FOOTER_TAIL.test(result)) return `${result}${footer}\n`;
       return `${result}\n---\n${footer}\n`;
     }
   }

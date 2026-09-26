@@ -6,7 +6,8 @@ import { lookupTermIdByName } from "../lookupTermIdByName";
 import { pageArgsOf } from "../pageArgsOf";
 import { pageByOffset } from "../pageByOffset";
 
-const DEFAULT_LIMIT = 20;
+/** v3's own default (arra-oracle-v3@61e5f8b6 src/tools/inbox.ts). */
+const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 100;
 const MAX_PREVIEW_CODE_POINTS = 500;
 
@@ -19,6 +20,14 @@ type Warning = { code: string; field: string; detail: string };
  * "updated_desc"`, done inside the kernel scan via K3's `any_term_ids`
  * instead of a directory listing v3 read). `type: "all"` is v3 dialect for
  * `"handoff"` until K10/K11 add unread messages to it (V3-PARITY.md §4.4).
+ *
+ * A recall path (R18 D3, V3-PARITY A6): both walks -- the page and the
+ * `total` count -- ask `listNodes` for its `eligible_only` view, so a
+ * forgotten (`is_active: false`), expired, not-yet-valid, retired or
+ * superseded handoff is neither listed nor counted, and `total` counts
+ * exactly the set `files` pages through. Fix round (v3-list, Opus verifier):
+ * this tool previously used the default view, which drops only
+ * retired/superseded nodes.
  */
 export async function oracle_inbox(args: Record<string, unknown>, context: V3ToolContext): Promise<unknown> {
   const { bank, kb, tool } = context;
@@ -41,7 +50,7 @@ export async function oracle_inbox(args: Record<string, unknown>, context: V3Too
     return { files: [], total: 0, limit, offset, compat_warnings: warnings };
   }
 
-  const requestBase = { workspace_name: bank, any_term_ids: [handoffTermId], type_term: null, order: "updated_desc" as const };
+  const requestBase = { workspace_name: bank, any_term_ids: [handoffTermId], type_term: null, order: "updated_desc" as const, eligible_only: true };
   const { rows, truncated } = await pageByOffset(kb, requestBase, offset, limit);
   if (truncated) {
     warnings.push({ code: "truncated", field: "offset", detail: "offset walks at most 10 kernel pages of 100; this offset is beyond that reach" });

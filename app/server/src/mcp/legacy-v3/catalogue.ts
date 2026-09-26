@@ -40,6 +40,9 @@ const obj = (properties: Record<string, unknown>, required: string[] = []) => ({
 });
 
 const RECALL = " Superseded and retired entries are excluded from recall (a v3 change: v3 still returned them).";
+/** R18 D3 fix round: the V6 recall tools list through `listNodes`'s
+ *  `eligible_only` view, #29's FULL rule, so they say so. */
+const RECALL_FULL = RECALL + " So are forgotten (is_active:false) entries and entries outside their validity window.";
 const NO_FILE = " Nothing is written to disk; LanceDB is canonical, so `file` is null.";
 const TAXONOMY_READS = ["lookupVocabularyByName", "lookupTermByName"];
 const TAXONOMY_WRITES = ["seedReservedVocabularies", "createVocabulary", "createTerm"];
@@ -179,12 +182,15 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
   spec({
     name: "oracle_list",
     action: "content:read",
-    uses: ["listNodes", "getAcceptedHead", "listLifecycleHistory", ...TAXONOMY_READS],
+    // R18 D3 fix round: `getRecallEligibility` flags each row the recall
+    // tools would drop (`ineligible_reasons`).
+    uses: ["listNodes", "getAcceptedHead", "listLifecycleHistory", "getRecallEligibility", ...TAXONOMY_READS],
     requires: ["listNodes", "getAcceptedHead"],
     // Fix round: this used to say "Paged with next_cursor", a field the
     // implementation never emitted -- corrected to name the field it
     // actually returns (`total`/`offset`/`limit`) rather than one it does not.
-    description: "Browse entries, including superseded ones (flagged). Paged with offset/limit; total is exact when reachable.",
+    description:
+      "Browse entries, including superseded, retired, forgotten and expired ones, flagged (ineligible_reasons). Paged with offset/limit; total is exact when reachable.",
     inputSchema: obj({ type: str(""), limit: int(""), offset: int(""), asOf: str("Refused: there is no historical browse in v4.") }),
   }),
   spec({
@@ -210,7 +216,7 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
     // the SAME by-name lookups `oracle_list`'s `type` filter already uses.
     uses: ["listNodes", "getAcceptedHead", ...TAXONOMY_READS],
     requires: ["listNodes", "getAcceptedHead"],
-    description: "One random learning or principle from this bank." + RECALL,
+    description: "One random learning or principle from this bank." + RECALL_FULL,
     inputSchema: obj({}),
   }),
   spec({
@@ -220,7 +226,7 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
     requires: ["listNodes", "getAcceptedHead"],
     // Fix round: returns the markdown STRING itself (v3 parity), not a JSON
     // object wrapping one.
-    description: "A markdown recap of the newest entries, grouped by project. Heat ranking is not carried." + RECALL,
+    description: "A markdown recap of the newest entries, grouped by project. Heat ranking is not carried." + RECALL_FULL,
     inputSchema: obj({ limit: int(""), maxTokens: int("Accepted, ignored: v4 fits a fixed character budget instead.") }),
   }),
   spec({
@@ -228,7 +234,7 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
     action: "content:read",
     uses: ["listNodes", "getAcceptedHead", ...TAXONOMY_READS],
     requires: ["listNodes", "getAcceptedHead"],
-    description: "Handoffs in this bank, newest first. No inbox directory is read." + RECALL,
+    description: "Handoffs in this bank, newest first. No inbox directory is read." + RECALL_FULL,
     inputSchema: obj({ limit: int(""), offset: int(""), type: str("") }),
   }),
   spec({

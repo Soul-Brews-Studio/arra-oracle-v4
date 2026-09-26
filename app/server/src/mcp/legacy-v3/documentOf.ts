@@ -14,11 +14,19 @@ export type LifecycleEvent = { new_id: string | null; reason: string; superseded
  * for the identical state. `type` prefers `legacy_type` over the reserved
  * `type` term, the same rule `oracle_supersede`'s `old_type`/`new_type`
  * states, so a v3-dialect type survives the round trip through v4's own.
+ *
+ * `ineligible_reasons` (R18 D3 fix round): the kernel's own
+ * `getRecallEligibility` reasons, ONLY on a row the recall tools would not
+ * return -- which also covers the two predicates the supersede fields cannot
+ * express, a head with `is_active: false` (`"inactive"`) and a validity
+ * window that excludes request time (`"expired"`/`"not_yet_valid"`). Absent
+ * on an eligible row, the same "flag only what is not eligible" rule.
  */
 export function documentOf(
   row: Record<string, unknown>,
   head: { revision: Record<string, unknown> },
   lifecycleEvent: LifecycleEvent | null,
+  ineligibleReasons: string[] = [],
 ): Record<string, unknown> {
   const parsed = termsOf(head.revision.term_snapshot_json as string);
   const doc: Record<string, unknown> = {
@@ -35,5 +43,6 @@ export function documentOf(
     doc.superseded_at = lifecycleEvent.superseded_at;
     doc.superseded_reason = lifecycleEvent.reason;
   }
+  if (ineligibleReasons.length > 0) doc.ineligible_reasons = ineligibleReasons;
   return doc;
 }

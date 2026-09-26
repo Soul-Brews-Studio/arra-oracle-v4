@@ -6,7 +6,8 @@ import { lookupTermIdByName } from "../lookupTermIdByName";
 import { pageArgsOf } from "../pageArgsOf";
 import { pageByOffset } from "../pageByOffset";
 
-const DEFAULT_LIMIT = 20;
+/** v3's own default (arra-oracle-v3@61e5f8b6 src/tools/list.ts). */
+const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 100;
 
 type Warning = { code: string; field: string; detail: string };
@@ -29,6 +30,14 @@ type Warning = { code: string; field: string; detail: string };
  * `asOf` is handled here too: V3-PARITY.md §4.3 says it "returns
  * unsupported_argument, because there is no historical browse" -- refused,
  * never silently read-and-ignored.
+ *
+ * R18 D3 fix round: browse keeps every node, but each row the RECALL tools
+ * would drop is flagged with the kernel's own `getRecallEligibility` reasons
+ * (`ineligible_reasons`, see `documentOf.ts`) -- one kernel call per row, so
+ * the flag and the recall filter are the same rule at request time, never a
+ * copy of it here. A non-string or blank `type` is refused, as v3 refused it
+ * (`type must be a string` / not in its enum), instead of silently reading
+ * as "all".
  */
 export async function oracle_list(args: Record<string, unknown>, context: V3ToolContext): Promise<unknown> {
   const { bank, kb, tool } = context;
@@ -38,7 +47,10 @@ export async function oracle_list(args: Record<string, unknown>, context: V3Tool
     throw new CompatError(tool, "unsupported_argument", "Invalid input at /asOf", "there is no historical browse in v4; asOf is refused rather than silently ignored", { path: "/asOf" });
   }
 
-  const rawType = typeof args.type === "string" && args.type.trim() !== "" ? args.type.trim() : null;
+  if (args.type !== undefined && args.type !== null && (typeof args.type !== "string" || args.type.trim() === "")) {
+    throw new CompatError(tool, "unsupported_argument", "Invalid input at /type", "type must be a nonblank string; omit it (or pass 'all') for no filter", { path: "/type" });
+  }
+  const rawType = typeof args.type === "string" ? args.type.trim() : null;
   const typeArg = rawType === "all" ? null : rawType;
 
   const warnings: Warning[] = [
@@ -92,7 +104,8 @@ export async function oracle_list(args: Record<string, unknown>, context: V3Tool
       const history = (await kb("listLifecycleHistory", { node_id: row.id, after_event_id: null, limit: 1 })) as { rows: LifecycleEvent[] };
       lifecycleEvent = history.rows[0] ?? null;
     }
-    documents.push(documentOf(row, head, lifecycleEvent));
+    const eligibility = (await kb("getRecallEligibility", { node_id: row.id })) as { eligible: boolean; reasons: string[] };
+    documents.push(documentOf(row, head, lifecycleEvent, eligibility.eligible ? [] : eligibility.reasons));
   }
 
   return {
