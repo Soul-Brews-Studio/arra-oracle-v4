@@ -1,4 +1,5 @@
 import type { Kb } from "./createKb";
+import { isEmbedderDown } from "./search.isEmbedderDown";
 import { keywordTerms } from "./search.keywordTerms";
 import { mergeKeyword } from "./search.mergeKeyword";
 
@@ -31,9 +32,6 @@ export type Retrieved = {
   /** True when the window may have cut matches off: `total` is then a lower bound. */
   saturated: boolean;
 };
-
-const isEmbedderDown = (error: unknown) =>
-  (error as { code?: unknown })?.code === "writer_unavailable" && typeof (error as { toJSON?: unknown })?.toJSON === "function";
 
 /**
  * Run ONE retrieval for a v3 recall tool (V3-PARITY.md §4.4; R7: keyword and

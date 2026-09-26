@@ -8,6 +8,11 @@ import type { KernelHit } from "./search.retrieve";
  * answer passes through in the kernel's own order. Only ORDER is consumed,
  * never a kernel score value (whose meaning is the kernel's to change).
  *
+ * An entry is SHOWN (snippet, match) as the first query word it holds found
+ * it, not the word where it ranked best: its place in another word's answer
+ * moves whenever an unrelated entry is written (BM25 statistics, node-id
+ * ties), and the same entry must not change its snippet for that.
+ *
  * This merges keyword answers with keyword answers only; a semantic answer is
  * never merged into it (R7: never fused).
  */
@@ -22,10 +27,7 @@ export function mergeKeyword(answers: readonly { term: string; hits: readonly Ke
         return;
       }
       entry.terms.push(term);
-      if (position < entry.best) {
-        entry.best = position;
-        entry.hit = hit;
-      }
+      entry.best = Math.min(entry.best, position);
     });
   }
   return [...byNode.values()]

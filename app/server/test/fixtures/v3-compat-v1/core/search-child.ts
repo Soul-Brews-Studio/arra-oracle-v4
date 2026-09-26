@@ -14,13 +14,17 @@
 // of a node's head revision through `kb_listSearchChunks` +
 // `kb_writeChunkEmbedding` -- the backfill an embed worker would run.
 //
+// Principals: rw (read+write, peers [neo]) and ro (read) on bank A, other
+// (read+write) on bank B, and wo (content:write ONLY) on bank A, for the
+// exact-grant checks.
+//
 // argv: [datasetRoot, workDir, payloadJson]; stdout: one JSON object.
 
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-type Who = "rw" | "ro" | "other";
+type Who = "rw" | "ro" | "other" | "wo";
 type Step = {
   label: string;
   as?: Who;
@@ -63,7 +67,7 @@ const embedder = {
   },
 };
 
-const TOKEN: Record<Who, string> = { rw: "d4".repeat(32), ro: "e5".repeat(32), other: "f6".repeat(32) };
+const TOKEN: Record<Who, string> = { rw: "d4".repeat(32), ro: "e5".repeat(32), other: "f6".repeat(32), wo: "a7".repeat(32) };
 const sha = (v: string) => createHash("sha256").update(v, "ascii").digest("hex");
 const policyPath = join(workDir!, "policy.json");
 writeFileSync(
@@ -74,6 +78,8 @@ writeFileSync(
       { id: "rw", disabled: false, workspaces: [{ name: BANK_A, actions: ["content:read", "content:write"], peers: ["neo"] }], global_actions: [] },
       { id: "ro", disabled: false, workspaces: [{ name: BANK_A, actions: ["content:read"] }], global_actions: [] },
       { id: "other", disabled: false, workspaces: [{ name: BANK_B, actions: ["content:read", "content:write"] }], global_actions: [] },
+      // Write-only on bank A: exact-grant admission never lets it read.
+      { id: "wo", disabled: false, workspaces: [{ name: BANK_A, actions: ["content:write"] }], global_actions: [] },
     ],
     credentials: (Object.keys(TOKEN) as Who[]).map((who) => ({
       id: `cred-${who}`, principal_id: who, sha256: sha(TOKEN[who]),
@@ -155,7 +161,7 @@ const tools = async (who: Who, bank: string) => {
 };
 
 const outcomes: Record<string, unknown> = {
-  lists: { rw: await tools("rw", BANK_A), ro: await tools("ro", BANK_A), other: await tools("other", BANK_B) },
+  lists: { rw: await tools("rw", BANK_A), ro: await tools("ro", BANK_A), other: await tools("other", BANK_B), wo: await tools("wo", BANK_A) },
 };
 for (const step of payload.steps) {
   embedderDown = step.embedderDown === true;

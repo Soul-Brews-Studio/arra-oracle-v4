@@ -1,9 +1,13 @@
 import { hopTrace } from "../chain.hopTrace";
 import { queryText } from "../chain.queryText";
+import { chainStopped } from "../chain.stopped";
 import { CompatError } from "../compat-error";
 import { ensureSpeaker } from "../ensureSpeaker";
 import type { V3ToolContext } from "../handlers";
+import { derivedId } from "../ids.derivedId";
+import { randomId } from "../ids.randomId";
 import { describeHead } from "../search.describeHead";
+import { isEmbedderDown } from "../search.isEmbedderDown";
 import type { CompatWarning } from "../search.parseFilters";
 import { readCount } from "../search.readCount";
 import type { RecallRow } from "../search.recall";
@@ -15,12 +19,10 @@ type Hop = { hop: number; query: string; sourceId: string | null; traceId: strin
 /** v3 stopped when a hop's best score fell under half the previous one's (src/tools/search/chain.ts DEFAULT_SCORE_DECAY). */
 const SCORE_DECAY = 0.5;
 
-const isEmbedderDown = (error: unknown) =>
-  (error as { code?: unknown })?.code === "writer_unavailable" && typeof (error as { toJSON?: unknown })?.toJSON === "function";
-
 /**
  * `oracle_search_chain` (V3-PARITY.md §4.4; v3 src/tools/chain-search.ts,
- * src/tools/search/chain.ts). content:write: it writes one trace per hop.
+ * src/tools/search/chain.ts). content:write: it writes one trace per hop; and
+ * content:read as well (`alsoNeeds`), since its answer is the entries found.
  *
  * Hop 0 is a semantic search for the seed query. Each later hop searches by
  * the previous best entry's own text (`chain.queryText.ts`) -- v3 queried by
@@ -31,7 +33,11 @@ const isEmbedderDown = (error: unknown) =>
  * previous hop's (`score_decay`), or `maxHops`. Each hop is written as an
  * immutable trace linked to the previous by `prev_id` (`chain.hopTrace.ts`),
  * attributed to the speaking peer when there is one. Superseded and retired
- * entries are never returned (D3, in the kernel).
+ * entries are never returned (D3, in the kernel). With `idempotency_key`
+ * (A8) each hop's trace id is derived from it, so a client retry over an
+ * unchanged bank replays the same traces (`already_satisfied`); a key reused
+ * for a different chain is refused. A hop whose trace cannot be written ends
+ * the call with a refusal naming the traces already written (`chain.stopped.ts`).
  *
  * With no query embedder the chain cannot start: a `kernel_error` saying so,
  * with the v4 envelope, and no trace written. If the embedder stops answering
@@ -43,6 +49,11 @@ export async function oracle_search_chain(args: Record<string, unknown>, context
   if (seed === "") throw new CompatError(tool, "unsupported_argument", "query is required", "v3's own rule: a nonblank query", { path: "/query" });
   const maxHops = readCount(tool, args, "maxHops", { fallback: 3, min: 1, max: SEARCH_WINDOW }).value;
   const breadth = readCount(tool, args, "breadth", { fallback: 5, min: 1, max: SEARCH_WINDOW }).value;
+  const key = args.idempotency_key;
+  if (key !== undefined && key !== null && (typeof key !== "string" || key === "")) {
+    throw new CompatError(tool, "unsupported_argument", "Invalid input at /idempotency_key", "idempotency_key must be a nonempty string", { path: "/idempotency_key" });
+  }
+  const traceIdOf = (hop: number) => (typeof key === "string" ? derivedId(context.bank, "trace", tool, key, String(hop)) : randomId());
   const warnings: CompatWarning[] = [];
   if (args.model !== undefined && args.model !== null) warnings.push({ code: "argument_ignored", field: "model", detail: "the embedding model is the server's" });
   // The speaker is ensured (possibly registered: a write) only once a hop has
@@ -86,8 +97,19 @@ export async function oracle_search_chain(args: Record<string, unknown>, context
       hops.at(-1)!.stoppedReason = "score_decay";
       break;
     }
-    peer ??= await ensureSpeaker(context, args);
-    const traceId = await hopTrace(kb, { index: hop, query: hopQuery, rows, prevId: traceIds.at(-1) ?? null, peer, bestDistance: best.hit.distance ?? 0 });
+    if (peer === undefined) peer = await ensureSpeaker(context, args);
+    const traceId = traceIdOf(hop);
+    let outcome: string;
+    try {
+      outcome = await hopTrace(kb, { id: traceId, index: hop, query: hopQuery, rows, prevId: traceIds.at(-1) ?? null, peer, bestDistance: best.hit.distance ?? 0 });
+    } catch (error) {
+      throw chainStopped(tool, error, traceIds);
+    }
+    if (outcome === "conflict") {
+      const reused = typeof key === "string";
+      throw chainStopped(tool, new CompatError(tool, "semantic_refusal", "write refused: payload",
+        reused ? "this idempotency_key was already used for a different chain" : "v4 trace conflict: payload", { path: reused ? "/idempotency_key" : "" }), traceIds);
+    }
     for (const row of rows) {
       visited.add(row.hit.node_id);
       results.push({ ...v3Result(row, results.length, "vector"), score: 1 / (1 + (row.hit.distance ?? 0)), distance: row.hit.distance ?? null, model: null });

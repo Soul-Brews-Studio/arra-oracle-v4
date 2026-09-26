@@ -25,7 +25,7 @@ import { configureKnowledgeAccess, createMcpAdapter } from "../src/mcp";
 const ORIGIN = "http://127.0.0.1:3939";
 const BANK = "bank-a";
 const sha = (v: string) => createHash("sha256").update(v, "ascii").digest("hex");
-const TOKENS = { rw: "7".repeat(64), ro: "8".repeat(64) } as const;
+const TOKENS = { rw: "7".repeat(64), ro: "8".repeat(64), wo: "9".repeat(64) } as const;
 const NOT_CARRIED = ["oracle_mcp_call", "oracle_mcp_list_tools", "oracle_trace_link", "oracle_trace_unlink", "oracle_profile"];
 const WRITE_FAMILY = [
   "oracle_learn", "oracle_research_note", "oracle_handoff", "oracle_supersede", "oracle_thread",
@@ -64,8 +64,9 @@ beforeAll(async () => {
     principals: [
       { id: "rw", disabled: false, workspaces: [{ name: BANK, actions: ["content:read", "content:write"], peers: ["neo"] }], global_actions: [] },
       { id: "ro", disabled: false, workspaces: [{ name: BANK, actions: ["content:read"] }], global_actions: [] },
+      { id: "wo", disabled: false, workspaces: [{ name: BANK, actions: ["content:write"] }], global_actions: [] },
     ],
-    credentials: [credential("rw"), credential("ro")],
+    credentials: [credential("rw"), credential("ro"), credential("wo")],
   }), { encoding: "utf-8", mode: 0o600 });
 });
 
@@ -137,21 +138,40 @@ describe("V0 #2: grants decide the family; not-carried tools do not exist", () =
   });
 });
 
-describe("V0 #3 and #4: availability is data-driven (V3-PARITY §2.1 rules b and c)", () => {
-  test("a tool whose requires names a missing registry method is not listed; calling it is not_yet_available", async () => {
-    const { V3_CATALOGUE } = await import("../src/mcp/legacy-v3/catalogue");
-    // Any tool still waiting on a kernel slice (oracle_search was the example
-    // until R18 V5 wired the real #30 names; the rule is what is pinned).
-    const pending = V3_CATALOGUE.find((t) => t.requires.some((m) => !(m in KNOWLEDGE_METHODS)));
-    expect(pending).toBeDefined();
+describe("V0 #2b: a write tool whose answer is bank content needs content:read too (exact grants)", () => {
+  test("content:write alone lists the write family but not oracle_search_chain, and calling it is an unknown tool's 403", async () => {
     configureKnowledgeAccess(configured);
-    expect(await list(true, "rw")).not.toContain(pending!.name);
-    const res = await call(true, "rw", pending!.name, {});
-    expect(res.status).toBe(200);
-    expect(res.json.result.isError).toBe(true);
-    const body = JSON.parse(toolText(res));
-    expect(body.success).toBe(false);
-    expect(body.compat).toMatchObject({ version: "arra-v3-compat/1", code: "not_yet_available", tool: pending!.name });
+    const wo = await list(true, "wo");
+    expect(wo).toContain("oracle_learn");
+    expect(wo).not.toContain("oracle_search");
+    expect(wo).not.toContain("oracle_search_chain");
+    expect(await list(true, "rw")).toContain("oracle_search_chain");
+    const unknown = await call(true, "wo", "oracle_nope");
+    expect(unknown.status).toBe(403);
+    expect(await call(true, "wo", "oracle_search_chain", { query: "x" })).toEqual(unknown);
+    expect(calls).toEqual([]);
+    expect(audit).toEqual([]);
+  });
+});
+
+describe("V0 #3 and #4: availability is data-driven (V3-PARITY §2.1 rules b and c)", () => {
+  test("a tool is listed exactly when its requires are registered and it has a handler; an unlisted one is not_yet_available", async () => {
+    const { V3_CATALOGUE } = await import("../src/mcp/legacy-v3/catalogue");
+    const { V3_HANDLERS } = await import("../src/mcp/legacy-v3/handlers");
+    // Whichever tools still wait on a kernel slice or a handler: the rule is
+    // pinned, not one example tool, so it holds when every tool is built.
+    const pending = V3_CATALOGUE.filter((t) => t.requires.some((m) => !(m in KNOWLEDGE_METHODS)) || !(t.name in V3_HANDLERS));
+    configureKnowledgeAccess(configured);
+    const listed = await list(true, "rw");
+    for (const tool of V3_CATALOGUE) expect([tool.name, listed.includes(tool.name)]).toEqual([tool.name, !pending.includes(tool)]);
+    for (const tool of pending) {
+      const res = await call(true, "rw", tool.name, {});
+      expect(res.status).toBe(200);
+      expect(res.json.result.isError).toBe(true);
+      const body = JSON.parse(toolText(res));
+      expect(body.success).toBe(false);
+      expect(body.compat).toMatchObject({ version: "arra-v3-compat/1", code: "not_yet_available", tool: tool.name });
+    }
     expect(calls).toEqual([]);
   });
 

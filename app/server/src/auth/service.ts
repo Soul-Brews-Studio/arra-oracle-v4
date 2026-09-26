@@ -22,6 +22,7 @@ import type { RequestAuthority } from "../knowledge/registry";
 import { bindToolOperations } from "./service.bindToolOperations";
 import { resolveToolName } from "./service.resolveToolName";
 import { toolAction } from "./service.toolAction";
+import { toolAlsoNeeds } from "./service.toolAlsoNeeds";
 import type { McpEnvelope, McpResult, StoreDependencies, TextSearchResult, ToolOperations } from "./service.types";
 
 export type { McpEnvelope, McpResult, StoreDependencies, TextSearchResult, ToolOperations } from "./service.types";
@@ -384,11 +385,13 @@ export function createOperationService(
       const envelope = await readEnvelope();
       if (envelope === null) return { kind: "tool_error", message: "parse error" };
 
+      // Exact grants: a tool's `toolAlsoNeeds` actions must be held too, from this snapshot.
+      const holdsAlso = (tool: string) => toolAlsoNeeds(tool, v3Compat).every((also) => granted.has(also));
       if (envelope.method === "tools/list") {
         const names: string[] = [];
         for (const tool of v3Compat ? [...TOOL_NAMES, ...V3_TOOL_NAMES] : TOOL_NAMES) {
           const action = toolAction(tool, v3Compat);
-          if (action !== undefined && granted.has(action)) names.push(tool);
+          if (action !== undefined && granted.has(action) && holdsAlso(tool)) names.push(tool);
         }
         return { kind: "tools", names };
       }
@@ -404,8 +407,8 @@ export function createOperationService(
       const action = toolAction(name, v3Compat);
       const context = action === undefined ? undefined : granted.get(action);
       // Unknown tool and unpermitted tool are indistinguishable, and neither
-      // echoes the caller-supplied name back.
-      if (context === undefined) return { kind: "denied", code: "forbidden" };
+      // echoes the caller-supplied name back; nor does one whose `holdsAlso` fails.
+      if (context === undefined || !holdsAlso(name)) return { kind: "denied", code: "forbidden" };
 
       const bank = scopeOf(context, action!);
       const started = clock();

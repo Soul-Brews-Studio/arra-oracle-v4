@@ -117,17 +117,6 @@ export type KnowledgeMethod = {
    * to answer. Admission (`action` above) is unchanged either way.
    */
   readonly operations?: (bytes: Uint8Array) => Promise<unknown>;
-  /**
-   * The method's facade exists on the READER bundle only (the #30 searches,
-   * the #32 chat facade): it is composed onto the gateless reader, and no
-   * writer carries it (`searches()` / `chat()` below are the backstops). Both
-   * transports already open the reader for every read, so neither consults
-   * this. It is for a caller that PINS one bundle per call -- the v3
-   * adapter's `kb()` (`mcp/legacy-v3/createKb.ts`), which opens the writer
-   * for a write tool -- so a write tool that also searches (R18 V5
-   * `oracle_search_chain`) is sent to the reader instead of the backstop.
-   */
-  readonly readerOnly?: true;
 };
 
 /** A reader bundle's `publication` facade has no `publishRevision`. */
@@ -278,9 +267,9 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
   // answers the closed `model_unavailable` (503). Admitting it under the
   // same action as `getContext` widens nothing: the model sees exactly the
   // items `getContext` would return to this caller.
-  answerChat: { action: "content:read", scopePath: [], readerOnly: true, call: (b, x) => chat(b).answerChat(x) },
+  answerChat: { action: "content:read", scopePath: [], call: (b, x) => chat(b).answerChat(x) },
   // The effective model settings, or `{model: null}`: model-free, dataset-free.
-  getChatSettings: { action: "content:read", scopePath: [], readerOnly: true, call: (b, x) => chat(b).getChatSettings(x) },
+  getChatSettings: { action: "content:read", scopePath: [], call: (b, x) => chat(b).getChatSettings(x) },
 
   // ── session links (#28) ─────────────────────────────────────────────────
   // Every parser below carries `workspace_name` at the request root
@@ -375,13 +364,11 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
   searchKnowledgeKeyword: {
     action: "content:read",
     scopePath: [],
-    readerOnly: true,
     call: (b, x) => searches(b).searchKnowledgeKeyword(x, Date.now()),
   },
   searchKnowledgeSemantic: {
     action: "content:read",
     scopePath: [],
-    readerOnly: true,
     call: (b, x) => searches(b).searchKnowledgeSemantic(x, Date.now()),
   },
 

@@ -9,6 +9,11 @@
 // query embedder (never Ollama) and replays MCP calls. Keyword scores are
 // consumed as ORDER only: the kernel's raw score is being re-defined
 // concurrently (R21), so nothing here pins a raw kernel score value.
+//
+// Fix round, written red first after an independent review: a content:write-
+// only principal ran oracle_search_chain and got entry content back (200, not
+// 403); a retry with an idempotency_key wrote new hop traces. The multi-word
+// OR test was added because no test here failed when the query went whole.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
@@ -61,6 +66,7 @@ beforeAll(async () => {
     { label: "old_head", bank: A, tool: "kb_getAcceptedHead", args: { payload: { workspace_name: A, node_id: { $ref: "old" } } } },
     search("s_apfs", { query: "APFS", limit: 10 }),
     search("s_first", { query: "tmutil localsnapshot before disk surgery", limit: 5 }),
+    search("s_words", { query: "APFS snapshot tmutil disk management", limit: 5 }),
     search("s_thai", { query: "ลืม", mode: "hybrid", limit: 8 }),
     search("s_short", { query: "ลื" }),
     search("s_fts", { query: "APFS", mode: "fts", limit: 10 }),
@@ -96,6 +102,14 @@ beforeAll(async () => {
     { label: "chain_hits0", bank: A, tool: "kb_listTraceHits", args: { payload: { workspace_name: A, trace_id: { $ref: "chain0" }, after_position: null, limit: 50 } } },
     { label: "chain_ro", as: "ro", bank: A, tool: "oracle_search_chain", args: { query: "APFS" } },
     { label: "chain_down", bank: A, tool: "oracle_search_chain", args: { query: "APFS" }, embedderDown: true },
+    ...[1, 2].map((n) => ({ label: `chain_key${n}`, bank: A, tool: "oracle_search_chain",
+      args: { query: "APFS snapshots keep a rollback point", maxHops: 2, breadth: 1, idempotency_key: "v5-chain-retry-1" } })),
+    { label: "chain_key_bad", bank: A, tool: "oracle_search_chain", args: { query: "APFS", idempotency_key: "" } },
+    // A content:write-only grant on bank A. Last, so its one write moves nothing above.
+    { label: "chain_wo", as: "wo", bank: A, tool: "oracle_search_chain", args: { query: "APFS" } },
+    { label: "kb_wo", as: "wo", bank: A, tool: "kb_searchKnowledgeKeyword", args: { payload: { workspace_name: A, query: "APFS", limit: 5 } } },
+    { label: "unknown_wo", as: "wo", bank: A, tool: "oracle_nope", args: {} },
+    { label: "learn_wo", as: "wo", bank: A, tool: "oracle_learn", args: { pattern: "a write-only grant still writes: wzzmarker" } },
   ];
   try {
     const result = await runGated(taxonomy.datasetRoot, CHILD, [taxonomy.datasetRoot, work, JSON.stringify({ banks: { a: A, b: B }, steps })], {
@@ -194,6 +208,15 @@ describe("oracle_search: keyword (fts, and hybrid answered honestly as keyword)"
     expect(value.results[0].id).toBe(captured.thai);
     expect(ids("s_thai")).not.toContain(captured.lost);
     expect(value.metadata.match).toBe("ngram");
+  });
+  test("a multi-word query is v3's OR over its words, not one phrase: the entry holding most of them comes first", () => {
+    const value = ok("s_words");
+    expect(value.metadata.terms.map((t: { term: string }) => t.term)).toEqual(["APFS", "snapshot", "tmutil", "disk", "management"]);
+    expect(value.results[0].id).toBe(captured.apfs);
+    // Holds APFS and tmutil but not the phrase: found only because each word is searched.
+    expect(ids("s_words")).toContain(captured.new);
+    expect(value.results[0].v4.matched_terms).toEqual(["APFS", "snapshot", "tmutil", "disk"]);
+    expect(warned(value, "semantic_change", "query")).toBe(true);
   });
   test("a 2-code-point query is a substring scan, and says so", () => {
     const value = ok("s_short");
@@ -323,5 +346,29 @@ describe("oracle_search_chain (content:write; one immutable trace per hop)", () 
     const down = refused("chain_down");
     expect(down.compat).toMatchObject({ code: "kernel_error", tool: "oracle_search_chain" });
     expect(down.error).toContain("Vector search unavailable");
+  });
+});
+
+describe("oracle_search_chain: retries (A8) and a write-only grant", () => {
+  test("the same idempotency_key replays the same hop traces instead of writing new ones; a blank key is refused", () => {
+    const first = ok("chain_key1");
+    const again = ok("chain_key2");
+    expect(first.traceIds.length).toBeGreaterThanOrEqual(1);
+    expect(again.traceIds).toEqual(first.traceIds);
+    expect(again.results).toEqual(first.results);
+    for (const id of first.traceIds) expect(ok("chain").traceIds).not.toContain(id);
+    expect(refused("chain_key_bad").compat).toMatchObject({ code: "unsupported_argument", tool: "oracle_search_chain", path: "/idempotency_key" });
+  });
+  test("content:write alone neither lists nor runs oracle_search_chain: its answer is bank content, which only content:read may see", () => {
+    expect([out.chain_wo.status, JSON.stringify(out.chain_wo.value)?.slice(0, 160)]).toEqual([403, undefined]);
+    expect(out.chain_wo.body).toEqual({ error: "forbidden" });
+    const names = (out.lists.wo as { name: string }[]).map((t) => t.name);
+    expect(names).toContain("oracle_learn");
+    expect(names).not.toContain("oracle_search");
+    expect(names).not.toContain("oracle_search_chain");
+    expect(out.unknown_wo).toEqual(out.chain_wo);
+    // The same read refused on the kb_* path, and the grant itself works.
+    expect(out.kb_wo.status).toBe(403);
+    expect(ok("learn_wo").success).toBe(true);
   });
 });

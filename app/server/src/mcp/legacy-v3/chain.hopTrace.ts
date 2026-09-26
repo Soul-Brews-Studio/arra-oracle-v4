@@ -1,5 +1,4 @@
 import type { Kb } from "./createKb";
-import { randomId } from "./ids.randomId";
 import type { RecallRow } from "./search.recall";
 
 /**
@@ -9,15 +8,17 @@ import type { RecallRow } from "./search.recall";
  * so the link is `prev_id`, written once at creation (D11). `depth` is 0: a
  * chain is a `prev_id` sequence, not a `parent_id` tree (K13 ties depth to the
  * parent only). Each hop result is a `node_revision` hit at its rank; the hop
- * is `complete` when written. Returns the new trace id.
+ * is `complete` when written. `id` is the caller's (random, or derived from
+ * an idempotency key, A8). Returns the kernel's outcome: `created`,
+ * `already_satisfied` (a replay of the same hop), or `conflict` (that id
+ * already holds a different hop), which is a returned value, never thrown.
  */
 export async function hopTrace(
   kb: Kb,
-  hop: { index: number; query: string; rows: readonly RecallRow[]; prevId: string | null; peer: string | null; bestDistance: number },
+  hop: { id: string; index: number; query: string; rows: readonly RecallRow[]; prevId: string | null; peer: string | null; bestDistance: number },
 ): Promise<string> {
-  const id = randomId();
-  await kb("createTrace", {
-    id,
+  const answer = (await kb("createTrace", {
+    id: hop.id,
     name: `oracle_search_chain hop ${hop.index}`,
     session_name: null,
     peer_name: hop.peer,
@@ -45,6 +46,6 @@ export async function hopTrace(
       captured_at: null,
       note: null,
     })),
-  });
-  return id;
+  })) as { outcome?: unknown } | null;
+  return String(answer?.outcome);
 }

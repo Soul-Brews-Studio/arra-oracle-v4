@@ -11,6 +11,11 @@
  *  - `action`: the arra-auth/v1 action. `auth/service.toolAction.ts` DERIVES
  *    the service's map from this table, the same way it derives `kb_*` from
  *    the registry; the adapter never chooses a grant.
+ *  - `alsoNeeds`: actions the principal must hold on the bank as well, from
+ *    the same snapshot (`auth/service.toolAlsoNeeds.ts`). Grants are exact
+ *    (`auth/policy.admit.ts`): content:write never implies content:read, so
+ *    a write tool whose ANSWER is bank content needs content:read too, as
+ *    HTTP and `kb_*` would refuse that read to a write-only principal.
  *  - `uses`: the only registry methods the tool's `kb()` may call (A1).
  *  - `requires`: methods that must exist in `KNOWLEDGE_METHODS` before the tool
  *    is advertised (§2.1 rule c). A kernel slice that adds them makes the tool
@@ -24,6 +29,7 @@ import type { WorkspaceAction } from "../../auth/policy";
 export type V3ToolSpec = {
   readonly name: string;
   readonly action: Extract<WorkspaceAction, "content:read" | "content:write">;
+  readonly alsoNeeds?: readonly Extract<WorkspaceAction, "content:read">[];
   readonly uses: readonly string[];
   readonly requires: readonly string[];
   readonly description: string;
@@ -56,7 +62,13 @@ const SEMANTIC = "searchKnowledgeSemantic";
 /** How a recall tool's `score` is made; the kernel's own value is not v3's. */
 const SCORE = " score is 1/(1+rank) in v4's order, not v3's fused relevance.";
 
-const spec = (s: V3ToolSpec): V3ToolSpec => Object.freeze({ ...s, uses: Object.freeze([...s.uses]), requires: Object.freeze([...s.requires]) });
+const spec = (s: V3ToolSpec): V3ToolSpec =>
+  Object.freeze({
+    ...s,
+    ...(s.alsoNeeds === undefined ? {} : { alsoNeeds: Object.freeze([...s.alsoNeeds]) }),
+    uses: Object.freeze([...s.uses]),
+    requires: Object.freeze([...s.requires]),
+  });
 
 export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
   spec({
@@ -165,7 +177,7 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
         limit: int("Default 5. At most 50 entries are reachable per query."),
         offset: int("Default 0."),
         mode: { type: "string", enum: ["hybrid", "fts", "vector"] },
-        project: str("owner/repo or github.com/owner/repo: that project plus _universal entries."),
+        project: str("owner/repo or github.com/owner/repo: that project, _universal entries and entries with no project (v3's project IS NULL)."),
         retrieval: { type: "string", enum: ["full", "compact-summary"], description: "compact-summary is not carried and is named as ignored." },
         model: str("Ignored: the embedding model is the server's."),
         asOf: str("Not carried: refused."),
@@ -385,15 +397,26 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
   spec({
     name: "oracle_search_chain",
     action: "content:write",
+    // It writes traces AND answers with the entries it found: both grants.
+    alsoNeeds: ["content:read"],
     uses: [SEMANTIC, "getAcceptedHead", "createTrace", "getPeer", "registerPeer"],
     requires: [SEMANTIC, "getAcceptedHead", "createTrace"],
     description:
       "Follow semantic neighbours hop by hop from a seed query, recording one immutable trace per hop, each linked to the" +
-      " previous one by prev_id. Later hops search by the best entry's text, re-embedded, not by its stored vector." +
+      " previous one by prev_id. Needs content:read as well as content:write on the bank: it returns what it found." +
+      " Later hops search by the best entry's text, re-embedded, not by its stored vector." +
       " Needs the query embedder; score is 1/(1+distance), and a hop whose best score falls below half the previous one stops the chain." +
+      " idempotency_key makes a retry replay the same hop traces instead of writing new ones." +
       RECALL,
     inputSchema: obj(
-      { query: str("Required."), maxHops: int("Default 3, at most 50."), breadth: int("Default 5, at most 50."), model: str("Ignored."), peer: str("") },
+      {
+        query: str("Required."),
+        maxHops: int("Default 3, at most 50."),
+        breadth: int("Default 5, at most 50."),
+        model: str("Ignored."),
+        peer: str(""),
+        idempotency_key: str("Optional. Derives each hop's trace id, so a client retry replays instead of writing twice."),
+      },
       ["query"],
     ),
   }),
