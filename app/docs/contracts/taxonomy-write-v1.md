@@ -194,3 +194,57 @@ Result: the complete wire row, encoded exactly as `getVocabulary`/`getTerm` enco
 **Peer binding.** Both methods assert no acting peer; `knowledge/registry.peerFields.ts` classifies them `[]`. The same edit classifies the 13 methods expose-13 registered after that table was written (`createTrace.peer_name`, `createSessionLink.created_by_peer_name`, `retireNode.peer_name`, `supersedeNode.peer_name`; the other nine assert none). Without it a grant carrying a `peers` binding was refused all 13 wholesale, and `transport-peer-fields.test.ts` failed on the integration branch.
 
 **Tests.** `app/server/test/taxonomy-lookup-service.test.ts`: by-name hit equal to the by-id read, miss is `null`, exact names (no trim or case fold), workspace isolation, closed keys and the name grammar, and the same answer over HTTP and MCP for a `content:read`-only credential. Written before the methods existed and seen red (0 pass, 8 fail).
+
+## Amendment 2026-09-26 (overnight R18 (K6 + K7 + V8))
+
+v4-overnight, v3-stats slice (Claude, AI). Ruling: `docs/overnight/DECISIONS.md` R18, design `docs/overnight/V3-PARITY.md` §5 (K6, K7) and §4.3/§4.4 (V8). The text above is not rewritten; this section adds three reads to "Results and read evidence" and changes nothing else. It was rewritten in place across two verifier fix rounds before it merged anywhere, so it states the final behaviour once; the corrections are listed under "Fix rounds" below instead of as contradicting sections.
+
+**Why.** `oracle_concepts` and the full (post-K7) shape of `oracle_stats` had no kernel to call: nothing counted how many current entries carry a term, and nothing counted nodes, chunks or taxonomy rows for a workspace. All three methods are read-only aggregates over existing columns. There is no new table and no new column.
+
+**Change.** Three read methods on every taxonomy reader facade (and so on every writer facade, which spreads the reads in), registered in `knowledge/registry.ts` under `content:read`, `scopePath: []`, reachable as `POST /api/knowledge/:bank/<method>` and MCP `kb_<method>`:
+
+- `listTerms {workspace_name, vocabulary_id, after_id, limit, include_inactive}`: a keyset-paginated listing of one vocabulary's terms, each row encoded exactly as `getTerm` encodes it. `getTerm` and `lookupTermByName` fetch one row only; this is the first way to enumerate a vocabulary.
+- `listTermUsage {workspace_name, vocabulary_id, type_term, limit}`: for one vocabulary, how many CURRENT heads carry each term. The count comes from each accepted head revision's own `term_snapshot_json`, one point read per head (the read `listNodes`' `type_term` filter already pays). It never reads the derived `node_revision_terms` projection; see "Source of the count" below. `type_term`, when not null, is a reserved `type` term name that restricts counting to heads of that type, derived from the same snapshot by the same decoder `listNodes` uses. The response is `{rows:[{term_id,name,count}], total_unique, coverage}`. `rows` is sorted by count descending, then name ascending, and capped at `limit`. `total_unique` counts every distinct term before that cap. `name` is the head snapshot's `term_name_snapshot`. When a rename has left heads disagreeing, the first node in id order wins. `count` and `total_unique` are canonical decimal-text Int64 strings, like every other count in this contract. A null head, a head pointer that matches 0 or more than 1 revision row, or a duplicate `term_id` inside one stored snapshot (publication refuses one) is `integrity_failure`, never a quietly smaller count.
+- `knowledgeStats {workspace_name}`: workspace-wide counts `{nodes_total, nodes_eligible, by_type, chunks, vocabularies, terms, last_updated_at}`. `nodes_total`, `vocabularies` and `terms` are the SDK's own native `countRows`, exact and unbounded. `by_type` (`[{term,count}]` over accepted heads, each head's type from its snapshot) and `last_updated_at` (the greatest `nodes.updated_at`) come from one bounded scan of `nodes`. `nodes_eligible` (total minus the terminal old ids in `supersede_log`) comes from a separate bounded scan of `supersede_log`. `chunks` (`[{embedding_profile,status,count}]`) comes from a bounded scan of `search_chunks_v1`.
+
+**Workspace.** All three check the `workspaces` row right after request validity, as `listNodes`, `listPeers` and `listSessions` do. A granted bank with no row is `invalid_reference /workspace_name`, never an answer of exact-looking zeros.
+
+**Source of the count (a stated deviation from V3-PARITY.md §5, which lists `node_revision_terms` as a K6 source).** The projection exists for a revision only after `reconcileRevisionAssociations` has run for it, and no ordinary writer runs it: not `kb_publishRevision`, not HTTP `publishRevision`, not the v4 UI. Only the migration's `deriveProjections` does. Counting projection rows therefore dropped every unreconciled head while `coverage` still said `"full"`. The verifier measured this live: after `oracle_learn {concepts:[apfs,backup]}` and a `kb_publishRevision` of a second node with the same snapshot, `oracle_concepts` answered `apfs:1, backup:1` with no warning, while the published terms give 2 and 2. `association-evidence-v1.md` §4 already rules this out ("Do not answer completeness from projection candidates"). `listTermUsage` now reads neither derived table, so no writer can make its count wrong by skipping a step, and a stale or partial projection cannot change it either. The snapshot can answer a `many`-cardinality vocabulary: `taxonomy.termSnapshot.ts` writes one entry per concept. An earlier draft of this section claimed it could not; that claim was false.
+
+**Bounded scans disclose; they never guess.** Every scan is capped: `nodes` at 1000 (the same as `listNodes`' `MAX_SCANNED_NODES`), `supersede_log` at 2000 and `search_chunks_v1` at 5000.
+- `listTermUsage` reports a truncated node scan as `coverage: "partial"`. That is the same shape R14's ngram fallback and `listNodes`' `type_term`-filtered `total` use. `coverage` has no other meaning, because the count no longer depends on any projection lag.
+- `knowledgeStats` has no single aggregate to hang a flag on. Each field a truncated scan cannot answer exactly comes back `null`: `by_type` and `last_updated_at` together, `nodes_eligible`, and `chunks`. A native count is never null.
+
+**Peer binding.** All three assert no acting peer; `knowledge/registry.peerFields.ts` classifies them `[]`.
+
+**V8: `oracle_concepts` and `oracle_stats`.**
+- `oracle_concepts` resolves the `concepts` vocabulary by name (K2 `lookupVocabularyByName`). If it is absent, the answer is an exact empty list, not an error. Otherwise the tool calls `listTermUsage`. `limit` follows v3's own `normalizeLimit`: a missing, non-integer or non-positive value (including `0`) means 50, and anything above 200 means 200.
+- v3's `type:learning` is also a v4 type, so it passes through with no warning. v3's `principle`, `pattern` and `retro` are stored as `note` plus a `legacy_type` term (A5), which this filter does not read. They match nothing and carry a `semantic_change` warning.
+- `oracle_stats` takes `total_documents`, `by_type`, `fts_indexed` and `last_indexed` from `knowledgeStats`, and `unique_concepts` from `listTermUsage`'s `total_unique`. `vector_status` (`empty`/`pending`/`ready`/`degraded`/`unknown`) is derived from the per-status chunk counts, never from a live LanceDB probe, because v4 IS the vector store.
+- An unmeasured K7 field is `null` on the wire and named in `compat_warnings`, never a placeholder (`{}`, `0`, `"empty"`). `last_indexed` is named alongside `by_type` because they share one scan, and `fts_status` alongside `fts_indexed`.
+- Both tools pass K6's honesty on. `coverage: "partial"` becomes a `partial` warning on `concepts` or `unique_concepts`.
+- A counted `handoff` concept becomes a `semantic_change` warning. Every `oracle_handoff` call is a v4 node (type `note`, `concepts:handoff`), while v3 kept handoffs as inbox files it never counted. `oracle_stats` asks K6 for the full 200-row ranking so that it sees the handoff row.
+- Both `mcp/legacy-v3/catalogue.ts` entries list exactly the methods they call.
+
+**v3 write path unchanged.** The adapter's `publish()` (`mcp/legacy-v3/publish.ts`) does not call `reconcileRevisionAssociations`. The first fix round made it do so, to fill the projection K6 then read. Once K6 read snapshots nothing needed that call, and it cost one more gated write per v3 write plus a failure path of its own. The second fix round removed it, and `publish.ts` is back to the base behaviour.
+
+**Fix rounds.**
+- The first cut counted `node_revision_terms`. Its end-to-end test hid the lag by calling `kb_reconcileRevisionAssociations` by hand, which no v3 client can do. `oracle_stats` also put `{}`, `0` and `"empty"` on the wire for unmeasured fields.
+- The first fix round made the v3 write path reconcile, nulled and named the unmeasured `oracle_stats` fields, and killed mutants M2, M3, M4 and M10.
+- The second fix round, after the verifier's blocking finding that every non-v3 writer was still undercounted with `coverage: "full"`:
+  - moved the count to head snapshots;
+  - removed the v3 reconcile call;
+  - added the workspace check;
+  - limited the `type` warning to non-v4 types;
+  - named counted handoffs;
+  - killed M12, M13 and M14 (a dropped workspace scope), M16 (name-only sort), and M18 and M19 (a dropped `partial` warning).
+
+**Tests.**
+- `app/server/test/taxonomy-term-usage-scans.test.ts` (in-memory adapter): snapshot counting with zero projection rows, stale projection rows ignored, count-then-name order, `total_unique` beyond `limit`, `type_term`, integrity failures, bounded windows at 1000 and 1001, exact `knowledgeStats` counts, two workspaces with different data in every table, and `invalid_reference` for a missing workspace row.
+- `taxonomy-term-usage-service.test.ts` (real fixture and wire): listing, exact seeded counts, grammar, HTTP/MCP parity, and `invalid_reference` over HTTP for a granted but unseeded bank.
+- `mcp-v3-stats.test.ts` (real gate, real dataset, MCP): the verifier's repro, plus the V8 shapes.
+- `mcp-v3-stats-adapter.test.ts`: `oracle_stats`/`oracle_concepts` translation of unmeasured or partial kernel answers, type warnings and handoff warnings.
+- Second-round red, recorded before the fix:
+  - `listTermUsage` answered `{rows:[], total_unique:"0", coverage:"full"}` for three unreconciled heads carrying apfs ×2 and backup ×1.
+  - `oracle_concepts` answered `apfs:2, backup:1` after a `kb_publishRevision` whose published terms give 3 and 2.
+  - The unseeded bank answered 200.

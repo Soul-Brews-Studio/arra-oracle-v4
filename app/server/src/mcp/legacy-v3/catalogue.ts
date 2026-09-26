@@ -229,17 +229,31 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
   spec({
     name: "oracle_stats",
     action: "content:read",
-    uses: ["listNodes", "knowledgeStats"],
-    requires: ["listNodes"],
-    description: "Counts for this bank. Fields v4 cannot count yet are null and named in compat_warnings.",
+    // K7 (docs/overnight/V3-PARITY.md §5, DECISIONS.md R18 (K6+K7+V8)):
+    // `knowledgeStats` carries total_documents/by_type/fts_indexed/
+    // last_indexed/vector_status; `unique_concepts` needs one more hop
+    // through the `concepts` vocabulary (`lookupVocabularyByName` then K6
+    // `listTermUsage`), same composition `oracle_concepts` below uses. No
+    // `listNodes` call remains (fix round: drift, this tool stopped calling
+    // it once `knowledgeStats` landed).
+    uses: ["knowledgeStats", "listTermUsage", "lookupVocabularyByName"],
+    requires: ["knowledgeStats", "listTermUsage", "lookupVocabularyByName"],
+    description:
+      "Counts for this bank. Fields v4 cannot count yet are null and named in compat_warnings." +
+      " Handoffs are entries in v4 (type note, concept handoff) and are counted; v3 kept them as inbox files.",
     inputSchema: obj({}),
   }),
   spec({
     name: "oracle_concepts",
     action: "content:read",
-    uses: ["listTermUsage", ...TAXONOMY_READS],
-    requires: ["listTermUsage"],
-    description: "Concept tags in use in this bank, with counts over current entries.",
+    // fix round: `requires` was missing `lookupVocabularyByName`, which this
+    // tool calls before every `listTermUsage` (K2 resolve-by-name).
+    uses: ["listTermUsage", "lookupVocabularyByName"],
+    requires: ["listTermUsage", "lookupVocabularyByName"],
+    description:
+      "Concept tags in use in this bank, with counts over current entries." +
+      " type filters on v4's own types (learning, note, conclusion, discussion, correction). v3's principle/pattern/retro" +
+      " are stored as note plus a legacy_type tag, which this filter does not read: they match nothing, with a semantic_change warning.",
     inputSchema: obj({ type: str(""), limit: int("") }),
   }),
   spec({

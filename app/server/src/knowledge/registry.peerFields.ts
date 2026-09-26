@@ -77,6 +77,11 @@ export const PEER_FIELDS: Readonly<Record<string, readonly PeerFieldPath[]>> = O
   getTerm: [],
   lookupVocabularyByName: [],
   lookupTermByName: [],
+  // K6+K7 (docs/overnight/V3-PARITY.md §5, DECISIONS.md R18 (K6+K7+V8)):
+  // term listing, term usage counts and knowledge stats assert no acting peer.
+  listTerms: [],
+  listTermUsage: [],
+  knowledgeStats: [],
   createVocabulary: [],
   createTerm: [],
   renameTerm: [],

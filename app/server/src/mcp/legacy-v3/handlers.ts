@@ -10,6 +10,7 @@ import type { RequestAuthority } from "../../knowledge/registry";
 import type { IndexProfile } from "../../knowledge/transport.indexProfile";
 import type { Kb } from "./createKb";
 import { guide } from "./guide";
+import { oracle_concepts } from "./tools/oracle_concepts";
 import { oracle_handoff } from "./tools/oracle_handoff";
 import { oracle_ask } from "./tools/oracle_ask";
 import { oracle_learn } from "./tools/oracle_learn";
@@ -23,6 +24,7 @@ import { oracle_thread } from "./tools/oracle_thread";
 import { oracle_thread_read } from "./tools/oracle_thread_read";
 import { oracle_thread_update } from "./tools/oracle_thread_update";
 import { oracle_threads } from "./tools/oracle_threads";
+import { oracle_stats } from "./tools/oracle_stats";
 
 export type V3ToolContext = {
   readonly tool: string;
@@ -56,4 +58,8 @@ export const V3_HANDLERS: Readonly<Record<string, V3Handler>> = Object.freeze({
   oracle_threads,
   oracle_thread_read,
   oracle_thread_update,
+  // V8 (docs/overnight/V3-PARITY.md §4.3/§4.4, §7 "V8"; DECISIONS.md R18
+  // (K6+K7+V8)): concept usage counts and full workspace stats.
+  oracle_concepts,
+  oracle_stats,
 });

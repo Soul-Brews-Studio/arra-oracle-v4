@@ -130,6 +130,7 @@ export const PRIMARY_KEY: Record<string, string> = {
   oracle_threads: "topLevel",
   oracle_thread_read: "topLevel",
   oracle_stats: "topLevel",
+  oracle_concepts: "topLevel",
   "compat-error": "shape",
 };
 

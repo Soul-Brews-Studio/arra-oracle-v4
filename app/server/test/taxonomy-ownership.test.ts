@@ -71,6 +71,11 @@ const TAXONOMY_METHODS = [
   "createVocabulary",
   "getTerm",
   "getVocabulary",
+  // K6+K7 (R18 (K6+K7+V8)): term listing, term usage counts and workspace
+  // stats, spread into the writer facade with the other reads.
+  "knowledgeStats",
+  "listTermUsage",
+  "listTerms",
   // K2 (R18): by-name reads, spread into the writer facade with the other reads.
   "lookupTermByName",
   "lookupVocabularyByName",
@@ -81,8 +86,9 @@ const TAXONOMY_METHODS = [
 ].join(",");
 const PUBLICATION_WRITE_METHODS = "getAcceptedHead,listAcceptedHistory,listNodes,publishRevision";
 const PUBLICATION_READ_METHODS = "getAcceptedHead,listAcceptedHistory,listNodes";
-// K2 (R18): the two by-name reads are on every taxonomy reader and writer facade.
-const TAXONOMY_READ_METHODS = "getTerm,getVocabulary,lookupTermByName,lookupVocabularyByName";
+// K2 (R18) + K6/K7 (R18 (K6+K7+V8)): every taxonomy reader and writer facade
+// carries the same read methods.
+const TAXONOMY_READ_METHODS = "getTerm,getVocabulary,knowledgeStats,listTermUsage,listTerms,lookupTermByName,lookupVocabularyByName";
 
 /** nanoid21 identities supplied by this file, so no builder invents them. */
 const id = (slug: string): string => `${slug}${"_".repeat(Math.max(0, 21 - slug.length))}`.slice(0, 21);

@@ -51,6 +51,12 @@ export { type ReparentTermRequest, parseReparentTerm } from "./taxonomy.parseRep
 export { type SeedRequest } from "./taxonomy.types";
 export { parseSeedRequest } from "./taxonomy.parseSeedRequest";
 
+// K6+K7 (docs/overnight/V3-PARITY.md §5, DECISIONS.md R18): listTerms,
+// listTermUsage and knowledgeStats request grammar.
+export { type ListTermsRequest, parseListTerms } from "./taxonomy.parseListTerms";
+export { type ListTermUsageRequest, parseListTermUsage } from "./taxonomy.parseListTermUsage";
+export { type KnowledgeStatsRequest, parseKnowledgeStats } from "./taxonomy.parseKnowledgeStats";
+
 export { encodeVocabularyRow } from "./taxonomy.encodeVocabularyRow";
 export { encodeTermRow } from "./taxonomy.encodeTermRow";
 export { seedVocabularyRows } from "./taxonomy.seedVocabularyRows";
