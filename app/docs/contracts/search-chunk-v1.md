@@ -948,3 +948,154 @@ transport-specific mapping needed updating.
   by `workspace_name` (`app/server/src/db.ts`) -- the "Still NOT claimed" bullet above already
   named this, and R21 did not rule on it. A caller of the legacy path has neither the VALUE fix
   nor the SET/order scoping this amendment describes.
+
+## 18. Amendment 2026-09-26 (overnight R22 (keyword order is workspace-local) + R21 + R14)
+
+Source: [`docs/overnight/DECISIONS.md`](../../../docs/overnight/DECISIONS.md) **R22** ("Keyword hit
+ORDER uses workspace-local signals only"), on `Soul-Brews-Studio/arra-oracle-v4#30` and `#10`;
+it builds on R21 (`rank`, no raw score: section 17) and R14 (the case-folded substring contract:
+section 13). Sections above are left as written. Where they disagree with this amendment, this
+amendment wins, in particular section 13's "order is score descending, then node id" and "rank
+after every scored hit", section 17's "in the exact order `score` used to produce", all of 17.1.1,
+and 17's caller-impact bullet on isolation.
+
+### 1 · What changed
+
+`searchKnowledgeKeyword` still lets the ONE FTS index on `search_chunks_v1.text`, shared by every
+workspace, pick candidate chunks: prefiltered to the workspace, overfetched, and re-checked exactly
+as section 13 says. BM25 no longer decides anything about the ORDER. Every hit, whichever path found
+it, is ordered by three facts about the node's current head revision in the requesting workspace
+(`search-chunk.keywordHitOrder.ts`):
+
+1. **occurrences** of the query in the head text (`chunkSourceText`: `title`, a blank line,
+   `body`), descending. The count uses R14's own matching rule (`containsFolded`): both sides
+   `toLowerCase()`d over the whole text. It counts left to right, non-overlapping (`"aaaa"` holds
+   `"aa"` twice), in `fts/fts.countFolded.ts`. A count is at least 1 exactly when the node is an
+   answer at all;
+2. then the head's **acceptance instant**, descending. No column is named `accepted_at`: it is
+   the head row's `node_revisions.created_at`, which `publishRevision` stamps with the clock value
+   at which it accepted the revision (the same value it writes to `nodes.updated_at` when the head
+   moves there). It is read raw as `timestamp[us]` microseconds and compared as a bigint;
+3. then **`node_id`** ascending, by UTF-16 code unit.
+
+One hit per node makes this a total order; `rank` is the 1-based position in it. The wire shape is
+unchanged: no new field, and neither key is on the wire. What changes is only the order, and so,
+at a bounded `limit`, which hits come back.
+
+- **All three paths answer in this order**: the index path (`match: "ngram"`), the short-query
+  scan (`"short_query"`) and the no-index scan (`"index_unavailable"`). A seam-scan hit
+  (section 13's 3-4 code point case) is now ordered together with the index hits of the same
+  answer, not placed after them. Its per-hit `match: "substring_scan"` is unchanged.
+- **BM25's `_score` is never read.** Keyword candidates carry no source rank
+  (`rankedChunk(row, null)`); `hits[].match` comes from which path fetched the row.
+- **v3 adapter** (section 15): `oracle_search` / `oracle_ask` call the kernel once per v3 word
+  (`search.keywordTerms.ts`), so each word's occurrences are counted by the kernel under R14's
+  rule, one word per call. `mergeKeyword` consumes only positions (more matched words first, then
+  best position), and the v3 `score` stays `1/(1+position)` in the final order. None of that
+  code changed. The kernel positions it reads are now workspace-local.
+- **Cost**: none measurable. The keys come from the head row keyword search already reads for
+  the substring re-check: one more column (`created_at`), and one count over text already in
+  memory, memoized per head revision per request. Semantic search reads no extra column.
+- **Ranking quality, the trade R22 names**: the count is not normalized for length, so a long
+  node that repeats the query ranks above a short, focused one; BM25 would have reversed that.
+  R22's "reverse by" line (back to BM25 order) is the way back, at the cost of the leak below.
+  No retrieval-quality number exists either way (#7).
+
+### 2 · What it closes, measured
+
+The R21 fix round's own repro (17.1.1) is now inverted, not deleted. Workspace ALPHA holds A1
+(query plus `abc`×40) and A2 (query plus `def`×40), and BETA indexes 12 nodes of `abc`×60, which
+depresses `abc`'s corpus-wide IDF. Under R21 ALPHA's order flipped from A1,A2 to A2,A1, so at
+`limit: 1` the answer changed from A1 to A2. Under R22, ALPHA's answers are byte-identical before
+and after BETA's writes: the multi-hit query (A1,A2; one occurrence each, one writer instant, so
+node id), the same query at `limit: 1` (A1), and a single-hit query built only from the trigrams
+BETA depresses (`abcabcabc` → A1).
+
+### 3 · The residual, and its measured bound
+
+R22 lets BM25 choose which candidate chunks are read. That choice is still corpus-wide, so the
+isolation holds only while every candidate is read. The overfetch loop is `fts/fts.overfetch.ts`
+with `FTS_CANDIDATE_FACTOR = 4` and `FTS_CANDIDATE_CEILING = 4096` (`fts/fts.constants.ts`):
+
+- The first round fetches `max(limit, min(limit × 4, 4096))` candidate chunks, in BM25 order on
+  the index path.
+- Later rounds double the fetch, from the top, only while fewer than `limit` nodes survive and
+  the round came back full.
+
+A **candidate chunk** is any chunk of the workspace whose text shares at least one trigram with
+the query (the `MatchQuery` terms are OR-ed). That includes chunks of stale revisions, of retired
+or superseded nodes, and of every embedding profile.
+
+- **The bound.** If the workspace holds at most `limit × FTS_CANDIDATE_FACTOR` candidate chunks,
+  the first round reads all of them. The answer is then a function of that workspace's own rows,
+  and no other workspace's write can change it, in order or in bytes. More generally, the answer
+  is workspace-local whenever the round that ends the loop reads every candidate.
+- **Past the bound**, the round reads BM25's top `fetch` of the workspace's candidates. BM25 uses
+  corpus-wide IDF, average document length and the shared index's refresh state, so another
+  workspace's writes can change which of this workspace's nodes a bounded answer holds. The
+  answer is still only this workspace's nodes, still in this order, but it is the best of what
+  BM25 let the round read. Measured, `limit: 1` (so a first round of 4) over the corpus of
+  section 2:
+  - ALPHA = X (query + `def`×40 + 6 non-query characters, a little longer than the others) plus
+    3 F nodes (query + `abc`×40): 4 candidate chunks, at the bound. BM25 order was F1,F2,F3,X
+    before BETA's writes and X,F1,F2,F3 after. The R22 answer is X both times, byte-identical.
+  - ALPHA = X plus 7 F nodes: 8 candidate chunks, past the bound. The `limit: 1` answer moved
+    from F1 (X was BM25-last, outside the round) to X (BETA's writes lifted X to BM25-first) with
+    no ALPHA write in between. At `limit: 50` (a round of 200) the same corpus is byte-identical
+    before and after.
+  - A row the shared index does not yet cover is scored apart from the indexed rows. Measured:
+    with X plus 4 F nodes, the fifth F, which the writer's refresh policy had left unindexed, came
+    back BM25-last, below X. Every writer's `indexRevisionChunks` call can rebuild the shared
+    index (section 13's refresh), so the index state is part of the same residual. The bound
+    above covers it: below the bound, nothing BM25 decides reaches the answer.
+- **A bounded answer past the bound need not be a prefix of a larger one.** In
+  `search-chunk-retrieval.test.ts`, ALPHA holds 5 candidate chunks for `ลืม` (two current nodes
+  plus retired, superseded and stale ones). `limit: 10` answers pending, then thai. `limit: 1`
+  reads a round of 4 and answers thai. Before R22, BM25 both chose and ordered, so a bounded
+  answer was a prefix. Past the bound it no longer is.
+- **The scans.** The scans read candidates in node-id order within the workspace, so which
+  candidates they read is always workspace-local. Below the bound, the scan and the index return
+  the identical hits in the identical order (everything but each hit's `match`). Past it, each
+  path answers the best of what its own rounds read, so the two can differ.
+- **Unchanged:** `match` and `scan_reason` still show whether the governed index exists. That is
+  section 14's one-bit disclosure: any workspace's first `indexRevisionChunks` builds the shared
+  index. R22 makes both paths answer in the same order; it does not hide which path answered.
+
+**Reverse or close by**: a per-workspace FTS index, or per-workspace BM25 statistics (R21's and
+R22's own line), which closes the residual fully. Raising `FTS_CANDIDATE_FACTOR` moves the bound
+linearly, at linear cost: each extra candidate node costs its head read and several eligibility
+reads (`service.recallEligibleNodeIds.ts`). That trade was not measured here, so the factor is
+unchanged.
+
+### Proof
+
+Every test was run red against the unfixed code first, then green after the fix. Fresh
+`mktemp -d` datasets, real writer gate, no model.
+
+- `app/server/test/search-chunk-retrieval-order-key.test.ts` (new, pure): `countFolded`, including
+  non-overlap, Thai inside a word and final sigma, agreeing with `containsFolded` over a sample
+  grid; `keywordHitOrder`'s three keys, microsecond-exact; and a total order, where every
+  permutation sorts to one sequence. Red: the helpers did not exist.
+- `app/server/test/search-chunk-retrieval-order.test.ts` (new): a corpus where R22's order is
+  neither BM25's nor node id's.
+  - MANY: 3 folded occurrences, the oldest head, the largest id. It comes first.
+  - NEWER: 1 occurrence, accepted later. It comes before two tied nodes.
+  - TIE_A and TIE_B: identical text at one instant, ordered by node id.
+  - Then new heads move nodes: 5 occurrences, and a later acceptance. The stale chunks count for
+    nothing.
+  - The same order holds on the index path, the short-query scan and the no-index scan. The
+    scan's hits equal the index path's.
+  - Red: BM25 gave `[MANY, TIE_A, TIE_B, NEWER]`; the scans gave node-id order.
+- `app/server/test/search-chunk-retrieval-score-isolation.test.ts`: the second `describe` is
+  inverted, as section 2 describes. Every other assertion is kept: the set never crosses
+  workspaces, there is no `score`, and ranks are `[1, 2]`. Red: `after` had A2 first.
+- `app/server/test/search-chunk-retrieval-overfetch-bound.test.ts` (new): the two measured cases
+  of section 3, sized from `FTS_CANDIDATE_FACTOR`. Red: at the bound, the `limit: 1` answer moved
+  F1 → X. The past-the-bound case pins the residual deliberately: if it starts failing because
+  the residual closed, amend this section.
+- `app/server/test/search-chunk-retrieval.test.ts`: its pin of BM25 order (`[thai, pending]`) is
+  now R22's `[pending, thai]`. Its "`limit: 1` is the unbounded first hit" assertion is replaced
+  by the measured residual above. New assertions: a rebuilt index returns the identical answer,
+  and both scans equal the index path's hits.
+- The v3 adapter's suites (`mcp-v3-search*.test.ts`, `mcp-v3-verdict`, `mcp-v3-frame`,
+  `mcp-v3-acceptance`) pass unchanged.
