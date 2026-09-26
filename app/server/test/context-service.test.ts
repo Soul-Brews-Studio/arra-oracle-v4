@@ -542,7 +542,7 @@ describe("real persistence: registration, shapes and reads", () => {
         "advanceReadCursor", "appendMessages", "closeSession", "createSessionLink", "createTrace", "embedPendingChunks", "getContext",
         "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSearchFreshness", "getSession", "getTrace",
         "indexRevisionChunks", "joinSession", "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks",
-        "listSessionLinks", "listSessionMembers", "listSessions", "listTraceHits", "reconcileSearchChunks", "registerPeer", "registerSession",
+        "listSessionLinks", "listSessionMembers", "listSessions", "listTraceHits", "listTraces", "reconcileSearchChunks", "registerPeer", "registerSession",
         "retireNode", "supersedeNode", "writeChunkEmbedding",
       ]);
       // Only the BUNDLE closes the owner.
@@ -1107,7 +1107,7 @@ describe("core: the sourced path and the reader bundle", () => {
       expect(parsed.readerContextMethods).toEqual([
         "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSearchFreshness", "getSession", "getTrace",
         "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks", "listSessionLinks", "listSessionMembers", "listSessions",
-        "listTraceHits", "searchKnowledgeKeyword", "searchKnowledgeSemantic",
+        "listTraceHits", "listTraces", "searchKnowledgeKeyword", "searchKnowledgeSemantic",
       ]);
       // A gateless reader works AFTER the writer released its gate.
       expect(parsed.freshReaderPeer.name).toBe("peer-a");

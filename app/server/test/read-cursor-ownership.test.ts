@@ -64,9 +64,10 @@ const RUNTIME_EXPORTS = [
   "openPublicationReader",
   "openPublicationWriter",
 ].join(",");
-/** §1: twenty-two on every context WRITER facade (its own eleven plus the
- *  eleven reader methods it spreads in), eleven on every context READER
- *  facade. */
+/** §1: thirty-three on every context WRITER facade (its own fourteen plus the
+ *  nineteen reader methods it spreads in, `listTraces` added by K5,
+ *  docs/overnight/V3-PARITY.md §5), twenty-one on every context READER
+ *  facade (the nineteen plus the two reader-only #30 searches). */
 // #30 overnight R7/R8: `getSearchFreshness` (read) and `embedPendingChunks`
 // (write-only) join the context facade -- both lists below grew accordingly.
 // Overnight R18: + closeSession (K9, D7) on every writer, + listSessionMembers (K10) on both.
@@ -76,14 +77,14 @@ const CONTEXT_WRITE_METHODS =
   "getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
   "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits," +
-  "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
+  "listTraces,reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
   "writeChunkEmbedding";
 const CONTEXT_READ_METHODS =
   "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
   "getSession,getTrace," +
   "listConnections,listLifecycleHistory,listMcpCalls,listMessages,listPeers," +
-  "listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits,searchKnowledgeKeyword," +
-  "searchKnowledgeSemantic";
+  "listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits,listTraces," +
+  "searchKnowledgeKeyword,searchKnowledgeSemantic";
 /** Bundle keys are unchanged by this slice; nested facades never carry close. */
 const CONTEXT_WRITER_KEYS = "close,context,publication,taxonomy";
 const EVIDENCE_WRITER_KEYS = "close,context,evidence,publication,taxonomy";
@@ -410,7 +411,7 @@ afterAll(async () => {
 
 describe.skipIf(!READY)(`context facades across all four factories [${PENDING}]`, () => {
   test(
-    "each writer facade carries twenty-two methods and each reader facade eleven, with exports unchanged",
+    "each writer facade carries thirty-three methods and each reader facade twenty-one, with exports unchanged",
     async () => {
       const root = await freshDataset("facades");
       // One writer per gated child: closing releases fd 42, so a second open in

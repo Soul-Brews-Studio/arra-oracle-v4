@@ -47,25 +47,28 @@ const BETA = "beta-workspace";
 /** §1: writer {publication,taxonomy,context,close}; reader {publication,taxonomy,context}. */
 const WRITER_KEYS = "close,context,publication,taxonomy";
 const READER_KEYS = "context,publication,taxonomy";
-/** §8: context writer has exactly these twenty-two (its own eleven plus the
- *  eleven reader methods it spreads in); the reader exactly the eleven. */
+/** §8: context writer has exactly these thirty-three (its own fourteen plus the
+ *  nineteen reader methods it spreads in); the reader exactly the nineteen plus
+ *  the two reader-only #30 searches, twenty-one. */
 // #30 overnight R7/R8: `getSearchFreshness` (read) and `embedPendingChunks`
 // (write-only) join the context facade -- both lists below grew accordingly.
 // Overnight R18: + closeSession (K9, D7) on every writer, + listSessionMembers (K10) on both.
+// Overnight R18 (V3 + K5 + V7): + listTraces (K5, docs/overnight/V3-PARITY.md §5), a
+// read on the reader and spread onto the writer.
 const CONTEXT_WRITE_METHODS =
   "advanceReadCursor,appendMessages,closeSession,createSessionLink,createTrace,embedPendingChunks," +
   "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
   "getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
   "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits," +
-  "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
+  "listTraces,reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
   "writeChunkEmbedding";
 const CONTEXT_READ_METHODS =
   "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
   "getSession,getTrace," +
   "listConnections,listLifecycleHistory,listMcpCalls,listMessages,listPeers," +
-  "listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits,searchKnowledgeKeyword," +
-  "searchKnowledgeSemantic";
+  "listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits,listTraces," +
+  "searchKnowledgeKeyword,searchKnowledgeSemantic";
 /** Existing facades keep their exact key sets and carry no close. */
 const PUBLICATION_WRITE_METHODS = "getAcceptedHead,listAcceptedHistory,listNodes,publishRevision";
 const PUBLICATION_READ_METHODS = "getAcceptedHead,listAcceptedHistory,listNodes";

@@ -73,14 +73,14 @@ const CONTEXT_WRITE_METHODS =
   "getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
   "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits," +
-  "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
+  "listTraces,reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
   "writeChunkEmbedding";
 const CONTEXT_READ_METHODS =
   "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
   "getSession,getTrace," +
   "listConnections,listLifecycleHistory,listMcpCalls,listMessages,listPeers," +
-  "listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits,searchKnowledgeKeyword," +
-  "searchKnowledgeSemantic";
+  "listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits,listTraces," +
+  "searchKnowledgeKeyword,searchKnowledgeSemantic";
 const CONTEXT_WRITER_KEYS = "close,context,publication,taxonomy";
 const EVIDENCE_WRITER_KEYS = "close,context,evidence,publication,taxonomy";
 const CONTEXT_READER_KEYS = "context,publication,taxonomy";
@@ -258,7 +258,7 @@ afterAll(async () => {
 
 describe("context facades across all four factories", () => {
   test(
-    "each writer facade carries thirty methods and each reader facade nineteen, with exports unchanged",
+    "each writer facade carries thirty-three methods and each reader facade twenty-one, with exports unchanged",
     async () => {
       const { datasetRoot: root } = await seededDataset("facades");
       for (const [factory, keys] of [

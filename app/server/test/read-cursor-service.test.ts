@@ -62,7 +62,7 @@ describe("preflight: the required surface", () => {
         expect(Object.keys(bundle.context).sort()).toEqual([
           "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSearchFreshness", "getSession", "getTrace",
           "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks", "listSessionLinks", "listSessionMembers", "listSessions",
-          "listTraceHits", "searchKnowledgeKeyword", "searchKnowledgeSemantic",
+          "listTraceHits", "listTraces", "searchKnowledgeKeyword", "searchKnowledgeSemantic",
         ]);
         expect("close" in bundle.context).toBe(false);
       }
@@ -121,7 +121,7 @@ describe("real persistence: cursors inside the real gate", () => {
           "advanceReadCursor", "appendMessages", "closeSession", "createSessionLink", "createTrace", "embedPendingChunks", "getContext",
           "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSearchFreshness", "getSession", "getTrace",
           "indexRevisionChunks", "joinSession", "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks",
-          "listSessionLinks", "listSessionMembers", "listSessions", "listTraceHits", "reconcileSearchChunks", "registerPeer", "registerSession",
+          "listSessionLinks", "listSessionMembers", "listSessions", "listTraceHits", "listTraces", "reconcileSearchChunks", "registerPeer", "registerSession",
           "retireNode", "supersedeNode", "writeChunkEmbedding",
         ]);
         expect(parsed.contextHasClose).toBe(false);

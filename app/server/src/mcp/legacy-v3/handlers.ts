@@ -25,6 +25,11 @@ import { oracle_thread_read } from "./tools/oracle_thread_read";
 import { oracle_thread_update } from "./tools/oracle_thread_update";
 import { oracle_threads } from "./tools/oracle_threads";
 import { oracle_stats } from "./tools/oracle_stats";
+import { oracle_trace } from "./tools/oracle_trace";
+import { oracle_trace_chain } from "./tools/oracle_trace_chain";
+import { oracle_trace_distill } from "./tools/oracle_trace_distill";
+import { oracle_trace_get } from "./tools/oracle_trace_get";
+import { oracle_trace_list } from "./tools/oracle_trace_list";
 
 export type V3ToolContext = {
   readonly tool: string;
@@ -62,4 +67,10 @@ export const V3_HANDLERS: Readonly<Record<string, V3Handler>> = Object.freeze({
   // (K6+K7+V8)): concept usage counts and full workspace stats.
   oracle_concepts,
   oracle_stats,
+  // V3 trace + V7 upgrades (V3-PARITY.md §4.2-4.3, K5).
+  oracle_trace,
+  oracle_trace_get,
+  oracle_trace_chain,
+  oracle_trace_distill,
+  oracle_trace_list,
 });

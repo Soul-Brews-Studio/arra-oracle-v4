@@ -24,12 +24,14 @@
 //
 // HOW THE METHOD LISTS WERE OBTAINED (this matters more than the numbers):
 // they were read off `src/publication/service.ts` in this worktree --
-// `createContextReadMethods` returns eleven methods and
-// `createContextWriterService` returns `{...reads}` plus eleven of its own, so
-// the writer union is twenty-two. They were then compared against the accepted
-// read-cursor lane's literals and found identical, which is the expected
-// outcome: this slice adds methods to the existing context reader/writer and
-// no new factory or bundle key, exactly as the contract's "Boundaries reused
+// `createContextReadMethods` returns nineteen methods (`listTraces` added by
+// K5, docs/overnight/V3-PARITY.md §5) and `createContextWriterService`
+// returns `{...reads}` plus fourteen of its own, so the writer union is
+// thirty-three; the reader adds the two reader-only #30 searches, twenty-one.
+// They were then compared against the accepted read-cursor
+// lane's literals and found identical, which is the expected outcome: this
+// slice adds methods to the existing context reader/writer and no new
+// factory or bundle key, exactly as the contract's "Boundaries reused
 // unchanged" section requires.
 //
 // Bounded claims: one cooperative local gate, disposable fixtures, pinned Bun
@@ -69,25 +71,27 @@ const RUNTIME_EXPORTS = [
   "openPublicationReader",
   "openPublicationWriter",
 ].join(",");
-/** Twenty-two on every context WRITER facade (its own eleven plus the eleven
- *  reader methods it spreads in), eleven on every context READER facade. */
+/** Thirty-three on every context WRITER facade (its own fourteen plus the
+ *  nineteen reader methods it spreads in), twenty-one on every context READER
+ *  facade (the nineteen plus the two reader-only #30 searches). */
 // #30 overnight R7/R8: `getSearchFreshness` (read) and `embedPendingChunks`
 // (write-only) join the context facade -- both lists below grew accordingly.
 // Overnight R18: + closeSession (K9, D7) on every writer, + listSessionMembers (K10) on both.
+// Overnight R18 (V3 + K5 + V7): + listTraces (K5, docs/overnight/V3-PARITY.md §5) on both.
 const CONTEXT_WRITE_METHODS =
   "advanceReadCursor,appendMessages,closeSession,createSessionLink,createTrace,embedPendingChunks," +
   "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
   "getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
   "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits," +
-  "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
+  "listTraces,reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
   "writeChunkEmbedding";
 const CONTEXT_READ_METHODS =
   "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
   "getSession,getTrace," +
   "listConnections,listLifecycleHistory,listMcpCalls,listMessages,listPeers," +
-  "listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits,searchKnowledgeKeyword," +
-  "searchKnowledgeSemantic";
+  "listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits,listTraces," +
+  "searchKnowledgeKeyword,searchKnowledgeSemantic";
 /** Bundle keys are unchanged by this slice; nested facades never carry close. */
 const CONTEXT_WRITER_KEYS = "close,context,publication,taxonomy";
 const EVIDENCE_WRITER_KEYS = "close,context,evidence,publication,taxonomy";
@@ -310,7 +314,7 @@ afterAll(async () => {
 
 describe("context facades across all four factories", () => {
   test(
-    "each writer facade carries twenty-two methods and each reader facade eleven, with exports unchanged",
+    "each writer facade carries thirty-three methods and each reader facade twenty-one, with exports unchanged",
     async () => {
       const root = await freshDataset("facades");
       // One writer per gated child: closing releases fd 42, so a second open in
@@ -370,7 +374,10 @@ describe("context facades across all four factories", () => {
       // Overnight R18 added `closeSession` (K9, D7: write-only) and
       // `listSessionMembers` (K10: a read, on the reader and spread onto the
       // writer): 30 -> 32 and 19 -> 20.
-      expect({ writer: writerMethods.length, reader: readerMethods.length }).toEqual({ writer: 32, reader: 20 });
+      // K5 (docs/overnight/V3-PARITY.md §5, overnight R18 (V3 + K5 + V7))
+      // added `listTraces` (a read, on the reader and spread onto the
+      // writer): 32 -> 33 and 20 -> 21.
+      expect({ writer: writerMethods.length, reader: readerMethods.length }).toEqual({ writer: 33, reader: 21 });
       for (const search of ["searchKnowledgeKeyword", "searchKnowledgeSemantic"]) {
         expect(readerMethods).toContain(search);
         expect(writerMethods).not.toContain(search);
@@ -382,6 +389,8 @@ describe("context facades across all four factories", () => {
       expect(readerMethods).not.toContain("closeSession");
       expect(readerMethods).toContain("listSessionMembers");
       expect(writerMethods).toContain("listSessionMembers");
+      expect(readerMethods).toContain("listTraces");
+      expect(writerMethods).toContain("listTraces");
       expect(writerMethods).not.toContain("close");
       expect(readerMethods).not.toContain("close");
     },
