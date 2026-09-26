@@ -258,14 +258,15 @@ round-tripped over both HTTP and MCP against a real writer-gated target-19 datas
 distinct indexed nodes — one over each transport — since a `pending` chunk row cannot be
 re-embedded, so an idempotent replay is not the right proof for `writeChunkEmbedding`).
 
-## 12. Amendment 2026-09-26 (overnight R7 (#30 part) + R14)
+## Amendment 2026-09-26 (overnight R7 (#30 part) + R14)
 
 **Change.** The target-19 tier gains its first retrieval: two `content:read` methods on the
 context READER facade (and, spread in, on every writer facade), registered in
 `app/server/src/knowledge/registry.ts`, so HTTP (`POST /api/knowledge/:bank/<method>`), MCP
-(`kb_<method>`) and the CLI (`kb <method>`, plus the `search` alias) all reach the same entry.
-Section 11's "`searchChunks` does not exist" is superseded: retrieval exists under the names
-below, which follow the registry's verb-first naming (`listSearchChunks`, `getRecallEligibility`).
+(`kb_<method>`) and the CLI (`kb <method>`, plus `search --mode keyword|semantic`) all reach
+the same entry. Section 11's "`searchChunks` does not exist" is superseded: retrieval exists
+under the names below, which follow the registry's verb-first naming (`listSearchChunks`,
+`getRecallEligibility`).
 
 - `searchKnowledgeKeyword` — `{workspace_name, query, limit?}`.
 - `searchKnowledgeSemantic` — `{workspace_name, query, limit?, embedding_profile?}`.
@@ -276,91 +277,139 @@ non-whitespace character (`invalid_value` at `/query`) and is capped at 4096 UTF
 (`limit_exceeded`); `limit` is a JSON integer 1..50, default 10, absent or null meaning the
 default. Keyword search takes no `embedding_profile` (`unexpected_field`): chunk text is
 identical under every profile. Semantic `embedding_profile` is the stored profile NAME (the
-`listSearchChunks` spelling, not the index-time `{name, dims}` object), default
-`DEFAULT_EMBEDDING_PROFILE = "all-minilm"`.
+`listSearchChunks` spelling, not the index-time `{name, dims}` object); absent or null means
+the profile of the composed query embedder (below).
 
 **Answers are nodes, and only current, recall-eligible ones.** Candidates are chunks; each
 candidate survives only when (1) its `revision_id` is its node's captured head
 (`nodes.current_revision_id`) — a chunk of an earlier revision is stale however well it
-matched; (2) the node is recall-eligible, decided by calling the public
-`getRecallEligibility` kernel method per node (`service.recallEligibleNodeIds.ts`), so retired
-and superseded nodes never surface (DECISIONS.md R18 D3); (3) every read is scoped to the
-request's workspace. A node's surviving chunks collapse into ONE hit
-`{node_id, revision_id, title, snippet, chunk_ids, ...}`: `title` is the head revision's,
-`snippet` is a 160-code-point window of the node's best chunk (around the first case-folded
-occurrence, for keyword), `chunk_ids` are the head revision's examined candidate chunk ids
-by `chunk_index`. The copied `term_ids`/session columns are never consulted: a stale-able
-projection is not a lifecycle or authorization source (section 2 stands).
+matched; (2) for keyword search, the head revision's WHOLE text contains the query (below);
+(3) the node is recall-eligible, decided by calling the public `getRecallEligibility` kernel
+method per node (`service.recallEligibleNodeIds.ts`), so retired and superseded nodes never
+surface (DECISIONS.md R18 D3); (4) every read is scoped to the request's workspace, the
+candidate query included. A node's surviving chunks collapse into ONE hit
+`{node_id, revision_id, title, snippet, chunk_ids, ...}`: `title` is the head revision's;
+`snippet` is a 160-code-point window, for keyword of the head text around the first
+case-folded occurrence, for semantic of the node's nearest chunk; `chunk_ids` are the head
+revision's examined candidate chunk ids by `chunk_index`. The copied `term_ids`/session
+columns are never consulted: a stale-able projection is not a lifecycle or authorization
+source (section 2 stands).
 
-**Keyword** (`{match, scan_reason, hits[{..., score, match}]}`):
+**Keyword** (`{match, scan_reason, hits[{..., score, match}]}`). The contract is: the node's
+head text — `title`, a blank line, `body` (`chunkSourceText`, exactly the string
+`indexRevisionChunks` cuts into chunks) — contains `query`, case-folded (`containsFolded`).
+It is checked on that text, never on one chunk, so an occurrence cut by the
+1000-code-unit chunk boundary, or a query longer than a chunk, is an answer.
 
 - `match: "ngram"` — an FTS index on `search_chunks_v1.text` built from the SHARED
   `FTS_INDEX_OPTIONS` (`app/server/src/fts/fts.constants.ts`: `ngram` 3..3, no stemming, no
-  stop-word removal — R14), the same constant the legacy `memories` index is built from.
-  Candidates come in BM25 order and each is re-checked as a case-folded literal substring, which
-  removes the measured trigram over-matches (หลงทาง does not match หลงลืม). `score` is the node's
-  best chunk score; order is score descending, then node id.
+  stop-word removal — R14), the same constant the legacy `memories` index is built from. The
+  query is a `MatchQuery`, whose terms are OR-ed (measured: `หลงลืม` returns a chunk holding
+  only `งลืม…`), so every chunk that holds three or more code points of an occurrence is a
+  candidate, in BM25 order. The whole-text re-check removes the measured trigram over-matches
+  (หลงทาง does not match หลงลืม). `score` is the node's best chunk score; order is score
+  descending, then node id.
+- The seam case: a query of 3 or 4 code points can be cut so that neither chunk keeps a
+  trigram of it (หล|ง, wx|yz), and the index cannot see it. When the index answers fewer than
+  `limit` nodes, a seam scan adds them: non-first chunks that start with a proper suffix of the
+  query (`seamPredicate`), re-checked the same way. Those hits carry `match: "substring_scan"`
+  and `score: null` inside an `ngram` answer, and rank after every scored hit, by node id.
 - `match: "substring_scan"`, `score: null` — a bounded, escaped `ILIKE` scan in node-id order,
   when the query is under 3 code points (`scan_reason: "short_query"`; a trigram index has
   nothing to look up and would answer `[]` silently) or when the index is absent or is not the
   governed config (`scan_reason: "index_unavailable"`; measured on 0.38.0: a never-indexed
   table answers FTS with `[]`, not an error, and an `icu` index would give `icu` answers).
-  SPEC §4.1.2: "fall back to LIKE and say so".
+  SPEC §4.1.2: "fall back to LIKE and say so". The scan crosses seams too
+  (`keywordScanPredicate`): under 6 code points, the whole query or a seam clause; from 6 on,
+  the query is cut into one more piece than the chunk boundaries an occurrence can cross (they
+  are at least 1000 code units apart), so one piece lies whole in some chunk.
+- Before any read, `chunkMayHoldQuery` drops candidates no occurrence can touch: a chunk
+  qualifies only by containing the query, by ending with a proper prefix of it when a seam
+  follows (full-length chunk), by starting with a proper suffix when a seam precedes
+  (`chunk_index > 0`), or by lying inside it. Its fold writes final sigma as σ, so a chunk-local
+  fold never hides what the whole-text fold finds.
 - Every round is bounded by the one shared overfetch loop (`fts/fts.overfetch.ts`,
   `FTS_CANDIDATE_FACTOR`/`FTS_CANDIDATE_CEILING`): an answer is short only when the source ran
   dry or 4096 candidates were examined.
 
 **Who builds the index (writer-gate rule).** Readers never create, rebuild or repair an index;
-they only read `listIndices()`. The WRITER does, in `indexRevisionChunks`: every successful call
-— `indexed`, or an `already_satisfied` replay — ends, inside the owner's serialized turn and
-after the chunk rows are verified durable, by leaving exactly one FTS index on the text column,
-kept as-is when its live `indexDetails` already match (no rebuild, no new version) and rebuilt
-under its own name when they differ. Rows appended after the build are still found (LanceDB
-searches unindexed rows too, measured). New failure mode: if that build fails, the call answers
-`writer_unavailable` (503) — the chunk rows are already durable and the owner is NOT poisoned;
-a replay repeats only the index step. A dataset whose chunks predate this amendment is scanned
+they only read `listIndices()`. The WRITER does, in `indexRevisionChunks`: every successful
+call — `indexed`, or an `already_satisfied` replay — is followed by an index step that leaves
+exactly one FTS index on the text column, kept as-is when its live `indexDetails` already
+match (no rebuild, no new version), rebuilt under its own name when they differ, and rebuilt
+over every row once the rows appended since its build reach the rows it covers
+(`fts.refreshStaleFtsIndexOn`). LanceDB still finds unindexed rows (measured), so staleness
+costs speed, never answers; the refresh keeps at most half the table unindexed at O(1)
+amortized rebuild work per row. The index step is its OWN turn in the owner's serialized
+queue, queued right after the write turn, with no write attempted in it. New failure mode: if
+the build fails, the call answers `writer_unavailable` (503); the chunk rows are already
+durable and the owner is NOT poisoned (the next publication and index call are served); a
+replay repeats only the index step. If the owner stops serving between the two turns (closed,
+or poisoned by another request), the call still answers the rows it verified, and the next
+owner's index call builds the index. A dataset whose chunks predate this amendment is scanned
 (`index_unavailable`) until any `indexRevisionChunks` call, a replay included, builds it.
 
 **Semantic** (`{embedding_profile, metric: "l2_squared", hits[{..., distance}]}`): the query is
 embedded by a trusted, injected `QueryEmbedder {profile, embed}` (composition: `embed.ts` over
-local Ollama, profile = `EMBEDDING_MODEL` or the default; tests: a stub). A request for a
-profile the embedder does not serve is `invalid_value` at `/embedding_profile`, before any model
-call — vector spaces are never mixed. No embedder, a throw, no answer within 30 s, or a vector
-that is not 384 finite float32 values is `writer_unavailable` (503), reusing `chat.ts`'s
-`mapModelFailure` choice; no code is added to the closed set. Candidates are `status = 'ready'`
-chunks of that profile and `chunker/v1`, flat L2 search with the workspace predicate as a
-prefilter; `distance` is LanceDB's `l2`, the SQUARED Euclidean distance, reported as stored
-(measured: orthogonal unit vectors give 2). Pending and failed chunks have no vector and are
-never candidates. Order is distance ascending, then node id. Keyword and semantic answers are
-never fused (R7: fusing measured worse than either alone in relic's evaluation).
+local Ollama; tests: a stub). The composition names the profile from `EMBEDDING_MODEL`, blank
+or unset meaning `DEFAULT_EMBEDDING_PROFILE = "all-minilm"`, and calls Ollama with that SAME
+name as the model, so the profile a search reports cannot differ from the model that embedded
+its query. A request naming no profile reads the embedder's own; a request for a profile the
+embedder does not serve is `invalid_value` at `/embedding_profile`, before any model call —
+vector spaces are never mixed. No embedder, a throw, no answer within 30 s, or a vector that
+is not 384 finite float32 values is `writer_unavailable` (503), reusing `chat.ts`'s
+`mapModelFailure` choice; no code is added to the closed set. Candidates are
+`status = 'ready'` chunks of that profile and `chunker/v1`, flat L2 search with the workspace
+predicate as a prefilter; `distance` is LanceDB's `l2`, the SQUARED Euclidean distance,
+reported as stored (measured: orthogonal unit vectors give 2). Pending and failed chunks have
+no vector and are never candidates. One table holds several profiles, as built (R7); a chunk
+of another profile is never a candidate. Order is distance ascending, then node id. Keyword and
+semantic answers are never fused (R7: fusing measured worse than either alone in relic's
+evaluation).
 
 **Reason.** `docs/overnight/DECISIONS.md` R7 (#30 part: keyword and semantic retrieval are
-separate methods; the chunk index is `ngram(3,3)` from one shared options module) and R14 (the
-shared `FTS_INDEX_OPTIONS`, the under-3-code-point scan that says so, substring
-post-verification). #30's acceptance "Support ICU keyword and separate semantic retrieval;
-validate canonical lifecycle/permissions after candidate retrieval" is met here with `ngram` in
-place of `icu`, per R7.
+separate methods; the chunk index is `ngram(3,3)` from one shared options module; one table
+holds several embedding profiles) and R14 (the shared `FTS_INDEX_OPTIONS`, the
+under-3-code-point scan that says so, substring post-verification). #30's acceptance "Support
+ICU keyword and separate semantic retrieval; validate canonical lifecycle/permissions after
+candidate retrieval" is met here with `ngram` in place of `icu`, per R7. R8 keeps the legacy
+CLI `search` (default `--mode text`) unchanged; the knowledge search is `--mode
+keyword|semantic`.
 
 **Still NOT claimed.**
 
-- No freshness report (unindexed-row count, pending/failed per profile) and no incremental
-  index optimisation: rows written after the index build are searched unindexed, correct but
-  linearly slower until an operator path rebuilds or optimises.
+- No freshness report (unindexed-row count, pending/failed per profile).
+- A first build over a large pre-existing chunk table, and each refresh rebuild, runs in the
+  owner's serialized queue: publications queued behind it wait for it.
+- BM25 `score` comes from one index shared by every workspace, so its value can depend on other
+  workspaces' text (ranking only; the answer SET is workspace-scoped). The legacy path exposes
+  `score` the same way.
 - No embedding-profile registry: `DEFAULT_EMBEDDING_PROFILE` and the composition's
   profile/model pairing are the seam a registry replaces.
 - Eligibility is today's `getRecallEligibility` rule (no `supersede_log` row naming the node).
   Validity windows and a transport-supplied `as_of` (R7 #29) arrive through the same seam,
   `service.recallEligibleNodeIds.ts`; until then a head outside its validity window is still
-  answered. The per-node call costs several scoped reads per candidate node.
+  answered. The per-node call costs several scoped reads per candidate node; it runs last,
+  only for nodes whose head text already matched.
 - The `reconcileSearchChunks` gaps of sections 6 and 10 are unchanged.
 - No retrieval-quality number (#7).
 
-Proof: `app/server/test/search-chunk-retrieval-grammar.test.ts` (grammar, snippet window),
-`app/server/test/search-chunk-retrieval.test.ts` (real gated dataset: the inside-word Thai case,
-the หลงทาง false positive removed, the 2-code-point scan, retired / superseded / stale-revision /
-other-workspace / pending chunks never surfacing, stable order and bounded limit, the reader
-never building the index while the writer builds and repairs it, squared-L2 ranking over stub
-vectors, profile mismatch and embedder failure), `app/server/test/search-chunk-retrieval-live.test.ts`
-(publish → `indexRevisionChunks` → `writeChunkEmbedding` → both searches over HTTP and MCP,
-same answers on both, cross-workspace credential refused, beta's identical text never in alpha's
-answer), and the `search` block of `app/cli.test.ts`.
+Proof: `app/server/test/search-chunk-retrieval-grammar.test.ts` (grammar, snippet window, the
+pre-filter's seam rules and a cut-position property, the scan predicate, total hit order),
+`app/server/test/search-chunk-retrieval.test.ts` (real gated dataset: the inside-word Thai
+case, the หลงทาง false positive removed, the 2-code-point scan, retired / superseded /
+stale-revision / other-workspace / pending chunks never surfacing, the candidate query itself
+scoped (a spying adapter), stable order and bounded limit, the reader never building the
+index while the writer builds and repairs it, squared-L2 ranking over stub vectors, a node
+indexed only under another profile never answering, the default profile being the
+embedder's, profile mismatch and embedder failure),
+`app/server/test/search-chunk-retrieval-straddle.test.ts` (occurrences cut by a chunk
+boundary, a 1100-character query and its 999-character prefix, on the index and on the
+scan), `app/server/test/search-chunk-retrieval-index-maintenance.test.ts` (a real index-build
+failure answers `writer_unavailable` without poisoning the owner, a replay repairs it, the
+refresh keeps unindexed rows below indexed ones),
+`app/server/test/search-chunk-retrieval-live.test.ts` (publish → `indexRevisionChunks` →
+`writeChunkEmbedding` → both searches over HTTP and MCP, same answers on both, a seam-cut
+occurrence found on both, cross-workspace credential refused, beta's identical text never in
+alpha's answer), and `app/server/test/cli-search.test.ts` (bare `search` stays legacy;
+`--mode keyword|semantic` reaches the registry route).

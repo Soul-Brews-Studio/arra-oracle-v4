@@ -38,7 +38,7 @@ Python LanceModel registries                 local LanceDB, two roots
 | `just/scripts/write_dev_policy.py` | Dev-only auth policy + bearer token writer (`arra-auth/v1` shape) |
 | `just/scripts/run_dev_server.py` | Execs the server as the sole target19 writer, holding the fd-42 gate |
 | `server/src/` | Elysia HTTP/MCP, storage and application behavior. `src/knowledge/registry.ts` is the 46-method target19 method table; `src/mcp/tools.ts` is the MCP catalogue (8 memory + 46 `kb_*` = 54 tools) |
-| `cli.ts`, `cli/` | CLI: 13 legacy memory commands plus `kb <method>` for every registry method, and daily-loop aliases (#31), including `search` over the knowledge tier (#30) |
+| `cli.ts`, `cli/` | CLI: 13 legacy memory commands plus `kb <method>` for every registry method, and daily-loop aliases (#31), including `search --mode keyword\|semantic` over the knowledge tier (#30) |
 | `cli.test.ts`, `server/test/` | Regression tests; isolated fixtures/stubs; run per-kernel with `bun run test:<kernel>` (see Verification below) |
 | ~~`migrate-rs/`, root `migrate-rust/`~~ | Rust experiments, removed — never schema owners. Recoverable from git history |
 | ~~root `index-ts/`, `query-ts/`~~ | Spikes over the removed Rust dataset, removed — no producer, no importer. Recoverable from git history |
@@ -134,14 +134,17 @@ kb_reconcileSearchChunks kb_searchKnowledgeKeyword kb_searchKnowledgeSemantic
 kb_getRevisionAssociations kb_scanDependents kb_reconcileRevisionAssociations
 ```
 
-Knowledge search (#30; `app/docs/contracts/search-chunk-v1.md` §12) answers NODES of the
-target-19 tier at their current head revision, never retired or superseded ones, one hit per
-node: `kb_searchKnowledgeKeyword` uses the same shared `ngram(3,3)` substring contract as the
-legacy path (`match: "ngram"` or `"substring_scan"`), over `search_chunks_v1.text`, whose index
-the writer builds in `indexRevisionChunks`; `kb_searchKnowledgeSemantic` embeds the query with
-the configured Ollama model and ranks READY chunk vectors of one embedding profile by squared
-L2 `distance`. The two are never fused. CLI: `search --bank B --query Q [--mode keyword|semantic]`
-(legacy memories search: `--mode text|vector`).
+Knowledge search (#30; `app/docs/contracts/search-chunk-v1.md`, amendment "overnight R7 (#30
+part) + R14") answers NODES of the target-19 tier at their current head revision, never retired
+or superseded ones, one hit per node: `kb_searchKnowledgeKeyword` uses the same shared
+`ngram(3,3)` substring contract as the legacy path (`match: "ngram"` or `"substring_scan"`),
+checked against the node's whole head text, so an occurrence cut by a chunk boundary is still
+found; its index on `search_chunks_v1.text` is built and refreshed by the writer in
+`indexRevisionChunks`. `kb_searchKnowledgeSemantic` embeds the query with the configured Ollama
+model (`EMBEDDING_MODEL`, whose name is also the default profile) and ranks READY chunk vectors
+of that one embedding profile by squared L2 `distance`. The two are never fused. CLI:
+`search --bank B --query Q --mode keyword|semantic`; a bare `search` stays the legacy memories
+search (`--mode text|vector`, default `text`).
 
 HTTP surface:
 
