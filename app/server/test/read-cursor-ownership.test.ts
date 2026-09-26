@@ -64,20 +64,21 @@ const RUNTIME_EXPORTS = [
   "openPublicationReader",
   "openPublicationWriter",
 ].join(",");
-/** §1: twenty-two on every context WRITER facade (its own eleven plus the
- *  eleven reader methods it spreads in), eleven on every context READER
+/** §1: twenty-three on every context WRITER facade (its own eleven plus the
+ *  twelve reader methods it spreads in, `listTraces` added by K5,
+ *  docs/overnight/V3-PARITY.md §5), twelve on every context READER
  *  facade. */
 const CONTEXT_WRITE_METHODS =
   "advanceReadCursor,appendMessages,createSessionLink,createTrace,getContext," +
   "getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
   "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessions,listTraceHits," +
-  "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
+  "listTraces,reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
   "writeChunkEmbedding";
 const CONTEXT_READ_METHODS =
   "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
   "listConnections,listLifecycleHistory,listMcpCalls,listMessages,listPeers," +
-  "listSearchChunks,listSessionLinks,listSessions,listTraceHits";
+  "listSearchChunks,listSessionLinks,listSessions,listTraceHits,listTraces";
 /** Bundle keys are unchanged by this slice; nested facades never carry close. */
 const CONTEXT_WRITER_KEYS = "close,context,publication,taxonomy";
 const EVIDENCE_WRITER_KEYS = "close,context,evidence,publication,taxonomy";
@@ -404,7 +405,7 @@ afterAll(async () => {
 
 describe.skipIf(!READY)(`context facades across all four factories [${PENDING}]`, () => {
   test(
-    "each writer facade carries twenty-two methods and each reader facade eleven, with exports unchanged",
+    "each writer facade carries twenty-three methods and each reader facade twelve, with exports unchanged",
     async () => {
       const root = await freshDataset("facades");
       // One writer per gated child: closing releases fd 42, so a second open in

@@ -62,7 +62,7 @@ describe("preflight: the required surface", () => {
         expect(Object.keys(bundle.context).sort()).toEqual([
           "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
           "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks", "listSessionLinks", "listSessions",
-          "listTraceHits",
+          "listTraceHits", "listTraces",
         ]);
         expect("close" in bundle.context).toBe(false);
       }
@@ -119,7 +119,7 @@ describe("real persistence: cursors inside the real gate", () => {
           "advanceReadCursor", "appendMessages", "createSessionLink", "createTrace", "getContext",
           "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
           "indexRevisionChunks", "joinSession", "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks",
-          "listSessionLinks", "listSessions", "listTraceHits", "reconcileSearchChunks", "registerPeer", "registerSession",
+          "listSessionLinks", "listSessions", "listTraceHits", "listTraces", "reconcileSearchChunks", "registerPeer", "registerSession",
           "retireNode", "supersedeNode", "writeChunkEmbedding",
         ]);
         expect(parsed.contextHasClose).toBe(false);

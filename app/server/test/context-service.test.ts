@@ -539,7 +539,7 @@ describe("real persistence: registration, shapes and reads", () => {
         "advanceReadCursor", "appendMessages", "createSessionLink", "createTrace", "getContext",
         "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
         "indexRevisionChunks", "joinSession", "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks",
-        "listSessionLinks", "listSessions", "listTraceHits", "reconcileSearchChunks", "registerPeer", "registerSession",
+        "listSessionLinks", "listSessions", "listTraceHits", "listTraces", "reconcileSearchChunks", "registerPeer", "registerSession",
         "retireNode", "supersedeNode", "writeChunkEmbedding",
       ]);
       // Only the BUNDLE closes the owner.
@@ -1101,7 +1101,7 @@ describe("core: the sourced path and the reader bundle", () => {
       expect(parsed.readerContextMethods).toEqual([
         "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
         "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks", "listSessionLinks", "listSessions",
-        "listTraceHits",
+        "listTraceHits", "listTraces",
       ]);
       // A gateless reader works AFTER the writer released its gate.
       expect(parsed.freshReaderPeer.name).toBe("peer-a");

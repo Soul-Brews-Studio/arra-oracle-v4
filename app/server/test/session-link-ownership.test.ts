@@ -24,12 +24,13 @@
 //
 // HOW THE METHOD LISTS WERE OBTAINED (this matters more than the numbers):
 // they were read off `src/publication/service.ts` in this worktree --
-// `createContextReadMethods` returns eleven methods and
-// `createContextWriterService` returns `{...reads}` plus eleven of its own, so
-// the writer union is twenty-two. They were then compared against the accepted
-// read-cursor lane's literals and found identical, which is the expected
-// outcome: this slice adds methods to the existing context reader/writer and
-// no new factory or bundle key, exactly as the contract's "Boundaries reused
+// `createContextReadMethods` returns twelve methods (`listTraces` added by
+// K5, docs/overnight/V3-PARITY.md §5) and `createContextWriterService`
+// returns `{...reads}` plus eleven of its own, so the writer union is
+// twenty-three. They were then compared against the accepted read-cursor
+// lane's literals and found identical, which is the expected outcome: this
+// slice adds methods to the existing context reader/writer and no new
+// factory or bundle key, exactly as the contract's "Boundaries reused
 // unchanged" section requires.
 //
 // Bounded claims: one cooperative local gate, disposable fixtures, pinned Bun
@@ -69,19 +70,20 @@ const RUNTIME_EXPORTS = [
   "openPublicationReader",
   "openPublicationWriter",
 ].join(",");
-/** Twenty-two on every context WRITER facade (its own eleven plus the eleven
- *  reader methods it spreads in), eleven on every context READER facade. */
+/** Twenty-three on every context WRITER facade (its own eleven plus the
+ *  twelve reader methods it spreads in), twelve on every context READER
+ *  facade. `listTraces` is K5 (docs/overnight/V3-PARITY.md §5). */
 const CONTEXT_WRITE_METHODS =
   "advanceReadCursor,appendMessages,createSessionLink,createTrace,getContext," +
   "getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
   "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessions,listTraceHits," +
-  "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
+  "listTraces,reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
   "writeChunkEmbedding";
 const CONTEXT_READ_METHODS =
   "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
   "listConnections,listLifecycleHistory,listMcpCalls,listMessages,listPeers," +
-  "listSearchChunks,listSessionLinks,listSessions,listTraceHits";
+  "listSearchChunks,listSessionLinks,listSessions,listTraceHits,listTraces";
 /** Bundle keys are unchanged by this slice; nested facades never carry close. */
 const CONTEXT_WRITER_KEYS = "close,context,publication,taxonomy";
 const EVIDENCE_WRITER_KEYS = "close,context,evidence,publication,taxonomy";
@@ -304,7 +306,7 @@ afterAll(async () => {
 
 describe("context facades across all four factories", () => {
   test(
-    "each writer facade carries twenty-two methods and each reader facade eleven, with exports unchanged",
+    "each writer facade carries twenty-three methods and each reader facade twelve, with exports unchanged",
     async () => {
       const root = await freshDataset("facades");
       // One writer per gated child: closing releases fd 42, so a second open in
@@ -353,8 +355,10 @@ describe("context facades across all four factories", () => {
       expect(writerMethods).toContain("listSessionLinks");
       expect(readerMethods).toContain("listSessionLinks");
       expect(readerMethods).not.toContain("createSessionLink");
-      // 28: #32 / R9 moved `answerChat` off the writer onto the reader-side chat facade.
-      expect({ writer: writerMethods.length, reader: readerMethods.length }).toEqual({ writer: 28, reader: 16 });
+      // 29: #32 / R9 moved `answerChat` off the writer onto the reader-side chat
+      // facade; K5 (docs/overnight/V3-PARITY.md §5, overnight R18) then added
+      // `listTraces` to both.
+      expect({ writer: writerMethods.length, reader: readerMethods.length }).toEqual({ writer: 29, reader: 17 });
       expect(writerMethods).not.toContain("close");
       expect(readerMethods).not.toContain("close");
     },

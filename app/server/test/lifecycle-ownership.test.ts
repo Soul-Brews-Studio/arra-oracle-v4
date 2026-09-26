@@ -10,11 +10,12 @@
 //
 // Every expected value is authored HERE, derived from the MERGED
 // `src/publication/service.ts` (never handed a count): `createContextWriterService`
-// spreads `createContextReadMethods` (11 methods) and adds its own eleven
+// spreads `createContextReadMethods` (12 methods, `listTraces` added by K5,
+// docs/overnight/V3-PARITY.md §5) and adds its own eleven
 // (`advanceReadCursor`, `appendMessages`, `createSessionLink`, `createTrace`,
 // `indexRevisionChunks`, `joinSession`, `registerPeer`, `registerSession`,
 // `retireNode`, `supersedeNode`, plus the read methods folded in via spread),
-// for 22 total on the writer and 11 on the reader — see
+// for 23 total on the writer and 12 on the reader — see
 // `service.ts:3084` (`createContextReadMethods`), `service.ts:3803-3908`
 // (`createContextWriterService`, `...reads` spread), and `service.ts:4547-4633`
 // (`retireNode`/`supersedeNode`). `evidence` reuses the identical
@@ -65,12 +66,12 @@ const CONTEXT_WRITE_METHODS =
   "getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
   "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessions,listTraceHits," +
-  "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
+  "listTraces,reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
   "writeChunkEmbedding";
 const CONTEXT_READ_METHODS =
   "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
   "listConnections,listLifecycleHistory,listMcpCalls,listMessages,listPeers," +
-  "listSearchChunks,listSessionLinks,listSessions,listTraceHits";
+  "listSearchChunks,listSessionLinks,listSessions,listTraceHits,listTraces";
 const CONTEXT_WRITER_KEYS = "close,context,publication,taxonomy";
 const EVIDENCE_WRITER_KEYS = "close,context,evidence,publication,taxonomy";
 const CONTEXT_READER_KEYS = "context,publication,taxonomy";
@@ -169,7 +170,7 @@ afterAll(async () => {
 
 describe("context facades across all four factories", () => {
   test(
-    "each writer facade carries twenty-two methods (union of reads+writes) and each reader facade eleven, with exports unchanged at nine",
+    "each writer facade carries twenty-three methods (union of reads+writes) and each reader facade twelve, with exports unchanged at nine",
     async () => {
       const fixture = await freshFixture("facades");
       const root = fixture.datasetRoot;
