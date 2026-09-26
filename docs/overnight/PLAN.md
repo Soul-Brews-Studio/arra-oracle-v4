@@ -244,3 +244,19 @@ are part of done.
     runs end to end.
   Verdicts: chat and v3-frame accepted (merged). lifecycle, search-query and sessions are in repair round 3. **search-embed refuted** on the
   digest pin (never re-probed; an unmeasured-then-measured boot flips the profile) → **R20** ruled and repair launched (`wf_be33b8c3-902`).
+- 01:36 Repair round 3 ACCEPTED lifecycle, search-query and sessions; search-embed ACCEPTED under R20 (13 mutations each turned a test red).
+  MERGED lifecycle (PEER_FIELDS dedupe; UI bundle to be rebuilt at the end) and sessions (the Relic adapter's contract-helper reuse reviewed;
+  both peer-field test blocks kept). **search-query merge**: 9 conflicting files, resolved by an Opus merge agent with an independent verifier
+  (`wf_8948aeb7-fd3`, both ACCEPT). Both searches moved to the READER side the way chat did (R9: reads never open a writer); the index step stays
+  on the writer; search now honours #29 validity windows via request time (new boundary test, red without it). Merge `67c176f`.
+- 01:36 **search-embed merge**: 26 conflicting files. My own slip: I relaunched the search-query merge script, whose prompt is hard-coded for the
+  previous branch. Stopped within seconds (`wpi734xox`); merge state verified untouched (26 conflicts, MERGE_HEAD adf28cd). Relaunched the correct
+  workflow (`wf_f1d0675c-352`): embed worker on the writer, freshness on the reader, R9 and R20 intact, full sharded suite required.
+- 01:36 **R21** (search-polish): keyword search returns a rank, not the raw BM25 score, because the FTS index is shared across workspaces and the raw score leaks
+  other workspaces' term statistics (measured 5.65 → 2.38 on the identical hit set). Semantic search without an embedder answers model_unavailable (R9 consistency).
+- 01:36 WAVE 4 launched (`wf_a914689e-621`) from `4b95491`: v3-search (V5 oracle_search/ask/search_chain + the wrong-method-name catalogue bug, Opus) ·
+  v3-reads (V2 read/supersede/verify) · v3-list (K3+K4 listNodes term filter and order + list/reflect/inbox/recap) · search-polish (R21).
+- 02:09 **search-embed merge ACCEPTED** (`89c4707`): R9 intact (query embedder on the reader, `documentEmbedder` + digest probe on the writer), R20 intact,
+  freshness on the reader, embedPendingChunks reachable on HTTP, MCP and CLI; the verifier measured writer owners = 0 during searches on a live gated server.
+  **Full suite 1629 pass / 0 fail, 109/109 files · Python 268 OK.** Known consequence, documented: chunks indexed before this commit under the bare
+  model name belong to a non-active profile and need re-indexing (none exist outside tests).

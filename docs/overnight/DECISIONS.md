@@ -297,6 +297,18 @@ v3". Measured usage on this machine: 709 real v3 tool calls; `oracle_search` 46%
   re-index, which is a deliberate act.
 - **Reverse by**: accepting mixed vectors, which is not recommended.
 
+## R21 · Keyword search returns a rank, not the raw BM25 score; a missing embedder is `model_unavailable`
+
+- **Ruling**:
+  - `searchKnowledgeKeyword` returns an integer `rank` (1..n, a stable order) and no
+    raw score. The FTS index is shared by every workspace, so a raw BM25 score
+    carries corpus statistics from other workspaces. The search-query verifier
+    measured 5.65 → 2.38 for the identical hit set after another workspace's data
+    changed. That is a cross-tenant side channel.
+  - Semantic search with no embedder, or with a failing one, answers
+    `model_unavailable`, the same as chat after R9.
+- **Reverse by**: a per-workspace index, which would make the score local.
+
 ## R12 · Model split tonight (corrects PLAN v0)
 
 - Nat's latest rule (09-21 08:12, c30e0ba2 #14638): Sonnet codes; Opus and Fable plan and check.
