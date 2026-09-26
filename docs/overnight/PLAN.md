@@ -316,3 +316,6 @@ are part of done.
   The verifier confirmed ALPHA's keyword bytes are identical over HTTP and MCP after 24 BETA-only writes.
   **Honest note**: my fixer prompt said R21 forbids BM25-dependent *ordering*; the written ruling only removes the score, and the fixer rightly followed the
   ruling. The residual is measured: BETA-only writes can reorder ALPHA's own hits (A3,A1,A2 → A3,A2,A1). **R22** launched to close it.
+- 03:56 v3-list ACCEPTED after repair (recall goes through one eligibility rule via listNodes `eligible_only`; browse flags `ineligible_reasons`) and MERGED
+  (`87f9f06`; handler union, duplicate imports removed, lifecycle amendments renumbered 10–17). **v3 client acceptance harness: PASS 37 / FAIL 0 / GAP 0 of 37:
+  a recorded real v3 client session runs end to end against v4.** Gate 9 is running.
