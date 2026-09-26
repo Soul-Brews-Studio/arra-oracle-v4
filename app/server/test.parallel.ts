@@ -23,7 +23,7 @@
 // job computes the identical partition from the same inputs, and checks that
 // the groups are disjoint and cover every file, so G jobs together still run
 // each file exactly once. Unset, it is one group: the whole suite.
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { availableParallelism, tmpdir } from "node:os";
 
@@ -149,10 +149,24 @@ const results: ShardResult[] = await Promise.all(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+    // Streamed to the log AS IT ARRIVES (R13): a job cancelled at its
+    // timeout-minutes still uploads what every shard printed so far, which
+    // names the file that was running. The parse below reads out + err.
+    const logPath = join(logDir, `shard-${index}.log`);
+    writeFileSync(logPath, "");
+    const pump = async (stream: ReadableStream<Uint8Array>): Promise<string> => {
+      const decoder = new TextDecoder();
+      let all = "";
+      for await (const chunk of stream) {
+        const piece = decoder.decode(chunk, { stream: true });
+        all += piece;
+        appendFileSync(logPath, piece);
+      }
+      return all + decoder.decode();
+    };
+    const [out, err] = await Promise.all([pump(proc.stdout), pump(proc.stderr)]);
     const exitCode = await proc.exited;
     const text = out + err;
-    writeFileSync(join(logDir, `shard-${index}.log`), text);
     const cpu = proc.resourceUsage()?.cpuTime.total;
     const num = (re: RegExp) => {
       const m = text.match(re);

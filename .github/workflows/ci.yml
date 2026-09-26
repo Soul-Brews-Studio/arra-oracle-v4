@@ -81,11 +81,12 @@ jobs:
       # 114% CPU — almost serial). test.parallel.ts splits the same file list
       # across TEST_SHARDS `bun test` processes with separate TMPDIRs, balanced
       # by test.census.tsv, and fails if any file is missing from the summary.
-      # TEST_SHARDS=4 per DECISIONS.md R13. Risk, not fact: GitHub's standard
-      # Linux runner is 2 vCPU on a private repo (4 vCPU is the public-repo
-      # runner) — 4 shards over 2 cores may see per-test timeouts or a longer
-      # wall time than 4 real cores would give. Unverified on GitHub itself
-      # (never run there yet); revisit TEST_SHARDS if that shows up.
+      # TEST_SHARDS=4 per DECISIONS.md R13. Measured on GitHub (run
+      # 36269825188): the runner has 2 cores, and 4 shards kept them 90% busy
+      # (1757 s CPU over 977 s wall), so more shards here cannot help. Only
+      # more machines would: test.parallel.ts takes TEST_GROUPS/TEST_GROUP for
+      # a matrix, not used, because it costs more Actions minutes than the one
+      # job and the suite now fits well inside timeout-minutes.
       - name: Test — sharded full suite (app/server)
         working-directory: app/server
         env:
