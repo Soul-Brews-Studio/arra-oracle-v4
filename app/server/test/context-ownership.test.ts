@@ -64,10 +64,11 @@ const CONTEXT_READ_METHODS =
 const PUBLICATION_WRITE_METHODS = "getAcceptedHead,listAcceptedHistory,listNodes,publishRevision";
 const PUBLICATION_READ_METHODS = "getAcceptedHead,listAcceptedHistory,listNodes";
 const TAXONOMY_WRITE_METHODS =
-  "createTerm,createVocabulary,getTerm,getVocabulary,lookupTermByName,lookupVocabularyByName," +
-  "renameTerm,reparentTerm,retireTerm,seedReservedVocabularies";
+  // K6+K7 (R18 (K6+K7+V8)): term listing, term usage counts and workspace stats.
+  "createTerm,createVocabulary,getTerm,getVocabulary,knowledgeStats,listTermUsage,listTerms," +
+  "lookupTermByName,lookupVocabularyByName,renameTerm,reparentTerm,retireTerm,seedReservedVocabularies";
 // K2 (R18): the two by-name reads are on every taxonomy reader and writer facade.
-const TAXONOMY_READ_METHODS = "getTerm,getVocabulary,lookupTermByName,lookupVocabularyByName";
+const TAXONOMY_READ_METHODS = "getTerm,getVocabulary,knowledgeStats,listTermUsage,listTerms,lookupTermByName,lookupVocabularyByName"; // K6/K7 (R18 (K6+K7+V8))
 
 /** §6: persistence/reference/state failures reuse the publication envelope, unchanged. */
 const PUB_ERR = "PublicationError arra-publication-error/v1";
