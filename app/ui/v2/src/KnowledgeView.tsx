@@ -129,14 +129,24 @@ export function KnowledgeView({
               error={null}
             />
             <RevisionHistory
-              revisions={k.history}
+              // Newest first, matching this component's own documented
+              // contract ("`revisions` is NOT re-sorted here -- the caller
+              // decides order"). Fix-round finding: this used to pass
+              // `k.history` straight through, which is whatever order the
+              // server sent (oldest first) -- the opposite of what the
+              // component's own comment promised.
+              revisions={sortedHistory}
               headRevisionId={k.snapshotHead ?? k.head?.revision?.id ?? null}
               loading={k.loading}
               error={null}
-              onSelect={() => {
-                /* POC: history is a record to read, not a checkout. Selecting
-                   a past revision would imply a restore this kernel does not
-                   have -- supersede is a new revision, never a rewind. */
+              onSelect={(id) => {
+                // POC: history is a record to read, not a checkout --
+                // selecting a past revision does not restore it, supersede is
+                // a new revision, never a rewind. What selecting DOES do is
+                // pick it as the base ("from") side of the diff below, so
+                // clicking any past entry immediately shows "that revision
+                // vs whatever `to` is" (head, by default).
+                setDiffFromId(id);
               }}
             />
             {sortedHistory.length >= 2 && (
