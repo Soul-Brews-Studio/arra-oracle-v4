@@ -7,8 +7,9 @@ export type RankedChunk = {
   revision_id: string;
   chunk_index: bigint;
   text: string;
-  /** BM25 `_score` (higher is better), squared-L2 `_distance` (lower is
-   *  better), or null for the substring scan, which has no rank. */
+  /** Squared-L2 `_distance` (semantic; lower is better), or null. Keyword
+   *  search keeps no source rank at all: overnight R22 orders its hits by the
+   *  node's own head text, never by the shared index's BM25 `_score`. */
   rank: number | null;
 };
 

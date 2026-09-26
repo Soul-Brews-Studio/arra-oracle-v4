@@ -1,8 +1,12 @@
 import { FTS_CANDIDATE_CEILING, FTS_CANDIDATE_FACTOR } from "./fts.constants";
 
 /**
- * The ONE bounded overfetch loop behind every verified answer, legacy and
- * knowledge alike.
+ * The ONE bounded overfetch loop behind the legacy substring answers and
+ * semantic knowledge search. Knowledge KEYWORD search does not use it
+ * (overnight R22): stopping once `limit` survive would let the source's
+ * order -- BM25, shared by every workspace -- choose which matches are
+ * answered, so that path reads every candidate up to `FTS_CANDIDATE_CEILING`
+ * in one read and orders them itself (`service.searchKnowledgeKeyword.ts`).
  *
  * `round(fetch)` asks its source for at most `fetch` candidates and returns
  * how many it actually got plus the ones that survived its own verification

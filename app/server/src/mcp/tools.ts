@@ -154,11 +154,15 @@ const SEARCH_NOTES: Readonly<Record<string, string>> = Object.freeze({
     " current head revision whose text (title and body, across chunk boundaries) contains the query," +
     ' case-insensitive; retired and superseded nodes are excluded. match is "ngram" (trigram index, every hit' +
     ' re-checked as a substring) or "substring_scan" (a query under 3 characters, or no index built yet); a' +
-    ' hit with match "substring_scan" in an ngram answer was found at a chunk seam. hits[].rank is this' +
-    " answer's 1-based position, never a raw score, so no raw BM25 number ever names another workspace's term" +
-    " statistics; the trigram index's BM25 order itself is still shared across every workspace, so another" +
-    " workspace's writes can still change which of this workspace's own nodes ranks first, and therefore which" +
-    " ones a bounded limit returns." +
+    ' hit with match "substring_scan" in an ngram answer was found at a chunk seam. Hits are ordered by this' +
+    " workspace's own data only: more occurrences of the query in the node's text first, then the most recently" +
+    " accepted revision, then node id; hits[].rank is the 1-based position in that order, never a raw score." +
+    " The shared trigram index only picks candidates, and all of them are read and ordered before limit" +
+    " applies, up to 4096 candidate chunks. A candidate is ANY chunk of this workspace sharing one" +
+    " 3-character sequence with the query, including chunks of old revisions, of retired or superseded nodes" +
+    " and of every embedding profile, so it can far outnumber the answers. Past 4096 candidate chunks, which" +
+    " ones are considered depends on the shared index's scoring, so other workspaces' writes and exact score" +
+    " ties can change the answer." +
     " Never fused with semantic results.",
   searchKnowledgeSemantic:
     " Semantic recall: payload {workspace_name, query, limit?, embedding_profile?} (profile defaults to the" +

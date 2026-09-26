@@ -10,8 +10,11 @@ import type { KernelHit } from "./search.retrieve";
  *
  * An entry is SHOWN (snippet, match) as the first query word it holds found
  * it, not the word where it ranked best: its place in another word's answer
- * moves whenever an unrelated entry is written (BM25 statistics, node-id
- * ties), and the same entry must not change its snippet for that.
+ * moves whenever an unrelated entry of this bank is written (one holding that
+ * word more often, or accepted later -- the kernel's order, overnight R22),
+ * and the same entry must not change its snippet for that. Each word's
+ * occurrences are counted by the kernel under R14's own rule, one word per
+ * call, so the merge never re-counts anything.
  *
  * This merges keyword answers with keyword answers only; a semantic answer is
  * never merged into it (R7: never fused).

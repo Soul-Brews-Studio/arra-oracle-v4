@@ -40,6 +40,10 @@ export const FTS_MIN_QUERY_CODE_POINTS = FTS_INDEX_OPTIONS.ngramMinLength;
  * to give, the fetch doubles, never past CEILING. A true match buried under
  * more than CEILING over-matching candidates is therefore not returned --
  * that is the bound, stated rather than hidden.
+ *
+ * Knowledge keyword search (overnight R22) skips the doubling: it reads up to
+ * CEILING candidate chunks at once and orders all of them, so CEILING is also
+ * where its workspace-local order ends (`search-chunk-v1.md` section 18.3).
  */
 export const FTS_CANDIDATE_FACTOR = 4;
 export const FTS_CANDIDATE_CEILING = 4096;

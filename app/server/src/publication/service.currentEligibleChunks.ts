@@ -1,7 +1,7 @@
-import { containsFolded } from "../fts/fts";
+import { containsFolded, countFolded } from "../fts/fts";
 import { failPublication } from "./errors";
 import { encodeNodeRow } from "./rows";
-import { chunkSourceText, type HitHead, type RankedChunk } from "./search-chunk";
+import { chunkSourceText, keywordHitOrder, type HitHead, type RankedChunk } from "./search-chunk";
 import { quote } from "./storage";
 import { NODE_REVISIONS, NODES } from "./service.constants";
 import { contextScope } from "./service.contextScope";
@@ -16,8 +16,10 @@ const batches = (ids: readonly string[]) =>
   Array.from({ length: Math.ceil(ids.length / ID_BATCH) }, (_, i) => ids.slice(i * ID_BATCH, (i + 1) * ID_BATCH));
 const unique = (ids: readonly string[]) => [...new Set(ids)];
 
-/** What one request learned about a head revision. */
-type HeadRevision = { title: string; text: string | undefined; matches: boolean };
+/** What one request learned about a head revision. With a query, a matching
+ *  head also carries overnight R22's ordering keys: its occurrence count and
+ *  its acceptance instant. */
+type HeadRevision = { title: string; text: string | undefined; matches: boolean; occurrences?: number; accepted_at?: bigint };
 
 /**
  * Keep only candidate chunks that ARE a current answer (#30 acceptance: "stale
@@ -34,7 +36,12 @@ type HeadRevision = { title: string; text: string | undefined; matches: boolean 
  *    retired and superseded nodes never surface, nor (#29 slice B) an
  *    inactive node or one outside its validity window at `requestTimeMs`,
  *    ONE `as_of` for the whole request. Asked last, and only for nodes that
- *    survived 1 and 2, because it costs several reads per node;
+ *    survived 1 and 2, because it costs several reads per node. With
+ *    `firstEligible` (keyword search, which has a query) it is asked only
+ *    down overnight R22's order (`keywordHitOrder`, over the keys read in 2),
+ *    until that many nodes pass, and only those nodes are kept: the same
+ *    nodes as judging every one and keeping the first `firstEligible`, at a
+ *    cost bounded by the limit rather than by the candidate count;
  * 4. every read is scoped to `workspace`, so a chunk can only resolve against
  *    its own workspace's nodes. The candidate query is scoped too; this is
  *    the second belt, not the first.
@@ -44,7 +51,10 @@ type HeadRevision = { title: string; text: string | undefined; matches: boolean 
  *
  * Returns a filter for ONE search request: each call takes that round's
  * candidates and answers the survivors plus, for each surviving node, its head
- * `{revision_id, title}` (and `text`, with a query). What it learns about a
+ * `{revision_id, title}` -- and, with a query, `text` plus overnight R22's
+ * ordering keys, read from the same head row: `occurrences` (`countFolded`
+ * over that text) and `accepted_at` (the row's raw `created_at` microseconds,
+ * the instant `publishRevision` accepted it). What it learns about a
  * node (head, text match, eligibility, title) is remembered across the
  * request's overfetch rounds, so nothing is looked up twice. A duplicated node
  * or head row is `integrity_failure`, never a pick.
@@ -54,7 +64,7 @@ export function currentEligibleChunks(
   workspace: string,
   query: string | null,
   requestTimeMs?: number,
-): (chunks: readonly RankedChunk[]) => Promise<{ chunks: RankedChunk[]; heads: Map<string, HitHead> }> {
+): (chunks: readonly RankedChunk[], firstEligible?: number) => Promise<{ chunks: RankedChunk[]; heads: Map<string, HitHead> }> {
   const scope = contextScope(workspace);
   const memo = {
     /** node id -> captured head revision id, or null (no such node / no head). */
@@ -64,9 +74,9 @@ export function currentEligibleChunks(
     /** node id -> recall-eligible (the #29 seam's answer). */
     eligible: new Map<string, boolean>(),
   };
-  const columns = query === null ? ["id", "node_id", "title"] : ["id", "node_id", "title", "body"];
+  const columns = query === null ? ["id", "node_id", "title"] : ["id", "node_id", "title", "body", "created_at"];
 
-  return async (chunks) => {
+  return async (chunks, firstEligible) => {
     const unknownNodes = unique(chunks.map((chunk) => chunk.node_id)).filter((id) => !memo.heads.has(id));
     for (const batch of batches(unknownNodes)) {
       const rows = await reader.query(NODES, `${scope} AND id IN (${inList(batch)})`);
@@ -90,22 +100,54 @@ export function currentEligibleChunks(
       );
       for (const row of rows) {
         if (typeof row.id !== "string" || typeof row.title !== "string") failPublication("integrity_failure", "");
-        if (query !== null && typeof row.body !== "string") failPublication("integrity_failure", "");
+        // `created_at` is timestamp[us] NOT NULL, decoded raw as a bigint.
+        if (query !== null && (typeof row.body !== "string" || typeof row.created_at !== "bigint")) failPublication("integrity_failure", "");
         // A head row that belongs to another node, or appears twice, is corrupt.
         if (memo.revisions.has(row.id) || memo.heads.get(row.node_id as string) !== row.id) failPublication("integrity_failure", "");
         const text = query === null ? undefined : chunkSourceText(row.title, row.body as string);
         const matches = text === undefined || containsFolded(text, query!);
-        // Only a matching head's text is kept: it is the hit's snippet source.
-        memo.revisions.set(row.id, { title: row.title, text: matches ? text : undefined, matches });
+        // Only a matching head's text is kept: it is the hit's snippet source,
+        // and (with its acceptance instant) what the hit is ordered by.
+        memo.revisions.set(row.id, {
+          title: row.title,
+          text: matches ? text : undefined,
+          matches,
+          ...(text !== undefined && matches ? { occurrences: countFolded(text, query!), accepted_at: row.created_at as bigint } : {}),
+        });
       }
       for (const id of batch) if (!memo.revisions.has(id)) failPublication("integrity_failure", "");
     }
     const matching = atHead.filter((chunk) => memo.revisions.get(chunk.revision_id)!.matches);
 
-    const unjudged = unique(matching.map((chunk) => chunk.node_id)).filter((id) => !memo.eligible.has(id));
-    const eligible = await recallEligibleNodeIds(reader, workspace, unjudged, requestTimeMs);
-    for (const id of unjudged) memo.eligible.set(id, eligible.has(id));
-    const current = matching.filter((chunk) => memo.eligible.get(chunk.node_id) === true);
+    const judge = async (ids: readonly string[]) => {
+      const unjudged = ids.filter((id) => !memo.eligible.has(id));
+      const eligible = await recallEligibleNodeIds(reader, workspace, unjudged, requestTimeMs);
+      for (const id of unjudged) memo.eligible.set(id, eligible.has(id));
+      return ids.filter((id) => memo.eligible.get(id) === true);
+    };
+    const nodes = unique(matching.map((chunk) => chunk.node_id));
+    let keep: Set<string>;
+    if (firstEligible === undefined) {
+      keep = new Set(await judge(nodes));
+    } else {
+      // R22's keys for a matching head were read with its text; one without
+      // them (no query) is a caller bug, never a guess.
+      const ordered = nodes
+        .map((node_id) => {
+          const { occurrences, accepted_at } = memo.revisions.get(memo.heads.get(node_id)!)!;
+          if (occurrences === undefined || accepted_at === undefined) failPublication("integrity_failure", "");
+          return { node_id, occurrences, accepted_at };
+        })
+        .sort(keywordHitOrder)
+        .map((key) => key.node_id);
+      keep = new Set();
+      for (let at = 0; at < ordered.length && keep.size < firstEligible; ) {
+        const batch = ordered.slice(at, at + firstEligible - keep.size);
+        at += batch.length;
+        for (const id of await judge(batch)) keep.add(id);
+      }
+    }
+    const current = matching.filter((chunk) => keep.has(chunk.node_id));
 
     const heads = new Map<string, HitHead>();
     for (const chunk of current) {
@@ -114,6 +156,7 @@ export function currentEligibleChunks(
         revision_id: chunk.revision_id,
         title: revision.title,
         ...(revision.text === undefined ? {} : { text: revision.text }),
+        ...(revision.occurrences === undefined ? {} : { occurrences: revision.occurrences, accepted_at: revision.accepted_at! }),
       });
     }
     return { chunks: current, heads };

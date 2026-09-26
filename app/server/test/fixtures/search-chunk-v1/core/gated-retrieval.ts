@@ -19,10 +19,26 @@
 //   harness              -> test-side dataset inspection/surgery on
 //                           search_chunks_v1's rows and indexes (never
 //                           product code)
+//
+// The writer's clock reads `payload.clockMs` (one fixed instant) unless an op
+// carries its own `clockMs`: from that op on, the clock reads that instant.
+// That is how a test gives two publications different acceptance times
+// (overnight R22's second ordering key) without a wall clock.
+//
+// A payload too large for argv arrives one of two ways, both read here: the
+// harness spill (`readArgPayload`, ci-green / R13: Linux caps one argv string
+// at 128 KiB) or R22's own `@<path>` (the candidate-ceiling case writes
+// megabytes of text; the test owns and removes that file).
+import { ARGFILE_PREFIX } from "../../../helpers/argv.constants";
 import { readArgPayload } from "../../../helpers/argv.readArgPayload";
-const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
-  ops: Array<{ label: string; facade: "publication" | "context" | "reader" | "reader_other" | "harness"; method: string; request?: any }>;
+const [, , datasetRoot, payloadArg] = Bun.argv;
+// The harness prefix also starts with "@", so it is checked first.
+const payloadJson =
+  payloadArg?.startsWith("@") && !payloadArg.startsWith(ARGFILE_PREFIX)
+    ? await Bun.file(payloadArg.slice(1)).text()
+    : readArgPayload(payloadArg);
+const payload = JSON.parse(payloadJson ?? "{}") as {
+  ops: Array<{ label: string; facade: "publication" | "context" | "reader" | "reader_other" | "harness"; method: string; request?: any; clockMs?: number }>;
   revisionIds: string[];
   clockMs?: number;
   embedderProfile: string;
@@ -51,9 +67,10 @@ const embedder = {
 };
 
 let revisionIndex = 0;
+let nowMs = payload.clockMs ?? 1_758_412_800_000;
 const writer = await openEvidenceWriter(datasetRoot!, {
   newRevisionId: () => payload.revisionIds[revisionIndex++] ?? `fallback${String(revisionIndex).padStart(13, "0")}`,
-  clock: () => payload.clockMs ?? 1_758_412_800_000,
+  clock: () => nowMs,
   sourceNamespace: null,
 });
 const reader = await openEvidenceReader(datasetRoot!, { embedder });
@@ -148,24 +165,36 @@ const harness: Record<string, (request: any) => Promise<unknown>> = {
   },
   /** Run searchKnowledgeKeyword over a spying adapter and report every
    *  CANDIDATE chunk's node id -- what the candidate query itself returned,
-   *  before any head/eligibility/workspace re-check. */
+   *  before any head/eligibility/workspace re-check -- plus each candidate
+   *  read in order (`reads`: which source, how many rows it asked for, how
+   *  many came back) and which nodes the #29 eligibility seam judged, in
+   *  order (`judged`: `evaluateNodeEligibility` reads its node by one id,
+   *  `AND id = '<id>'`; the head check reads nodes by `IN (...)`). */
   async spyKeyword(request) {
     const base = makeAdapter(await openPrivateConnection(datasetRoot!), () => {});
     const candidates: string[] = [];
-    const record = (rows: Record<string, unknown>[]) => {
+    const reads: { source: "index" | "scan"; asked: number; got: number }[] = [];
+    const judged: string[] = [];
+    const record = (source: "index" | "scan", asked: unknown, rows: Record<string, unknown>[]) => {
+      reads.push({ source, asked: asked as number, got: rows.length });
       for (const row of rows) candidates.push(row.node_id as string);
       return rows;
     };
     const spy = {
       ...base,
-      fullTextSearchChunks: async (...args: unknown[]) => record(await base.fullTextSearchChunks(...args)),
+      fullTextSearchChunks: async (...args: unknown[]) => record("index", args[2], await base.fullTextSearchChunks(...args)),
       orderedProjection: async (table: string, ...rest: unknown[]) => {
         const rows = await base.orderedProjection(table, ...rest);
-        return table === "search_chunks_v1" ? record(rows) : rows;
+        return table === "search_chunks_v1" ? record("scan", rest[3], rows) : rows;
+      },
+      query: async (table: string, predicate: string, ...rest: unknown[]) => {
+        const one = table === "nodes" ? / AND id = '([^']*)'$/.exec(predicate) : null;
+        if (one !== null) judged.push(one[1]!);
+        return base.query(table, predicate, ...rest);
       },
     };
     const value = await searchKnowledgeKeyword(spy, new TextEncoder().encode(JSON.stringify(request)));
-    return { value, candidates: [...new Set(candidates)].sort() };
+    return { value, candidates: [...new Set(candidates)].sort(), reads, judged };
   },
 };
 
@@ -183,6 +212,7 @@ const describeError = (error: unknown): Record<string, unknown> => {
 const results: Record<string, unknown> = {};
 try {
   for (const op of payload.ops) {
+    if (typeof op.clockMs === "number") nowMs = op.clockMs;
     try {
       if (op.facade === "harness") {
         results[op.label] = { ok: true, value: await harness[op.method]!(op.request) };

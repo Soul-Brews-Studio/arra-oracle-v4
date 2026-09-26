@@ -21,6 +21,7 @@ export {
 } from "./fts.constants";
 export type { FtsMatch, FtsResult } from "./fts.constants";
 export { containsFolded } from "./fts.containsFolded";
+export { countFolded } from "./fts.countFolded";
 export { ensureFtsIndexOn } from "./fts.ensureFtsIndexOn";
 export { escapeLike } from "./fts.escapeLike";
 export { ftsIndexConfig } from "./fts.ftsIndexConfig";

@@ -139,10 +139,13 @@ part) + R14") answers NODES of the target-19 tier at their current head revision
 or superseded ones, one hit per node: `kb_searchKnowledgeKeyword` uses the same shared
 `ngram(3,3)` substring contract as the legacy path (`match: "ngram"` or `"substring_scan"`),
 checked against the node's whole head text, so an occurrence cut by a chunk boundary is still
-found; its index on `search_chunks_v1.text` is built and refreshed by the writer in
-`indexRevisionChunks`. `kb_searchKnowledgeSemantic` embeds the query with the configured Ollama
-model (`EMBEDDING_MODEL`, whose name is also the default profile) and ranks READY chunk vectors
-of that one embedding profile by squared L2 `distance`. The two are never fused. CLI:
+found; hits are ordered from the workspace's own rows (occurrences of the query, then the most
+recently accepted head, then node id; amendment "overnight R22"), never by the shared index's
+BM25, which only picks the candidates (every one is read, up to 4096 candidate chunks); its
+index on `search_chunks_v1.text` is built and refreshed by the writer in `indexRevisionChunks`.
+`kb_searchKnowledgeSemantic` embeds the query with the configured Ollama model
+(`EMBEDDING_MODEL`, whose name is also the default profile) and ranks READY chunk vectors of that
+one embedding profile by squared L2 `distance`. The two are never fused. CLI:
 `search --bank B --query Q --mode keyword|semantic`; a bare `search` stays the legacy memories
 search (`--mode text|vector`, default `text`).
 
