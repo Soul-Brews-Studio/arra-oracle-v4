@@ -257,15 +257,25 @@ This section amends §1's `peer_name:W|null` and §2's fresh-path steps. The tex
 
 **Evidence.** `app/server/test/workspace-isolation-supersede.test.ts` covers a beta-only peer and a peer that exists nowhere, both refused from alpha and both leaving history empty; alpha's own peer is accepted and replays idempotently; `null` is accepted; and a refused operation id is reusable. The test was red on `aff9c65` (the beta-only peer was accepted). `lifecycle-precision.test.ts` previously named an unregistered `"peer-a"` and now names the fixture's seeded alpha peer.
 
-## Amendment 2026-09-26 (overnight R7 (#29 part))
+**Not changed here.** When this slice was written, lifecycle had no transport. Section 10 above (the expose-13 slice, merged first into `v4/overnight-26sep`) added the four registry entries, and its tests cover transport-level authorization. This section only adds the workspace check on `peer_name`, and that check applies on every transport, because it runs in the kernel.
+
+## 12. Amendment 2026-09-26 (overnight R7 (#29 part))
+
+*(Fix round, 2026-09-26: this section was originally spliced in BEFORE §11's own closing
+"Not changed here" paragraph above, which pushed that paragraph to the end of the file, after
+this section's own content, and left §11 appearing to end without it. It is now properly
+appended after §11, as the file's next numbered section. No wording in §11's paragraph or in
+this section's own text changed -- only its position moved back to where it belongs.)*
 
 Implements `docs/overnight/DECISIONS.md` R7's `#29` bullets on top of R7/R8's exposure amendment
 (§10) and the #10 peer-reference amendment (§11): the centralized normal-read eligibility rule
 DESIGN.md §9 describes, `listNodes`'s default view, and the terminal-successor supersede
 question the #29 reopen comment and `.tmp/understand/analysis-29.json`'s fix plan B named as
-still open after exposure alone. Nothing in §§1-11 above is changed; this section is additive.
+still open after exposure alone. §§1-4 and §§6-11 above are unchanged. **§5 is not**: point 2
+below replaces §5's definition of `eligible`, it does not merely add to it -- see point 2 for
+exactly what changed and why.
 
-**1. Centralized eligibility.** New module `app/server/src/publication/service.evaluateEligibility.ts`
+**1. Centralized eligibility.** New module `app/server/src/publication/service.evaluateNodeEligibility.ts`
 exports `evaluateNodeEligibility(reader, workspace, nodeId, asOf)`, which resolves the node, its
 head revision and its own terminal `supersede_log` event (if any) and returns
 `{eligible, reasons, head_revision_id, lifecycle}`. `reasons` is a subset of `["retired",
@@ -276,20 +286,42 @@ decided here). The validity window is HALF-OPEN: valid AT `valid_from`, no longe
 after) `valid_to`. The module is write-free (AC4): it only ever reads `nodes`, `node_revisions`
 and `supersede_log`.
 
-The same module exports the batch helper `terminalEventsFor(reader, workspace, ids[])`: one
-`supersede_log` query per PAGE (`old_id IN (...)`), not one per node, shared by `listNodes`,
-`getAcceptedHead`, `listAcceptedHistory`, `supersedeNode`'s successor check, `reconcileSearchChunks`
-and `indexRevisionChunks`.
+A sibling module, `app/server/src/publication/service.terminalEventsFor.ts`, exports the batch
+helper `terminalEventsFor(reader, workspace, ids[])`: one `supersede_log` query per PAGE (`old_id
+IN (...)`), not one per node, shared by `listNodes`, `getAcceptedHead`, `listAcceptedHistory`,
+`supersedeNode`'s successor check, `reconcileSearchChunks` and `indexRevisionChunks`.
+`evaluateNodeEligibility` itself calls it. *(Fix round correction, 2026-09-26: both functions
+originally lived together in one `service.evaluateEligibility.ts` file, which broke this
+package's "one exported function per file, named after the file" rule -- the only file under
+`publication/service.*.ts` that did. Split into the two files named above; no behaviour
+changed.)*
 
-**2. `getRecallEligibility` gains `reasons`, additively.** `eligible` and `witness_event_id` keep
-their exact §5 meaning; `reasons` is the same array `evaluateNodeEligibility` returns. Readers take
-no clock (§4, unchanged): `evaluateNodeEligibility` and `getRecallEligibility` never call a system
-clock themselves. The validity-window `as_of` is a plain argument the caller supplies --
+**2. `getRecallEligibility` gains `reasons`; `eligible` REPLACES its §5 meaning, `witness_event_id`
+does not.** `witness_event_id` keeps its exact §5 meaning. `eligible` does **not**: fix round
+correction, a prior version of this section claimed it did, which is false. §5 defines `eligible`
+as solely "no `supersede_log` row exists with `old_id = node_id`" -- a node "that has itself never
+been superseded or retired is eligible regardless of" anything else. This section replaces that
+definition with DESIGN.md §9's five predicates: a node with `is_active: false`, or whose head falls
+outside its `[valid_from, valid_to)` window at `as_of`, is now ineligible even with zero
+`supersede_log` rows. This is a disclosed, deliberate behaviour change, not an additive one --
+`reasons` is the additive part, `eligible`'s widened meaning is not.
+
+Readers still take no clock in the sense §4 states it (the kernel is never the thing that SAMPLES
+one): `evaluateNodeEligibility` never calls `Date.now()`, on any path. **`getRecallEligibility`
+does**, on one path -- fix round correction, a prior version of this section (and matching source
+comments in `service.evaluateEligibility.ts`, now split into `service.terminalEventsFor.ts` /
+`service.evaluateNodeEligibility.ts`, and in `registry.ts`) claimed neither ever does, which is
+false. The validity-window `as_of` is a plain argument the caller supplies --
 `app/server/src/knowledge/registry.ts`, the one dispatch point HTTP and MCP both call through,
-supplies real request time (`Date.now()`) on every live call, which is the ONE place a clock enters
-this kernel's read path. `service.getRecallEligibility.ts`'s `requestTimeMs` parameter stays
-optional purely so a handful of pre-existing generic in-process test harnesses (one argument per
-call) keep working; none of them assert on `reasons`, so the difference is invisible to them.
+supplies real request time (`Date.now()`) explicitly on every live call, which is the intended one
+place a clock enters this kernel's read path. But `service.getRecallEligibility.ts`'s own
+`requestTimeMs` parameter is optional, with `const asOf = requestTimeMs ?? Date.now();` -- so
+`getRecallEligibility` itself also calls `Date.now()` whenever a caller omits the parameter. That
+fallback exists purely so a handful of pre-existing generic in-process test harnesses (one argument
+per call) keep working; none of them assert on `reasons`, so the difference is invisible to them,
+and every LIVE call goes through the registry's explicit value, never the fallback -- but the
+fallback is real code that runs, not a hypothetical, and this document should not have said
+otherwise.
 
 **3. `getAcceptedHead` / `listAcceptedHistory` gain `lifecycle`, additively.** `null` when the node
 carries no terminal event, else `{event_id, kind: "retired"|"superseded", new_id, new_revision_id,
@@ -351,6 +383,21 @@ byte-identical replay of a request accepted before the successor became terminal
 rule §2 states for the pin and the forward-chain walk. `LifecycleWriteOutcome`'s conflict `reason`
 union gains `"successor_terminal"` alongside the three existing values.
 
+*Fix round correction, 2026-09-26.* The first version of this check lived entirely in
+`service.supersedeNode.ts`, running before `writeLifecycleEventFresh` was ever called -- meaning
+it ran before THIS request's own `/node_id` and `/peer_name` even resolved, and broke §11's frozen
+precedence in exactly the way §11 states for peer references: "a caller naming a node [or peer]
+that does not exist is told there is a conflict, as if the node existed." It now runs inside
+`writeLifecycleEventFresh`, immediately after the `/peer_name` check §11 describes -- so a
+nonexistent `/node_id`, a `/peer_name` that resolves nowhere, or a `/peer_name` that resolves only
+in another workspace are each still told their OWN problem first. This does **not** reorder
+`successor_terminal` relative to `stale_pin`/`already_terminal`: `successor_terminal` still runs
+BEFORE those two, exactly as it always has (the successor's own pre-existing `/new_node_id`
+existence and `/new_revision_id` match checks have likewise always run before this node's
+`stale_pin`, unchanged) -- only its position relative to `/node_id` and `/peer_name` moved. See
+`app/server/test/lifecycle-supersede-terminal-order.test.ts`, red against the original placement,
+green after the move.
+
 **Not changed here.** §§1-3 (identity, replay, conflict classification), §7 (the closed error code
 set: no new thrown code was needed; every new refusal above is a returned value), and §8's
 disclosed gaps (no ownership/recovery/precision lanes for this kernel) all stand exactly as before.
@@ -366,4 +413,14 @@ true`). `app/server/test/list-nodes-service.test.ts`, `list-pagination-isolation
 `lifecycle-ownership.test.ts` and `search-chunk-recovery.test.ts` were updated for the new required
 key and the two additive fields their existing assertions pin exactly.
 
-**Not changed here.** When this slice was written, lifecycle had no transport. Section 10 above (the expose-13 slice, merged first into `v4/overnight-26sep`) added the four registry entries, and its tests cover transport-level authorization. This section only adds the workspace check on `peer_name`, and that check applies on every transport, because it runs in the kernel.
+**Fix round evidence, 2026-09-26.** `lifecycle-supersede-terminal-order.test.ts` (new): red against
+the original successor_terminal placement (a nonexistent `/node_id` returned `successor_terminal`
+instead of `invalid_reference`), green after the move described under point 6 above; also proves
+`successor_terminal` still legitimately outranks `stale_pin` once the reference issues are ruled
+out. `lifecycle-eligibility-window-boundary.test.ts` (new): pins the exact `[valid_from, valid_to)`
+half-open boundary instants (a mutation flipping either comparison operator now fails), and the new
+non-finite-`as_of` guard in `service.evaluateNodeEligibility.ts` (red without the guard: a `NaN`
+`as_of` silently read as eligible; green with it: refused `invalid_request`).
+`lifecycle-eligibility-ac1.test.ts` (new): #29 AC1, a `correction`-typed node and a `corrects` link
+into another node's accepted revision are ordinary content, not lifecycle events, and change
+nothing about eligibility -- untracked by any test before this round.
