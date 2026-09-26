@@ -37,7 +37,8 @@
     "test:trace": "bun test test/trace-*.test.ts",
     "test:transport": "bun test test/transport-*.test.ts",
     "test:ui-scope": "bun test test/ui-scope.test.ts",
-    "test:workspace-isolation": "bun test test/workspace-isolation*.test.ts"
+    "test:workspace-isolation": "bun test test/workspace-isolation*.test.ts",
+    "test:parallel": "bun test.parallel.ts"
   },
   "dependencies": {
     "@elysiajs/static": "^1.4.10",
