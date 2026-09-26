@@ -17,6 +17,8 @@ export type StepOutcome = {
   args?: unknown;
   list?: { status: number; names: string[] };
   call?: Wire;
+  /** An alias step's canonical tool, called right after it (`compareToCanonicalCall`). */
+  canonical?: Wire;
   unknown?: Wire;
   spawnCalls?: number;
 };
@@ -116,10 +118,16 @@ function checkStep(step: Step, run: SessionRun, session: SessionScript): string[
 
   if (a.kind === "alias_matches") {
     if (a.neverListed && run.lists[step.as]?.names.includes(step.tool!)) fail(`alias ${step.tool} is listed`);
-    const prior = valueOf(stepByRef(session, run, a.compareToStepRef!)?.outcome.call) as { results?: unknown[] } | undefined;
+    // Same-state comparison when asked; else a NAMED earlier step (with no
+    // ref named, `stepByRef` would find the alias step itself: a vacuous match).
+    const against = a.compareToCanonicalCall ? `${a.aliasOf} called right after it` : a.compareToStepRef;
+    if (against === undefined) return [...errors, "alias_matches names nothing to compare with"];
+    const other = a.compareToCanonicalCall ? out.canonical : stepByRef(session, run, a.compareToStepRef!)?.outcome.call;
+    if (other?.status !== 200 || isToolError(other)) fail(`${against}: HTTP ${other?.status} ${show(valueOf(other))}`);
+    const prior = valueOf(other) as { results?: unknown[] } | undefined;
     const results = (value as { results?: unknown[] } | undefined)?.results;
     if (!Array.isArray(results) || results.length === 0) fail("alias returned no results (a vacuous match proves nothing)");
-    if (!same(results, prior?.results)) fail(`alias results differ from ${a.compareToStepRef}`);
+    if (!same(results, prior?.results)) fail(`alias results differ from ${against}`);
     return errors;
   }
 

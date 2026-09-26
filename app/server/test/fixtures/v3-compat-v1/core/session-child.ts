@@ -118,7 +118,7 @@ for (const who of Object.keys(TOKEN) as As[]) {
   lists[who] = { status: wire.status, names: names(wire) };
 }
 
-type Outcome = { args?: unknown; list?: { status: number; names: string[] }; call?: Wire; unknown?: Wire; spawnCalls?: number };
+type Outcome = { args?: unknown; list?: { status: number; names: string[] }; call?: Wire; canonical?: Wire; unknown?: Wire; spawnCalls?: number };
 const steps: Record<number, Outcome> = {};
 
 for (const step of session.steps as Step[]) {
@@ -148,6 +148,11 @@ for (const step of session.steps as Step[]) {
   }
   try {
     outcome.call = await rpc(step.as, { method: "tools/call", params: { name: step.tool, arguments: args } }, headers);
+    // An alias is judged against its canonical tool at the SAME dataset state:
+    // the same principal, arguments and headers, with nothing written between.
+    if (step.assert.compareToCanonicalCall && step.assert.aliasOf) {
+      outcome.canonical = await rpc(step.as, { method: "tools/call", params: { name: step.assert.aliasOf, arguments: args } }, headers);
+    }
     if (step.assert.compareToUnknownTool) {
       outcome.unknown = await rpc(step.as, {
         method: "tools/call",

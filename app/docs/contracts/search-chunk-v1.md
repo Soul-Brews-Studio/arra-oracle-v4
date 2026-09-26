@@ -758,3 +758,11 @@ Known limits, disclosed rather than fixed:
   starts between the probe and the embed call still consumes attempts.
 - `text_index` is non-null exactly when the caller's workspace owns every chunk row, which
   tells a `content:read` caller whether any other workspace has indexed chunks (one bit).
+
+## Amendment 2026-09-26 (overnight R18 (V5) + R7 + R14)
+
+v3-search slice (Claude Opus 5.5, AI); rulings in `docs/overnight/DECISIONS.md` R18 (V5, D3), R7, R14. Section 13 stands; this adds its first adapter consumer.
+
+- The v3-compatible tools `oracle_search`, `oracle_ask` and `oracle_search_chain` (`app/server/src/mcp/legacy-v3/`) reach `searchKnowledgeKeyword`/`searchKnowledgeSemantic` through the same registry entries, parser and eligibility as HTTP and `kb_*`. `oracle_search` and `oracle_ask` consume answer ORDER only, never a `score` or `distance` value, so a change to the keyword `score` field does not change their contract. `oracle_search_chain` does read the semantic `distance` (squared L2 as stored, section 13): its v3 `score` is `1/(1+distance)`, a hop whose best falls under half the previous hop's stops the chain, and each result carries `distance`. A change to that field's meaning changes this tool.
+- Both searches (and the two chat methods) exist on the reader only, as section 13 says. The adapter's `kb()` sends them to a reader even inside a `content:write` tool, from its own list (`mcp/legacy-v3/readerOnlyMethods.ts`), which a test pins to exactly the registry methods whose `call` refuses a writer bundle; the registry itself is unchanged. A `content:write` tool reaches them only when it also needs `content:read` (`authorization-integration-v1.md`, amendment "R18 (V5) + R7 + R14").
+- The v3 adapter does not route recall to the legacy `memories` path: `oracle_learn` writes the target-19 tier, and splitting one fact across two writable stores is what V3-PARITY §4.4 forbids.

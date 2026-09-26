@@ -54,7 +54,10 @@ export type StepAssert = {
   expectEmptyResults?: boolean;
   metadataEquals?: Record<string, unknown>;
   aliasOf?: string;
+  /** Compare with an earlier step's call, by `ref`: sound only when no write lands in between. */
   compareToStepRef?: string;
+  /** Compare with `aliasOf` called with the same arguments right after the alias (the child records it). */
+  compareToCanonicalCall?: boolean;
   neverListed?: boolean;
   compareToUnknownTool?: string;
   assertNoSpawn?: boolean;

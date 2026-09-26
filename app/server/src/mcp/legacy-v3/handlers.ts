@@ -11,8 +11,11 @@ import type { IndexProfile } from "../../knowledge/transport.indexProfile";
 import type { Kb } from "./createKb";
 import { guide } from "./guide";
 import { oracle_handoff } from "./tools/oracle_handoff";
+import { oracle_ask } from "./tools/oracle_ask";
 import { oracle_learn } from "./tools/oracle_learn";
 import { oracle_research_note } from "./tools/oracle_research_note";
+import { oracle_search } from "./tools/oracle_search";
+import { oracle_search_chain } from "./tools/oracle_search_chain";
 
 export type V3ToolContext = {
   readonly tool: string;
@@ -33,4 +36,8 @@ export const V3_HANDLERS: Readonly<Record<string, V3Handler>> = Object.freeze({
   oracle_learn,
   oracle_research_note,
   oracle_handoff,
+  // V5 recall over the #30 knowledge searches (V3-PARITY.md §4.4).
+  oracle_search,
+  oracle_ask,
+  oracle_search_chain,
 });

@@ -11,6 +11,11 @@
  *  - `action`: the arra-auth/v1 action. `auth/service.toolAction.ts` DERIVES
  *    the service's map from this table, the same way it derives `kb_*` from
  *    the registry; the adapter never chooses a grant.
+ *  - `alsoNeeds`: actions the principal must hold on the bank as well, from
+ *    the same snapshot (`auth/service.toolAlsoNeeds.ts`). Grants are exact
+ *    (`auth/policy.admit.ts`): content:write never implies content:read, so
+ *    a write tool whose ANSWER is bank content needs content:read too, as
+ *    HTTP and `kb_*` would refuse that read to a write-only principal.
  *  - `uses`: the only registry methods the tool's `kb()` may call (A1).
  *  - `requires`: methods that must exist in `KNOWLEDGE_METHODS` before the tool
  *    is advertised (§2.1 rule c). A kernel slice that adds them makes the tool
@@ -24,6 +29,7 @@ import type { WorkspaceAction } from "../../auth/policy";
 export type V3ToolSpec = {
   readonly name: string;
   readonly action: Extract<WorkspaceAction, "content:read" | "content:write">;
+  readonly alsoNeeds?: readonly Extract<WorkspaceAction, "content:read">[];
   readonly uses: readonly string[];
   readonly requires: readonly string[];
   readonly description: string;
@@ -45,10 +51,24 @@ const TAXONOMY_READS = ["lookupVocabularyByName", "lookupTermByName"];
 const TAXONOMY_WRITES = ["seedReservedVocabularies", "createVocabulary", "createTerm"];
 const PUBLISH = [...TAXONOMY_READS, ...TAXONOMY_WRITES, "getPeer", "registerPeer", "publishRevision", "indexRevisionChunks"];
 const PUBLISH_REQUIRES = [...TAXONOMY_READS, ...TAXONOMY_WRITES, "publishRevision", "indexRevisionChunks"];
-/** K1 chunk search (#30 wave 2), named as V3-PARITY.md §5 designs it. */
-const K1 = ["searchChunksKeyword", "searchChunksSemantic"];
+/**
+ * K1, the #30 knowledge searches, under the names #30 SHIPPED them with
+ * (search-chunk-v1.md §13). V3-PARITY.md §5 designed them as
+ * `searchChunksKeyword`/`searchChunksSemantic`; those names never existed,
+ * so rule (c) kept every tool that required them hidden.
+ */
+const KEYWORD = "searchKnowledgeKeyword";
+const SEMANTIC = "searchKnowledgeSemantic";
+/** How a recall tool's `score` is made; the kernel's own value is not v3's. */
+const SCORE = " score is 1/(1+rank) in v4's order, not v3's fused relevance.";
 
-const spec = (s: V3ToolSpec): V3ToolSpec => Object.freeze({ ...s, uses: Object.freeze([...s.uses]), requires: Object.freeze([...s.requires]) });
+const spec = (s: V3ToolSpec): V3ToolSpec =>
+  Object.freeze({
+    ...s,
+    ...(s.alsoNeeds === undefined ? {} : { alsoNeeds: Object.freeze([...s.alsoNeeds]) }),
+    uses: Object.freeze([...s.uses]),
+    requires: Object.freeze([...s.requires]),
+  });
 
 export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
   spec({
@@ -143,19 +163,24 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
   spec({
     name: "oracle_search",
     action: "content:read",
-    uses: [...K1, ...TAXONOMY_READS, "getAcceptedHead"],
-    requires: K1,
+    uses: [KEYWORD, SEMANTIC, "getAcceptedHead"],
+    requires: [KEYWORD, SEMANTIC, "getAcceptedHead"],
     description:
-      "Search this bank. Keyword search is character-trigram (finds Thai inside words); vector is semantic. hybrid runs keyword and says so:" +
-      " fusion is not carried." + RECALL,
+      "Search this bank with v3's arguments. mode fts is keyword search over character trigrams, so Thai is found inside words" +
+      " (a query under 3 characters is a substring scan, named in metadata.match). mode vector is semantic search over embedded" +
+      " entries; if the query embedder does not answer it falls back to keyword and says so, as v3 did. hybrid, the default, is" +
+      " answered by keyword search and says so: fusion is not carried (it measured worse)." + SCORE + RECALL,
     inputSchema: obj(
       {
         query: str("Required."),
-        type: str(""),
-        limit: int(""),
-        offset: int(""),
+        type: str("learning, or a v3 type (principle, pattern, retro) kept as legacy_type; all or absent means every type."),
+        limit: int("Default 5. At most 50 entries are reachable per query."),
+        offset: int("Default 0."),
         mode: { type: "string", enum: ["hybrid", "fts", "vector"] },
-        project: str(""),
+        project: str("owner/repo or github.com/owner/repo: that project, _universal entries and entries with no project (v3's project IS NULL)."),
+        retrieval: { type: "string", enum: ["full", "compact-summary"], description: "compact-summary is not carried and is named as ignored." },
+        model: str("Ignored: the embedding model is the server's."),
+        asOf: str("Not carried: refused."),
       },
       ["query"],
     ),
@@ -163,10 +188,22 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
   spec({
     name: "oracle_ask",
     action: "content:read",
-    uses: [...K1, "answerFromKnowledge", "getAcceptedHead"],
-    requires: ["searchChunksKeyword"],
-    description: "Answer a question from this bank's knowledge, with citations; extractive when no model is configured." + RECALL,
-    inputSchema: obj({ question: str("Required."), llm: { type: "boolean" }, limit: int("") }, ["question"]),
+    // answerFromKnowledge (K8) is the model-grounded answer V9 adds.
+    uses: [KEYWORD, "answerFromKnowledge", "getAcceptedHead"],
+    requires: [KEYWORD, "getAcceptedHead"],
+    description:
+      "Answer a question from this bank with cited sources: keyword search over the question, then v3's extractive answer" +
+      " (the top three sources). llm:true needs a knowledge-grounded model method v4 does not have yet (not_yet_available):" +
+      " it answers extractively and says so in compat_warnings." + SCORE + RECALL,
+    inputSchema: obj({
+      question: str("The question (or q)."),
+      q: str("Alias of question."),
+      type: str(""),
+      limit: int("Sources to use, 1-20, default 8."),
+      project: str(""),
+      model: str("Ignored."),
+      llm: { type: "boolean" },
+    }),
   }),
   spec({
     name: "oracle_read",
@@ -360,10 +397,28 @@ export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
   spec({
     name: "oracle_search_chain",
     action: "content:write",
-    uses: ["searchChunksSemantic", "listSearchChunks", "createTrace"],
-    requires: ["searchChunksSemantic", "listSearchChunks", "createTrace"],
-    description: "Follow semantic neighbours hop by hop, recording one trace per hop." + RECALL,
-    inputSchema: obj({ query: str("Required."), maxHops: int(""), breadth: int("") }, ["query"]),
+    // It writes traces AND answers with the entries it found: both grants.
+    alsoNeeds: ["content:read"],
+    uses: [SEMANTIC, "getAcceptedHead", "createTrace", "getPeer", "registerPeer"],
+    requires: [SEMANTIC, "getAcceptedHead", "createTrace"],
+    description:
+      "Follow semantic neighbours hop by hop from a seed query, recording one immutable trace per hop, each linked to the" +
+      " previous one by prev_id. Needs content:read as well as content:write on the bank: it returns what it found." +
+      " Later hops search by the best entry's text, re-embedded, not by its stored vector." +
+      " Needs the query embedder; score is 1/(1+distance), and a hop whose best score falls below half the previous one stops the chain." +
+      " idempotency_key makes a retry replay the same hop traces instead of writing new ones." +
+      RECALL,
+    inputSchema: obj(
+      {
+        query: str("Required."),
+        maxHops: int("Default 3, at most 50."),
+        breadth: int("Default 5, at most 50."),
+        model: str("Ignored."),
+        peer: str(""),
+        idempotency_key: str("Optional. Derives each hop's trace id, so a client retry replays instead of writing twice."),
+      },
+      ["query"],
+    ),
   }),
 ]);
 

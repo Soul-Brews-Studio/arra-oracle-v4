@@ -25,7 +25,7 @@ import { configureKnowledgeAccess, createMcpAdapter } from "../src/mcp";
 const ORIGIN = "http://127.0.0.1:3939";
 const BANK = "bank-a";
 const sha = (v: string) => createHash("sha256").update(v, "ascii").digest("hex");
-const TOKENS = { rw: "7".repeat(64), ro: "8".repeat(64) } as const;
+const TOKENS = { rw: "7".repeat(64), ro: "8".repeat(64), wo: "9".repeat(64) } as const;
 const NOT_CARRIED = ["oracle_mcp_call", "oracle_mcp_list_tools", "oracle_trace_link", "oracle_trace_unlink", "oracle_profile"];
 const WRITE_FAMILY = [
   "oracle_learn", "oracle_research_note", "oracle_handoff", "oracle_supersede", "oracle_thread",
@@ -44,6 +44,13 @@ const fakeBundle = new Proxy({}, {
   get: (_t, facade) => new Proxy({}, { get: (_u, method) => async () => void calls.push(`${String(facade)}.${String(method)}`) }),
 }) as unknown as KnowledgeBundle;
 const configured: KnowledgeAccess = { getBundle: async () => fakeBundle };
+/** A READER-shaped bundle (no publishRevision) whose #30 searches answer nothing. */
+const searchable: KnowledgeAccess = {
+  getBundle: async () => ({
+    publication: {},
+    context: { searchKnowledgeKeyword: async () => ({ match: "ngram", scan_reason: null, hits: [] }) },
+  }) as unknown as KnowledgeBundle,
+};
 
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "arra-v3-frame-"));
@@ -57,8 +64,9 @@ beforeAll(async () => {
     principals: [
       { id: "rw", disabled: false, workspaces: [{ name: BANK, actions: ["content:read", "content:write"], peers: ["neo"] }], global_actions: [] },
       { id: "ro", disabled: false, workspaces: [{ name: BANK, actions: ["content:read"] }], global_actions: [] },
+      { id: "wo", disabled: false, workspaces: [{ name: BANK, actions: ["content:write"] }], global_actions: [] },
     ],
-    credentials: [credential("rw"), credential("ro")],
+    credentials: [credential("rw"), credential("ro"), credential("wo")],
   }), { encoding: "utf-8", mode: 0o600 });
 });
 
@@ -130,19 +138,41 @@ describe("V0 #2: grants decide the family; not-carried tools do not exist", () =
   });
 });
 
-describe("V0 #3 and #4: availability is data-driven (V3-PARITY §2.1 rules b and c)", () => {
-  test("a tool whose requires names a missing registry method is not listed; calling it is not_yet_available", async () => {
-    const { V3_CATALOGUE } = await import("../src/mcp/legacy-v3/catalogue");
-    const search = V3_CATALOGUE.find((t) => t.name === "oracle_search")!;
-    expect(search.requires.some((m) => !(m in KNOWLEDGE_METHODS))).toBe(true);
+describe("V0 #2b: a write tool whose answer is bank content needs content:read too (exact grants)", () => {
+  test("content:write alone lists the write family but not oracle_search_chain, and calling it is an unknown tool's 403", async () => {
     configureKnowledgeAccess(configured);
-    expect(await list(true, "rw")).not.toContain("oracle_search");
-    const res = await call(true, "rw", "oracle_search", { query: "x" });
-    expect(res.status).toBe(200);
-    expect(res.json.result.isError).toBe(true);
-    const body = JSON.parse(toolText(res));
-    expect(body.success).toBe(false);
-    expect(body.compat).toMatchObject({ version: "arra-v3-compat/1", code: "not_yet_available", tool: "oracle_search" });
+    const wo = await list(true, "wo");
+    expect(wo).toContain("oracle_learn");
+    expect(wo).not.toContain("oracle_search");
+    expect(wo).not.toContain("oracle_search_chain");
+    expect(await list(true, "rw")).toContain("oracle_search_chain");
+    const unknown = await call(true, "wo", "oracle_nope");
+    expect(unknown.status).toBe(403);
+    expect(await call(true, "wo", "oracle_search_chain", { query: "x" })).toEqual(unknown);
+    expect(calls).toEqual([]);
+    expect(audit).toEqual([]);
+  });
+});
+
+describe("V0 #3 and #4: availability is data-driven (V3-PARITY §2.1 rules b and c)", () => {
+  test("a tool is listed exactly when its requires are registered and it has a handler; an unlisted one is not_yet_available", async () => {
+    const { V3_CATALOGUE } = await import("../src/mcp/legacy-v3/catalogue");
+    const { V3_HANDLERS } = await import("../src/mcp/legacy-v3/handlers");
+    // Whichever tools still wait on a kernel slice or a handler: the rule is
+    // pinned, not one example tool, so it holds when every tool is built.
+    const pending = V3_CATALOGUE.filter((t) => t.requires.some((m) => !(m in KNOWLEDGE_METHODS)) || !(t.name in V3_HANDLERS));
+    configureKnowledgeAccess(configured);
+    const listed = await list(true, "rw");
+    for (const tool of V3_CATALOGUE) expect([tool.name, listed.includes(tool.name)]).toEqual([tool.name, !pending.includes(tool)]);
+    for (const tool of pending) {
+      const res = await call(true, "rw", tool.name, {});
+      expect(res.status).toBe(200);
+      expect(res.json.result.isError).toBe(true);
+      const body = JSON.parse(toolText(res));
+      expect(body.success).toBe(false);
+      expect(body.compat).toMatchObject({ version: "arra-v3-compat/1", code: "not_yet_available", tool: tool.name });
+    }
+    expect(calls).toEqual([]);
   });
 
   test("with no dataset configured, neither the v3 family nor kb_* is listed (defect 5)", async () => {
@@ -159,13 +189,16 @@ describe("V0 #3 and #4: availability is data-driven (V3-PARITY §2.1 rules b and
 
 describe("V0 #5: inbound arra_* aliases (D6)", () => {
   test("arra_search runs as oracle_search under oracle_search's action, is never listed, and is audited canonically", async () => {
-    configureKnowledgeAccess(configured);
+    configureKnowledgeAccess(searchable);
     const names = await list(true, "ro");
     expect(names.filter((n) => n.startsWith("arra_"))).toEqual([]);
     const res = await call(true, "ro", "arra_search", { query: "x" });
+    const direct = await call(true, "ro", "oracle_search", { query: "x" });
     expect(res.status).toBe(200);
-    expect(JSON.parse(toolText(res)).compat).toMatchObject({ code: "not_yet_available", tool: "oracle_search" });
-    expect(audit.at(-1)).toMatchObject({ tool: "oracle_search", requested_as: "arra_search", status: "error" });
+    expect(res.json.result.isError).toBeUndefined();
+    const timeless = (text: string) => ({ ...JSON.parse(text), metadata: { ...JSON.parse(text).metadata, searchTime: 0 } });
+    expect(timeless(toolText(res))).toEqual(timeless(toolText(direct)));
+    expect(audit[0]).toMatchObject({ tool: "oracle_search", requested_as: "arra_search", status: "ok" });
   });
 
   test("an alias never widens a grant, and muninn_* stays unknown", async () => {
@@ -255,7 +288,8 @@ describe("V0 #8: kb() is the only capability, and it is bounded", () => {
 describe("V0 #9 and #10: errors, audit and the speaker header", () => {
   test("a CompatError crosses runMcp as exact JSON with isError, and the audit row says error", async () => {
     configureKnowledgeAccess(configured);
-    const res = await call(true, "rw", "oracle_search", { query: "x" });
+    // No query: oracle_search refuses before any kernel call.
+    const res = await call(true, "rw", "oracle_search", {});
     const body = JSON.parse(toolText(res));
     expect(Object.keys(body).sort()).toEqual(["compat", "error", "success", "v4_error"]);
     expect(body.v4_error).toBeNull();

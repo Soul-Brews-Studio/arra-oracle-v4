@@ -3,8 +3,8 @@ import { createHash } from "node:crypto";
 /**
  * A deterministic nanoid21 for an adapter-created row (V3-PARITY.md §3 A4,
  * A8): vocabulary, term and peer ids from their scoped names, so a replayed
- * create answers `already_satisfied`; node and operation ids from an
- * `idempotency_key`, so a client retry replays instead of duplicating.
+ * create answers `already_satisfied`; node, operation and chain-hop trace ids
+ * from an `idempotency_key`, so a client retry replays instead of duplicating.
  *
  *   base64url(sha256("arra-v3-compat/1\n" + bank + "\n" + parts.join("\n")))[0:21]
  *
