@@ -5,11 +5,34 @@
     "commit": "61e5f8b6"
   },
   "success": {
-    "success": { "type": "boolean", "const": true },
-    "file": { "type": "string", "note": "the written markdown path, learn.ts:310" },
-    "id": { "type": "string" },
-    "embedding": { "type": "string", "enum": ["ok", "failed"], "note": "handler variable embeddingStatus, learn.ts:284/294/312" },
-    "embeddingError": { "type": "string", "optional": true, "note": "only present when embedding === 'failed', learn.ts:313" },
-    "message": { "type": "string" }
-  }
+    "success": {
+      "type": "boolean",
+      "const": true
+    },
+    "file": {
+      "type": "string",
+      "note": "the written markdown path, learn.ts:310. v4 writes no file (§4.3, §6), so it is null + named in compat_warnings. V3-PARITY.md §2.5: a v3 field v4 cannot fill is PRESENT as null and named in compat_warnings ({code, field, detail}); the matcher (test/helpers/v3-compat-shapes.ts) accepts null for a non-nullable field only then."
+    },
+    "id": {
+      "type": "string"
+    },
+    "embedding": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "failed",
+        "enqueued"
+      ],
+      "note": "v3: embeddingStatus ok|failed, learn.ts:284/294/312. v4 adds 'enqueued' (V3-PARITY.md §4.3 oracle_learn: the chunk is indexed pending and the backfill embeds it later, R8); 'failed' keeps v3's meaning, indexing failed after the publish stood."
+    },
+    "embeddingError": {
+      "type": "string",
+      "optional": true,
+      "note": "only present when embedding === 'failed', learn.ts:313"
+    },
+    "message": {
+      "type": "string"
+    }
+  },
+  "v4Output": "V3-PARITY.md §4.3: {success:true, file:null, id: node_id, embedding:'enqueued'|'failed', embeddingError?, message, v4:{node_id, revision_id}}"
 }

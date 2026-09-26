@@ -6,18 +6,50 @@
     "commit": "61e5f8b6"
   },
   "topLevel": {
-    "thread_id": { "type": "number", "note": "v3 integer id, forum.ts:275. v4 uses the session NAME as a string (A3) -- a deliberate change, not a v3 field." },
-    "title": { "type": "string", "nullable": true },
-    "status": { "type": "string" },
-    "message_count": { "type": "number", "note": "threadData.messages.length BEFORE the limit slice, forum.ts:278 -- v3 never returns a short count even when `limit` truncated the array" },
-    "messages": { "type": "array", "items": "message" }
+    "thread_id": {
+      "type": [
+        "number",
+        "string"
+      ],
+      "note": "v3 integer id, forum.ts:275. v4 the session name, a string (§3 A3)."
+    },
+    "title": {
+      "type": "string",
+      "nullable": true
+    },
+    "status": {
+      "type": "string"
+    },
+    "message_count": {
+      "type": "number",
+      "note": "threadData.messages.length BEFORE the limit slice, forum.ts:278 -- v3 never returns a short count even when `limit` truncated the array v4: exact when the forward walk was exhausted, otherwise null + named in compat_warnings (§4.2)."
+    },
+    "messages": {
+      "type": "array",
+      "items": "message"
+    }
   },
   "message": {
-    "id": { "type": "number" },
-    "role": { "type": "string" },
-    "author": { "type": "string" },
-    "content": { "type": "string" },
-    "timestamp": { "type": "string", "note": "ISO 8601, forum.ts:258" }
+    "id": {
+      "type": [
+        "number",
+        "string"
+      ],
+      "note": "v3 integer; v4 the message public_id (§3 A3)."
+    },
+    "role": {
+      "type": "string"
+    },
+    "author": {
+      "type": "string"
+    },
+    "content": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "string",
+      "note": "ISO 8601, forum.ts:258"
+    }
   },
   "notes": "v3 has NO `seq` field and NO `next_cursor` field on this tool. V3-PARITY.md §4.2 documents both as v4 additions."
 }

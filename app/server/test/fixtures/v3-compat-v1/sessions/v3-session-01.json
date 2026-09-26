@@ -1,31 +1,80 @@
 {
-  "version": "v3-compat-v1/session-01",
+  "version": "v3-compat-v1/session-01 (rev 2: gated child, GAP state, dropped §8 steps restored)",
   "design": "docs/overnight/V3-PARITY.md §8 (acceptance script), §2 (exposure), §2.5-2.6 (responses/errors), §4 (the 30 tools)",
   "ruling": "docs/overnight/DECISIONS.md R18",
   "description": "One ordered, realistic v3 client session. Every step's tool name and argument KEYS/TYPES are copied from a real mcp__arra-oracle__* / mcp__oracle-v2__* tool_use call recorded on this machine (see each step's `provenance`). Argument VALUES are scrubbed: real names, paths and personal content are replaced with neutral placeholder text of the same shape. IDs referenced across steps are resolved at run time via `capture`/`$ref` (see test/mcp-v3-acceptance.test.ts), never hand-typed, so they stay whatever the live server actually returns.",
   "provenanceMethod": "relic search '<tool>' --role tool_use [--all-tiers], on this machine (bank main + peer + codex tiers), narrowed with `relic show`/direct JSONL read for the full tool_use input. See docs/overnight/V3-PARITY.md §1.2 for the aggregate usage counts this session is sampled from (709 real calls, oracle_search 323, oracle_learn 187, oracle_trace 70, oracle_handoff 43, oracle_thread 25, oracle_thread_read 16, oracle_trace_get 12, oracle_trace_list 11).",
   "principals": {
-    "rw": { "workspace": "bank-a", "actions": ["content:read", "content:write"], "peer": "neo" },
-    "ro": { "workspace": "bank-a", "actions": ["content:read"] },
-    "other": { "workspace": "bank-b", "actions": ["content:read", "content:write"] }
+    "rw": {
+      "workspace": "bank-a",
+      "actions": [
+        "content:read",
+        "content:write",
+        "diagnostics:read"
+      ],
+      "peers": [
+        "neo"
+      ]
+    },
+    "ro": {
+      "workspace": "bank-a",
+      "actions": [
+        "content:read"
+      ]
+    },
+    "other": {
+      "workspace": "bank-b",
+      "actions": [
+        "content:read",
+        "content:write",
+        "audit:read",
+        "diagnostics:read"
+      ]
+    }
   },
-  "notCarried": ["oracle_mcp_call", "oracle_mcp_list_tools", "oracle_trace_link", "oracle_trace_unlink", "oracle_profile"],
+  "notCarried": [
+    "oracle_mcp_call",
+    "oracle_mcp_list_tools",
+    "oracle_trace_link",
+    "oracle_trace_unlink",
+    "oracle_profile"
+  ],
   "steps": [
     {
       "step": 1,
       "slice": "V0",
       "as": "rw",
       "method": "tools/list",
+      "gate": [
+        {
+          "as": "rw",
+          "tool": "____IMPORTANT"
+        }
+      ],
       "provenance": [],
       "assert": {
         "kind": "tools_list_gate",
         "expectListed": [
-          "oracle_search", "oracle_learn", "oracle_trace", "oracle_handoff", "oracle_thread",
-          "oracle_thread_read", "oracle_trace_get", "oracle_trace_list", "oracle_read", "oracle_list",
-          "oracle_supersede", "oracle_inbox", "____IMPORTANT"
+          "____IMPORTANT",
+          "remember",
+          "recall",
+          "kb_getAcceptedHead",
+          "kb_lookupVocabularyByName",
+          "kb_lookupTermByName"
         ],
-        "expectAbsent": ["oracle_mcp_call", "oracle_mcp_list_tools", "oracle_trace_link", "oracle_trace_unlink", "oracle_profile"],
-        "notes": "V3-PARITY.md §8 step 1: `tools/list` as `rw` must be exactly the advertised v3 set plus the v4 tools, and never the 5 not-carried names."
+        "expectAbsent": [
+          "oracle_mcp_call",
+          "oracle_mcp_list_tools",
+          "oracle_trace_link",
+          "oracle_trace_unlink",
+          "oracle_profile",
+          "arra_search",
+          "arra_learn",
+          "muninn_search",
+          "call_log"
+        ],
+        "expectOnlyCarriedV3": true,
+        "notes": "V3-PARITY.md §8 step 1: tools/list as rw is exactly the advertised v3 set plus the v4 tools (memory, kb_*, including K2's two lookups); never the 5 not-carried names, never an arra_* alias (D6), never an audit:read tool rw does not hold. Every advertised oracle_*/____ name must be one of the 25 carried tools; which of those are advertised is each step's own GAP gate."
       }
     },
     {
@@ -44,13 +93,17 @@
     },
     {
       "step": 3,
+      "ref": "learn-L1",
       "slice": "V1",
       "as": "rw",
       "method": "tools/call",
       "tool": "oracle_learn",
       "arguments": {
         "pattern": "APFS snapshots keep a filesystem-level rollback point before disk surgery: take one with `tmutil localsnapshot` before repartitioning or migrating a volume.",
-        "concepts": ["apfs", "backup"],
+        "concepts": [
+          "apfs",
+          "backup"
+        ],
         "project": "github.com/laris-co/homelab"
       },
       "provenance": [
@@ -72,9 +125,17 @@
       "assert": {
         "kind": "listed_and_ok",
         "shape": "oracle_learn",
-        "notes": "V3-PARITY.md §8 step 3: success, nanoid21 id, embedding:\"enqueued\"."
+        "notes": "V3-PARITY.md §8 step 3: success, nanoid21 id, embedding:\"enqueued\".",
+        "expectFields": {
+          "success": true,
+          "embedding": "enqueued"
+        },
+        "expectNanoid21Field": "id"
       },
-      "capture": { "as": "L1", "path": "id" }
+      "capture": {
+        "as": "L1",
+        "path": "id"
+      }
     },
     {
       "step": 4,
@@ -84,7 +145,9 @@
       "tool": "oracle_learn",
       "arguments": {
         "pattern": "หลงลืม: การลืมคือค่า is_active เป็น binary ไม่ใช่การค่อย ๆ จางหายไปทีละน้อย",
-        "concepts": ["thai"]
+        "concepts": [
+          "thai"
+        ]
       },
       "provenance": [
         {
@@ -98,9 +161,13 @@
       "assert": {
         "kind": "listed_and_ok",
         "shape": "oracle_learn",
-        "notes": "V3-PARITY.md §8 step 4. Content picked to also exercise R14 inside-word Thai search later (§4.4 oracle_search)."
+        "notes": "V3-PARITY.md §8 step 4. Content picked to also exercise R14 inside-word Thai search later (§4.4 oracle_search).",
+        "expectNanoid21Field": "id"
       },
-      "capture": { "as": "L2", "path": "id" }
+      "capture": {
+        "as": "L2",
+        "path": "id"
+      }
     },
     {
       "step": 5,
@@ -108,7 +175,11 @@
       "as": "rw",
       "method": "tools/call",
       "tool": "oracle_read",
-      "arguments": { "id": { "$ref": "L1" } },
+      "arguments": {
+        "id": {
+          "$ref": "L1"
+        }
+      },
       "provenance": [
         {
           "sessionId": "ce11ed04-6443-43cd-8e85-354a94fb7c85",
@@ -121,7 +192,13 @@
       "assert": {
         "kind": "listed_and_ok",
         "shape": "oracle_read",
-        "notes": "V3-PARITY.md §8 step 5: content equals the step-3 pattern."
+        "notes": "V3-PARITY.md §8 step 5: content equals the step-3 pattern, byte for byte.",
+        "expectFieldsFromStepArgs": {
+          "content": {
+            "stepRef": "learn-L1",
+            "path": "pattern"
+          }
+        }
       }
     },
     {
@@ -130,7 +207,10 @@
       "as": "rw",
       "method": "tools/call",
       "tool": "oracle_list",
-      "arguments": { "type": "learning", "limit": 30 },
+      "arguments": {
+        "type": "learning",
+        "limit": 30
+      },
       "provenance": [
         {
           "sessionId": "5c51f324-bc8a-4f4e-ac7d-a639e0cc57cf",
@@ -150,17 +230,24 @@
       "assert": {
         "kind": "listed_and_ok",
         "shape": "oracle_list",
-        "includesCaptured": ["L1", "L2"],
+        "includesCaptured": [
+          "L1",
+          "L2"
+        ],
         "notes": "V3-PARITY.md §8 step 6: includes steps 3 and 4 (order exact only once V6/K3+K4 land, per §4.3 oracle_list)."
       }
     },
     {
       "step": 7,
+      "ref": "search-apfs",
       "slice": "V5",
       "as": "rw",
       "method": "tools/call",
       "tool": "oracle_search",
-      "arguments": { "query": "APFS snapshot tmutil disk management", "limit": 5 },
+      "arguments": {
+        "query": "APFS snapshot tmutil disk management",
+        "limit": 5
+      },
       "provenance": [
         {
           "sessionId": "1367b426-bd8b-4631-a8a5-38032baace47",
@@ -183,7 +270,11 @@
       "as": "rw",
       "method": "tools/call",
       "tool": "oracle_search",
-      "arguments": { "query": "หลงลืม", "mode": "hybrid", "limit": 8 },
+      "arguments": {
+        "query": "ลืม",
+        "mode": "hybrid",
+        "limit": 8
+      },
       "provenance": [
         {
           "sessionId": "a5425642-61b9-4522-87af-ec571e78a1f7",
@@ -197,8 +288,10 @@
         "kind": "listed_and_ok",
         "shape": "oracle_search",
         "firstResultIsCaptured": "L2",
-        "metadataEquals": { "mode_effective": "fts" },
-        "notes": "V3-PARITY.md §8 step 8 and §4.4: hybrid degrades to fts with a semantic_change warning (R7)."
+        "metadataEquals": {
+          "mode_effective": "fts"
+        },
+        "notes": "V3-PARITY.md §8 step 8 and R14: the query is the INSIDE-WORD Thai substring ลืม, found inside หลงลืม (step 4). hybrid degrades to fts with a semantic_change warning (R7)."
       }
     },
     {
@@ -209,7 +302,10 @@
       "tool": "oracle_learn",
       "arguments": {
         "pattern": "APFS snapshots: prefer `tmutil localsnapshot` over a full Time Machine backup when the only goal is a pre-surgery rollback point -- it is instant and local.",
-        "concepts": ["apfs", "backup"],
+        "concepts": [
+          "apfs",
+          "backup"
+        ],
         "project": "github.com/laris-co/homelab"
       },
       "provenance": [
@@ -226,7 +322,10 @@
         "shape": "oracle_learn",
         "notes": "V3-PARITY.md §8 step 9: the replacement learning before supersede."
       },
-      "capture": { "as": "L1B", "path": "id" }
+      "capture": {
+        "as": "L1B",
+        "path": "id"
+      }
     },
     {
       "step": 10,
@@ -235,8 +334,12 @@
       "method": "tools/call",
       "tool": "oracle_supersede",
       "arguments": {
-        "oldId": { "$ref": "L1" },
-        "newId": { "$ref": "L1B" },
+        "oldId": {
+          "$ref": "L1"
+        },
+        "newId": {
+          "$ref": "L1B"
+        },
         "reason": "More comprehensive version with the rollback-point rationale spelled out"
       },
       "provenance": [
@@ -258,7 +361,7 @@
       "assert": {
         "kind": "listed_and_ok",
         "shape": "oracle_supersede",
-        "notes": "V3-PARITY.md §8 step 9(cont'd): success. A repeat call must return unchanged:true (not scripted as a separate step, left for V2's own failing-first test)."
+        "notes": "V3-PARITY.md §8 step 9: supersede succeeds with v3's success shape."
       }
     },
     {
@@ -266,33 +369,79 @@
       "slice": "V2",
       "as": "rw",
       "method": "tools/call",
-      "tool": "oracle_read",
-      "arguments": { "id": { "$ref": "L1" } },
-      "provenance": [],
+      "tool": "oracle_supersede",
+      "arguments": {
+        "oldId": {
+          "$ref": "L1"
+        },
+        "newId": {
+          "$ref": "L1B"
+        },
+        "reason": "More comprehensive version with the rollback-point rationale spelled out"
+      },
+      "provenance": [
+        {
+          "sessionId": "1a20f7f2-eb17-46cb-bb95-936edd7ef949",
+          "seq": 125,
+          "timestamp": "2026-03-03T15:37:26.148Z",
+          "tool": "mcp__oracle-v2__oracle_supersede",
+          "note": "real call shape: {oldId, newId, reason}; ids were v3 integers-as-strings, scrubbed here to the $ref of this session's own v4 ids"
+        }
+      ],
       "assert": {
         "kind": "listed_and_ok",
-        "shape": "oracle_read",
-        "expectFieldsPresent": ["superseded_by"],
-        "notes": "V3-PARITY.md §8 step 10 (read half): read(old) shows superseded_by once V2 exists."
+        "shape": "oracle_supersede",
+        "shapeKey": "unchanged",
+        "expectFields": {
+          "success": true,
+          "unchanged": true
+        },
+        "notes": "V3-PARITY.md §8 step 9 (repeat) and §4.3 oracle_supersede: the same supersede again returns v3's unchanged:true, never a second lifecycle event."
       }
     },
     {
       "step": 12,
-      "slice": "V5",
+      "slice": "V2",
       "as": "rw",
       "method": "tools/call",
-      "tool": "oracle_search",
-      "arguments": { "query": "APFS snapshot tmutil disk management", "limit": 5 },
+      "tool": "oracle_read",
+      "arguments": {
+        "id": {
+          "$ref": "L1"
+        }
+      },
       "provenance": [],
       "assert": {
         "kind": "listed_and_ok",
-        "shape": "oracle_search",
-        "excludesCaptured": ["L1"],
-        "notes": "V3-PARITY.md §8 step 10 (search half): the superseded step-3 node no longer returns (D3 recall-eligibility)."
+        "shape": "oracle_read",
+        "notes": "V3-PARITY.md §8 step 10 (read half) and A6: read(old) is browse, so it still returns the old node, with superseded_by equal to the step-9 replacement id.",
+        "expectFieldsFromCapture": {
+          "superseded_by": "L1B"
+        }
       }
     },
     {
       "step": 13,
+      "slice": "V5",
+      "as": "rw",
+      "method": "tools/call",
+      "tool": "oracle_search",
+      "arguments": {
+        "query": "APFS snapshot tmutil disk management",
+        "limit": 5
+      },
+      "provenance": [],
+      "assert": {
+        "kind": "listed_and_ok",
+        "shape": "oracle_search",
+        "excludesCaptured": [
+          "L1"
+        ],
+        "notes": "V3-PARITY.md §8 step 10 (search half): the superseded step-3 node no longer returns (D3 recall-eligibility)."
+      }
+    },
+    {
+      "step": 14,
       "slice": "V3",
       "as": "rw",
       "method": "tools/call",
@@ -303,14 +452,33 @@
         "queryType": "project",
         "agentCount": 1,
         "foundFiles": [
-          { "path": "github.com/laris-co/example-app", "type": "other", "confidence": "high", "matchReason": "digital-twin demo project" },
-          { "path": "github.com/example-org/example-brain", "type": "other", "confidence": "high", "matchReason": "brain repo" }
+          {
+            "path": "github.com/laris-co/example-app",
+            "type": "other",
+            "confidence": "high",
+            "matchReason": "digital-twin demo project"
+          },
+          {
+            "path": "github.com/example-org/example-brain",
+            "type": "other",
+            "confidence": "high",
+            "matchReason": "brain repo"
+          }
         ],
         "foundCommits": [
-          { "hash": "cebbca8", "shortHash": "cebbca8", "message": "handoff: fleet join", "date": "2026-02-22" }
+          {
+            "hash": "cebbca8",
+            "shortHash": "cebbca8",
+            "message": "handoff: fleet join",
+            "date": "2026-02-22"
+          }
         ],
         "foundIssues": [
-          { "number": 42, "title": "Split the digital-twin repo", "state": "open" }
+          {
+            "number": 42,
+            "title": "Split the digital-twin repo",
+            "state": "open"
+          }
         ]
       },
       "provenance": [
@@ -339,24 +507,20 @@
       "assert": {
         "kind": "listed_and_ok",
         "shape": "oracle_trace",
-        "expectSummary": { "file_count": 2, "commit_count": 1, "issue_count": 1 },
-        "notes": "V3-PARITY.md §8 step 11: depth 0, summary counts. The commit is a real 7-hex short hash, so it exercises unrepresentable_commits (§4.2)."
+        "expectSummary": {
+          "file_count": 2,
+          "commit_count": 1,
+          "issue_count": 1
+        },
+        "notes": "V3-PARITY.md §8 step 11: depth 0, summary counts. The commit is a real 7-hex short hash, so it exercises unrepresentable_commits (§4.2).",
+        "expectFields": {
+          "success": true,
+          "depth": 0
+        }
       },
-      "capture": { "as": "T1", "path": "trace_id" }
-    },
-    {
-      "step": 14,
-      "slice": "V3",
-      "as": "rw",
-      "method": "tools/call",
-      "tool": "oracle_trace",
-      "arguments": { "query": "follow-up: which repo keeps the OTA flasher", "parentTraceId": { "$ref": "T1" } },
-      "provenance": [],
-      "assert": {
-        "kind": "listed_and_ok",
-        "shape": "oracle_trace",
-        "expectFields": { "depth": 1 },
-        "notes": "V3-PARITY.md §8 step 12: depth 1 from a real parent."
+      "capture": {
+        "as": "T1",
+        "path": "trace_id"
       }
     },
     {
@@ -364,8 +528,35 @@
       "slice": "V3",
       "as": "rw",
       "method": "tools/call",
+      "tool": "oracle_trace",
+      "arguments": {
+        "query": "follow-up: which repo keeps the OTA flasher",
+        "parentTraceId": {
+          "$ref": "T1"
+        }
+      },
+      "provenance": [],
+      "assert": {
+        "kind": "listed_and_ok",
+        "shape": "oracle_trace",
+        "expectFields": {
+          "depth": 1
+        },
+        "notes": "V3-PARITY.md §8 step 12: depth 1 from a real parent."
+      }
+    },
+    {
+      "step": 16,
+      "slice": "V3",
+      "as": "rw",
+      "method": "tools/call",
       "tool": "oracle_trace_get",
-      "arguments": { "traceId": { "$ref": "T1" }, "includeChain": true },
+      "arguments": {
+        "traceId": {
+          "$ref": "T1"
+        },
+        "includeChain": true
+      },
       "provenance": [
         {
           "sessionId": "a6581e37-48f9-4363-bef3-c608ccad53c5",
@@ -389,12 +580,14 @@
       }
     },
     {
-      "step": 16,
+      "step": 17,
       "slice": "V3",
       "as": "rw",
       "method": "tools/call",
       "tool": "oracle_trace_get",
-      "arguments": { "traceId": "71c5d419-90e5-4d99-9a62-102846ef28e9" },
+      "arguments": {
+        "traceId": "71c5d419-90e5-4d99-9a62-102846ef28e9"
+      },
       "provenance": [
         {
           "sessionId": "a6581e37-48f9-4363-bef3-c608ccad53c5",
@@ -411,12 +604,15 @@
       }
     },
     {
-      "step": 17,
+      "step": 18,
       "slice": "V7",
       "as": "rw",
       "method": "tools/call",
       "tool": "oracle_trace_list",
-      "arguments": { "query": "digital-twin OTA flasher", "limit": 20 },
+      "arguments": {
+        "query": "digital-twin OTA flasher",
+        "limit": 20
+      },
       "provenance": [
         {
           "sessionId": "06040d20-93e6-4992-b134-4c39da78be54",
@@ -436,12 +632,79 @@
       "assert": {
         "kind": "listed_and_ok",
         "shape": "oracle_trace_list",
-        "includesCaptured": ["T1"],
-        "notes": "V3-PARITY.md §8 step 14."
+        "includesCaptured": [
+          "T1"
+        ],
+        "notes": "V3-PARITY.md §8 step 14.",
+        "rowsKey": "traces",
+        "idKey": "trace_id"
       }
     },
     {
-      "step": 18,
+      "step": 19,
+      "slice": "V3",
+      "as": "rw",
+      "method": "tools/call",
+      "tool": "oracle_trace_distill",
+      "arguments": {
+        "traceId": {
+          "$ref": "T1"
+        },
+        "awakening": "The OTA flasher lives with the firmware repo, not the digital-twin demo: split along the flashing boundary.",
+        "promoteToLearning": true,
+        "concepts": [
+          "firmware",
+          "ota"
+        ]
+      },
+      "provenance": [],
+      "provenanceNote": "No real oracle_trace_distill call exists on this machine (V3-PARITY.md §4.1: 0 real calls). Argument keys follow v3's own input schema, arra-oracle-v3 src/tools/oracle.ts:20-38 at 61e5f8b6 (traceId, awakening, promoteToLearning, concepts).",
+      "assert": {
+        "kind": "listed_and_ok",
+        "shape": "oracle_trace_distill",
+        "expectFields": {
+          "success": true,
+          "status": "distilled"
+        },
+        "expectStringField": "learningId",
+        "notes": "V3-PARITY.md §8 step 15 (distill half): a promoted distill returns learningId; the trace itself is never rewritten (§4.3)."
+      },
+      "capture": {
+        "as": "D1",
+        "path": "learningId"
+      }
+    },
+    {
+      "step": 20,
+      "slice": "V5",
+      "as": "rw",
+      "method": "tools/call",
+      "tool": "oracle_search",
+      "arguments": {
+        "query": "OTA flasher lives with the firmware repo",
+        "limit": 5
+      },
+      "provenance": [
+        {
+          "sessionId": "1367b426-bd8b-4631-a8a5-38032baace47",
+          "seq": 3906,
+          "timestamp": "2026-03-27T08:05:02.563Z",
+          "tool": "mcp__arra-oracle__oracle_search",
+          "note": "real call shape: {query, limit}"
+        }
+      ],
+      "assert": {
+        "kind": "listed_and_ok",
+        "shape": "oracle_search",
+        "includesCaptured": [
+          "D1"
+        ],
+        "notes": "V3-PARITY.md §8 step 15 (search half): oracle_search finds the learning the distill just published."
+      }
+    },
+    {
+      "step": 21,
+      "ref": "handoff-H1",
       "slice": "V1",
       "as": "rw",
       "method": "tools/call",
@@ -464,15 +727,20 @@
         "shape": "oracle_handoff",
         "notes": "V3-PARITY.md §8 step 16."
       },
-      "capture": { "as": "H1", "path": "id" }
+      "capture": {
+        "as": "H1",
+        "path": "id"
+      }
     },
     {
-      "step": 19,
+      "step": 22,
       "slice": "V6",
       "as": "rw",
       "method": "tools/call",
       "tool": "oracle_inbox",
-      "arguments": { "limit": 5 },
+      "arguments": {
+        "limit": 5
+      },
       "provenance": [
         {
           "sessionId": "270796fd-b272-4ef5-94c4-7d7394a1babd",
@@ -492,12 +760,17 @@
       "assert": {
         "kind": "listed_and_ok",
         "shape": "oracle_inbox",
-        "firstFileIsCaptured": "H1",
-        "notes": "V3-PARITY.md §8 step 17: the first file is step 18/16 (newest-first, once V6 lands)."
+        "notes": "V3-PARITY.md §8 step 17 and §4.4 oracle_inbox: the newest handoff comes first; its filename is the handoff title, which §4.3 sets to the slug.",
+        "expectFirstFileFromStepArgs": {
+          "field": "filename",
+          "stepRef": "handoff-H1",
+          "path": "slug"
+        }
       }
     },
     {
-      "step": 20,
+      "step": 23,
+      "ref": "thread-new",
       "slice": "V4",
       "as": "rw",
       "peer": "neo",
@@ -522,17 +795,23 @@
         "expectStringField": "thread_id",
         "notes": "V3-PARITY.md §8 step 18: new thread, thread_id is a string."
       },
-      "capture": { "as": "TH1", "path": "thread_id" }
+      "capture": {
+        "as": "TH1",
+        "path": "thread_id"
+      }
     },
     {
-      "step": 21,
+      "step": 24,
+      "ref": "thread-continue",
       "slice": "V4",
       "as": "rw",
       "peer": "neo",
       "method": "tools/call",
       "tool": "oracle_thread",
       "arguments": {
-        "threadId": { "$ref": "TH1" },
+        "threadId": {
+          "$ref": "TH1"
+        },
         "message": "## Lesson: check the fleet sidebar before closing a worktree",
         "role": "claude"
       },
@@ -552,13 +831,17 @@
       }
     },
     {
-      "step": 22,
+      "step": 25,
       "slice": "V4",
       "as": "rw",
       "peer": "neo",
       "method": "tools/call",
       "tool": "oracle_thread_read",
-      "arguments": { "threadId": { "$ref": "TH1" } },
+      "arguments": {
+        "threadId": {
+          "$ref": "TH1"
+        }
+      },
       "provenance": [
         {
           "sessionId": "8a26af73-5941-4bbc-a792-d055c5000f8b",
@@ -572,16 +855,93 @@
         "kind": "listed_and_ok",
         "shape": "oracle_thread_read",
         "expectMessageCount": 2,
-        "notes": "V3-PARITY.md §8 step 19 (read half): 2 messages in order."
+        "notes": "V3-PARITY.md §8 step 19 (read half): exactly 2 messages, in seq order, with the two posted bodies.",
+        "expectMessagesFromStepArgs": [
+          {
+            "stepRef": "thread-new",
+            "path": "message"
+          },
+          {
+            "stepRef": "thread-continue",
+            "path": "message"
+          }
+        ]
       }
     },
     {
-      "step": 23,
+      "step": 26,
+      "slice": "V4",
+      "as": "rw",
+      "peer": "neo",
+      "method": "tools/call",
+      "tool": "oracle_threads",
+      "arguments": {
+        "limit": 20
+      },
+      "provenance": [
+        {
+          "sessionId": "c4dc43ce-3574-4689-a039-f560bfaad83e",
+          "seq": 20884,
+          "timestamp": "2026-04-10T15:14:04.703Z",
+          "tool": "mcp__arra-oracle__oracle_threads",
+          "note": "real call shape: {status, limit}"
+        },
+        {
+          "sessionId": "36ff5b66-50a4-4592-bde8-9e0229402864",
+          "seq": 272,
+          "timestamp": "2026-02-25T06:22:39.223Z",
+          "tool": "mcp__oracle-v2__oracle_threads",
+          "note": "real call shape: {} (empty)"
+        }
+      ],
+      "assert": {
+        "kind": "listed_and_ok",
+        "shape": "oracle_threads",
+        "includesCaptured": [
+          "TH1"
+        ],
+        "rowsKey": "threads",
+        "idKey": "id",
+        "notes": "V3-PARITY.md §8 step 19 (list half) and §4.2 oracle_threads: the new thread is listed, its id the session name."
+      }
+    },
+    {
+      "step": 27,
+      "slice": "V4",
+      "as": "rw",
+      "peer": "neo",
+      "method": "tools/call",
+      "tool": "oracle_thread_update",
+      "arguments": {
+        "threadId": {
+          "$ref": "TH1"
+        },
+        "status": "answered"
+      },
+      "provenance": [
+        {
+          "sessionId": "7ac6ec3b-5531-4a8b-8a51-d038b68755fb",
+          "seq": 996,
+          "timestamp": "2026-02-24T21:43:32.939Z",
+          "tool": "mcp__oracle-v2__oracle_thread_update",
+          "note": "real call shape: {threadId, status:\"answered\"} -- both real calls used answered (V3-PARITY.md §4.4)"
+        }
+      ],
+      "assert": {
+        "kind": "isError_code",
+        "errorCode": "semantic_refusal",
+        "notes": "V3-PARITY.md §8 step 20 and §4.4: answered is not a stored state in v4 (binary is_active); the documented arra-v3-compat/1 refusal, never a silent success."
+      }
+    },
+    {
+      "step": 28,
       "slice": "V4",
       "as": "rw",
       "method": "tools/call",
       "tool": "oracle_thread_read",
-      "arguments": { "threadId": 41 },
+      "arguments": {
+        "threadId": 41
+      },
       "provenance": [
         {
           "sessionId": "8a26af73-5941-4bbc-a792-d055c5000f8b",
@@ -598,7 +958,7 @@
       }
     },
     {
-      "step": 24,
+      "step": 29,
       "slice": "V2+V8",
       "as": "rw",
       "method": "tools/call",
@@ -621,28 +981,40 @@
       }
     },
     {
-      "step": 25,
+      "step": 30,
       "slice": "V0+V5",
       "as": "rw",
       "method": "tools/call",
       "tool": "arra_search",
-      "arguments": { "query": "APFS snapshot tmutil disk management", "limit": 5 },
+      "arguments": {
+        "query": "APFS snapshot tmutil disk management",
+        "limit": 5
+      },
+      "gate": [
+        {
+          "as": "rw",
+          "tool": "oracle_search"
+        }
+      ],
       "provenance": [],
       "assert": {
         "kind": "alias_matches",
         "aliasOf": "oracle_search",
-        "compareToStep": 7,
         "neverListed": true,
-        "notes": "V3-PARITY.md §8 step 22 and §2.4 (D6): `arra_search` resolves to `oracle_search`'s action and result set, and is never advertised. No indexed real `arra_search` call was found on this machine within the current lookback window -- §2.4 [run] dates the last one at 2026-05-18, from the era when v3 briefly *listed* arra_* names (rebrand commit 8b0b0373). This step is therefore modelled on §2.4's own citation plus step 7's real oracle_search shape, not on a freshly re-found transcript."
+        "notes": "V3-PARITY.md §8 step 22 and §2.4 (D6): `arra_search` resolves to `oracle_search`'s action and result set, and is never advertised. No indexed real `arra_search` call was found on this machine within the current lookback window -- §2.4 [run] dates the last one at 2026-05-18, from the era when v3 briefly *listed* arra_* names (rebrand commit 8b0b0373). This step is therefore modelled on §2.4's own citation plus step 7's real oracle_search shape, not on a freshly re-found transcript.",
+        "compareToStepRef": "search-apfs"
       }
     },
     {
-      "step": 26,
+      "step": 31,
       "slice": "V0",
       "as": "rw",
       "method": "tools/call",
       "tool": "oracle_search",
-      "arguments": { "query": "x", "tenantId": "t" },
+      "arguments": {
+        "query": "x",
+        "tenantId": "t"
+      },
       "provenance": [],
       "assert": {
         "kind": "isError_code",
@@ -651,42 +1023,99 @@
       }
     },
     {
-      "step": 27,
+      "step": 32,
+      "slice": "V0+V1",
+      "as": "rw",
+      "method": "tools/call",
+      "tool": "oracle_learn",
+      "arguments": {
+        "pattern": "tenant carriers must never reach a write",
+        "orgId": "t"
+      },
+      "provenance": [],
+      "provenanceNote": "v3's tenant carriers are argument keys (arra-oracle-v3 src/mcp/tenant.ts:3 at 61e5f8b6: tenantId, tenant_id, tenant, orgId, org_id). No recorded client sent one with oracle_learn; this step pairs the carrier with the tool V1 advertises, so the V0 frame refusal is exercised on a WRITE before any search kernel exists.",
+      "assert": {
+        "kind": "isError_code",
+        "errorCode": "unsupported_argument",
+        "notes": "V3-PARITY.md §3 A2: a tenant carrier on any v3 tool is refused before the tool runs; nothing is written."
+      }
+    },
+    {
+      "step": 33,
       "slice": "V0",
       "as": "ro",
       "method": "tools/list",
+      "gate": [
+        {
+          "as": "ro",
+          "tool": "____IMPORTANT"
+        },
+        {
+          "as": "rw",
+          "tool": "oracle_learn"
+        }
+      ],
       "provenance": [],
       "assert": {
         "kind": "tools_list_gate",
         "expectAbsent": [
-          "oracle_learn", "oracle_handoff", "oracle_thread", "oracle_supersede", "oracle_research_note",
-          "oracle_thread_update", "oracle_trace", "oracle_trace_distill", "oracle_search_chain", "oracle_verify",
-          "oracle_mcp_call", "oracle_mcp_list_tools", "oracle_trace_link", "oracle_trace_unlink", "oracle_profile"
+          "oracle_learn",
+          "oracle_handoff",
+          "oracle_thread",
+          "oracle_supersede",
+          "oracle_research_note",
+          "oracle_thread_update",
+          "oracle_trace",
+          "oracle_trace_distill",
+          "oracle_search_chain",
+          "oracle_verify",
+          "oracle_mcp_call",
+          "oracle_mcp_list_tools",
+          "oracle_trace_link",
+          "oracle_trace_unlink",
+          "oracle_profile",
+          "kb_publishRevision"
         ],
-        "notes": "V3-PARITY.md §8 step 25 (list half): a content:read-only grant lists no write tools."
+        "notes": "V3-PARITY.md §8 step 25 (list half): a content:read-only grant lists the read family (____IMPORTANT and K2's lookups) and no write tool. Gated on rw listing oracle_learn: before a write tool exists anywhere, 'no write tools' would pass vacuously.",
+        "expectListed": [
+          "____IMPORTANT",
+          "kb_lookupTermByName"
+        ]
       }
     },
     {
-      "step": 28,
+      "step": 34,
       "slice": "V0",
       "as": "ro",
       "method": "tools/call",
       "tool": "oracle_learn",
-      "arguments": { "pattern": "should never be written" },
+      "arguments": {
+        "pattern": "should never be written"
+      },
+      "gate": [
+        {
+          "as": "rw",
+          "tool": "oracle_learn"
+        }
+      ],
       "provenance": [],
       "assert": {
         "kind": "not_listed_403",
         "compareToUnknownTool": "oracle_nope",
-        "notes": "V3-PARITY.md §8 step 25 (call half): 403, byte-identical to calling an unknown tool."
+        "notes": "V3-PARITY.md §8 step 25 (call half): 403, byte-identical to calling an unknown tool. Gated on rw listing oracle_learn, so the 403 proves the grant refuses it, not that the tool does not exist."
       }
     },
     {
-      "step": 29,
+      "step": 35,
       "slice": "V2",
       "as": "other",
       "method": "tools/call",
       "tool": "oracle_read",
-      "arguments": { "id": { "$ref": "L1" } },
+      "arguments": {
+        "id": {
+          "$ref": "L1"
+        }
+      },
       "provenance": [],
       "assert": {
         "kind": "isError_generic",
@@ -694,12 +1123,15 @@
       }
     },
     {
-      "step": 30,
+      "step": 36,
       "slice": "V5",
       "as": "other",
       "method": "tools/call",
       "tool": "oracle_search",
-      "arguments": { "query": "APFS snapshot tmutil disk management", "limit": 5 },
+      "arguments": {
+        "query": "APFS snapshot tmutil disk management",
+        "limit": 5
+      },
       "provenance": [],
       "assert": {
         "kind": "listed_and_ok",
@@ -709,18 +1141,59 @@
       }
     },
     {
-      "step": 31,
+      "step": 37,
       "slice": "V0",
       "as": "rw",
       "method": "tools/call",
       "tool": "oracle_mcp_call",
-      "arguments": { "command": "sh", "args": ["-c", "id"], "toolName": "x" },
+      "arguments": {
+        "command": "sh",
+        "args": [
+          "-c",
+          "id"
+        ],
+        "toolName": "x"
+      },
+      "gate": [
+        {
+          "as": "rw",
+          "tool": "____IMPORTANT"
+        }
+      ],
       "provenance": [],
       "assert": {
         "kind": "not_listed_403",
         "assertNoSpawn": true,
-        "notes": "V3-PARITY.md §8 step 27 and §6: never carried -- 403 like an unknown tool, and no process is spawned (the test injects a Bun.spawn spy)."
+        "notes": "V3-PARITY.md §8 step 27 and §6: never carried -- 403 like an unknown tool, and no process is spawned (the child installs a Bun.spawn spy). Gated on the v3 family being advertised at all: with the flag off every oracle_* name is unknown and the 403 would prove nothing."
       }
     }
-  ]
+  ],
+  "carried": [
+    "____IMPORTANT",
+    "oracle_search",
+    "oracle_ask",
+    "oracle_read",
+    "oracle_list",
+    "oracle_stats",
+    "oracle_concepts",
+    "oracle_reflect",
+    "oracle_recap",
+    "oracle_inbox",
+    "oracle_threads",
+    "oracle_thread_read",
+    "oracle_trace_get",
+    "oracle_trace_list",
+    "oracle_trace_chain",
+    "oracle_learn",
+    "oracle_research_note",
+    "oracle_handoff",
+    "oracle_supersede",
+    "oracle_thread",
+    "oracle_thread_update",
+    "oracle_trace",
+    "oracle_trace_distill",
+    "oracle_search_chain",
+    "oracle_verify"
+  ],
+  "verdicts": "Each step is PASS, FAIL or GAP. GAP means a tool the step depends on is not advertised to the principal named in the step's gate (default: the step's own tool, to the step's own principal). A GAP step is never PASS (V3-PARITY.md §8). A step whose gate holds is evaluated in full: any failed assertion is FAIL."
 }

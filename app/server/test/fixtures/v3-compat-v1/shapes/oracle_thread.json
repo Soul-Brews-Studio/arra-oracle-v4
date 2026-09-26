@@ -6,10 +6,35 @@
     "commit": "61e5f8b6"
   },
   "success": {
-    "thread_id": { "type": "number", "note": "v3 threadId is an auto-increment integer (forum.ts type OracleThreadInput.threadId?: number), NOT a string. V3-PARITY.md §8 step 18 expects a v4-native STRING thread_id -- that is a deliberate v4 change (A3: the session name becomes v3 thread_id), not a v3 carry-over." },
-    "message_id": { "type": "number" },
-    "status": { "type": "string" },
-    "oracle_response": { "type": "object", "nullable": true, "shape": { "content": "string", "principles_found": "number", "patterns_found": "number" } },
-    "issue_url": { "type": "string", "nullable": true }
+    "thread_id": {
+      "type": [
+        "number",
+        "string"
+      ],
+      "note": "v3: an auto-increment integer (forum.ts OracleThreadInput.threadId?: number). v4: the session NAME, a string (V3-PARITY.md §3 A3; §8 step 18 asserts a string). Both are accepted here; the step asserts the v4 string."
+    },
+    "message_id": {
+      "type": [
+        "number",
+        "string"
+      ],
+      "note": "v3 integer; v4 the message public_id (§3 A3)."
+    },
+    "status": {
+      "type": "string"
+    },
+    "oracle_response": {
+      "type": "object",
+      "nullable": true,
+      "shape": {
+        "content": "string",
+        "principles_found": "number",
+        "patterns_found": "number"
+      }
+    },
+    "issue_url": {
+      "type": "string",
+      "nullable": true
+    }
   }
 }
