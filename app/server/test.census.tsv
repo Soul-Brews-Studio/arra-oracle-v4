@@ -11,7 +11,7 @@
 # Columns: path(relative to app/server)  seconds  exit_code  pass_count  fail_count
 #
 # Regenerate with ./test-census.sh (~18 minutes: runs every *.test.ts file under
-# test/, plus ../cli.test.ts, as its own bun test invocation). Re-run after adding,
+# test/, plus every ../cli*.test.ts file, as its own bun test invocation). Re-run after adding,
 # removing, or materially changing test files so test.order.ts's ordering and
 # test.fast.txt's split stay honest. A file with NO entry here (new since the last
 # census) is not silently ignored: test.order.ts warns on stderr and falls back to

@@ -102,7 +102,8 @@ runIt(
 
     // Revision ids the writer assigned (`randomNanoid21`) -- not knowable
     // ahead of the run, which is exactly why `child.ts`'s `capture`/`"@name"`
-    // substitution exists (see the `Step["capture"]` doc comment above).
+    // substitution exists (see the `Step["capture"]` doc comment in
+    // `test/helpers/expose13-live-steps.ts`).
     const revA = out.pub_A.body.revision_id as string;
     const revB = out.pub_B.body.revision_id as string;
     const revC = out.pub_C.body.revision_id as string;
