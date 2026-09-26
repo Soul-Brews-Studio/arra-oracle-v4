@@ -1,0 +1,15 @@
+{
+  "tool": "oracle_thread",
+  "v3Source": {
+    "handler": "arra-oracle-v3 src/tools/forum.ts:194-207 (handleThread success)",
+    "closedGate": "arra-oracle-v3 src/tools/forum.ts:161-171 (isError:true when threadId is closed and reopen is not true)",
+    "commit": "61e5f8b6"
+  },
+  "success": {
+    "thread_id": { "type": "number", "note": "v3 threadId is an auto-increment integer (forum.ts type OracleThreadInput.threadId?: number), NOT a string. V3-PARITY.md §8 step 18 expects a v4-native STRING thread_id -- that is a deliberate v4 change (A3: the session name becomes v3 thread_id), not a v3 carry-over." },
+    "message_id": { "type": "number" },
+    "status": { "type": "string" },
+    "oracle_response": { "type": "object", "nullable": true, "shape": { "content": "string", "principles_found": "number", "patterns_found": "number" } },
+    "issue_url": { "type": "string", "nullable": true }
+  }
+}

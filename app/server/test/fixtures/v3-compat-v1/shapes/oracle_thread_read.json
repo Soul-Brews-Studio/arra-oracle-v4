@@ -1,0 +1,23 @@
+{
+  "tool": "oracle_thread_read",
+  "v3Source": {
+    "handler": "arra-oracle-v3 src/tools/forum.ts:271-281 (handleThreadRead)",
+    "messageMap": "arra-oracle-v3 src/tools/forum.ts:255-261",
+    "commit": "61e5f8b6"
+  },
+  "topLevel": {
+    "thread_id": { "type": "number", "note": "v3 integer id, forum.ts:275. v4 uses the session NAME as a string (A3) -- a deliberate change, not a v3 field." },
+    "title": { "type": "string", "nullable": true },
+    "status": { "type": "string" },
+    "message_count": { "type": "number", "note": "threadData.messages.length BEFORE the limit slice, forum.ts:278 -- v3 never returns a short count even when `limit` truncated the array" },
+    "messages": { "type": "array", "items": "message" }
+  },
+  "message": {
+    "id": { "type": "number" },
+    "role": { "type": "string" },
+    "author": { "type": "string" },
+    "content": { "type": "string" },
+    "timestamp": { "type": "string", "note": "ISO 8601, forum.ts:258" }
+  },
+  "notes": "v3 has NO `seq` field and NO `next_cursor` field on this tool. V3-PARITY.md §4.2 documents both as v4 additions."
+}

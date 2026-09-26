@@ -1,0 +1,24 @@
+{
+  "tool": "oracle_trace_list",
+  "v3Source": {
+    "handler": "arra-oracle-v3 src/tools/trace.ts:192-209 (handleTraceList)",
+    "commit": "61e5f8b6"
+  },
+  "topLevel": {
+    "traces": { "type": "array", "items": "trace" },
+    "total": { "type": "number" },
+    "has_more": { "type": "boolean" }
+  },
+  "trace": {
+    "trace_id": { "type": "string" },
+    "query": { "type": "string" },
+    "scope": { "type": "string", "nullable": true },
+    "depth": { "type": "number" },
+    "file_count": { "type": "number" },
+    "commit_count": { "type": "number" },
+    "issue_count": { "type": "number" },
+    "status": { "type": "string" },
+    "has_awakening": { "type": "boolean" },
+    "created_at": { "type": "string", "note": "ISO 8601, trace.ts:205" }
+  }
+}

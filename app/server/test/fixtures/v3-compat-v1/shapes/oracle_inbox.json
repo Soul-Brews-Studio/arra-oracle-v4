@@ -1,0 +1,22 @@
+{
+  "tool": "oracle_inbox",
+  "v3Source": {
+    "handler": "arra-oracle-v3 src/tools/inbox.ts:84-89",
+    "fileShape": "arra-oracle-v3 src/tools/inbox.ts:68-74",
+    "commit": "61e5f8b6"
+  },
+  "topLevel": {
+    "files": { "type": "array", "items": "file" },
+    "total": { "type": "number" },
+    "limit": { "type": "number" },
+    "offset": { "type": "number" }
+  },
+  "file": {
+    "filename": { "type": "string" },
+    "path": { "type": "string", "note": "ψ/inbox/handoff/<file>, inbox.ts:70" },
+    "created": { "type": "string", "note": "'unknown' when the filename does not match the date prefix, inbox.ts:63-66" },
+    "preview": { "type": "string", "note": "content.substring(0,500), inbox.ts:72" },
+    "type": { "type": "string", "const": "handoff" }
+  },
+  "notes": "v3 sorts handoff files by filename descending (fs.readdirSync(...).sort().reverse(), inbox.ts:57-58), which is newest-first only because filenames are date-prefixed -- not a stored recency column."
+}
