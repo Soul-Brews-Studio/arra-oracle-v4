@@ -7,7 +7,15 @@
  */
 import { describe, expect, test } from "bun:test";
 import type { RevisionRow, TermSnapshot } from "../api/knowledge";
-import { compareRevisionNo, pairDiffLines, revisionDiff } from "./revisionDiff";
+import { compareRevisionNo, MAX_DIFF_CELLS, pairDiffLines, revisionDiff, type RevisionDiffResult } from "./revisionDiff";
+
+/** `body` is a discriminated union (too-large bodies carry no `lines`); every
+ *  test below builds SHORT bodies, so this just unwraps the `tooLarge:false`
+ *  branch instead of repeating the narrowing at every call site. */
+function linesOf(diff: RevisionDiffResult) {
+  if (diff.body.tooLarge) throw new Error("expected a diffable body in this test");
+  return diff.body.lines;
+}
 
 function term(term_id: string, vocabulary_name_snapshot: string, term_name_snapshot: string): TermSnapshot {
   return {
@@ -53,12 +61,13 @@ describe("revisionDiff", () => {
     const b = revision({ id: "r1", revision_no: "1", title: "Storage plan", body: "line one\nline two" });
     const diff = revisionDiff(a, b);
     expect(diff.titleChanged).toBe(false);
-    expect(diff.bodyLines).toEqual([
+    expect(linesOf(diff)).toEqual([
       { op: "equal", text: "line one" },
       { op: "equal", text: "line two" },
     ]);
     expect(diff.termChanges).toEqual([]);
     expect(diff.linkChanges).toEqual([]);
+    expect(diff.fieldChanges.every((c) => !c.changed)).toBe(true);
   });
 
   test("diffs a title change", () => {
@@ -74,7 +83,7 @@ describe("revisionDiff", () => {
     const a = revision({ id: "r1", revision_no: "1", body: "alpha\nbeta\ngamma" });
     const b = revision({ id: "r2", revision_no: "2", body: "alpha\nBETA\ngamma" });
     const diff = revisionDiff(a, b);
-    expect(diff.bodyLines).toEqual([
+    expect(linesOf(diff)).toEqual([
       { op: "equal", text: "alpha" },
       { op: "removed", text: "beta" },
       { op: "added", text: "BETA" },
@@ -129,11 +138,121 @@ describe("revisionDiff", () => {
   });
 });
 
+/** Fix-round finding: revisionDiff compared only title/body/terms/links and
+ *  silently reported "no difference" for a revision that only re-attributed
+ *  authorship, changed session, expired validity or carried a different
+ *  change_reason/fields -- exactly the shape #33's design revision-2 example
+ *  needs ("distinct author/observer/subject"). Every field a revision
+ *  request actually carries (contracts/revision-v1.ts) must be comparable,
+ *  not just the free-text/set-shaped ones. */
+describe("revisionDiff field-level diff", () => {
+  test("reports every per-revision field, not just title/body/terms/links", () => {
+    const a = revision({
+      id: "r1",
+      revision_no: "1",
+      author_peer_name: "alice",
+      observer_peer_name: null,
+      subject_peer_name: "bob",
+      session_name: "sess-a",
+      is_active: true,
+      valid_from: null,
+      valid_to: null,
+      change_reason: null,
+      fields: "{}",
+    });
+    const b = revision({
+      id: "r2",
+      revision_no: "2",
+      author_peer_name: "carol",
+      observer_peer_name: null,
+      subject_peer_name: "dave",
+      session_name: "sess-b",
+      is_active: true,
+      valid_from: null,
+      valid_to: "2026-10-01T00:00:00.000Z",
+      change_reason: "re-attributed",
+      fields: '{"k":1}',
+    });
+    const diff = revisionDiff(a, b);
+    const byField = Object.fromEntries(diff.fieldChanges.map((c) => [c.field, c]));
+
+    expect(byField.author_peer_name).toEqual({ field: "author_peer_name", changed: true, from: "alice", to: "carol" });
+    expect(byField.observer_peer_name).toEqual({ field: "observer_peer_name", changed: false, from: null, to: null });
+    expect(byField.subject_peer_name).toEqual({ field: "subject_peer_name", changed: true, from: "bob", to: "dave" });
+    expect(byField.session_name).toEqual({ field: "session_name", changed: true, from: "sess-a", to: "sess-b" });
+    expect(byField.is_active).toEqual({ field: "is_active", changed: false, from: "true", to: "true" });
+    expect(byField.valid_from).toEqual({ field: "valid_from", changed: false, from: null, to: null });
+    expect(byField.valid_to).toEqual({
+      field: "valid_to",
+      changed: true,
+      from: null,
+      to: "2026-10-01T00:00:00.000Z",
+    });
+    expect(byField.change_reason).toEqual({
+      field: "change_reason",
+      changed: true,
+      from: null,
+      to: "re-attributed",
+    });
+    expect(byField.fields).toEqual({ field: "fields", changed: true, from: "{}", to: '{"k":1}' });
+  });
+
+  test("a revision that ONLY expires validity (valid_to) is not reported as identical", () => {
+    const a = revision({ id: "r1", revision_no: "1", valid_to: null });
+    const b = revision({ id: "r2", revision_no: "2", valid_to: "2026-10-01T00:00:00.000Z" });
+    const diff = revisionDiff(a, b);
+    expect(diff.fieldChanges.some((c) => c.field === "valid_to" && c.changed)).toBe(true);
+  });
+
+  test("is_active flips render as a real boolean change, not a stringified no-op", () => {
+    const a = revision({ id: "r1", revision_no: "1", is_active: true });
+    const b = revision({ id: "r2", revision_no: "2", is_active: false });
+    const diff = revisionDiff(a, b);
+    expect(diff.fieldChanges.find((c) => c.field === "is_active")).toEqual({
+      field: "is_active",
+      changed: true,
+      from: "true",
+      to: "false",
+    });
+  });
+});
+
+/** Fix-round finding: `diffLines` builds a full (n+1)x(m+1) LCS table with no
+ *  size guard, so `KnowledgeView` -- which renders this automatically for
+ *  the two newest revisions of any node with 2+ revisions -- can freeze or
+ *  crash the tab on a body inside the server's own 256 KiB request cap.
+ *  `revisionDiff` must refuse to build the table past a bounded cell count
+ *  and say so, rather than compute it. */
+describe("revisionDiff body size guard", () => {
+  test("MAX_DIFF_CELLS is a real, positive bound", () => {
+    expect(MAX_DIFF_CELLS).toBeGreaterThan(0);
+  });
+
+  test("a body pair whose line-count product exceeds the bound reports tooLarge, not a computed table", () => {
+    // n*m must exceed MAX_DIFF_CELLS while staying cheap to allocate in a
+    // test: two bodies just over sqrt(MAX_DIFF_CELLS) lines each.
+    const side = Math.ceil(Math.sqrt(MAX_DIFF_CELLS)) + 1;
+    const bodyA = Array.from({ length: side }, (_, i) => `line-${i}`).join("\n");
+    const bodyB = Array.from({ length: side }, (_, i) => `LINE-${i}`).join("\n");
+    const a = revision({ id: "r1", revision_no: "1", body: bodyA });
+    const b = revision({ id: "r2", revision_no: "2", body: bodyB });
+    const diff = revisionDiff(a, b);
+    expect(diff.body).toEqual({ tooLarge: true, fromLineCount: side, toLineCount: side });
+  });
+
+  test("a body pair at or under the bound is still diffed normally", () => {
+    const a = revision({ id: "r1", revision_no: "1", body: "one\ntwo" });
+    const b = revision({ id: "r2", revision_no: "2", body: "one\nTWO" });
+    const diff = revisionDiff(a, b);
+    expect(diff.body.tooLarge).toBe(false);
+  });
+});
+
 describe("pairDiffLines", () => {
   test("pairs an adjacent removed+added run as one changed row, side by side", () => {
     const a = revision({ id: "r1", revision_no: "1", body: "alpha\nbeta\ngamma" });
     const b = revision({ id: "r2", revision_no: "2", body: "alpha\nBETA\ngamma" });
-    const rows = pairDiffLines(revisionDiff(a, b).bodyLines);
+    const rows = pairDiffLines(linesOf(revisionDiff(a, b)));
     expect(rows).toEqual([
       { kind: "equal", left: "alpha", right: "alpha" },
       { kind: "changed", left: "beta", right: "BETA" },
@@ -144,7 +263,7 @@ describe("pairDiffLines", () => {
   test("a line added with no counterpart has a blank left side", () => {
     const a = revision({ id: "r1", revision_no: "1", body: "alpha" });
     const b = revision({ id: "r2", revision_no: "2", body: "alpha\nbeta" });
-    const rows = pairDiffLines(revisionDiff(a, b).bodyLines);
+    const rows = pairDiffLines(linesOf(revisionDiff(a, b)));
     expect(rows).toEqual([
       { kind: "equal", left: "alpha", right: "alpha" },
       { kind: "added", left: null, right: "beta" },
@@ -154,7 +273,7 @@ describe("pairDiffLines", () => {
   test("a line removed with no counterpart has a blank right side", () => {
     const a = revision({ id: "r1", revision_no: "1", body: "alpha\nbeta" });
     const b = revision({ id: "r2", revision_no: "2", body: "alpha" });
-    const rows = pairDiffLines(revisionDiff(a, b).bodyLines);
+    const rows = pairDiffLines(linesOf(revisionDiff(a, b)));
     expect(rows).toEqual([
       { kind: "equal", left: "alpha", right: "alpha" },
       { kind: "removed", left: "beta", right: null },
@@ -166,5 +285,18 @@ describe("compareRevisionNo", () => {
   test("orders numerically, descending, even past 2^53", () => {
     const values = ["2", "10", "9007199254740993", "1"];
     expect([...values].sort(compareRevisionNo)).toEqual(["9007199254740993", "10", "2", "1"]);
+  });
+
+  // Fix-round finding: the previous version of this test passed even if
+  // `compareRevisionNo` used `Number(a) - Number(b)` instead of `BigInt`,
+  // because none of its fixture values actually collide once rounded to a
+  // JS `number`. These two DO collide -- `Number("9007199254740993") ===
+  // Number("9007199254740992")` -- so a Number-based comparator cannot tell
+  // them apart (and JS's default sort would then leave their relative order
+  // unchanged, i.e. NOT descending), while `BigInt` orders them correctly.
+  test("distinguishes two revision_no values that collide once rounded to a JS number", () => {
+    expect(Number("9007199254740993")).toBe(Number("9007199254740992"));
+    const values = ["9007199254740992", "9007199254740993"];
+    expect([...values].sort(compareRevisionNo)).toEqual(["9007199254740993", "9007199254740992"]);
   });
 });
