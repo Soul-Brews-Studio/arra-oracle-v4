@@ -1,5 +1,5 @@
 import { MatchQuery } from "@lancedb/lancedb";
-import { ensureFtsIndexOn, ftsIndexStatus } from "../fts/fts";
+import { ensureFtsIndexOn, ftsIndexStatus, refreshStaleFtsIndexOn } from "../fts/fts";
 import { failPublication } from "./errors";
 import { EMBEDDING_DIMENSION } from "./search-chunk";
 import { SEARCH_CHUNKS, SEARCH_HIT_COLUMNS } from "./service.constants";
@@ -287,10 +287,12 @@ export function makeAdapter(connection: Connection, onRelease: () => void): Data
     // `updateSearchChunkEmbedding`: no caller names a table or a column here.
     async ensureSearchChunkTextIndex() {
       // Writer maintenance: see the type's doc. `checkoutLatest` so the index
-      // decision is made against the version this turn just wrote.
+      // decision is made against the latest version, including the rows the
+      // turn before this one wrote.
       const tbl = await handle(SEARCH_CHUNKS);
       await tbl.checkoutLatest();
-      return ensureFtsIndexOn(tbl, "text", false);
+      const labels = await ensureFtsIndexOn(tbl, "text", false);
+      return (await refreshStaleFtsIndexOn(tbl, "text")) ? (await tbl.listIndices()).map((i) => `${i.name}:${i.indexType}`) : labels;
     },
     async searchChunkTextIndexStatus() {
       const tbl = await handle(SEARCH_CHUNKS);

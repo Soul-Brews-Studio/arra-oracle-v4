@@ -98,8 +98,10 @@ export type DatasetAdapter = {
    * #30 retrieval (overnight R7 #30 part + R14): leave exactly one FTS index
    * on `search_chunks_v1.text`, built from the shared `FTS_INDEX_OPTIONS`
    * (`fts/fts.constants.ts`); an index whose live details already match is
-   * kept, one that differs is rebuilt under its own name. WRITER-ONLY: the
-   * only caller is `indexRevisionChunks`, inside the owner's serialized turn.
+   * kept, one that differs is rebuilt under its own name, and a matching one
+   * is rebuilt over every row once its unindexed rows reach its indexed rows
+   * (`fts.refreshStaleFtsIndexOn`). WRITER-ONLY: the only caller is
+   * `indexRevisionChunks`, in the owner's serialized queue.
    * A reader never builds or repairs an index -- it asks
    * `searchChunkTextIndexStatus` and scans when the answer is not `ready`.
    * Hardcoded to one table and column, like `updateSearchChunkEmbedding`.

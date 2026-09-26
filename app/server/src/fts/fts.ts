@@ -22,10 +22,13 @@ export {
 export type { FtsMatch, FtsResult } from "./fts.constants";
 export { containsFolded } from "./fts.containsFolded";
 export { ensureFtsIndexOn } from "./fts.ensureFtsIndexOn";
+export { escapeLike } from "./fts.escapeLike";
 export { ftsIndexConfig } from "./fts.ftsIndexConfig";
 export { ftsIndexMatches } from "./fts.ftsIndexMatches";
 export { ftsIndexStatus } from "./fts.ftsIndexStatus";
 export { isFtsIndexOn } from "./fts.isFtsIndexOn";
 export { likeContainsPredicate } from "./fts.likeContainsPredicate";
+export { likePrefixPredicate } from "./fts.likePrefixPredicate";
 export { overfetch } from "./fts.overfetch";
+export { refreshStaleFtsIndexOn } from "./fts.refreshStaleFtsIndexOn";
 export { substringSearch } from "./fts.substringSearch";

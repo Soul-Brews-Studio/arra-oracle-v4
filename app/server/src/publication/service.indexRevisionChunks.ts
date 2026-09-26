@@ -1,6 +1,6 @@
 import { type ChatModelFn } from "./chat";
 import { failPublication } from "./errors";
-import { CHUNK_STATUSES, SEARCH_CHUNK_FIELDS, chunkText, deriveChunkId, deriveContentHash, encodeSearchChunkRow, parseIndexRevision } from "./search-chunk";
+import { CHUNK_STATUSES, SEARCH_CHUNK_FIELDS, chunkSourceText, chunkText, deriveChunkId, deriveContentHash, encodeSearchChunkRow, parseIndexRevision } from "./search-chunk";
 import { quote } from "./storage";
 import { RESERVED_TYPE_VOCABULARY, SEARCH_CHUNKS } from "./service.constants";
 import { contextOne } from "./service.contextOne";
@@ -17,25 +17,47 @@ import { type Clock, type DatasetAdapter, type OwnerCore } from "./service.types
  * #30 retrieval (overnight R7 #30 part + R14): the writer that adds chunks
  * also maintains their text index. Every successful call -- `indexed` or an
  * `already_satisfied` replay -- ends by leaving exactly one FTS index on
- * `search_chunks_v1.text` built from the shared `FTS_INDEX_OPTIONS`, inside
- * the same serialized turn: kept as-is when its live details already match
- * (no rebuild, no new version), rebuilt under its own name when they differ.
- * Rows appended after the build are still found (LanceDB searches unindexed
- * rows too, measured), so the index never has to be rebuilt per call. A
- * reader never builds it; until a writer has, keyword search scans and says
- * so. The chunk rows are already verified durable when this runs, so a
- * failed build is `writer_unavailable` (retry; the replay repeats only this
- * step), never a poisoned owner.
+ * `search_chunks_v1.text` built from the shared `FTS_INDEX_OPTIONS`: kept
+ * as-is when its live details already match (no rebuild, no new version),
+ * rebuilt under its own name when they differ, and rebuilt over every row
+ * once the rows appended since its build outnumber the ones it covers
+ * (LanceDB still finds those, unindexed and slower -- measured). A reader
+ * never builds it; until a writer has, keyword search scans and says so.
+ *
+ * It is its OWN serialized turn, queued right after the write turn, so it
+ * runs with no write attempted in that turn: the chunk rows are already
+ * verified durable, and a failed build is `writer_unavailable` (retry; the
+ * replay repeats only this step) -- never a poisoned owner, which is what any
+ * failure after `markAttemptedWrite` would be (`createOwnerCore`'s `serial`).
+ * If the owner stopped serving between the two turns (closed, or poisoned by
+ * another request), the queue refuses the index turn; the rows this call
+ * verified still stand, so the call still answers them, and the next owner's
+ * index call builds the index.
  */
-async function ensureChunkTextIndex(writer: DatasetAdapter): Promise<void> {
+async function ensureChunkTextIndex(writer: DatasetAdapter, core: OwnerCore): Promise<void> {
+  let built: boolean;
   try {
-    await writer.ensureSearchChunkTextIndex();
+    built = await core.serial(async () => {
+      try {
+        await writer.ensureSearchChunkTextIndex();
+        return true;
+      } catch {
+        return false;
+      }
+    });
   } catch {
-    failPublication("writer_unavailable", "");
+    return; // refused by the queue itself: see above.
   }
+  if (!built) failPublication("writer_unavailable", "");
 }
 
-export function indexRevisionChunks(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn }, requestBytes: Uint8Array) {
+export async function indexRevisionChunks(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn }, requestBytes: Uint8Array) {
+  const result = await indexChunkRows(writer, core, requestBytes);
+  await ensureChunkTextIndex(writer, core);
+  return result;
+}
+
+function indexChunkRows(writer: DatasetAdapter, core: OwnerCore, requestBytes: Uint8Array) {
 const request = parseIndexRevision(requestBytes);
       return mutateContextWrite(core, async () => {
         await requireContextWorkspaceRow(writer, request.workspace_name);
@@ -81,7 +103,8 @@ const request = parseIndexRevision(requestBytes);
         const title = selected.title;
         const body = selected.body;
         if (typeof title !== "string" || typeof body !== "string") failPublication("integrity_failure", "");
-        const derivedText = `${title}\n\n${body}`;
+        // The same string keyword search re-checks a hit against.
+        const derivedText = chunkSourceText(title, body);
         const embeddingProfileName = request.embedding_profile.name;
         const pieces = chunkText(derivedText);
 
@@ -134,7 +157,6 @@ const request = parseIndexRevision(requestBytes);
 
         if (targets.length > 0 && targets.every((target) => existingById.has(target.id))) {
           const rows = targets.map((target) => encodeSearchChunkRow(existingById.get(target.id)!));
-          await ensureChunkTextIndex(writer);
           return { outcome: "already_satisfied" as const, rows };
         }
 
@@ -199,7 +221,6 @@ const request = parseIndexRevision(requestBytes);
           return rows;
         });
         await core.contextBoundary("after_readback", true);
-        await ensureChunkTextIndex(writer);
         return { outcome: "indexed" as const, rows: stored };
       });
 }
