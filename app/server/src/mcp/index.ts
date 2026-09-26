@@ -12,26 +12,19 @@
  * invalidated when the request ends.
  */
 
-import type { WorkspaceAction } from "../auth/policy";
 import type { McpEnvelope, OperationService, ToolOperations } from "../auth/service";
 import { KNOWLEDGE_METHODS } from "../knowledge/registry";
 import type { KnowledgeAccess } from "../knowledge/transport";
+import { callKnowledgeMethod } from "./index.callKnowledgeMethod";
+import { V3_TOOL_NAMES, V3_TOOLS } from "./legacy-v3/catalogue";
+import { dispatchLegacyV3 } from "./legacy-v3/dispatchLegacyV3";
 import { SERVER_NAME, SERVER_VERSION, err, negotiate, ok, text } from "./protocol";
 import { TOOLS } from "./tools";
+import { isAdvertised } from "./tools.isAdvertised";
 
-/** Which action each tool needs. A tool absent here is not dispatchable. */
-const TOOL_ACTION: Readonly<Record<string, WorkspaceAction>> = Object.freeze({
-  remember: "content:write",
-  recall: "content:read",
-  get_memory: "content:read",
-  list_memories: "content:read",
-  bank_info: "diagnostics:read",
-  status: "diagnostics:read",
-  call_log: "audit:read",
-  call_stats: "audit:read",
-});
-
-export const toolAction = (tool: string): WorkspaceAction | undefined => TOOL_ACTION[tool];
+// The tool -> action map is the service's (`auth/service.toolAction.ts`). A
+// second, hand-kept copy used to sit here with no callers and no kb_ entries
+// (parity defect 6); it is gone so nothing can grow a third one by mistake.
 
 const optionalString = (args: Record<string, unknown>, field: string) => {
   if (!(field in args)) return undefined;
@@ -107,27 +100,10 @@ async function dispatchKnowledgeTool(name: string, args: Record<string, unknown>
   if (scoped === null || scoped !== ops.bank) {
     throw new Error("payload workspace_name must match the connected bank");
   }
-  if (knowledgeAccess === null) throw new Error("knowledge transport is not configured");
   const bytes = new TextEncoder().encode(JSON.stringify(payload));
-  // Same gate discipline as the HTTP transport (`knowledge/transport.ts`'s
-  // `handleKnowledgeRequest`): an `ephemeralWrite` method (currently only
-  // `answerChat`) must never share the process-lifetime cached writer, or
-  // `kb_answerChat` would seize the exclusive dataset gate on its first MCP
-  // call and hold it for the rest of the process -- a call that persists
-  // nothing and, at this deployment, cannot even succeed.
-  if (entry.ephemeralWrite === true) {
-    if (knowledgeAccess.getEphemeralWriter === undefined) {
-      throw new Error("knowledge transport cannot open an ephemeral writer");
-    }
-    const opened = await knowledgeAccess.getEphemeralWriter();
-    try {
-      return await entry.call(opened, bytes);
-    } finally {
-      await opened.close().catch(() => undefined);
-    }
-  }
-  const bundle = await knowledgeAccess.getBundle(entry.action);
-  return entry.call(bundle, bytes);
+  // Peer binding, the operations-root branch and bundle choice live in the
+  // one helper the v3 adapter's kb() shares.
+  return callKnowledgeMethod(knowledgeAccess, method, bytes, ops.authority);
 }
 
 /** Pure dispatcher: receives scope-bound operations, never a context. */
@@ -136,6 +112,11 @@ export async function dispatchTool(
   args: Record<string, unknown>,
   ops: ToolOperations,
 ): Promise<unknown> {
+  // R18: the v3 family (the service only admits these names with
+  // ARRA_MCP_V3_COMPAT on). It refuses scope AND tenant carriers itself,
+  // with the arra-v3-compat/1 body v3 clients can read.
+  if (V3_TOOL_NAMES.includes(name)) return dispatchLegacyV3(name, args, ops, knowledgeAccess);
+
   for (const carrier of SCOPE_CARRIERS) {
     if (carrier in args) throw new Error("scope may not be supplied in arguments");
   }
@@ -164,7 +145,15 @@ export async function dispatchTool(
       const limit = bounded(args.limit, 10, "limit");
       const mode = args.mode === undefined ? "text" : args.mode;
       if (mode !== "text" && mode !== "vector") throw new Error("mode must be 'text' or 'vector'");
-      return mode === "vector" ? ops.searchVector(q, limit) : ops.searchText(q, limit);
+      // The same answer shape as GET /api/search, so a caller can see HOW a text
+      // answer was produced (R14): `match` is "ngram" or, under 3 code points,
+      // "substring_scan". Vector mode has no lexical match mode.
+      if (mode === "vector") {
+        const rows = await ops.searchVector(q, limit);
+        return { mode, count: rows.length, rows };
+      }
+      const { match, rows } = await ops.searchText(q, limit);
+      return { mode, match, count: rows.length, rows };
     }
     case "get_memory": {
       const hit = await ops.getById(requiredString(args, "id"));
@@ -238,6 +227,8 @@ export function createMcpAdapter(service: OperationService) {
     authorization: string | null,
     readEnvelope: () => Promise<McpEnvelope | null>,
     userAgent = "",
+    /** A7/D8: the X-Arra-Peer header, grammar-checked by the route; the service binds it. */
+    assertedPeer: string | null = null,
   ): Promise<McpOutcome> {
     if (!bank?.trim()) return { kind: "denied", code: "invalid_scope" };
 
@@ -252,14 +243,17 @@ export function createMcpAdapter(service: OperationService) {
 
     // The tool -> action map is owned by the service; passing one from here
     // would let the adapter choose which grant a tool required.
-    const result = await service.runMcp(authorization, bank, capturingReader, dispatchTool, userAgent);
+    const result = await service.runMcp(authorization, bank, capturingReader, dispatchTool, userAgent, assertedPeer);
 
     switch (result.kind) {
       case "denied":
         return { kind: "denied", code: result.code };
       case "tools": {
-        // Catalogue ORDER preserved; only tools whose action was admitted.
-        const visible = TOOLS.filter((tool) => result.names.includes(tool.name));
+        // Catalogue ORDER preserved; only tools whose action was admitted AND
+        // that this deployment can serve (#31: nothing proposed is advertised).
+        const visible = [...TOOLS, ...V3_TOOLS].filter(
+          (tool) => result.names.includes(tool.name) && isAdvertised(tool.name, knowledgeAccess),
+        );
         return { kind: "response", response: Response.json(ok(envelopeId, { tools: visible })) };
       }
       case "method_not_found":

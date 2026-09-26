@@ -18,6 +18,7 @@ import {
   type SeededWorkspace,
 } from "./helpers/publication-fixture";
 import { openPublicationReader } from "../src/publication/service";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/publication-v1/gated-publish.ts", import.meta.url).pathname;
 const ALPHA = "alpha-workspace";
@@ -32,7 +33,12 @@ let beta: SeededWorkspace;
 const nodeId = (seed: string) => `${seed}${"0".repeat(Math.max(0, 21 - seed.length))}`.slice(0, 21);
 const revId = (seed: string) => `${seed}${"0".repeat(Math.max(0, 21 - seed.length))}`.slice(0, 21);
 
-type ListNodesPage = { rows: Record<string, unknown>[]; next_after_id: string | null; total: string | null };
+type ListNodesPage = {
+  rows: Record<string, unknown>[];
+  next_after_id: string | null;
+  next_after_updated_at: string | null;
+  total: string | null;
+};
 
 async function publish(
   request: unknown,
@@ -53,7 +59,12 @@ async function listNodes(request: {
   after_id: string | null;
   limit: number;
   include_total: boolean;
+  include_inactive: boolean;
   type_term: string | null;
+  all_term_ids?: string[] | null;
+  any_term_ids?: string[] | null;
+  order?: "id_asc" | "updated_desc";
+  after_updated_at?: string | null;
 }): Promise<ListNodesPage> {
   const reader = await openPublicationReader(fixture.datasetRoot);
   return (await reader.listNodes(encodeRequest(request))) as ListNodesPage;
@@ -63,7 +74,7 @@ beforeAll(async () => {
   fixture = await createFixture([ALPHA, BETA]);
   alpha = fixture.workspaces[ALPHA]!;
   beta = fixture.workspaces[BETA]!;
-}, 180_000);
+}, testTimeout(180_000));
 
 afterAll(async () => {
   await fixture?.cleanup();
@@ -71,7 +82,7 @@ afterAll(async () => {
 
 describe("listNodes: base cases", () => {
   test("an empty workspace returns an empty page with next_after_id and total both null", async () => {
-    const page = await listNodes({ workspace_name: BETA, after_id: null, limit: 10, include_total: false, type_term: null });
+    const page = await listNodes({ workspace_name: BETA, after_id: null, limit: 10, include_total: false, include_inactive: false, type_term: null });
     expect(page.rows).toEqual([]);
     expect(page.next_after_id).toBeNull();
     expect(page.total).toBeNull();
@@ -92,7 +103,7 @@ describe("listNodes: base cases", () => {
     let row: Record<string, unknown> | undefined;
     let after: string | null = null;
     for (let guard = 0; guard < 1000 && row === undefined; guard += 1) {
-      const page = await listNodes({ workspace_name: ALPHA, after_id: after, limit: 100, include_total: false, type_term: null });
+      const page = await listNodes({ workspace_name: ALPHA, after_id: after, limit: 100, include_total: false, include_inactive: false, type_term: null });
       row = page.rows.find((r) => r.id === node);
       if (page.next_after_id === null) break;
       after = page.next_after_id;
@@ -102,7 +113,42 @@ describe("listNodes: base cases", () => {
     expect(row!.revision_no).toBe("1");
     expect(row!.content_digest).toBe(result.outcome!.content_digest);
     expect(row!.current_revision_id).toBe(revision);
-  }, 180_000);
+  }, testTimeout(180_000));
+});
+
+describe("listNodes: include_inactive is OPTIONAL (#29 fix round: unblocks the `nodes list` CLI alias)", () => {
+  test("a request with no `include_inactive` key at all parses fine, defaulting to false -- the exact wire shape `app/cli/kb.aliases.ts`'s `nodes list` alias sends without --history", async () => {
+    const reader = await openPublicationReader(fixture.datasetRoot);
+    const page = (await reader.listNodes(
+      encodeRequest({ workspace_name: BETA, after_id: null, limit: 10, include_total: true, type_term: null }),
+    )) as ListNodesPage;
+    // BETA only ever receives active nodes in this file; a defaulted-false
+    // request must behave identically to an explicit `include_inactive: false`
+    // one -- same empty-workspace shape as the very first test above.
+    expect(page.rows).toEqual([]);
+    expect(page.total).toBe("0");
+  });
+
+  test("an explicit `include_inactive: null` is still refused invalid_request -- closed-typed (boolean only), not merely optional", async () => {
+    const reader = await openPublicationReader(fixture.datasetRoot);
+    let caught: any = null;
+    try {
+      await reader.listNodes(
+        encodeRequest({
+          workspace_name: BETA,
+          after_id: null,
+          limit: 10,
+          include_total: false,
+          type_term: null,
+          include_inactive: null,
+        }),
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught?.code).toBe("invalid_request");
+    expect(caught?.path).toBe("/include_inactive");
+  });
 });
 
 describe("listNodes: keyset pagination", () => {
@@ -118,7 +164,7 @@ describe("listNodes: keyset pagination", () => {
     expect(r1.ok).toBe(true);
     expect(r2.ok).toBe(true);
 
-    const page1 = await listNodes({ workspace_name: ALPHA, after_id: null, limit: 1, include_total: false, type_term: null });
+    const page1 = await listNodes({ workspace_name: ALPHA, after_id: null, limit: 1, include_total: false, include_inactive: false, type_term: null });
     expect(page1.rows.length).toBe(1);
     expect(page1.next_after_id).not.toBeNull();
     expect(typeof page1.next_after_id).toBe("string");
@@ -130,7 +176,7 @@ describe("listNodes: keyset pagination", () => {
     let guard = 0;
     while (!(seenIds.has(n1) && seenIds.has(n2)) && guard < 1000) {
       guard += 1;
-      const page = await listNodes({ workspace_name: ALPHA, after_id: after, limit: 1, include_total: false, type_term: null });
+      const page = await listNodes({ workspace_name: ALPHA, after_id: after, limit: 1, include_total: false, include_inactive: false, type_term: null });
       expect(page.rows.length).toBeGreaterThan(0);
       for (const row of page.rows) seenIds.add(row.id as string);
       after = page.next_after_id;
@@ -149,12 +195,12 @@ describe("listNodes: keyset pagination", () => {
         after_id: finalNextAfterId,
         limit: 100,
         include_total: false,
-        type_term: null,
+        include_inactive: false, type_term: null,
       });
       finalNextAfterId = page.next_after_id;
     }
     expect(finalNextAfterId).toBeNull();
-  }, 180_000);
+  }, testTimeout(180_000));
 
   test("a full keyset walk visits every id exactly once, strictly increasing, with no short-but-continuing page", async () => {
     const seeds = ["walk1", "walk2", "walk3", "walk4", "walk5"].map((s) => nodeId(`listnodes${s}`));
@@ -172,7 +218,7 @@ describe("listNodes: keyset pagination", () => {
     for (;;) {
       guard += 1;
       if (guard > 10_000) throw new Error("pagination did not converge");
-      const page = await listNodes({ workspace_name: ALPHA, after_id: after, limit: 2, include_total: false, type_term: null });
+      const page = await listNodes({ workspace_name: ALPHA, after_id: after, limit: 2, include_total: false, include_inactive: false, type_term: null });
       // Every page except possibly the last is exactly `limit` long; a short
       // page that still claims `next_after_id` would be a gap, not a page.
       if (page.next_after_id !== null) expect(page.rows.length).toBe(2);
@@ -195,15 +241,15 @@ describe("listNodes: keyset pagination", () => {
     // Exhaustion is a real boundary, not just "the last call returned some
     // rows anyway": one more call from the final cursor is an empty page.
     const last = seen[seen.length - 1]!;
-    const afterEnd = await listNodes({ workspace_name: ALPHA, after_id: last, limit: 10, include_total: false, type_term: null });
+    const afterEnd = await listNodes({ workspace_name: ALPHA, after_id: last, limit: 10, include_total: false, include_inactive: false, type_term: null });
     expect(afterEnd.rows).toEqual([]);
     expect(afterEnd.next_after_id).toBeNull();
-  }, 180_000);
+  }, testTimeout(180_000));
 });
 
 describe("listNodes: include_total", () => {
   test("include_total: false always returns total: null", async () => {
-    const page = await listNodes({ workspace_name: ALPHA, after_id: null, limit: 10, include_total: false, type_term: null });
+    const page = await listNodes({ workspace_name: ALPHA, after_id: null, limit: 10, include_total: false, include_inactive: false, type_term: null });
     expect(page.total).toBeNull();
   });
 
@@ -213,14 +259,14 @@ describe("listNodes: include_total", () => {
       [revId("totalworkspacerA")],
     );
 
-    const before = await listNodes({ workspace_name: ALPHA, after_id: null, limit: 1, include_total: true, type_term: null });
+    const before = await listNodes({ workspace_name: ALPHA, after_id: null, limit: 1, include_total: true, include_inactive: false, type_term: null });
     // Compare against an independent full walk's count rather than a
     // hardcoded literal, since ALPHA accumulates nodes across this file's
     // other tests and test order is not something this test should pin.
     let walked = 0;
     let after: string | null = null;
     for (let guard = 0; guard < 1000; guard += 1) {
-      const page = await listNodes({ workspace_name: ALPHA, after_id: after, limit: 100, include_total: false, type_term: null });
+      const page = await listNodes({ workspace_name: ALPHA, after_id: after, limit: 100, include_total: false, include_inactive: false, type_term: null });
       walked += page.rows.length;
       if (page.next_after_id === null) break;
       after = page.next_after_id;
@@ -229,7 +275,7 @@ describe("listNodes: include_total", () => {
     expect(before.total).toBe(String(walked));
     // Canonical decimal text: no leading zeros, no plus sign.
     expect(before.total).toMatch(/^(?:0|[1-9][0-9]*)$/);
-  }, 180_000);
+  }, testTimeout(180_000));
 
   test("include_total: true with type_term set leaves total null -- no native scoped count for a JSON-embedded field", async () => {
     const decisionType = alpha.term_ids.type.decision;
@@ -238,7 +284,7 @@ describe("listNodes: include_total", () => {
       after_id: null,
       limit: 10,
       include_total: true,
-      type_term: decisionType.name,
+      include_inactive: false, type_term: decisionType.name,
     });
     expect(page.total).toBeNull();
   });
@@ -283,7 +329,7 @@ describe("listNodes: type_term filter", () => {
       after_id: null,
       limit: 100,
       include_total: false,
-      type_term: decisionType.name,
+      include_inactive: false, type_term: decisionType.name,
     });
     const decisionIds = decisions.rows.map((r) => r.id);
     expect(decisionIds).toContain(decisionNode);
@@ -313,7 +359,7 @@ describe("listNodes: type_term filter", () => {
       after_id: null,
       limit: 100,
       include_total: false,
-      type_term: noteType.name,
+      include_inactive: false, type_term: noteType.name,
     });
     const noteIds = notes.rows.map((r) => r.id);
     expect(noteIds).toContain(noteNode);
@@ -326,9 +372,9 @@ describe("listNodes: type_term filter", () => {
       after_id: null,
       limit: 10,
       include_total: false,
-      type_term: "no-such-type-term-anywhere",
+      include_inactive: false, type_term: "no-such-type-term-anywhere",
     });
     expect(none.rows).toEqual([]);
     expect(none.next_after_id).toBeNull();
-  }, 180_000);
+  }, testTimeout(180_000));
 });

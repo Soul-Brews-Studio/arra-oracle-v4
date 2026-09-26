@@ -11,6 +11,7 @@
 // path to exist.
 
 import { KNOWLEDGE_METHOD_NAMES } from "../knowledge/registry";
+import { PEER_FIELDS } from "../knowledge/registry.peerFields";
 
 export const MEMORY_TOOLS = [
   {
@@ -28,7 +29,11 @@ export const MEMORY_TOOLS = [
             "Free-text type in the current spike; default note. Controlled taxonomy validation is planned, not implemented.",
         },
         session_name: { type: "string", description: "File it in a session. Organisation, not scope." },
-        peer_name: { type: "string", description: "Who wrote it." },
+        peer_name: {
+          type: "string",
+          description:
+            "Who wrote it. When this credential's grant carries an arra-auth/v1 peers binding, it must be one of those peers, else the call is refused (forbidden) and nothing is stored.",
+        },
         subject_peer_name: { type: "string", description: "Who it is ABOUT, if different." },
       },
       required: ["content"],
@@ -37,7 +42,7 @@ export const MEMORY_TOOLS = [
   {
     name: "recall",
     description:
-      "Search this bank using ICU full-text by default or explicit vector mode. Full revision/lifecycle eligibility and embedding-profile enforcement remain planned.",
+      "Search this bank. Text mode (default) is a substring match: character-trigram full-text, every hit re-checked to contain the query (case-insensitive); a query under 3 characters is a bounded substring scan instead. The answer is {mode, match, count, rows}, with match 'ngram' or 'substring_scan'. Vector mode is explicit and has no match field. Full revision/lifecycle eligibility and embedding-profile enforcement remain planned.",
     inputSchema: {
       type: "object",
       properties: {
@@ -115,15 +120,72 @@ export const MEMORY_TOOLS = [
  * SAME registry entry the HTTP transport uses, so both surfaces share one
  * parser and one validator.
  */
+/**
+ * #87 / R3 (docs/overnight/DECISIONS.md): the message reads -- and, since the
+ * overnight R18 amendment, the member list -- carry an authorization rule a
+ * generic "exact request body" line would hide, so the catalogue states it
+ * and declares the one optional payload key.
+ */
+const READ_BOUNDARY_NOTE =
+  " Membership is a read boundary: set payload.requester_peer_name to read as that peer, which must be a CURRENT" +
+  " member of the session read (a stranger or departed member is refused; getMessage answers null)." +
+  " Omit it for the operator view, which needs audit:read on this bank; a content:read-only credential that" +
+  " names no requester is refused with forbidden.";
+const REQUESTER_PROPERTY = {
+  requester_peer_name: {
+    type: "string",
+    description: "Optional. The peer reading; omit (or null) for the audit:read operator view.",
+  },
+};
+const READ_BOUNDARY_METHODS: ReadonlySet<string> = new Set(["getMessage", "listMessages", "listSessionMembers"]);
+
+/** Methods whose payload names an ACTING peer (`registry.peerFields.ts`). */
+const BINDING_NOTE =
+  " If this credential's grant carries an arra-auth/v1 peers binding, every acting-peer field must name a bound" +
+  " peer, else forbidden.";
+
+/**
+ * #30 (overnight R7 #30 part + R14): the two recall tools say what an answer
+ * is, since "search" alone would suggest chunks, fusion or history.
+ */
+const SEARCH_NOTES: Readonly<Record<string, string>> = Object.freeze({
+  searchKnowledgeKeyword:
+    " Keyword recall: payload {workspace_name, query, limit?} (limit 1..50, default 10). Answers NODES at their" +
+    " current head revision whose text (title and body, across chunk boundaries) contains the query," +
+    ' case-insensitive; retired and superseded nodes are excluded. match is "ngram" (trigram index, every hit' +
+    ' re-checked as a substring) or "substring_scan" (a query under 3 characters, or no index built yet); a' +
+    ' hit with match "substring_scan" in an ngram answer was found at a chunk seam. Hits are ordered by this' +
+    " workspace's own data only: more occurrences of the query in the node's text first, then the most recently" +
+    " accepted revision, then node id; hits[].rank is the 1-based position in that order, never a raw score." +
+    " The shared trigram index only picks candidates, and all of them are read and ordered before limit" +
+    " applies, up to 4096 candidate chunks. A candidate is ANY chunk of this workspace sharing one" +
+    " 3-character sequence with the query, including chunks of old revisions, of retired or superseded nodes" +
+    " and of every embedding profile, so it can far outnumber the answers. Past 4096 candidate chunks, which" +
+    " ones are considered depends on the shared index's scoring, so other workspaces' writes and exact score" +
+    " ties can change the answer." +
+    " Never fused with semantic results.",
+  searchKnowledgeSemantic:
+    " Semantic recall: payload {workspace_name, query, limit?, embedding_profile?} (profile defaults to the" +
+    " server's query embedder's own, the active embedding profile id ollama/<EMBEDDING_MODEL, else" +
+    " all-minilm>/384/none; any other profile is refused)." +
+    " Answers NODES at their current head revision, nearest READY chunk vector first by squared" +
+    " L2 distance; retired and superseded nodes are excluded. Never fused with keyword results.",
+});
+
 export const KNOWLEDGE_TOOLS = KNOWLEDGE_METHOD_NAMES.map((method) => ({
   name: `kb_${method}`,
-  description: `Publication/taxonomy/context/evidence kernel method "${method}", scoped to this connection's bank.`,
+  description:
+    `Publication/taxonomy/context/evidence kernel method "${method}", scoped to this connection's bank.` +
+    (SEARCH_NOTES[method] ?? "") +
+    (READ_BOUNDARY_METHODS.has(method) ? READ_BOUNDARY_NOTE : "") +
+    (Object.hasOwn(PEER_FIELDS, method) ? BINDING_NOTE : ""),
   inputSchema: {
     type: "object",
     properties: {
       payload: {
         type: "object",
         description: "The exact request body this method's HTTP route expects.",
+        ...(READ_BOUNDARY_METHODS.has(method) ? { properties: REQUESTER_PROPERTY } : {}),
       },
     },
     required: ["payload"],

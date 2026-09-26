@@ -1,7 +1,10 @@
-import { type ChatModelFn } from "./chat";
+import { type ContextResult } from "./chat";
+import { type DigestProbeFn, type EmbedFn } from "./search-chunk.types";
 import { type BoundaryHook, type ContextBoundary, type ContextBoundaryHook, type EvidenceBoundary, type EvidenceBoundaryHook, type PublicationBoundary, type TaxonomyBoundary, type TaxonomyBoundaryHook } from "./service.boundaries";
+import { type createChatService } from "./service.createChatService";
 import { type createContextReadMethods } from "./service.createContextReadMethods";
 import { type createContextWriterService } from "./service.createContextWriterService";
+import { type createSearchService } from "./service.createSearchService";
 import { type createEvidenceReadMethods } from "./service.createEvidenceReadMethods";
 import { type createEvidenceWriterService } from "./service.createEvidenceWriterService";
 import { type createTaxonomyReadMethods } from "./service.createTaxonomyReadMethods";
@@ -35,12 +38,25 @@ export type DatasetAdapter = {
    * Ordered output bounds JS materialization. It does NOT bound SDK engine
    * scan work or execution time, and nothing here should be read as claiming
    * otherwise.
+   *
+   * `ordering` accepts a single column OR a compound (primary, tie-break…)
+   * list, applied in array order -- the SAME `ORDER BY col1, col2` semantics
+   * SQL gives a multi-column sort. A single-column ordering makes no promise
+   * about how a tie on that one column breaks, which under a `limit` can
+   * silently drop a member of a tie group that straddles the cutoff (K4 fix
+   * round, overnight R18): the engine's arbitrary tie order decides which
+   * rows fall inside `limit` and which do not, and a caller re-sorting the
+   * OUTPUT afterward is too late -- the excluded row was never fetched. A
+   * compound ordering with a total-order tie-break column (e.g. the unique
+   * `id`) makes the row set a `limit` selects fully deterministic, with no
+   * ambiguity left for the engine to resolve arbitrarily. `service.listNodes.ts`'s
+   * `updated_desc` mode is the first caller.
    */
   orderedProjection(
     table: string,
     predicate: string,
     columns: string[],
-    ordering: { column: string; ascending: boolean },
+    ordering: { column: string; ascending: boolean } | ReadonlyArray<{ column: string; ascending: boolean }>,
     limit: number,
   ): Promise<Record<string, unknown>[]>;
   /**
@@ -94,7 +110,63 @@ export type DatasetAdapter = {
    * mutate authoritative rows this kernel does not intend to expose that way.
    */
   updateSearchChunkEmbedding(row: Record<string, unknown>): Promise<number>;
+  /**
+   * #30 retrieval (overnight R7 #30 part + R14): leave exactly one FTS index
+   * on `search_chunks_v1.text`, built from the shared `FTS_INDEX_OPTIONS`
+   * (`fts/fts.constants.ts`); an index whose live details already match is
+   * kept, one that differs is rebuilt under its own name, and a matching one
+   * is rebuilt over every row once its unindexed rows reach its indexed rows
+   * (`fts.refreshStaleFtsIndexOn`). WRITER-ONLY: the only caller is
+   * `indexRevisionChunks`, in the owner's serialized queue.
+   * A reader never builds or repairs an index -- it asks
+   * `searchChunkTextIndexStatus` and scans when the answer is not `ready`.
+   * Hardcoded to one table and column, like `updateSearchChunkEmbedding`.
+   */
+  ensureSearchChunkTextIndex(): Promise<string[]>;
+  /** Read-only: whether the chunk-text index is the governed one (`fts.ftsIndexStatus`). */
+  searchChunkTextIndexStatus(): Promise<"ready" | "missing" | "mismatched">;
+  /**
+   * Trigram full-text candidates on `search_chunks_v1.text`, BM25 order,
+   * `predicate` applied as a PREFILTER (measured: a limit is filled from the
+   * scoped rows, not cut before the scope). Rows carry `SEARCH_HIT_COLUMNS`
+   * plus `_score`, decoded from raw Arrow like every other read here.
+   */
+  fullTextSearchChunks(query: string, predicate: string, limit: number): Promise<Record<string, unknown>[]>;
+  /**
+   * Nearest `search_chunks_v1.embedding` rows to `vector`, flat L2 search,
+   * `predicate` as a prefilter. `_distance` is LanceDB's `l2`, which is the
+   * SQUARED Euclidean distance (measured: orthogonal unit vectors -> 2).
+   * Null embeddings are never candidates.
+   */
+  vectorSearchChunks(vector: number[], predicate: string, limit: number): Promise<Record<string, unknown>[]>;
+  /**
+   * Row counts behind the one lexical (FTS/INVERTED) index on `column`, or
+   * `null` when no such index exists yet -- distinct from a real zero, which
+   * means the index exists and every row is indexed (#30's `getSearchFreshness`:
+   * "unknown, not zero"). Scans `listIndices()` for an FTS/INVERTED index
+   * naming `column` (the same filter `fts.ensureFtsIndexOn.ts` uses) and reads
+   * its `indexStats`, never assuming a fixed index name: the index itself is
+   * built by `ensureSearchChunkTextIndex` (above), under whatever name
+   * LanceDB defaults it to. Read-only, like `searchChunkTextIndexStatus`.
+   */
+  textIndexStats(table: string, column: string): Promise<{ indexedRows: number; unindexedRows: number } | null>;
   release(): void;
+};
+
+/**
+ * #30 retrieval: the query-side embedder a semantic search is composed with --
+ * never a network call this kernel makes on its own. Trusted composition
+ * (`composition.ts` -> `createKnowledgeAccess` -> `openEvidenceReader`), handed
+ * to the READER only, the way #32 / R9 hands chat's model to the reader-side
+ * chat facade: it is never a writer option, so no search holds a writer.
+ * `profile` is the stored `embedding_profile` name whose vector space `embed`
+ * produces; a search for any other profile is refused, because a query
+ * embedded by one model and compared against another model's vectors answers
+ * nothing meaningful.
+ */
+export type QueryEmbedder = {
+  readonly profile: string;
+  readonly embed: (text: string) => Promise<number[]>;
 };
 
 export type PublishOutcome =
@@ -136,7 +208,8 @@ export type TermSnapshotEntry = {
 export type PublicationReaderService = {
   getAcceptedHead(requestBytes: Uint8Array): Promise<unknown>;
   listAcceptedHistory(requestBytes: Uint8Array): Promise<unknown>;
-  listNodes(requestBytes: Uint8Array): Promise<unknown>;
+  /** `requestTimeMs` is the `eligible_only` view's `as_of` (R18 D3), supplied by the transport. */
+  listNodes(requestBytes: Uint8Array, requestTimeMs?: number): Promise<unknown>;
 };
 
 export type PublicationWriterService = PublicationReaderService & {
@@ -210,7 +283,18 @@ export type KnowledgeWriterService = {
   close: () => Promise<void>;
 };
 
-export type KnowledgeOptions = OperatorOptions & { onTaxonomyBoundary?: TaxonomyBoundaryHook };
+export type KnowledgeOptions = OperatorOptions & {
+  onTaxonomyBoundary?: TaxonomyBoundaryHook;
+  /** Trusted CONFIGURATION, never request JSON (R6, #27). `true` lets this
+   *  owner's taxonomy facade create, rename, retire and reparent terms in a
+   *  SEALED vocabulary: the operator lifecycle taxonomy-write-v1.md
+   *  describes. Absent or false, those four refuse `invalid_request`. No
+   *  transport sets it; `createKnowledgeAccess` opens ordinary writers. */
+  taxonomyOperator?: boolean;
+};
+
+/** What each taxonomy mutator receives from its writer factory. */
+export type TaxonomyWriteOptions = { clock: Clock; taxonomyOperator: boolean };
 
 export type ContextRegistration =
   | { outcome: "created" | "already_satisfied"; row: Record<string, unknown> }
@@ -234,7 +318,12 @@ export type LifecycleWriteOutcome =
   | { outcome: "idempotent"; row: Record<string, unknown> }
   | {
       outcome: "conflict";
-      reason: "operation_digest" | "stale_pin" | "already_terminal";
+      // "successor_terminal" (#29 slice B, overnight R7): `supersedeNode`'s
+      // named successor already carries its own terminal `supersede_log`
+      // event -- refused the same way `already_terminal` refuses a second
+      // event on the OLD node, just checked on the NEW one. See
+      // `service.supersedeNode.ts` and `lifecycle-v1.md`'s amendment.
+      reason: "operation_digest" | "stale_pin" | "already_terminal" | "successor_terminal";
       row: Record<string, unknown> | null;
     };
 
@@ -242,7 +331,13 @@ export type LifecycleReplayClassification =
   | { replay: true; outcome: LifecycleWriteOutcome }
   | { replay: false };
 
-export type ContextReaderService = ReturnType<typeof createContextReadMethods>;
+/** The #30 knowledge searches, composed into the READER bundles' context
+ *  facade only (`service.createSearchService.ts`), never a writer's. */
+export type SearchService = ReturnType<typeof createSearchService>;
+
+/** A reader's context facade: the reads every writer also carries (`...reads`
+ *  in `createContextWriterService`), plus the reader-only #30 searches. */
+export type ContextReaderService = ReturnType<typeof createContextReadMethods> & SearchService;
 
 export type ContextWriterService = ReturnType<typeof createContextWriterService>;
 
@@ -265,11 +360,27 @@ export type ContextOptions = KnowledgeOptions & {
    *  an authorization credential. */
   sourceNamespace: string | null;
   onContextBoundary?: ContextBoundaryHook;
-  /** #32 chat's model call, injected exactly like `clock`. Absent means
-   *  `answerChat` is unavailable (mapped through `mapModelFailure` on first
-   *  use); never a network call this module makes on its own. */
-  model?: ChatModelFn;
+  /** #30 R8's embed worker DOCUMENT embedder (`embedPendingChunks`),
+   *  injected exactly like `clock`. A WRITER option because that method
+   *  writes vectors -- named apart from the READER-only query embedder
+   *  (`QueryEmbedder`, `openEvidenceReader(root, {embedder})`) semantic
+   *  search uses. No chat model travels here (#32 / R9). Absent means
+   *  `embedPendingChunks` transitions every chunk it cannot satisfy by
+   *  content-hash reuse straight to `failed`/`embedder_unavailable` rather
+   *  than attempting a network call this module makes on its own. */
+  documentEmbedder?: EmbedFn;
+  /** R20's model-digest probe, injected the same way. Absent means every
+   *  `embedPendingChunks` run is `blocked: "digest_unmeasured"`: no vector
+   *  is ever written without a measured digest. */
+  digestProbe?: DigestProbeFn;
 };
+
+/** What the chat facade needs from a reader: context assembly, nothing else
+ *  (#32 / R9). A writer's context facade satisfies it too, but the transport
+ *  composes chat over the READER bundle only. */
+export type ChatReader = { getContext(requestBytes: Uint8Array): Promise<ContextResult> };
+
+export type ChatService = ReturnType<typeof createChatService>;
 
 export type SetAction = "unchanged" | "filled" | "rebuilt";
 

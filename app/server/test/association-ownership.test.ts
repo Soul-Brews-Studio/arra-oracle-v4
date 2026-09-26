@@ -37,11 +37,13 @@ import { join, resolve } from "node:path";
 import { targetOp } from "../src/contracts/evidence-v1";
 import { parseStrict } from "../src/contracts/jcs";
 import { PYTHON, revisionEnvelope, runGated, runOwnedChild, spawnGatedChild } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const TEST_DIR = import.meta.dir;
 const SERVER_DIR = resolve(TEST_DIR, "..");
 const OWNERSHIP_CHILD = join(TEST_DIR, "fixtures", "association-v1", "ownership", "evidence-child.ts");
-const TEST_TIMEOUT_MS = 180_000;
+const TEST_TIMEOUT_MS = testTimeout(180_000);
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
 
@@ -66,19 +68,28 @@ const EVIDENCE_READ_METHODS = "getRevisionAssociations,scanDependents";
 const PUBLICATION_WRITE_METHODS = "getAcceptedHead,listAcceptedHistory,listNodes,publishRevision";
 const PUBLICATION_READ_METHODS = "getAcceptedHead,listAcceptedHistory,listNodes";
 const TAXONOMY_WRITE_METHODS =
-  "createTerm,createVocabulary,getTerm,getVocabulary,renameTerm,reparentTerm,retireTerm,seedReservedVocabularies";
-const TAXONOMY_READ_METHODS = "getTerm,getVocabulary";
+  // K6+K7 (R18 (K6+K7+V8)): term listing, term usage counts and workspace stats.
+  "createTerm,createVocabulary,getTerm,getVocabulary,knowledgeStats,listTermUsage,listTerms," +
+  "lookupTermByName,lookupVocabularyByName,renameTerm,reparentTerm,retireTerm,seedReservedVocabularies";
+// K2 (R18): the two by-name reads are on every taxonomy reader and writer facade.
+const TAXONOMY_READ_METHODS = "getTerm,getVocabulary,knowledgeStats,listTermUsage,listTerms,lookupTermByName,lookupVocabularyByName"; // K6/K7 (R18 (K6+K7+V8))
+// #30 overnight R7/R8: `getSearchFreshness` (read) and `embedPendingChunks`
+// (write-only) join the context facade -- both lists below grew accordingly.
+// Overnight R18: + closeSession (K9, D7) on every writer, + listSessionMembers (K10) on both.
 const CONTEXT_WRITE_METHODS =
-  "advanceReadCursor,answerChat,appendMessages,createSessionLink,createTrace,getContext," +
-  "getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
+  "advanceReadCursor,appendMessages,closeSession,createSessionLink,createTrace,embedPendingChunks," +
+  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
+  "getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
-  "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessions,listTraceHits," +
-  "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
+  "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits," +
+  "listTraces,reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
   "writeChunkEmbedding";
 const CONTEXT_READ_METHODS =
-  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
+  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
+  "getSession,getTrace," +
   "listConnections,listLifecycleHistory,listMcpCalls,listMessages,listPeers," +
-  "listSearchChunks,listSessionLinks,listSessions,listTraceHits";
+  "listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits,listTraces," +
+  "searchKnowledgeKeyword,searchKnowledgeSemantic";
 const LEGACY = {
   publication: { keys: "close,getAcceptedHead,listAcceptedHistory,listNodes,publishRevision", nested: {} },
   knowledge: {
@@ -432,7 +443,7 @@ describe.skipIf(!READY)(`shared owner exclusion and close [${PENDING}]`, () => {
             ].join("\n"),
             root,
           ],
-          { deadlineMs: 30_000 },
+          { deadlineMs: scaledMs(30_000) },
         );
         expect({ code: contender.code, events: eventsOf(contender.stdout) }).toEqual({
           code: 0,

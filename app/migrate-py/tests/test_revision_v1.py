@@ -500,6 +500,27 @@ class IsolationTests(unittest.TestCase):
         # and this test has been failing since that merge, unnoticed because the
         # Python suite was not run on it.
         TS_ROOT / "publication" / "chat.ts",
+        # The #34 copy migration (overnight rulings R11 + R17,
+        # docs/overnight/DECISIONS.md) publishes THROUGH the kernel, so it
+        # must not carry a second copy of the governed constants or error type
+        # either: buildRevisionRequest stamps the revision contract's own
+        # CANONICAL_VERSION / SCHEMA_VERSION instead of restating them, and
+        # errorOutcome classifies a ContractError by identity. Exact files,
+        # deliberately: the other migration modules do not touch the contract
+        # helpers, and a new one that does fails here until it is reviewed.
+        TS_ROOT / "migration" / "buildRevisionRequest.ts",
+        TS_ROOT / "migration" / "errorOutcome.ts",
+        # The #28 Unit D Relic `SessionSource` adapter builds `evidence-v1`
+        # targets (`relic_session`, `relic_event`) to pin into `createTrace`/
+        # `createSessionLink` calls, so it reuses the governed JCS
+        # canonicalizer, the strict-hash helper and the evidence codec for the
+        # same reason every kernel above does: it must not carry a second
+        # canonicalizer. Listed as exact files, deliberately -- a future
+        # `source/` provider (e.g. `session-viewer`, `lanceglass`) is not a
+        # sibling of any reviewed barrel and must be reviewed too.
+        TS_ROOT / "source" / "relic.buildRelicEventTarget.ts",
+        TS_ROOT / "source" / "relic.buildRelicSessionTarget.ts",
+        TS_ROOT / "source" / "relic.captureDigest.ts",
     )
 
     #: A pure-move split extracted every barrel above into flat
@@ -518,6 +539,21 @@ class IsolationTests(unittest.TestCase):
         for barrel in HELPER_REUSE_BARRELS
         for sibling in sorted(barrel.parent.glob(f"{barrel.stem}.*.ts"))
     )
+
+    #: v3-compatible adapter (#31 legacy adapters, R18), reviewed at the
+    #: overnight merge of 2026-09-26: each reuses a contract helper for the
+    #: SAME purpose the kernel does, so a v3 write validates exactly like a v4
+    #: one instead of carrying a second copy of the rules.
+    #:   - publish.ts: CANONICAL_VERSION / SCHEMA_VERSION constants for the
+    #:     revision envelope it builds (revision-v1).
+    #:   - renderResearchNote.ts, normalizeProject.ts: normalizeRepo /
+    #:     requireUrl for the evidence links a research note carries (evidence-v1).
+    OVERNIGHT_HELPER_REUSE = (
+        TS_ROOT / "mcp" / "legacy-v3" / "publish.ts",
+        TS_ROOT / "mcp" / "legacy-v3" / "renderResearchNote.ts",
+        TS_ROOT / "mcp" / "legacy-v3" / "normalizeProject.ts",
+    )
+    HELPER_REUSE_ALLOWED = HELPER_REUSE_ALLOWED + OVERNIGHT_HELPER_REUSE
 
     #: The publication kernel is internal: no active source may import it.
     PUBLICATION_FILES = (
@@ -552,6 +588,21 @@ class IsolationTests(unittest.TestCase):
     )
     #: `writer_gate` is a fixture/operator tool, not an active migrator import.
     WRITER_GATE_PATTERNS = ("writer_gate", "from .writer_gate", "arra_migrate.writer_gate")
+    #: The #34 copy migration (overnight R11 + R17) IS an operator tool, with
+    #: its own entry point (``arra-migrate-copy``), and holding the gate is its
+    #: job: it takes ``writer_gate`` on the NEW empty candidate, hands the SAME
+    #: held lock to the Bun worker (``adopt_gate``), and its preflight tolerates
+    #: the gate's own lock file as the one leftover a candidate may hold, so a
+    #: rerun after a failed run converges (``snapshot``). The production migrator
+    #: (``__main__``) still never imports the gate or the copy path -- see
+    #: ``test_the_copy_migration_is_reachable_only_from_its_own_entry_points``.
+    #: EXACT files, never the whole package: a new copy_migration module that
+    #: reaches for the gate fails here until it is reviewed.
+    WRITER_GATE_CONSUMERS = (
+        PY_ROOT / "copy_migration" / "run.py",
+        PY_ROOT / "copy_migration" / "snapshot.py",
+        PY_ROOT / "copy_migration" / "adopt_gate.py",
+    )
     # Adapters must not reach raw data/model/audit modules directly; they go
     # through the admitted operation service.
     ADAPTER_FILES = (
@@ -618,6 +669,63 @@ class IsolationTests(unittest.TestCase):
         TS_ROOT / "composition.ts",
     )
 
+    #: The #34 copy migration (overnight rulings R11 + R17,
+    #: docs/overnight/DECISIONS.md) is the third reviewed doorway. Its Bun
+    #: worker must publish legacy memories THROUGH the kernel -- R17 requires
+    #: migrated rows to be readable by it, and a second writer would be a
+    #: second source of revision bytes -- so it opens the evidence writer and
+    #: re-reads every stored row with the kernel's own codecs. It is
+    #: OPERATOR-ONLY: spawned by ``arra-migrate-copy`` under the candidate's
+    #: writer gate, never imported by a transport, the composition root or the
+    #: CLI (``test_the_copy_migration_is_reachable_only_from_its_own_entry_points``
+    #: checks that, so this widening does not open a new HTTP/MCP path).
+    #:
+    #: EXACT files again, not ``migration/`` as a directory: the modules that
+    #: do not import the kernel (buildRevisionRequest, plan.types,
+    #: requestBytes) are deliberately absent, so one that starts to fails here.
+    MIGRATION_PUBLICATION_CONSUMERS = (
+        TS_ROOT / "migration" / "applyLifecycleEvent.ts",
+        TS_ROOT / "migration" / "checkStoredRows.ts",
+        TS_ROOT / "migration" / "deriveProjections.ts",
+        TS_ROOT / "migration" / "errorOutcome.ts",
+        TS_ROOT / "migration" / "migrateWorkspace.ts",
+        TS_ROOT / "migration" / "publishPlannedMemory.ts",
+        TS_ROOT / "migration" / "readBackNodes.ts",
+        TS_ROOT / "migration" / "runMigrationWorker.ts",
+        TS_ROOT / "migration" / "seedWorkspaceTaxonomy.ts",
+    )
+
+    #: Read-side consumers added by the overnight slices of 2026-09-26, reviewed
+    #: at the integration merge (docs/overnight/PLAN.md). None of them opens a
+    #: writer or reaches the writer gate:
+    #:   - chat-model.*: TYPE-only imports of the chat contract (#32 / R9); erased
+    #:     at build, no runtime edge into the kernel.
+    #:   - mcp/calls.listMcpCalls, mcp/connections.listConnections,
+    #:     mcp/operations.listPage, mcp/calls.recordableName: the operations-root
+    #:     readers and the audit writer's name check (#103 / #102, R5), reusing
+    #:     the kernel's PURE codecs (row encoders, storedName, decodeArrowRows)
+    #:     so the operations tables validate exactly like target19.
+    #:   - knowledge/transport.requireBoundPeers: split out of transport.ts (an
+    #:     existing reviewed consumer) for R3; imports only the error class.
+    OVERNIGHT_READ_CONSUMERS = (
+        TS_ROOT / "chat-model.createOllamaChatModel.ts",
+        TS_ROOT / "chat-model.renderChatPrompt.ts",
+        TS_ROOT / "chat-model.types.ts",
+        TS_ROOT / "mcp" / "calls.listMcpCalls.ts",
+        TS_ROOT / "mcp" / "calls.recordableName.ts",
+        TS_ROOT / "mcp" / "connections.listConnections.ts",
+        TS_ROOT / "mcp" / "operations.listPage.ts",
+        TS_ROOT / "knowledge" / "transport.requireBoundPeers.ts",
+        #   - knowledge/transport.indexProfile: reads CHUNKER_VERSION and
+        #     EMBEDDING_DIMENSION, constants, to name the profile a server-side
+        #     index request uses (R8 backfill); no kernel call. Since the
+        #     search-embed merge it also reads activeEmbeddingProfileId(), the
+        #     #30 registry's configured profile id (a pure read of
+        #     EMBEDDING_MODEL fixed at import), because the registry refuses any
+        #     other name; still no kernel call and no writer.
+        TS_ROOT / "knowledge" / "transport.indexProfile.ts",
+    )
+
     def test_no_active_server_source_imports_the_publication_kernel(self):
         """Only the kernel files and its reviewed consumers may import it.
 
@@ -625,7 +733,14 @@ class IsolationTests(unittest.TestCase):
         absence of enumerated substrings. It is NOT module resolution and does
         not prove a dynamic `import(expr)` is impossible.
         """
-        publication = set(self.PUBLICATION_FILES) | set(self.PUBLICATION_CONSUMERS)
+        for path in self.PUBLICATION_CONSUMERS + self.MIGRATION_PUBLICATION_CONSUMERS + self.OVERNIGHT_READ_CONSUMERS:
+            self.assertTrue(path.is_file(), f"stale publication consumer entry: {path}")
+        publication = (
+            set(self.PUBLICATION_FILES)
+            | set(self.PUBLICATION_CONSUMERS)
+            | set(self.MIGRATION_PUBLICATION_CONSUMERS)
+            | set(self.OVERNIGHT_READ_CONSUMERS)
+        )
         scanned = [p for p in self.TS_ROOT.rglob("*.ts") if p not in publication] + [self.CLI]
         self.assertGreaterEqual(len(scanned), 8, f"scan collapsed: {len(scanned)} files")
         for path in self.PUBLICATION_FILES:
@@ -654,13 +769,81 @@ class IsolationTests(unittest.TestCase):
 
     def test_no_active_python_source_imports_the_writer_gate(self):
         """`writer_gate` is an operator/fixture tool, not a migrator import."""
-        scanned = [p for p in self.PY_ROOT.rglob("*.py") if p.name != "writer_gate.py"]
+        for path in self.WRITER_GATE_CONSUMERS:
+            self.assertTrue(path.is_file(), f"stale writer_gate consumer entry: {path}")
+        allowed = set(self.WRITER_GATE_CONSUMERS)
+        scanned = [p for p in self.PY_ROOT.rglob("*.py") if p.name != "writer_gate.py" and p not in allowed]
         self.assertGreaterEqual(len(scanned), 35, f"scan collapsed: {len(scanned)} modules")
         for path in scanned:
             text = path.read_text(encoding="utf-8")
             for pattern in self.WRITER_GATE_PATTERNS:
                 with self.subTest(module=path.name, pattern=pattern):
                     self.assertNotIn(pattern, text)
+
+    #: Static and literal dynamic module specifiers. Same bound as above: a
+    #: source-text scan, not module resolution.
+    MODULE_SPECIFIER = re.compile(
+        r"""(?:(?:import|export)[^;]*?from\s*|import\s*\(\s*)["']([^"']+)["']""", re.S
+    )
+
+    @staticmethod
+    def names_migration_worker(specifier: str) -> bool:
+        return "/migration/" in specifier or specifier.endswith("/migration") or specifier.startswith("migration/")
+
+    def test_the_copy_migration_is_reachable_only_from_its_own_entry_points(self):
+        """What the #34 widenings above are traded against.
+
+        The copy migration was allowed the publication kernel, two contract
+        helpers and the writer gate BECAUSE it is operator-only. That premise
+        is checked here, not assumed: no server source outside ``migration/``
+        and not ``app/cli.ts`` names the migration worker in a module
+        specifier (so no HTTP/MCP/CLI path reaches it), and no Python module
+        outside ``copy_migration/`` names the copy path (so the production
+        migrator cannot run it). Bounded source-text checks, like the rest.
+        """
+        migration = self.TS_ROOT / "migration"
+        scanned = [p for p in self.TS_ROOT.rglob("*.ts") if migration not in p.parents] + [self.CLI]
+        self.assertGreaterEqual(len(scanned), 8, f"scan collapsed: {len(scanned)} files")
+        for path in scanned:
+            specifiers = self.MODULE_SPECIFIER.findall(path.read_text(encoding="utf-8"))
+            with self.subTest(file=str(path.relative_to(self.TS_ROOT.parent.parent))):
+                self.assertEqual([], [s for s in specifiers if self.names_migration_worker(s)])
+
+        copy = self.PY_ROOT / "copy_migration"
+        modules = [p for p in self.PY_ROOT.rglob("*.py") if copy not in p.parents]
+        self.assertGreaterEqual(len(modules), 35, f"scan collapsed: {len(modules)} modules")
+        for path in modules:
+            with self.subTest(module=str(path.relative_to(self.PY_ROOT))):
+                self.assertNotIn("copy_migration", path.read_text(encoding="utf-8"))
+
+    def test_the_migration_reachability_scan_fires_on_representative_text(self):
+        """Sensitivity for the scan above, on hand-written source in a tmp dir."""
+
+        flagged = (
+            'import { runMigrationWorker } from "./migration/runMigrationWorker";\n',
+            'import { type MigrationPlan } from "../migration/plan.types";\n',
+            'export { migrateWorkspace } from "./migration/migrateWorkspace";\n',
+            'const worker = await import("./migration/runMigrationWorker");\n',
+            'import * as all from "../migration";\n',
+        )
+        benign = (
+            'import { applyMigrations } from "./db/migrations";\n',
+            "// the #34 migration/ worker is operator-only\n",
+            'import { admit } from "./auth/policy";\n',
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertNotIn(str(self.TS_ROOT), str(root))
+            for index, (kind, source) in enumerate([("flagged", s) for s in flagged] + [("benign", s) for s in benign]):
+                probe = root / f"{kind}_{index}.ts"
+                probe.write_text(source, encoding="utf-8")
+                found = [s for s in self.MODULE_SPECIFIER.findall(probe.read_text(encoding="utf-8"))
+                         if self.names_migration_worker(s)]
+                with self.subTest(kind=kind, source=source.strip()):
+                    if kind == "flagged":
+                        self.assertNotEqual([], found)
+                    else:
+                        self.assertEqual([], found)
 
     def test_the_publication_import_scan_fires_on_representative_text(self):
         """Sensitivity, on INDEPENDENT hand-written source.

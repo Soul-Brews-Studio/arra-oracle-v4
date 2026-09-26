@@ -1,0 +1,20 @@
+{
+  "tool": "oracle_stats",
+  "v3Source": {
+    "handler": "arra-oracle-v3 src/tools/stats.ts:75-95 (handleStats)",
+    "commit": "61e5f8b6"
+  },
+  "topLevel": {
+    "total_documents": { "type": "number" },
+    "by_type": { "type": "object", "note": "record<type,count>, stats.ts:32-37" },
+    "fts_indexed": { "type": "number" },
+    "unique_concepts": { "type": "number" },
+    "last_indexed": { "type": "string", "nullable": true, "note": "ISO 8601 or null, stats.ts:83-85" },
+    "vector_status": { "type": "string" },
+    "vector_reason": { "type": "string", "optional": true },
+    "embedder_provider": { "type": "string", "optional": true },
+    "fts_status": { "type": "string", "enum": ["healthy", "empty"] },
+    "version": { "type": "string" },
+    "tenant": { "type": "object", "optional": true, "shape": { "id": "string", "scope": "string" } }
+  }
+}

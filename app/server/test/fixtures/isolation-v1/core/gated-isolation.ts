@@ -9,9 +9,11 @@
 // call's outcome (or governed error) back to the parent as JSON, plus a raw
 // harness read for setup verification. Every isolation claim is made by the
 // test file, from what this script reports.
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
-  ops: Array<{ facade?: "context" | "publication" | "taxonomy" | "evidence" | "harness"; method: string; request: any }>;
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
+  // `authority`: the #87 RequestAuthority the message reads take (R3).
+  ops: Array<{ facade?: "context" | "publication" | "taxonomy" | "evidence" | "harness"; method: string; request: any; authority?: unknown }>;
   clockMs?: number;
   revisionIds?: string[];
 };
@@ -94,7 +96,7 @@ try {
       }
       continue;
     }
-    const facade = (service as Record<string, Record<string, (b: Uint8Array) => Promise<unknown>>>)[
+    const facade = (service as Record<string, Record<string, (b: Uint8Array, authority?: unknown) => Promise<unknown>>>)[
       op.facade ?? "context"
     ];
     const call = facade?.[op.method];
@@ -103,7 +105,7 @@ try {
       continue;
     }
     try {
-      results[label] = { ok: true, value: await call(new TextEncoder().encode(JSON.stringify(op.request))) };
+      results[label] = { ok: true, value: await call(new TextEncoder().encode(JSON.stringify(op.request)), op.authority) };
     } catch (error) {
       results[label] = { ok: false, ...describeError(error) };
     }

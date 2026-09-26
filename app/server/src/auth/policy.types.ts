@@ -31,7 +31,17 @@ export type Policy = { readonly __policy: unique symbol };
 
 export type AuthErrorCode = "policy_invalid" | "invalid_request" | "unauthenticated" | "forbidden";
 
-export type WorkspaceGrant = { readonly name: string; readonly actions: readonly WorkspaceAction[] };
+export type WorkspaceGrant = {
+  readonly name: string;
+  readonly actions: readonly WorkspaceAction[];
+  /**
+   * #87 / R3 anti-spoofing binding (docs/overnight/DECISIONS.md): when a list,
+   * every peer name this principal asserts in a request on this workspace must
+   * be in it. Null when the grant carries no `peers` key -- then the trust unit
+   * stays the workspace, exactly as before. It grants nothing by itself.
+   */
+  readonly peers: readonly string[] | null;
+};
 
 export type PrincipalRecord = {
   readonly id: string;

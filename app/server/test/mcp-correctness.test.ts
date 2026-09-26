@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { connect, Index, type Connection } from "@lancedb/lancedb";
+import { connect, type Connection } from "@lancedb/lancedb";
+import { ftsIndexConfig } from "../src/fts/fts";
 import { text as mcpText } from "../src/mcp/protocol";
 import {
   Bool,
@@ -16,6 +17,7 @@ import {
 } from "apache-arrow";
 
 import { bearer, TOKENS } from "./helpers/auth-fixture";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const HOST = "127.0.0.1:3939";
 const ORIGIN = `http://${HOST}`;
@@ -395,7 +397,7 @@ describe("memory correctness", () => {
       });
     const response = await Promise.race([
       operation,
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("remember waited on embedder")), 2000)),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("remember waited on embedder")), scaledMs(2000))),
     ]);
     const value = await toolValue(response);
     expect(embedCalls).toBe(0);
@@ -510,9 +512,9 @@ describe("boundary validation", () => {
 
 
 describe("keyword-search startup readiness", () => {
-  test("empty datasets can build an ICU index and return empty results", async () => {
+  test("empty datasets can build the shared trigram index and return empty results", async () => {
     const empty = await connection.createEmptyTable("empty_search_fixture", memorySchema);
-    await empty.createIndex("content", { config: Index.fts({ baseTokenizer: "icu" }) });
+    await empty.createIndex("content", { config: ftsIndexConfig() });
     expect(await empty.search("schema", "fts").toArray()).toEqual([]);
   });
   test("startup index initialization is idempotent and new rows are searchable with bank scope", async () => {
@@ -523,8 +525,9 @@ describe("keyword-search startup readiness", () => {
     expect(await table.version()).toBe(version);
     const alpha = await store.insert({ name: "search-alpha", workspace_name: "alpha", content: "uniqueproof ความทรงจำ" });
     await store.insert({ name: "search-beta", workspace_name: "beta", content: "uniqueproof ความทรงจำ" });
-    const rows = await toolValue(await rpc("alpha", "recall", { query: "uniqueproof", mode: "text" }));
-    expect(rows.map((r: any) => r.id)).toEqual([alpha.id]);
+    const recalled = await toolValue(await rpc("alpha", "recall", { query: "uniqueproof", mode: "text" }));
+    expect(recalled.match).toBe("ngram");
+    expect(recalled.rows.map((r: any) => r.id)).toEqual([alpha.id]);
     const response = await app.handle(new Request("http://localhost/api/search?bank=alpha&q=uniqueproof"));
     expect(response.status).toBe(200);
     expect((await response.json()).rows.map((r: any) => r.id)).toEqual([alpha.id]);
@@ -597,10 +600,10 @@ describe("store scope boundary", () => {
     ]);
     await store.ensureFtsIndex();
 
-    const alphaText = (await store.searchText("boundary", "alpha")) as Array<{ workspace_name: string }>;
+    const alphaText = (await store.searchText("boundary", "alpha")).rows as Array<{ workspace_name: string }>;
     expect(alphaText.length).toBeGreaterThan(0);
     expect([...new Set(alphaText.map((r) => r.workspace_name))]).toEqual(["alpha"]);
-    const betaText = (await store.searchText("boundary", "beta")) as Array<{ workspace_name: string }>;
+    const betaText = (await store.searchText("boundary", "beta")).rows as Array<{ workspace_name: string }>;
     expect([...new Set(betaText.map((r) => r.workspace_name))]).toEqual(["beta"]);
 
     const previous = globalThis.fetch;
@@ -617,7 +620,7 @@ describe("store scope boundary", () => {
     } finally {
       globalThis.fetch = previous;
     }
-    await expect(store.searchText("boundary", "no-such-bank")).resolves.toEqual([]);
+    await expect(store.searchText("boundary", "no-such-bank")).resolves.toEqual({ match: "ngram", rows: [] });
     await expect(store.list("no-such-bank")).resolves.toEqual([]);
   });
 

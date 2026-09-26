@@ -4,8 +4,9 @@
 // same clock-injection discipline, same trace/results envelope. Trimmed to
 // what the session-link smoke test actually needs -- no message reshaping
 // surgery, since this slice never touches messages.
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   ops: Array<{ facade?: "context" | "publication" | "taxonomy" | "harness"; method: string; request: any }>;
   clockMs?: number | number[] | "throw";
 };

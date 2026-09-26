@@ -300,7 +300,8 @@ describe("mapModelFailure(): the closed publication envelope, exactly -- no `nam
       const json = (error as PublicationError).toJSON();
       expect(Object.keys(json).sort()).toEqual(["code", "message", "path", "version"]);
       expect(json.version).toBe("arra-publication-error/v1");
-      expect(json.code).toBe("writer_unavailable");
+      // #32 / R9: its own closed code, no longer a reuse of writer_unavailable.
+      expect(json.code).toBe("model_unavailable");
       expect(json.path).toBe("");
       // `Error.name` ("PublicationError") is a real, enumerable-looking
       // property on the instance but MUST NOT appear in the wire shape.

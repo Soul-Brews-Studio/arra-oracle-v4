@@ -60,9 +60,17 @@ export async function openContextWriter(
 
   return Object.freeze({
     publication: Object.freeze(publicationData),
-    taxonomy: Object.freeze(createTaxonomyWriterService(adapter, core, { clock })),
+    taxonomy: Object.freeze(
+      createTaxonomyWriterService(adapter, core, { clock, taxonomyOperator: options.taxonomyOperator === true }),
+    ),
     context: Object.freeze(
-      createContextWriterService(adapter, core, { clock, sourceNamespace: options.sourceNamespace, model: options.model }),
+      createContextWriterService(adapter, core, {
+        clock,
+        sourceNamespace: options.sourceNamespace,
+        documentEmbedder: options.documentEmbedder,
+        digestProbe: options.digestProbe,
+        datasetRoot: canonical,
+      }),
     ),
     close: core.close,
   });

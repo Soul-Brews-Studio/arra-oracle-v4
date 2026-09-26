@@ -19,6 +19,8 @@ export type RuntimeConfig = {
   readonly policyPath: string;
   readonly origin: string;
   readonly port: number;
+  /** R18 D10: the v3-compatible MCP family. Absent = off. */
+  readonly v3Compat?: boolean;
 };
 
 /**
@@ -130,6 +132,8 @@ export async function composeService(config: RuntimeConfig): Promise<OperationSe
         workspace_name: string;
         session_name?: string | null;
         client_label?: string | null;
+        peer_name?: string | null;
+        requested_as?: string | null;
         transport?: string | null;
         remote_ip?: string | null;
         auth: { principal_id: string; credential_id: string; policy_version: string };
@@ -143,14 +147,23 @@ export async function composeService(config: RuntimeConfig): Promise<OperationSe
       void connections
         .foldConnection({
           workspace_name: entry.workspace_name,
-          // "unknown" rather than a guess: `method` is NOT NULL and the read
-          // validates it as nonempty text, so a transport that did not say
-          // must still round-trip as something a human can read as "we were
-          // not told" -- never silently attributed to http or mcp.
-          method: entry.transport?.trim() ? entry.transport : "unknown",
-          principal: entry.auth.principal_id,
+          // DECISIONS.md R19: SPEC §7.2 defines `method` as the AUTH method
+          // (bearer | oauth | owner-session), not the transport. Every request
+          // that reaches this fold was admitted by an arra-auth/v1 bearer
+          // credential (auth/http.ts); oauth and owner sessions do not exist yet.
+          method: "bearer",
+          // DECISIONS.md R5: `principal` is the CREDENTIAL id, matching
+          // SPEC §7.2 ("token id or oauth client_id") -- never `principal_id`,
+          // which names the PERSON/service the credential belongs to, not the
+          // credential itself. One principal can hold several credentials,
+          // each a distinct caller from this table's point of view.
+          principal: entry.auth.credential_id,
           label: entry.client_label?.trim() ? entry.client_label : "unlabelled",
           user_agent: entry.client_label ?? null,
+          // DECISIONS.md R5: stays null. No caller of `logCall` ever sets
+          // `entry.remote_ip` today (`appendAudit` in `auth/service.ts` does
+          // not collect it) -- capturing it is a privacy decision left for a
+          // later slice, not silently done here.
           remote_ip: entry.remote_ip ?? null,
           tool: entry.tool,
         })
@@ -163,7 +176,10 @@ export async function composeService(config: RuntimeConfig): Promise<OperationSe
         duration_ms: entry.duration_ms,
         workspace_name: entry.workspace_name,
         // peer_name stays a DOMAIN field: the principal never populates it.
-        peer_name: null,
+        // It carries only the speaker the connection ASSERTED (X-Arra-Peer,
+        // R18 A7), which the service already checked against the grant.
+        peer_name: entry.peer_name ?? null,
+        requested_as: entry.requested_as ?? null,
         session_name: entry.session_name ?? null,
         client_label: entry.client_label ?? null,
         auth: entry.auth,
@@ -171,7 +187,17 @@ export async function composeService(config: RuntimeConfig): Promise<OperationSe
     },
   };
 
-  return createOperationService({ policyPath: config.policyPath }, deps);
+  return createOperationService({ policyPath: config.policyPath, v3Compat: config.v3Compat === true }, deps);
+}
+
+/**
+ * R18 D10: `ARRA_MCP_V3_COMPAT` turns on the v3-compatible MCP family
+ * (`mcp/legacy-v3/`). Trusted operator configuration, read here and nowhere
+ * else, never from a request. Only the exact value "1" enables it, so a typo
+ * or "true" leaves the default (off) in place rather than guessing.
+ */
+export function composeV3Compat(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.ARRA_MCP_V3_COMPAT === "1";
 }
 
 /**
@@ -184,13 +210,73 @@ export async function composeService(config: RuntimeConfig): Promise<OperationSe
  * instead of trying to open a dataset that was never configured. Reads and
  * the writer are still opened lazily inside `createKnowledgeAccess` — this
  * function only decides WHERE, never whether a connection is attempted yet.
+ *
+ * #32 / R9: the chat model is composed HERE, from env, and handed to the
+ * access as trusted configuration -- the only place a model is wired. The
+ * model module is imported lazily, like `embed.ts` in `composeService`.
+ * `ARRA_CHAT_PROVIDER` unset leaves chat unconfigured (`model_unavailable`);
+ * a malformed `ARRA_CHAT_*` throws, and `startup` checks that first. The #30
+ * query embedder is composed here the same way, for the same reader.
+ *
+ * #30 R8 / R20: the embed worker's DOCUMENT embedder and the model-digest
+ * probe are composed here too, but for the WRITER: `embedPendingChunks`
+ * writes vectors, so it runs on the one cached writer, never the reader.
+ * Query and document embedder share one model, the #30 registry's active
+ * profile (`search-chunk.profiles.ts`), so a query vector and the chunk
+ * vectors it is compared with always come from the same model, stored under
+ * the same profile id. Neither embedder nor the probe is called here: boot
+ * never probes the model and never pins a digest (R20).
  */
-export function composeKnowledgeAccess(env: NodeJS.ProcessEnv = process.env): KnowledgeAccess {
+export async function composeKnowledgeAccess(env: NodeJS.ProcessEnv = process.env): Promise<KnowledgeAccess> {
   const datasetRoot = env.ARRA_KNOWLEDGE_DATASET_ROOT;
+  const { createChatModel } = await import("./chat-model");
+  const chat = createChatModel(env);
+  // The registry reads EMBEDDING_MODEL from `process.env` once, at import
+  // (like `embed.ts`), so the profile every chunk row is indexed under is
+  // fixed for the process; imported lazily here, per this module's header.
+  const { ACTIVE_EMBEDDING_PROFILE } = await import("./publication/search-chunk.profiles");
+  const embeddingModel = ACTIVE_EMBEDDING_PROFILE.model;
   return createKnowledgeAccess({
     datasetRoot: typeof datasetRoot === "string" && datasetRoot.trim() ? datasetRoot : undefined,
     env,
+    chat: { model: chat.model, settings: chat.settings },
+    // #30 semantic search: the query embedder is `embed.ts`'s local Ollama
+    // client, imported lazily on first use like `composeService`'s raw
+    // modules, and handed to the READER only (like the chat model above,
+    // never a writer option). Its profile is the #30 registry's active
+    // profile id -- the one name `indexRevisionChunks` accepts and stores --
+    // and it calls that profile's own model, so the profile a search reports
+    // can never differ from the model that embedded its query. (Integration
+    // merge: this replaces the retrieval slice's model-name-as-profile seam.)
+    embedder: {
+      profile: ACTIVE_EMBEDDING_PROFILE.profile_id,
+      embed: async (text: string) => (await import("./embed")).embedOne(text, embeddingModel),
+    },
+    // #30 R8: the embed worker's DOCUMENT embedder, a WRITER option (see
+    // above) and named apart from the reader's query `embedder`. The same
+    // Ollama call and the same model, lazily imported so merely composing
+    // knowledge access cannot trigger `embed.ts`'s own import-time
+    // environment reads (this module's own header rule).
+    documentEmbedder: (texts, signal) => import("./embed").then((mod) => mod.embed(texts, embeddingModel, signal)),
+    // #30 R20: the model-digest probe every `embedPendingChunks` run makes
+    // before embedding anything -- `GET /api/tags` on the same OLLAMA_URL and
+    // EMBEDDING_MODEL `embed.ts` uses. Called per run, never at boot.
+    digestProbe: (signal) =>
+      import("./publication/search-chunk.fetchOllamaModelDigest").then((mod) =>
+        mod.fetchOllamaModelDigest({ signal }),
+      ),
   });
+}
+
+/**
+ * Validate the chat model configuration (#32 / R9) the way `readConfig`
+ * validates the rest: at startup, before listen, failing closed. Contacts no
+ * model -- reachability is a per-answer outcome (`model_unavailable`), not a
+ * startup precondition, so a stopped Ollama never stops the server.
+ */
+export async function checkChatConfig(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  const { readChatConfig } = await import("./chat-model");
+  readChatConfig(env);
 }
 
 /**
@@ -198,9 +284,16 @@ export function composeKnowledgeAccess(env: NodeJS.ProcessEnv = process.env): Kn
  *
  * Lives here, not in the HTTP entrypoint: §3 keeps index/app free of raw store
  * imports, and startup maintenance is an operator path, not a request path.
+ *
+ * #30 R20: boot never probes the embedding model, never pins its digest and
+ * never changes an embedding profile id. The digest is measured by every
+ * `embedPendingChunks` run instead (`search-chunk-digest-boot.test.ts` runs
+ * this function against a live stub Ollama and asserts zero requests).
  */
 export async function runStartupIndexWork(): Promise<void> {
   const store = await import("./db");
-  // Do not rebuild an existing index on every restart, and never mutate on read.
+  // Do not rebuild a matching index on every restart, and never mutate on read.
+  // An index whose live details differ from the shared trigram config (an older
+  // deployment's icu) is rebuilt here once, before listen (R14, #10).
   await store.ensureFtsIndex(false);
 }

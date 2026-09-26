@@ -6,6 +6,8 @@
 
 > Current delivery overlay: [delivery gates](app/docs/contracts/delivery-gates.md) records accepted isolated physical/byte/source contracts, scoped reads, pure authorization policy `eb281cc` and local HTTP/MCP/CLI/browser integration `11cf723`. The running spike was not restarted; target19 remains isolated and #25 remains open for future target-service/reference coverage. Earlier built-state snapshots below remain historical.
 
+> Overnight status (2026-09-27): what is built now against what is still target is in the closing section, "Amendment 2026-09-26 (overnight all (R1-R22) — docs corrected from measured source)". The rulings are in [`docs/overnight/DECISIONS.md`](docs/overnight/DECISIONS.md). The body below is unchanged.
+
 # v4 revised full design: conversation, knowledge, context, and LanceDB
 
 <!-- arra-v4:full-revision-after-honcho:2026-09-20 -->
@@ -758,6 +760,8 @@ Query embedding profile must match stored vectors.
 
 Profiles pin model/version/digest, dimensions, normalization and query/document prefixes. Model changes rebuild search, not history. Tag-only revisions may reuse compatible text/profile vectors but keep their own search rows.
 
+> **Amendment 2026-09-26 (overnight R7 (#30 part)).** "One embedding profile per physical table" above is superseded by the table as built: one `search_chunks_v1` holds rows of several profiles, told apart by its `embedding_profile` column (part of each chunk's deterministic id), with one frozen dimension (384) for every profile. What the diagram protects still holds, enforced per query instead of per table: `searchKnowledgeSemantic` embeds the query with one composed embedder, reads only `status = 'ready'` chunks whose `embedding_profile` is that embedder's profile, and refuses any other profile before a model call, so vectors of two profiles are never compared. A different dimension would still need its own table. Ruling: `docs/overnight/DECISIONS.md` R7 (#30: "One table holds several embedding profiles, as built. DESIGN gets an amendment"); contract: `app/docs/contracts/search-chunk-v1.md`, amendment "overnight R7 (#30 part) + R14". A profile registry (which name is active, what each pins) is not claimed here.
+
 ```text
 SAVE PATH
   validate + authorize
@@ -790,6 +794,8 @@ Content becomes durable before any model call. Keyword search becomes available 
 Single-writer reconciliation recovers even absent chunks without a queue database. Multiple workers require a proven claim/lease protocol.
 
 Use ICU FTS as the measured baseline, with phrase/AND behavior and English stemming/stop-word choices tested against real Thai/English data. Keep keyword and semantic modes explicit; do not assume hybrid fusion improves them. The old 25-row probe is not a universal benchmark.
+
+> **Amendment 2026-09-26 (overnight R14 (+ R7 tokenizer)).** The ICU baseline above is superseded for every lexical index this server builds. The index is character trigrams, `Index.fts({baseTokenizer:"ngram", ngramMinLength:3, ngramMaxLength:3, prefixOnly:false, stem:false, removeStopWords:false})`, from one shared constant (`app/server/src/fts/fts.constants.ts`) that the legacy `memories` store uses now and the #30 chunk index is to import. Reason: ICU segments whole Thai words and measurably cannot find a sub-word query (`ลืม` inside a stored `หลงลืม`: 0/2 inside-word probes, #10), which #10's acceptance requires; `ngram(3,3)` is the only buildable LanceDB 0.38 tokenizer that can (`trigram`/`unicode61` are refused by the SDK). Its measured costs are handled, not assumed away: queries under 3 code points fall back to a bounded, escaped ILIKE scan and the answer says `match:"substring_scan"` (otherwise `match:"ngram"`); every trigram candidate is re-checked as a literal case-folded substring, which removes the measured over-matches (`หลงทาง`, `ความทรงจำ` -> `ความรัก`). Startup keeps a matching index and rebuilds a mismatching one once under the same name. The stemming/stop-word choices this paragraph asks to test are therefore off by construction. Recall quality on real Thai/English data remains #7's measurement, not claimed here. Ruling: `docs/overnight/DECISIONS.md` R14 and R7; reverse by changing the one constant.
 
 After retrieving candidates, authorize and validate the authoritative current revision, activity, validity, and supersession state. Copied search filters are optimization, not permission or truth. Overfetch/refill must be bounded and expose partial coverage rather than quietly return stale results.
 
@@ -1187,3 +1193,72 @@ Arrows summarize order; issues hold full dependencies. Proposed refinements: cap
 - Honcho: connected 40-tool contracts + read-only evidence in #35, not older local 3.0.12 alone. [MCP instructions](https://github.com/plastic-labs/honcho/blob/main/mcp/instructions.md) are reference, not requirements.
 
 Written by Codex (AI), speaking as itself. Prior discussions remain historical records; this revision does not assert a completed migration, full test pass, or production readiness.
+
+## Amendment 2026-09-26 (overnight all (R1-R22) — docs corrected from measured source)
+
+*Added 2026-09-27 by Claude Opus 5.5 (AI) and measured on `v4/overnight-26sep` `e00b50b`.
+This is a pointer, not a rewrite. The design above stands as written on 2026-09-20. This
+section records which parts of it are built now, so the snapshot in §1 is not read as current.
+The rulings are in [`docs/overnight/DECISIONS.md`](docs/overnight/DECISIONS.md) (R1–R22). The
+evidence will be in [`docs/overnight/PROOF.md`](docs/overnight/PROOF.md), which the overnight
+driver writes at the end of the run; it is not yet written on `e00b50b`. The measured detail,
+with file:line citations, is in [AGENTS.md "Current implementation"](AGENTS.md).*
+
+Three headline claims above are superseded by fresh source:
+
+- "15 built tables / 19 proposed" (§"What changed"). The 19 tables are built and enforced:
+  TypeScript `TARGET_SCHEMA` equals Python `target_v1`, 19 tables / 228 fields. The default
+  migrator still creates the 15.
+- "8 tools, auth absent" (§1 `[L]`, evidence list). MCP now serves 65 tools, 8 legacy plus 57
+  `kb_*`, or 90 when `ARRA_MCP_V3_COMPAT=1`. Bearer auth from an `arra-auth/v1` policy file
+  is required (#25, closed).
+- "ICU full-text search" (§1 `[B]`). Replaced by one shared `ngram(3,3)` config (R14, and the
+  §11 amendment above).
+
+```text
+ DESIGN section                    state on e00b50b                                  ruling
+ --------------------------------  ------------------------------------------------  ---------
+ §4  19-table schema               BUILT + ENFORCED; default migrator still active15; —
+                                   target-19-manifest still "proposed-not-active"
+ §5  Honcho-shaped core            BUILT: peers, sessions, members, messages, cursors #28
+     membership as read boundary   BUILT: requester must be a current member, else   R3
+                                   audit:read operator view; optional peers binding
+     session links                 BUILT; mixed continues/forked_from cycles refused  R7 (#28)
+     Relic adapter                 BUILT, isolated, read-only; NO route yet           R7 (#28)
+     round-trip vs stock Honcho    phase 1 on fixtures only; live run NOT done        R15 (#8)
+ §6  nodes + immutable revisions   BUILT                                             #26 closed
+ §7  taxonomy, type, horizon       BUILT; sealed vocab refused on every transport;   R6, R10
+                                   "conclusion" is a type term, no table (#89)
+ §8  evidence, dependents          BUILT: associations, scanDependents, reconcile    —
+ §9  corrections, supersession     BUILT: one eligibility rule, [valid_from,valid_to) R7 (#29)
+                                   at request time; listNodes hides inactive
+ §10 traces                        BUILT: create/get/list/hits; immutable, so the    R7, D11
+                                   v3 link/unlink tools are NOT carried
+ §11 embeddings / derived search   BUILT save-first: index, then embed backfill;     R7, R8,
+                                   several profiles per table; digest pinned per      R14, R20,
+                                   dataset; keyword rank without score; semantic l2   R21
+     keyword order workspace-local  BUILT (merged debd350)                            R22
+ §12 context, chat, UI             BUILT: getContext, answerChat via local Ollama;   R4, R9
+                                   coverage "full" only when nothing excluded;
+                                   UI v2 tier-2 views (docs/overnight/UI-PROOF.md)    #33
+ §13 operations and audit          BUILT in ARRA_DATA_DIR (operations root), not in  R5, R19
+                                   the target root; MCP calls only
+ §14 one service, three transports BUILT: 57 methods on HTTP, MCP and CLI (kb +      R7, R8
+                                   6 aliases); v3-compatible adapter behind a flag    R18
+ §15 durability / concurrency      one writer via the fd-42 gate; R2 multi-writer    —
+                                   and a distributed lease NOT proven
+ §16 migration 15 -> 19            BUILT operator-only on a copy (arra-migrate-copy); R11, R17
+                                   no cutover; #7, #8, #10-quality release-excluded
+ §17 acceptance                    docs/overnight/PROOF.md (driver; not yet written)  —
+```
+
+Still target and not built:
+
+- a per-workspace FTS index or statistics, which would close the R22 residual fully;
+- recall-quality judgments not written by an agent (#7, R16 phase B);
+- a live #8 round-trip against stock Honcho;
+- a workspace-creation API;
+- a release cutover;
+- non-Ollama chat providers.
+
+On GitHub, #22 and #27–#34 remain open until the integration PR is reviewed.

@@ -24,12 +24,14 @@
 //
 // HOW THE METHOD LISTS WERE OBTAINED (this matters more than the numbers):
 // they were read off `src/publication/service.ts` in this worktree --
-// `createContextReadMethods` returns eleven methods and
-// `createContextWriterService` returns `{...reads}` plus eleven of its own, so
-// the writer union is twenty-two. They were then compared against the accepted
-// read-cursor lane's literals and found identical, which is the expected
-// outcome: this slice adds methods to the existing context reader/writer and
-// no new factory or bundle key, exactly as the contract's "Boundaries reused
+// `createContextReadMethods` returns nineteen methods (`listTraces` added by
+// K5, docs/overnight/V3-PARITY.md §5) and `createContextWriterService`
+// returns `{...reads}` plus fourteen of its own, so the writer union is
+// thirty-three; the reader adds the two reader-only #30 searches, twenty-one.
+// They were then compared against the accepted read-cursor
+// lane's literals and found identical, which is the expected outcome: this
+// slice adds methods to the existing context reader/writer and no new
+// factory or bundle key, exactly as the contract's "Boundaries reused
 // unchanged" section requires.
 //
 // Bounded claims: one cooperative local gate, disposable fixtures, pinned Bun
@@ -46,11 +48,13 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { PYTHON, runGated, runOwnedChild, spawnGatedChild } from "./helpers/publication-fixture";
 import { createSessionLinkFixture, sessionLinkId } from "./helpers/session-link-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const TEST_DIR = import.meta.dir;
 const SERVER_DIR = resolve(TEST_DIR, "..");
 const OWNERSHIP_CHILD = join(TEST_DIR, "fixtures", "session-link-v1", "ownership", "link-child.ts");
-const TEST_TIMEOUT_MS = 180_000;
+const TEST_TIMEOUT_MS = testTimeout(180_000);
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
 
@@ -69,19 +73,27 @@ const RUNTIME_EXPORTS = [
   "openPublicationReader",
   "openPublicationWriter",
 ].join(",");
-/** Twenty-two on every context WRITER facade (its own eleven plus the eleven
- *  reader methods it spreads in), eleven on every context READER facade. */
+/** Thirty-three on every context WRITER facade (its own fourteen plus the
+ *  nineteen reader methods it spreads in), twenty-one on every context READER
+ *  facade (the nineteen plus the two reader-only #30 searches). */
+// #30 overnight R7/R8: `getSearchFreshness` (read) and `embedPendingChunks`
+// (write-only) join the context facade -- both lists below grew accordingly.
+// Overnight R18: + closeSession (K9, D7) on every writer, + listSessionMembers (K10) on both.
+// Overnight R18 (V3 + K5 + V7): + listTraces (K5, docs/overnight/V3-PARITY.md §5) on both.
 const CONTEXT_WRITE_METHODS =
-  "advanceReadCursor,answerChat,appendMessages,createSessionLink,createTrace,getContext," +
-  "getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
+  "advanceReadCursor,appendMessages,closeSession,createSessionLink,createTrace,embedPendingChunks," +
+  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
+  "getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
-  "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessions,listTraceHits," +
-  "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
+  "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits," +
+  "listTraces,reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
   "writeChunkEmbedding";
 const CONTEXT_READ_METHODS =
-  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
+  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
+  "getSession,getTrace," +
   "listConnections,listLifecycleHistory,listMcpCalls,listMessages,listPeers," +
-  "listSearchChunks,listSessionLinks,listSessions,listTraceHits";
+  "listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits,listTraces," +
+  "searchKnowledgeKeyword,searchKnowledgeSemantic";
 /** Bundle keys are unchanged by this slice; nested facades never carry close. */
 const CONTEXT_WRITER_KEYS = "close,context,publication,taxonomy";
 const EVIDENCE_WRITER_KEYS = "close,context,evidence,publication,taxonomy";
@@ -304,7 +316,7 @@ afterAll(async () => {
 
 describe("context facades across all four factories", () => {
   test(
-    "each writer facade carries twenty-two methods and each reader facade eleven, with exports unchanged",
+    "each writer facade carries thirty-three methods and each reader facade twenty-one, with exports unchanged",
     async () => {
       const root = await freshDataset("facades");
       // One writer per gated child: closing releases fd 42, so a second open in
@@ -353,7 +365,34 @@ describe("context facades across all four factories", () => {
       expect(writerMethods).toContain("listSessionLinks");
       expect(readerMethods).toContain("listSessionLinks");
       expect(readerMethods).not.toContain("createSessionLink");
-      expect({ writer: writerMethods.length, reader: readerMethods.length }).toEqual({ writer: 29, reader: 16 });
+      // 30: #32 / R9 moved `answerChat` off the writer onto the reader-side chat facade.
+      // 19: #30's two searches are READER-only (service.createSearchService.ts):
+      // their query embedder is composed onto the reader like chat's model, so
+      // the writer gains neither -- only `indexRevisionChunks` maintains the index.
+      // #30 R7/R8 (search-embed) added `embedPendingChunks` (write-only: it
+      // writes vectors, so its document embedder is a WRITER option) and
+      // `getSearchFreshness` (a read, on the reader and, like every read,
+      // spread onto the writer): 28 -> 30 and 18 -> 19.
+      // Overnight R18 added `closeSession` (K9, D7: write-only) and
+      // `listSessionMembers` (K10: a read, on the reader and spread onto the
+      // writer): 30 -> 32 and 19 -> 20.
+      // K5 (docs/overnight/V3-PARITY.md §5, overnight R18 (V3 + K5 + V7))
+      // added `listTraces` (a read, on the reader and spread onto the
+      // writer): 32 -> 33 and 20 -> 21.
+      expect({ writer: writerMethods.length, reader: readerMethods.length }).toEqual({ writer: 33, reader: 21 });
+      for (const search of ["searchKnowledgeKeyword", "searchKnowledgeSemantic"]) {
+        expect(readerMethods).toContain(search);
+        expect(writerMethods).not.toContain(search);
+      }
+      expect(readerMethods).toContain("getSearchFreshness");
+      expect(writerMethods).toContain("embedPendingChunks");
+      expect(readerMethods).not.toContain("embedPendingChunks");
+      expect(writerMethods).toContain("closeSession");
+      expect(readerMethods).not.toContain("closeSession");
+      expect(readerMethods).toContain("listSessionMembers");
+      expect(writerMethods).toContain("listSessionMembers");
+      expect(readerMethods).toContain("listTraces");
+      expect(writerMethods).toContain("listTraces");
       expect(writerMethods).not.toContain("close");
       expect(readerMethods).not.toContain("close");
     },
@@ -517,7 +556,7 @@ describe("shared owner lifecycle", () => {
             ].join("\n"),
             root,
           ],
-          { deadlineMs: 30_000 },
+          { deadlineMs: scaledMs(30_000) },
         );
         expect({ code: contender.code, events: eventsOf(contender.stdout) }).toEqual({
           code: 0,

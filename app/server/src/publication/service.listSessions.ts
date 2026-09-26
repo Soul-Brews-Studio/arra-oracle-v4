@@ -3,15 +3,24 @@ import { failPublication } from "./errors";
 import { quote } from "./storage";
 import { SESSIONS } from "./service.constants";
 import { contextScope } from "./service.contextScope";
+import { listMemberSessions } from "./service.listMemberSessions";
 import { requireWorkspace } from "./service.requireWorkspace";
 import { type DatasetAdapter } from "./service.types";
 
 export async function listSessions(reader: DatasetAdapter, requestBytes: Uint8Array): Promise<{ rows: Record<string, unknown>[]; next_after_name: string | null; total: string | null }> {
 const request = parseListSessions(requestBytes);
       await requireWorkspace(reader, request.workspace_name);
+      // K10 (overnight R18): a membership filter pages over the peer's
+      // CURRENT memberships instead, in its own file.
+      if (request.member_peer_name !== null) return listMemberSessions(reader, request);
       await reader.refresh(SESSIONS);
 
-      const workspaceScope = contextScope(request.workspace_name);
+      // K10: `is_active` is a column of this table, so it filters INSIDE the
+      // page query and the count -- pages stay full, and total counts exactly
+      // the filtered set. Omitted, the scope is the workspace, as before.
+      const workspaceScope =
+        contextScope(request.workspace_name) +
+        (request.is_active === null ? "" : ` AND is_active = ${request.is_active ? "true" : "false"}`);
       const scope =
         workspaceScope +
         (request.after_name === null ? "" : ` AND name > ${quote(request.after_name)}`);

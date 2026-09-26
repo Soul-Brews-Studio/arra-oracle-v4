@@ -1,0 +1,238 @@
+[p1 "arra-oracle-v4 — memory" | space "ui-33 fix-round proof"(86): 1 managed, 0 untracked — p1* "arra-oracle-v4 — memory"]
+root
+  container
+    container
+      text "BANK"
+      textbox [ref=190, loc=css:input[placeholder="default"]]
+        text "default"
+    container
+      text "WORKSPACE"
+      textbox [ref=191, loc=css:input[placeholder="workspace_name"]]
+        text "default"
+    container
+      text "TOKEN"
+      textbox [ref=192, loc=css:input[placeholder="bearer…"]]
+    button [ref=193]
+      text "ping"
+  container
+    button [ref=194]
+      text "overview"
+    button [ref=195]
+      text "explore"
+    button [ref=196]
+      text "messages"
+    button [ref=197]
+      text "forum"
+    button [ref=198]
+      text "knowledge"
+  container
+    container
+      container
+        text "NODES"
+        button [ref=199]
+          text "new"
+      container
+        textbox [ref=200, loc=css:input[placeholder="node id…"]]
+          text "node id…"
+        button [ref=201]
+          text "add"
+      text "no nodes bookmarked yet"
+    container [ref=202]
+      container
+        container
+          text "SA7WGSFrNd"
+          text "…"
+        text "note"
+      container [ref=203]
+        container
+          heading
+            text "แผนการเก็บข้อมูล"
+          text "note"
+        paragraph
+          text "เก็บ timestamp เป็นไมโครวินาที ไม่ปัดเศษ"
+        unordered_list
+          list_item
+            text "revision"
+          list_item
+            text "2"
+          list_item
+            text "created"
+          list_item
+            text "2026-09-26T18:58:34.064Z"
+          list_item
+            text "active"
+          list_item
+            text "yes"
+          list_item
+            text "digest"
+          list_item
+            text "71a6352bb7a0…"
+      container [ref=204]
+        button [ref=205]
+          container
+            container
+              text "#"
+              text "2"
+            text "HEAD"
+          text "แผนการเก็บข้อมูล"
+          text "re-attributed"
+          container
+            text "2026-09-26T18:58:34.064Z"
+            container
+              text "⤷ base:"
+              container
+                text "t_ukQcVQ"
+                text "…"
+        button [ref=206]
+          container
+            text "#"
+            text "1"
+          text "แผนการเก็บข้อมูล"
+          container
+            text "2026-09-26T18:58:34.016Z"
+            container
+              text "⤷ base:"
+              text "none (first revision)"
+      container
+        container
+          text "DIFF"
+          combobox [ref=207]
+            text "#1 — แผนการเก็บข้อมูล"
+          text "vs"
+          combobox [ref=208]
+            text "#2 — แผนการเก็บข้อมูล"
+        container
+          container
+            container
+              paragraph
+                text "FROM · REV"
+                text "1"
+              paragraph
+                text "แผนการเก็บข้อมูล"
+            container
+              paragraph
+                text "TO · REV"
+                text "2"
+              paragraph
+                text "แผนการเก็บข้อมูล"
+          table
+            table_row
+              table_cell
+                text "author"
+              table_cell
+                text "alice"
+              table_cell
+                text "carol"
+            table_row
+              table_cell
+                text "observer"
+              table_cell
+                text "—"
+              table_cell
+                text "—"
+            table_row
+              table_cell
+                text "subject"
+              table_cell
+                text "bob"
+              table_cell
+                text "dave"
+            table_row
+              table_cell
+                text "session"
+              table_cell
+                text "sess-a"
+              table_cell
+                text "sess-b"
+            table_row
+              table_cell
+                text "is_active"
+              table_cell
+                text "true"
+              table_cell
+                text "true"
+            table_row
+              table_cell
+                text "valid_from"
+              table_cell
+                text "—"
+              table_cell
+                text "—"
+            table_row
+              table_cell
+                text "valid_to"
+              table_cell
+                text "—"
+              table_cell
+                text "2026-10-01T00:00:00.000Z"
+            table_row
+              table_cell
+                text "change_reason"
+              table_cell
+                text "—"
+              table_cell
+                text "re-attributed"
+            table_row
+              table_cell
+                text "fields"
+              table_cell
+                text "{}"
+              table_cell
+                text "{}"
+          paragraph
+            text "body unchanged (shown below)"
+          table
+            table_row
+              table_cell
+                text "เก็บ timestamp เป็นไมโครวินาที ไม่ปัดเศษ"
+              table_cell
+                text "เก็บ timestamp เป็นไมโครวินาที ไม่ปัดเศษ"
+          paragraph
+            text "TERMS ("
+            text "0"
+            text ")"
+          paragraph
+            text "no term changes"
+          paragraph
+            text "LINKS ("
+            text "0"
+            text ")"
+          paragraph
+            text "no link changes"
+      paragraph
+        text "Seed the reserved vocabularies first — a revision needs exactly one type term."
+      textbox [ref=209, loc=css:input[placeholder="title…"]]
+        text "title…"
+      textbox [ref=210, loc=css:textarea[placeholder="body…"]]
+        text "body…"
+      container
+        text "FORMAT"
+        combobox [ref=211]
+          text "text"
+      container
+        text "TYPE"
+        combobox [ref=212]
+          text "note"
+      container
+        text "HORIZON"
+        combobox [ref=213]
+          text "none"
+      textbox [ref=214, loc=css:input[placeholder="change reason (optional)…"]]
+        text "change reason (optional)…"
+      button [ref=215]
+        text "publish revision"
+    container
+      container
+        container
+          paragraph
+            text "Reserved vocabularies not seeded"
+          paragraph
+            text "Every revision needs exactly one `type` term, and this workspace has no vocabulary/term ids for `type` or `memory_horizon` yet. Seeding mints them CLIENT-side and holds them only in this browser -- th..."
+        button [ref=216]
+          text "seed reserved vocabularies"
+      container
+        paragraph
+          text "TYPE"
+        button [ref=217]
+          text "note"
+          text "3"

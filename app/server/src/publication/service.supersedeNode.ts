@@ -1,4 +1,3 @@
-import { type ChatModelFn } from "./chat";
 import { failPublication } from "./errors";
 import { parseSupersedeNode } from "./lifecycle";
 import { encodeNodeRow, encodeRevisionRow } from "./rows";
@@ -14,7 +13,7 @@ import { walkForwardChain } from "./service.walkForwardChain";
 import { writeContextRow } from "./service.writeContextRow";
 import { writeLifecycleEventFresh } from "./service.writeLifecycleEventFresh";
 
-export function supersedeNode(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn }, requestBytes: Uint8Array): Promise<LifecycleWriteOutcome> {
+export function supersedeNode(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null }, requestBytes: Uint8Array): Promise<LifecycleWriteOutcome> {
 const request = parseSupersedeNode(requestBytes);
       if (request.new_node_id === request.node_id) {
         failPublication("invalid_request", "/new_node_id");
@@ -56,6 +55,17 @@ const request = parseSupersedeNode(requestBytes);
           failPublication("invalid_reference", "/new_revision_id");
         }
 
+        // #29 slice B (overnight R7): superseding INTO a successor that
+        // already carries its own terminal event (retired, or itself already
+        // superseded) is refused -- a returned conflict, like every other
+        // lifecycle-state classification in this file, since the reference
+        // itself resolved fine and only its STATE is refused. That check now
+        // lives inside `writeLifecycleEventFresh`, AFTER it resolves this
+        // request's own `/node_id` and `/peer_name` (fix round: checking it
+        // here, before those two ever resolved, broke lifecycle-v1.md §11's
+        // "request references resolve first" precedence -- a caller naming a
+        // nonexistent node or peer was told there was a conflict, as if the
+        // node existed).
         await writer.refresh(NODE_REVISIONS);
         const successorRevision = await contextOne(
           writer,

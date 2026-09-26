@@ -226,7 +226,9 @@ export function createScratchDependencies(connection: Connection) {
       const table = await memories();
       await table.checkoutLatest();
       const rows = await table.query().where(`workspace_name = ${quote(bank)}`).limit(limit).toArray();
-      return clean(rows.filter((r: any) => String(r.content).includes(q)));
+      // The real store's answer shape (R14); the match label follows its rule.
+      const match = [...q].length < 3 ? ("substring_scan" as const) : ("ngram" as const);
+      return { match, rows: clean(rows.filter((r: any) => String(r.content).includes(q))) };
     },
     async searchVector(_q: string, bank: string, limit: number) {
       const table = await memories();

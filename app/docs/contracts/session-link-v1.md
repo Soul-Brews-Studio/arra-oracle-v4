@@ -66,3 +66,29 @@ Same owner registry, serial queue, attempted-write/poison, one-shot close as con
 Neo, serialized core: `app/server/src/publication/service.ts` (context read/write method additions), new `app/server/src/publication/session-link.ts` (pure grammar/codec), new `app/server/test/session-link-service.test.ts`, new `app/server/test/helpers/session-link-fixture.ts`, new `app/server/test/fixtures/session-link-v1/core/**`, `app/migrate-py/tests/test_revision_v1.py` exact four IsolationTests insertions (session-link.ts immediately after read-cursor.ts in both tuples/patterns, independent flagged sample immediately after the read-cursor sample).
 
 Ownership/recovery/precision lanes are explicitly OUT of this dispatch — not delivered by this pass. Disclosed limit, not silently omitted: full independent-lane coverage (queue exclusion, poison-both-directions, kill-after-write recovery, Int64 boundary sweep) is NOT claimed for this slice at the time of first commit.
+
+## Amendment 2026-09-26 (overnight R7 (exposure part) + R8 (HTTP/MCP part))
+
+`createSessionLink` and `listSessionLinks` were reachable from no transport: `knowledge/registry.ts` deliberately excluded the session-link kernel from `KNOWLEDGE_METHODS`, so `POST /api/knowledge/:bank/createSessionLink` and `.../listSessionLinks` answered 404, and no `kb_createSessionLink`/`kb_listSessionLinks` tool existed for MCP (measured in `.tmp/understand/issue-28/`, `.tmp/understand/issue-31/repro.ts`). `docs/overnight/DECISIONS.md` R7 rules that code no client can call is not done for #28, and R8 keeps the full HTTP+MCP+CLI contract for #31 rather than narrowing it.
+
+Both methods are now registry entries — `listSessionLinks` at `content:read`, `createSessionLink` at `content:write` — with `scopePath: []`, since `workspace_name` sits at the request root in this kernel's own grammar (`parseCreateSessionLink`/`parseListSessionLinks` above), not inside a nested envelope like `publishRevision`'s `content`. HTTP, the `kb_<method>` MCP tool, `tools/list` filtering and the tool→action grant map are all derived from that one registry entry, per the recipe `knowledge/registry.ts`'s own header describes — no second list was touched to expose these two methods. No grammar, validation, cycle-check or replay semantic in this document changed: this amendment is transport reachability only.
+
+Proof: `app/server/test/knowledge-expose13-registry.test.ts` (registry shape, no dataset), `app/server/test/knowledge-expose13-transport.test.ts` (HTTP 404→200 and `kb_createSessionLink`/`kb_listSessionLinks` on `tools/list`, against a fake bundle calling this file's own real parsers), and `app/server/test/knowledge-expose13-live.test.ts` (`createSessionLink` → `listSessionLinks` round-tripped over both HTTP and MCP against a real writer-gated target-19 dataset, plus a same-payload MCP replay landing `already_satisfied`, proving both transports dispatch to the identical registry entry against the identical dataset).
+
+## Amendment 2026-09-26 (overnight R7 (#28 part))
+
+This amendment covers analysis-28.json's Unit B (mixed-relation cycle refusal, below).
+
+Decision 4's cycle walk queried only the relation named on the PROPOSED edge (`relation = rel`). An independent re-verification (`.tmp/understand/analysis-28.json` run2) measured that this let a caller build a two-node loop by mixing relations: with `sess-b --continues--> sess-a` already stored, a request for `sess-a --forked_from--> sess-b` queried `relation = 'forked_from'` while walking, never saw the stored `continues` edge, and returned `"created"` (`oob_cross_relation_cycle: returned created`). `docs/overnight/DECISIONS.md` R7 rules on this for the `#28` part: "Mixed `continues`/`forked_from` cycles are refused across both link kinds (amendment to `session-link-v1.md` Decision 4)."
+
+**Amended rule**: the cycle walk in `service.assertSessionLinkAcyclic.ts` follows `relation IN ('continues', 'forked_from')` at every step, regardless of which of the two directed relations the PROPOSED edge itself names. A loop closed through EITHER relation, or any mix of the two, is refused exactly as a same-relation loop already was:
+- Reaching the proposed edge's own `from_session_name` (the immediate child) while walking from `to_session_name` is `invalid_request` at `/to_session_name` — unchanged, still a caller fault, checked first.
+- Reaching an already-on-path node deeper in the walk is `integrity_failure` at ROOT — unchanged.
+- The bound is unchanged: 1024 distinct finished sessions, or any single node with more than 1024 COMBINED `continues` + `forked_from` out-edges, is `limit_exceeded` at ROOT. This is the same `MAX_CYCLE_VISITED` constant, not a wider one, applied to the union query instead of a single-relation query.
+- A legal diamond that reconverges through two DIFFERENT directed relations (e.g. `X --continues--> Y --continues--> W` and `X --forked_from--> Z --forked_from--> W`) is still accepted: the gray/black distinction is unaffected by which relation each edge carries, only by adjacency.
+
+`related_to` is untouched by this amendment: it is still checked first (`if (rel === "related_to") return;`) and never enters the walk, unioned relation set or not — no traversal, no bound, no cycle policy, exactly as the base decision above states.
+
+No schema change, no grammar change, no change to Decision 1–3, 5 or 6. The query itself is WIDER — a union of both relations instead of one — even though the set of requests it accepts is narrower (a mixed loop that previously slipped through is now refused). This is a wider cycle-detection query, not a new rule.
+
+Proof: `app/server/test/session-link-service.test.ts` — "a mixed continues/forked_from loop is refused at the request that closes it" (red before this amendment's code change, green after), "a legal diamond across continues AND forked_from stays accepted", and "related_to stays exempt from the cycle walk even facing a directed loop".

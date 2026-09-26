@@ -1,6 +1,0 @@
-$0219628d-cde3-4238-a652-2aa75abc18c8²³id ÿÿÿÿÿÿÿÿÿ*string8name ÿÿÿÿÿÿÿÿÿ*string8'workspace_name ÿÿÿÿÿÿÿÿÿ*string8'session_name ÿÿÿÿÿÿÿÿÿ*string08$	peer_name ÿÿÿÿÿÿÿÿÿ*string08,subject_peer_name ÿÿÿÿÿÿÿÿÿ*string08type ÿÿÿÿÿÿÿÿÿ*string8 content ÿÿÿÿÿÿÿÿÿ*string87	embedding ÿÿÿÿÿÿÿÿÿ*fixed_size_list:float:38408+
-created_at	 ÿÿÿÿÿÿÿÿÿ*timestamp:us:-8-
-valid_from
- ÿÿÿÿÿÿÿÿÿ*timestamp:us:-08+valid_to ÿÿÿÿÿÿÿÿÿ*timestamp:us:-08#
-sync_state ÿÿÿÿÿÿÿÿÿ*string8/last_sync_at ÿÿÿÿÿÿÿÿÿ*timestamp:us:-08%sync_attempts ÿÿÿÿÿÿÿÿÿ*int648(superseded_by ÿÿÿÿÿÿÿÿÿ*string080superseded_at ÿÿÿÿÿÿÿÿÿ*timestamp:us:-08 	is_active ÿÿÿÿÿÿÿÿÿ*bool8%
-h_metadata ÿÿÿÿÿÿÿÿÿ*string08,internal_metadata ÿÿÿÿÿÿÿÿÿ*string08

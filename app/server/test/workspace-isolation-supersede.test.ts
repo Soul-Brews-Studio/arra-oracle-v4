@@ -25,12 +25,13 @@ import {
   type Fixture,
 } from "./helpers/publication-fixture";
 import { contextId } from "./helpers/context-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/isolation-v1/core/gated-isolation.ts", import.meta.url).pathname;
 const CLOCK_MS = Date.parse("2026-09-21T00:00:00.000Z");
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
-const TEST_TIMEOUT_MS = 300_000;
+const TEST_TIMEOUT_MS = testTimeout(300_000);
 
 const ctx = (method: string, request: unknown) => ({ facade: "context", method, request });
 const pub = (method: string, request: unknown) => ({ facade: "publication", method, request });
@@ -258,6 +259,77 @@ describe("supersedeNode: colliding old_id AND colliding successor ids across wor
       // of beta's ten LATER, larger row ids.
       expect(finalEligibility.witness_event_id).toBe(alphaSupersede.row.id);
       expect(finalEligibility.witness_event_id).not.toBe("0");
+    } finally {
+      await fixture.cleanup();
+    }
+  }, TEST_TIMEOUT_MS);
+});
+
+// ── #10 analysis B: supersede_log.peer_name is a scoped reference ───────────
+
+describe("supersede_log.peer_name resolves in the event's OWN workspace (lifecycle-v1 amendment 2026-09-26)", () => {
+  test("a peer that exists only in beta, or nowhere, is invalid_reference at /peer_name from alpha and writes nothing; alpha's own peer and null are accepted", async () => {
+    const fixture = await createFixture([ALPHA, BETA]);
+    try {
+      const alpha = fixture.workspaces[ALPHA]!;
+      const beta = fixture.workspaces[BETA]!;
+      const alphaPeer = alpha.peer_names[0]!;
+      // Seeded in beta only: an unscoped peer lookup would accept it from alpha.
+      const betaOnlyPeer = beta.peer_names[0]!;
+      const oldId = contextId("peer-ref-old");
+      const succId = contextId("peer-ref-succ");
+      const retireId = contextId("peer-ref-retire");
+      const nullId = contextId("peer-ref-null");
+      const [revOld, revSucc, revRetire, revNull] = ["old", "succ", "retire", "null"].map((s) => contextId(`peer-ref-rev-${s}`));
+      const supersede = (peer_name: string | null, operation_id: string) =>
+        ctx("supersedeNode", {
+          workspace_name: ALPHA, node_id: oldId, expected_revision_id: revOld,
+          new_node_id: succId, new_revision_id: revSucc, reason: "peer reference", peer_name, operation_id,
+        });
+      const retire = (node_id: string, expected_revision_id: string, peer_name: string | null, operation_id: string) =>
+        ctx("retireNode", { workspace_name: ALPHA, node_id, expected_revision_id, reason: "peer reference", peer_name, operation_id });
+      const history = (node_id: string) =>
+        ctx("listLifecycleHistory", { workspace_name: ALPHA, node_id, after_event_id: null, limit: 10 });
+
+      const parsed = await drive(
+        fixture,
+        [
+          pub("publishRevision", { operation_id: "op-peer-old", content: revisionEnvelope(ALPHA, alpha, oldId) }),
+          pub("publishRevision", { operation_id: "op-peer-succ", content: revisionEnvelope(ALPHA, alpha, succId) }),
+          pub("publishRevision", { operation_id: "op-peer-retire", content: revisionEnvelope(ALPHA, alpha, retireId) }),
+          pub("publishRevision", { operation_id: "op-peer-null", content: revisionEnvelope(ALPHA, alpha, nullId) }),
+          ctx("getPeer", { workspace_name: ALPHA, peer_name: betaOnlyPeer }),
+          supersede(betaOnlyPeer, "op-supersede-beta-peer"),
+          retire(retireId, revRetire, "no-such-peer-anywhere", "op-retire-no-peer"),
+          history(oldId),
+          history(retireId),
+          supersede(alphaPeer, "op-supersede-alpha-peer"),
+          supersede(alphaPeer, "op-supersede-alpha-peer"),
+          retire(nullId, revNull, null, "op-retire-null-peer"),
+          // The refused retire consumed nothing: its operation_id is still free.
+          retire(retireId, revRetire, alphaPeer, "op-retire-no-peer"),
+        ],
+        { revisionIds: [revOld, revSucc, revRetire, revNull] },
+      );
+
+      for (const op of ["op0", "op1", "op2", "op3"]) expect(ok(parsed[op], `publish ${op}`).outcome).toBe("accepted");
+      // Precondition: the beta peer really is absent from alpha.
+      expect(ok(parsed.op4, "alpha getPeer of the beta-only peer")).toBeNull();
+
+      // FAILED before the amendment: both were accepted and written.
+      refusedReference(parsed.op5, "/peer_name", "supersede naming a beta-only peer from alpha");
+      refusedReference(parsed.op6, "/peer_name", "retire naming a peer that exists nowhere");
+      expect(ok(parsed.op7, "history after refused supersede").rows).toEqual([]);
+      expect(ok(parsed.op8, "history after refused retire").rows).toEqual([]);
+
+      const accepted = ok(parsed.op9, "supersede with alpha's own peer");
+      expect(accepted.outcome).toBe("accepted");
+      expect(accepted.row.peer_name).toBe(alphaPeer);
+      const replay = ok(parsed.op10, "exact replay");
+      expect(replay.outcome).toBe("idempotent");
+      expect(replay.row).toEqual(accepted.row);
+      expect(ok(parsed.op11, "retire with a null peer").outcome).toBe("accepted");
+      expect(ok(parsed.op12, "retire retried with a real peer").outcome).toBe("accepted");
     } finally {
       await fixture.cleanup();
     }

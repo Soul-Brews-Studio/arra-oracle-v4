@@ -2,16 +2,33 @@ import { TYPE_TERMS, type TypeTerm } from "../api/knowledge";
 import type { NodeRow } from "../api/listing";
 import type { ChatAnswer, MessageRow as MessageRowType } from "../api/memory";
 import type { TaxonomyIds } from "../api/knowledge";
+import type { CitedRevisionStatus, CitingNodeStatus } from "../state/evidenceStatus.types";
+import type {
+  AssociationResult,
+  DependentOccurrence,
+  LifecycleEventRow,
+  LifecycleWriteOutcome,
+  RecallEligibility,
+  SessionLinkRow,
+  TraceHitRow,
+  TraceRow,
+} from "../api/evidenceReview";
 import { DialecticPanel } from "../components/DialecticPanel";
 import { Composer } from "../components/Composer";
 import { Transcript } from "../components/Transcript";
 import { TaxonomySetup } from "../components/TaxonomySetup";
+import { TracePanel } from "../components/TracePanel";
+import { SessionLinksPanel } from "../components/SessionLinksPanel";
+import { LifecyclePanel } from "../components/LifecyclePanel";
+import { LifecycleActions } from "../components/LifecycleActions";
+import { AssociationPanel } from "../components/AssociationPanel";
+import { DependentsPanel } from "../components/DependentsPanel";
 import { ListPanel } from "./ListPanel";
 
-export type ExploreTab = "nodes" | "chat" | "messages" | "config";
-export const EXPLORE_TABS: ExploreTab[] = ["nodes", "chat", "messages", "config"];
+export type ExploreTab = "nodes" | "chat" | "messages" | "evidence" | "config";
+export const EXPLORE_TABS: ExploreTab[] = ["nodes", "chat", "messages", "evidence", "config"];
 
-/** The right-hand detail panel. Four tabs, one already-fetched-elsewhere
+/** The right-hand detail panel. Five tabs, one already-fetched-elsewhere
  *  view each -- this component switches between them and lays them out; it
  *  fetches nothing itself, matching `Transcript`/`DialecticPanel`'s own
  *  presentational contract. Chat and Messages are the EXISTING dialectic and
@@ -28,6 +45,10 @@ export function DetailTabs(props: {
     onSelect: (id: string) => void;
     typeTerm: TypeTerm | null;
     onTypeTerm: (t: TypeTerm | null) => void;
+    /** #29 slice B: "show history" -- false excludes retired/superseded
+     *  nodes (the ordinary view); true includes them, labelled. */
+    includeInactive: boolean;
+    onIncludeInactive: (v: boolean) => void;
     loading: boolean;
     error: string | null;
     supported: boolean;
@@ -59,6 +80,64 @@ export function DetailTabs(props: {
     disabled: boolean;
     disabledReason: string | null;
   };
+  evidence: {
+    nodeId: string | null;
+    sessionName: string | null;
+    headRevisionId: string | null;
+    trace: {
+      id: string;
+      onIdChange: (id: string) => void;
+      onLookup: () => void;
+      loading: boolean;
+      row: TraceRow | null;
+      error: string | null;
+    };
+    hits: {
+      rows: TraceHitRow[];
+      error: string | null;
+      hasMore: boolean;
+      onLoadMore: () => void;
+    };
+    sessionLinks: {
+      rows: SessionLinkRow[];
+      loading: boolean;
+      error: string | null;
+      hasMore: boolean;
+      onLoadMore: () => void;
+      direction: "from" | "to";
+      onDirectionChange: (d: "from" | "to") => void;
+    };
+    lifecycle: {
+      rows: LifecycleEventRow[];
+      loading: boolean;
+      error: string | null;
+    };
+    recall: {
+      value: RecallEligibility | null;
+      error: string | null;
+    };
+    lifecycleActions: {
+      busy: boolean;
+      error: string | null;
+      outcome: LifecycleWriteOutcome | null;
+      onRetire: (expectedRevisionId: string, reason: string) => void;
+      onSupersede: (expectedRevisionId: string, newNodeId: string, newRevisionId: string, reason: string) => void;
+    };
+    association: {
+      row: AssociationResult | null;
+      loading: boolean;
+      error: string | null;
+      citedStatus: ReadonlyMap<string, CitedRevisionStatus>;
+    };
+    dependents: {
+      rows: DependentOccurrence[];
+      loading: boolean;
+      error: string | null;
+      hasMore: boolean;
+      onLoadMore: () => void;
+      citingStatus: ReadonlyMap<string, CitingNodeStatus>;
+    };
+  };
   config: {
     taxonomy: TaxonomyIds | null;
     seeded: boolean;
@@ -69,7 +148,10 @@ export function DetailTabs(props: {
 }) {
   const { active, onChange } = props;
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    // `min-w-0`: this panel is a flex item of ExploreView's row, and without
+    // it one long unbreakable line (a code target's path, measured: 1,807px)
+    // set the panel's minimum width and pushed the whole page sideways.
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex gap-1 border-b border-edge px-2 py-1.5">
         {EXPLORE_TABS.map((t) => (
           <button
@@ -98,15 +180,34 @@ export function DetailTabs(props: {
                 <option key={t} value={t}>{t}</option>
               ))}
             </select>
+            {/* #29 slice B: default excludes retired/superseded nodes;
+                checking this asks for the history view instead. */}
+            <label className="ml-auto flex items-center gap-1.5 text-[11px] text-muted">
+              <input
+                type="checkbox"
+                checked={props.nodes.includeInactive}
+                onChange={(e) => props.nodes.onIncludeInactive(e.target.checked)}
+                className="accent-accent"
+              />
+              show history
+            </label>
           </div>
           {/* Same list shell as the left column's peers/sessions -- one
               node row rendered as "type · title · rev N" since ListPanel's
-              row slot is plain text, not a badge layout. */}
+              row slot is plain text, not a badge layout. A retired or
+              superseded row (only ever seen with "show history" checked)
+              gets its lifecycle state appended, so it never looks like an
+              ordinary active node. */}
           <ListPanel<NodeRow>
             label="nodes"
             rows={props.nodes.rows}
             rowKey={(n) => n.id}
-            renderRow={(n) => `${n.title} · rev ${n.revision_no}`}
+            renderRow={(n) =>
+              n.lifecycle_state === "active"
+                ? `${n.title} · rev ${n.revision_no}`
+                : `${n.title} · rev ${n.revision_no} · ${n.lifecycle_state}` +
+                  (n.new_id !== null ? ` → ${n.new_id}` : "")
+            }
             selectedKey={props.nodes.selectedId}
             onSelect={(n) => props.nodes.onSelect(n.id)}
             loading={props.nodes.loading}
@@ -153,6 +254,67 @@ export function DetailTabs(props: {
             sending={props.messages.sending}
             disabled={props.messages.disabled}
             disabledReason={props.messages.disabledReason}
+          />
+        </div>
+      )}
+
+      {active === "evidence" && (
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          <TracePanel
+            traceId={props.evidence.trace.id}
+            onTraceIdChange={props.evidence.trace.onIdChange}
+            onLookup={props.evidence.trace.onLookup}
+            loading={props.evidence.trace.loading}
+            trace={props.evidence.trace.row}
+            error={props.evidence.trace.error}
+            hits={props.evidence.hits.rows}
+            hitsError={props.evidence.hits.error}
+            hasMoreHits={props.evidence.hits.hasMore}
+            onLoadMoreHits={props.evidence.hits.onLoadMore}
+          />
+          <SessionLinksPanel
+            sessionName={props.evidence.sessionName}
+            direction={props.evidence.sessionLinks.direction}
+            onDirectionChange={props.evidence.sessionLinks.onDirectionChange}
+            rows={props.evidence.sessionLinks.rows}
+            loading={props.evidence.sessionLinks.loading}
+            error={props.evidence.sessionLinks.error}
+            hasMore={props.evidence.sessionLinks.hasMore}
+            onLoadMore={props.evidence.sessionLinks.onLoadMore}
+          />
+          <AssociationPanel
+            row={props.evidence.association.row}
+            loading={props.evidence.association.loading}
+            error={props.evidence.association.error}
+            citedStatus={props.evidence.association.citedStatus}
+          />
+          <DependentsPanel
+            rows={props.evidence.dependents.rows}
+            loading={props.evidence.dependents.loading}
+            error={props.evidence.dependents.error}
+            hasMore={props.evidence.dependents.hasMore}
+            onLoadMore={props.evidence.dependents.onLoadMore}
+            citingStatus={props.evidence.dependents.citingStatus}
+          />
+          <LifecyclePanel
+            nodeId={props.evidence.nodeId}
+            recall={props.evidence.recall.value}
+            recallError={props.evidence.recall.error}
+            history={props.evidence.lifecycle.rows}
+            loading={props.evidence.lifecycle.loading}
+            error={props.evidence.lifecycle.error}
+          />
+          {/* Keyed by node: a retire/supersede form opened (and half filled)
+              on node A must not survive into node B and be confirmed there. */}
+          <LifecycleActions
+            key={props.evidence.nodeId ?? "none"}
+            nodeId={props.evidence.nodeId}
+            expectedRevisionId={props.evidence.headRevisionId}
+            busy={props.evidence.lifecycleActions.busy}
+            error={props.evidence.lifecycleActions.error}
+            outcome={props.evidence.lifecycleActions.outcome}
+            onRetire={props.evidence.lifecycleActions.onRetire}
+            onSupersede={props.evidence.lifecycleActions.onSupersede}
           />
         </div>
       )}

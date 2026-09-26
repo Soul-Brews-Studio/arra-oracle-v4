@@ -1,4 +1,3 @@
-import { type ChatModelFn } from "./chat";
 import { SESSION_PEER_FIELDS as SESSION_PEER_FIELDS_LOCAL, encodeSessionPeerRow, encodeSessionRow, parseJoinSession } from "./context";
 import { failPublication } from "./errors";
 import { quote } from "./storage";
@@ -10,7 +9,7 @@ import { requireContextWorkspaceRow } from "./service.requireContextWorkspaceRow
 import { type Clock, type ContextRegistration, type DatasetAdapter, type OwnerCore } from "./service.types";
 import { writeContextRow } from "./service.writeContextRow";
 
-export function joinSession(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn }, requestBytes: Uint8Array): Promise<ContextRegistration> {
+export function joinSession(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null }, requestBytes: Uint8Array): Promise<ContextRegistration> {
 return mutateContextWrite(core, async () => {
         const request = parseJoinSession(requestBytes);
         await requireContextWorkspaceRow(writer, request.workspace_name);

@@ -213,3 +213,144 @@ empty/short page (`listTraceHits`), never `not_found`. `{outcome: "conflict", re
 - `trace_hits` having no `id` column at all — its key is purely positional — means a hit
   cannot be addressed independently of its trace and position; there is no way to reference
   "this hit" from outside the `(workspace_name, trace_id, position)` triple.
+
+## 10. Amendment 2026-09-26 (overnight R7 (exposure part) + R8 (HTTP/MCP part))
+
+`createTrace`, `getTrace` and `listTraceHits` had no transport route: `knowledge/registry.ts`
+deliberately excluded the trace kernel, so all three answered HTTP 404 and no `kb_createTrace`
+/`kb_getTrace`/`kb_listTraceHits` tool existed on `tools/list`. This was measured directly:
+`.tmp/understand/issue-28/`'s repro showed a conclusion citing two traces could not even be
+published over any transport, because no transport could create the traces it cited first.
+`docs/overnight/DECISIONS.md` R7 rules that kernel code no client can call is not #28-done, and
+R8 keeps the full HTTP+MCP+CLI contract for #31.
+
+All three are now registry entries at `scopePath: []` (every parser above carries
+`workspace_name` at the request root) — `getTrace` and `listTraceHits` at `content:read`,
+`createTrace` at `content:write`. Caller-asserted attribution (`peer_name`,
+`session_id`/`session_from_ts`/`session_to_ts`, `h_metadata`, `internal_metadata`) remains
+exactly as unverified as section 5/6 above already document; exposing the transport route
+changes reachability only, not what this kernel validates or trusts. The mixed
+`continues`/`forked_from` session-link cycle question `docs/overnight/DECISIONS.md` R7 raises
+for `#28` is a separate, session-link-side decision and is out of scope for this amendment.
+
+Proof: `app/server/test/knowledge-expose13-registry.test.ts` (registry shape),
+`app/server/test/knowledge-expose13-transport.test.ts` (HTTP 404→200, `kb_createTrace`/
+`kb_getTrace`/`kb_listTraceHits` on `tools/list`, workspace-scope and read/write authorization
+refusals, against a fake bundle calling this file's own real parsers), and
+`app/server/test/knowledge-expose13-live.test.ts` (`createTrace` → `getTrace` →
+`listTraceHits` round-tripped over both HTTP and MCP against a real writer-gated target-19
+dataset, including a same-payload MCP replay of `createTrace` landing `already_satisfied`).
+
+## 11. Amendment 2026-09-26 (overnight R11 + R17, migration)
+
+Appended, not rewritten. Context: the #34 copy migration under [`docs/overnight/DECISIONS.md`](../../../docs/overnight/DECISIONS.md) R11 and R17 (as corrected 22:00).
+
+**What changed.** Legacy `traces.status` values `raw | distilled | retired` are outside this kernel's closed set `open | complete | abandoned`, so a verbatim copy reads back as `integrity_failure`. The copy migration maps `raw -> open` (ruled: R17 as corrected 22:00) and, as an implementer extension that is **not** ruled, `distilled -> complete` and `retired -> abandoned` (DESIGN §10 still lists `raw | reviewed | distilled | retired`). The legacy value is recorded on the trace's report record. Legacy integer-millisecond columns are copied raw, and `distilled_to` / `distilled_at` become a revision link plus revision metadata. A legacy hit kind outside `TARGET_KINDS` (e.g. `file`) is rejected with a record; a kind inside it is unresolved, because a free-text `ref` does not determine a structured `target`.
+
+**Fix round, same night.** Appended. Proof only; the mapping is unchanged. The ruled leg `raw -> open` now has its own fixture trace and test (`test_ruled_raw_trace_status_maps_to_open`); before, only the unruled `distilled`/`retired` extension was exercised. A hit whose kind is inside `TARGET_KINDS` (a `url` with a valid https ref) is tested as `unresolved` (`locator_unmappable`). It stays unresolved on purpose: `trace_hits` rows are immutable and are created only with their trace, and Python cannot reproduce the kernel's WHATWG `requireUrl` check. Writing such a row directly would store a target the kernel never validated.
+
+## 12. Amendment 2026-09-26 (overnight R7 (#28 part))
+
+This amendment covers the v3-parity review's K13 hygiene defect (depth validation, below),
+found while auditing the trace kernel `docs/overnight/DECISIONS.md` R7 required exposing
+over HTTP/MCP (section 10 above) — the same #28 slice, not a separate ruling.
+
+The v3-parity review (`docs/overnight/V3-PARITY.md` K13, defect 4) measured that
+`createTrace` accepted **any** nonnegative `depth`, regardless of the resolved
+`parent_id`'s own stored depth — a request could name `depth:"999"` on a brand-new root
+trace with no `parent_id` at all, or `depth:"0"` under a real parent already at depth 5.
+`depth` is documented (`DESIGN.md` section 10) as "derived/cache, not another edge" over
+the `parent_id` tree, so an unchecked value defeats the one thing that field exists to
+answer: "how deep is this trace in its own parent chain".
+
+**Amended rule**: on a genuinely fresh `createTrace` (no existing row by `id` — section 3
+above is unaffected: replay/conflict classification still runs first and does not
+re-derive this), once `parent_id` is resolved (section 4's existing `invalid_reference`/
+chain-walk checks still run first), `depth` must equal exactly:
+- `0`, when `parent_id` is `null`;
+- the resolved parent's own stored `depth` + 1, when `parent_id` is set.
+
+A mismatch is `invalid_request` at `/depth` — a caller fault, decided before the clock is
+ever sampled, exactly like every other pre-write STATIC-then-owner-read check in this
+kernel. `prev_id` (the readable-sequence pointer) has no bearing on `depth`; only
+`parent_id` does. No schema change, no change to identity/replay/conflict (section 3), the
+chain-walk bound (section 4), or any other field's grammar.
+
+`UNIQUE(name, workspace_name)` — named in `SPEC.md` section 14.2's historical `Trace`
+interface comment ("Honcho's idiom") — is **deliberately NOT enforced** here, and stays
+that way. Reasons, checked against the current authorities before writing this down:
+- `DESIGN.md` section 10's current `traces` block (the shipped-direction schema this
+  contract itself documents) carries no such constraint in its field list, unlike
+  `sessions`/`peers`, which spell `UNIQUE(W, name)` explicitly in the same document.
+  `SPEC.md` is superseded historical rationale on this point (repo `CLAUDE.md`: "`SPEC.md`
+  preserves historical rationale, including superseded architecture"), not the current
+  storage authority.
+- Section 3 above already fixes identity on the caller-supplied `id` (nanoid21),
+  workspace-scoped — the same "caller-stable identity, not content, not name" shape
+  `session-link-v1.md` Decision 1 chose for the same reason. A second uniqueness axis on
+  `name` would need its own conflict/replay classification (a same-name-different-id
+  request is neither a replay of the named row nor unrelated to it), which no accepted
+  contract defines and which K13's own "S"-sized dispatch does not include.
+  `v3-parity`'s `oracle_trace` translation (`V3-PARITY.md` section 4.2) already derives
+  `name` as `slug(query) + "-" + id[0..6]` specifically *because* the id suffix makes
+  incidental collisions harmless — the adapter's own design does not need this enforced
+  to work.
+- Enforcing it now would be a behavior change on a **shipped, tested kernel**
+  (`trace-service.test.ts`, `trace-ownership.test.ts`, `trace-recovery.test.ts`,
+  `trace-precision.test.ts` all create traces with today's semantics), and this dispatch's
+  scope (R7's #28 part) does not call for redesigning trace identity — only for exposing
+  transport reachability, fixing the session-link cycle gap, and closing the two
+  independently-measured hygiene defects (K13 depth, and this documentation).
+
+If a future need requires `name` uniqueness (e.g. a UI listing that must not collide),
+that is a fresh review with its own conflict-classification decision, not a default this
+amendment should reach for.
+
+Proof: `app/server/test/trace-service.test.ts` — "K13 (v3-parity hygiene review): depth
+must be parent.depth + 1, or 0 with no parent" (three cases: root with nonzero depth
+refused, child disagreeing with `parent.depth + 1` refused, depth exactly one more than
+the resolved parent's depth accepted through a two-hop chain). `trace-precision.test.ts`'s
+"all physical columns wire exactly" case was updated to build a real three-deep parent
+chain for its `depth:"3"` wire value, since that value is no longer accepted in isolation.
+
+## 13. Amendment 2026-09-26 (overnight R18 (V3 + K5 + V7))
+
+Appended, not rewritten. Context: the v3-compatible MCP adapter (#31, [`docs/overnight/V3-PARITY.md`](../../../docs/overnight/V3-PARITY.md) §4.2-§4.3, §5, §7) and [`docs/overnight/DECISIONS.md`](../../../docs/overnight/DECISIONS.md) R18.
+
+**K5, a new content:read method: `listTraces`.** Request `{workspace_name, parent_id|null, prev_id|null, query_contains|null, after_created_at|null, after_id|null, limit(1..100)}`; `after_created_at`/`after_id` are a COMPOUND keyset cursor, refused if only one is present (this kernel's ordering contract, `created_at desc, id asc`, is not a total order on `created_at` alone -- two traces can share a millisecond). `DatasetAdapter.orderedProjection` sorts by exactly one column, so the compound sort, the cursor comparison and `query_contains` (a plain, bounded substring scan -- not SQL `LIKE`, no wildcard semantics) all finish in JS over a widened scan window (`MAX_SCANNED_TRACES = 1000`), the same "widen the window, filter in memory" tradeoff `listNodes` already uses for its `type_term` filter. Every returned row carries `derived_from_count`: the number of `revision_links` rows (`target_kind="trace"`, `relation="derived_from"`, this trace's `target_key`) whose `revision_id` is still its node's CURRENT head. `revision_links` is a RECONCILED projection (`reconcileRevisionAssociations`), not written by `publishRevision` itself -- a caller that just wrote a `derived_from` link must reconcile that one revision before `derived_from_count` reflects it (the V3 adapter's `oracle_trace_distill` does this immediately after publish, `publish.ts`'s new `reconcile` option). `coverage` is `"partial"`, never silently `"full"`, when the scan window could not prove every stored trace matching the SQL predicate was examined. Classified in `registry.peerFields.ts` as asserting no acting peer (`listTraces: []`).
+
+**V3, the trace family: `oracle_trace`, `oracle_trace_get`, `oracle_trace_chain`, `oracle_trace_distill`.** `mcp/legacy-v3/trace-hits.ts` translates v3's `foundFiles`/`foundCommits`/`foundIssues`/`foundRetrospectives`/`foundLearnings`/`foundResonance`: a full-length commit hash (40-hex sha1 or 64-hex sha256) under a `project` that parses to `owner/repo` becomes an indexed `commit` hit, and an issue under the same `repo` becomes an indexed `issue` hit (its `url` is synthesized as `https://github.com/<repo>/issues/<n>` when the caller gave none); anything that does not qualify is `unrepresentable_*`, kept verbatim in `h_metadata.legacy` rather than silently dropped. `summary` counts the RAW v3 input arrays, exactly as v3's own `trace/store.ts` did (`file_count` folds in `foundFiles`+`foundRetrospectives`+`foundLearnings`+`foundResonance`, since none of the latter three has an indexed hit kind). `oracle_trace_distill` publishes a NEW node `derived_from` the trace -- `learning` when `promoteToLearning` is set, else `conclusion` (R10, D4) -- and never rewrites the trace row; re-distilling adds a second node. `oracle_trace_chain` walks `prev_id` backward (always available) and, with K5, `listTraces({prev_id})` forward one hop at a time; reaching more than one successor is a fork (v4 allows what v3's exclusive `oracle_trace_link` pointer never could) and stops the walk, reporting `forked:true, branches:[...]` rather than guessing a branch. `oracle_trace_get`'s `child_trace_ids` (`listTraces({parent_id})`, bounded, `truncated` warned if more exist) and `next_trace_id` (`listTraces({prev_id}, limit:2)`, left `null` with a `semantic_change` warning on a fork) are both K5-backed, shipping in this same slice rather than staying `field_unavailable`.
+
+**A fixture defect K5 found, fixed at the root.** `app/migrate-py/tests/export_publication_fixture.py` seeded every workspace's baseline trace with `status="raw"` -- a legacy v3 status outside this kernel's closed `open | complete | abandoned` set (§1's own rule: a stored value outside it is `integrity_failure`, decoded or not). Nothing before K5 ever ran an UNFILTERED scan of `traces` (every other reader only cites the seeded `trace_id` as an opaque evidence-link target, per `association-service.test.ts`); `listTraces` is the first, and it failed closed on the poisoned row exactly as designed. Fixed at the fixture (`status="complete"`): no test anywhere asserted the old value, and TS-side decoding of an out-of-band `status` is not something Python test fixtures should ever produce.
+
+**Tests:** `test/mcp-v3-trace.test.ts` (V3, over the real wire, inside the writer gate), `test/trace-list-service.test.ts` (K5 kernel + isolation + HTTP/MCP reachability), `test/trace-ownership.test.ts` (the context facade's exhaustive method-count check, now twenty-three/twelve), `test/mcp-v3-acceptance.test.ts` (steps 14-19, `oracle_trace`/`oracle_trace_get`/`oracle_trace_chain`/`oracle_trace_distill`/`oracle_trace_list`, GAP -> PASS).
+
+**Fix round (2026-09-27, same R18).** Appended, not rewritten. An independent verifier refuted the slice above on four points; all four are fixed here, each with a failing-first test proving the old behavior and a passing one proving the new.
+
+1. **Regression: nine OTHER ownership/service test files hard-code the same exhaustive context facade method list `listTraces` was added to.** Only `trace-ownership.test.ts` was updated originally. `chat-ownership.test.ts`, `lifecycle-ownership.test.ts`, `search-chunk-ownership.test.ts`, `session-link-ownership.test.ts`, `context-ownership.test.ts`, `context-service.test.ts`, `association-ownership.test.ts`, `read-cursor-ownership.test.ts` and `read-cursor-service.test.ts` all now carry `listTraces` in their literal lists (and the twenty-two/eleven counts they narrate, now twenty-three/twelve). Proof: `bun run test:association|chat|context|lifecycle|read-cursor|search-chunk|session-link` and `bun test test/context-service.test.ts` are green again (were 12 failures across these nine files, 122 pass / 12 fail).
+2. **K5, the keyset cursor dead-ended past `MAX_SCANNED_TRACES` (1000).** `service.listTraces.ts` parsed `after_created_at`/`after_id` but never pushed them into the SQL predicate, so every page re-scanned the SAME newest 1000 rows regardless of how far a caller had already paged; and the returned cursor was derived from the last MATCH, not the last row examined, so a `query_contains` filter sparse enough to leave a whole widened window empty came back with a null cursor while `has_more` stayed `true` -- a dead end mid-table, not only past row 1000. Fixed by pushing the cursor into SQL (`created_at < X OR (created_at = X AND id > Y)`, `listNodes`' `idScope` shape) and by walking the sorted window like `listNodes` does -- the cursor is the last row EXAMINED (match or not) when it stops, never merely the last MATCH. Proof: `test/trace-list-cursor.test.ts` (2005 planted rows, three widened-window boundaries; RED on the un-pushed predicate) and `test/trace-list-service.test.ts`'s existing small-scale pagination test (still green -- catches the interim over-correction that jumped the cursor to the window's tail even when the page hadn't reached it).
+3. **V7, `oracle_trace_list` duplicated rows.** Its walk copied a `null` cursor straight back into the next kernel call whenever `has_more:true` arrived with nothing to resume from (K5's dead end, above), which restarts K5 from the newest trace instead of continuing -- rows already returned came back again, and rows past the restart point were never reached. Fixed: the walk now stops (an honest `has_more:true`, never presented as complete) the moment a page claims more with no cursor, rather than looping. Proof: `test/mcp-v3-trace-list-walk.test.ts`, a deterministic stub of the exact K5 dead-end shape (RED: 10 calls and a duplicated row on the old walk; GREEN: 2 calls, no duplicate).
+4. **V7, `oracle_trace_chain` dropped the requested trace when a fork existed UPSTREAM of it.** The forward walk started at the backward walk's earliest ancestor and tried to re-derive the path to the caller's own trace via `listTraces({prev_id})`; an unrelated fork anywhere on that path (even one that has nothing to do with the requested trace) stopped the walk before it ever reached it, so `position` fell back to 0 on a chain that no longer contained the trace asked for. Fixed: `prev_id` is single-valued, so the backward walk can never itself hit a fork -- the path it already walked (root to the requested trace) is kept outright, and only the segment PAST the requested trace still needs a `listTraces` round trip (where a genuine fork is real, reportable ambiguity in that trace's own future, not noise from an unrelated sibling). Proof: `test/mcp-v3-trace.test.ts`'s new case, `R <- S1 <- S2` plus an unrelated fork off `R`; asking about `S2` still returns `[R, S1, S2]` at position 2 (RED before the fix: `chain:[R], position:0`).
+
+Also fixed as part of this round, not separately ruled: the amendment date above (this section) read 2026-09-27 in the pre-fix-round draft; corrected to the date R18 itself landed.
+
+## 14. Amendment 2026-09-26 (overnight R18 (V3 + K5 + V7, D4, D11))
+
+Appended, not rewritten. Fix round 2 of §13, same ruling: [`docs/overnight/DECISIONS.md`](../../../docs/overnight/DECISIONS.md) R18 (V3 + K5 + V7, D4, D11), design in [`docs/overnight/V3-PARITY.md`](../../../docs/overnight/V3-PARITY.md) §2.5, §4.3-§4.4, §5. An independent verifier refuted §13 on four blocking points. Each is fixed below with a test that was red before the fix or, where the code was already right, red under the mutation the verifier used.
+
+1. **K5: a `created_at` tie straddling the end of the scan window lost rows.** §13 ordered the 1000-row window by `created_at` alone, so which rows of a tie group at the window's tail made it in was the storage engine's choice. When a walk ran off such a window, the cursor `(tail.created_at, tail.id)` then excluded, permanently, every tied row that had not fit and had a smaller id. The last page still said `coverage:"full"`. This supersedes §13's first-paragraph wording ("the cursor comparison ... finish in JS") and its missing disclosure. The cursor comparison is SQL (fix round 1). Now the window is also cut at a tie boundary (`service.scanTraceWindow.ts`). Every millisecond above the tail is whole, because a row there would outrank the tail row. So a full window drops its tail millisecond, and the next page's predicate still reaches all of it. If the whole window is one millisecond (at least 1000 tied rows), that millisecond is re-read ordered by `id` and paged by `id`. Both cases keep a whole prefix of the kernel's own `(created_at desc, id asc)` order, and the cursor always moves strictly forward, so the walk visits every row exactly once. `coverage` is `"partial"` whenever the first read filled the window. Proof: `test/trace-list-tie.test.ts`. It plants 998 newer rows plus 8 tied rows across the boundary, and a 1003-row tie group bigger than the window. Before the fix, 6 of the 8 tied needle rows were lost and 3 of the 1003 wide-group rows were never visited.
+2. **K5 request grammar: new required-but-nullable key `depth`.** The request is now `{workspace_name, parent_id|null, prev_id|null, depth|null, query_contains|null, after_created_at|null, after_id|null, limit}`. `depth` is canonical non-negative int64 decimal text, the same form `createTrace` stores, and it goes into the SQL predicate as `depth = N`. Omitting the key is `missing_field`, as for every other filter key (K3's idiom). Proof: `test/trace-list-service.test.ts` ("depth filters ...", "depth is int64 decimal text or null ...").
+3. **V7 `oracle_trace_list`: v3's `project` and `depth` filters were dropped silently** (v3 `src/trace/list.ts:17-19`). This violated §2.5, "removals are never silent". `depth` (a non-negative integer) goes to K5. `project` is compared in the adapter for exact equality with the trace's `h_metadata.project`. That is where `oracle_trace` records v3's `project` verbatim, and the kernel treats `h_metadata` as opaque. Both filters apply before `offset`, as in v3. The adapter refuses a `depth` that is not a non-negative integer, and a non-string `project`, with `unsupported_argument` at `/depth` or `/project`. Any argument outside v3's six is named `argument_ignored`. Sometimes the ten-page walk (1000 traces) runs out before the filters and offset are exhausted. The page then carries a `truncated` warning on `traces` and `has_more:true`, never a silent short page. `offset` and `limit` follow v3's own `boundedInteger` clamps (`[0, 10000]`, `[1, 100]`). `scope` is the recorded `h_metadata.scope`, else v3's default `"project"`; before, it was a bare `null`. Proof: `test/mcp-v3-trace.test.ts` over the real wire, including the verifier's exact call `{project:"github.com/nobody/none", depth:5}`, and `test/mcp-v3-trace-list-walk.test.ts` with a stubbed kernel.
+4. **Per-page cost and the flaky walk test.** Each `listTraces` row used to cost its own `traces` read plus a `revision_links` read and a `nodes` read. The whole page now takes one `id IN (...)` read, and `derived_from_count` is counted for the page in one pass (`service.countTraceDerivations.ts`, chunked `IN` lists of at most 200). The rule is unchanged: a link counts only while its revision is its node's current head, and two nodes naming one head revision is `integrity_failure`. `test/trace-list-cursor.test.ts`'s 21-page walk measured 2.05 s before and 0.09 s after, both at load average about 6. The verifier saw it exceed bun's 5 s default 4 out of 4 times at load 14-18. It now has an explicit 30 s timeout. The current-heads rule is pinned by `test/trace-list-heads.test.ts`: a real publish, reconcile, and a revision that drops the link. Counting every link gives 2 instead of 1.
+5. **R18 D4 pinned.** `oracle_trace_distill` already published `learning` when promoted and `conclusion` otherwise, but no test read the type back, so swapping the two left 41/41 green. `test/mcp-v3-trace.test.ts` now reads each distilled node's accepted head. It asserts the `type` term and the `derived_from` link to the trace, and it fails under the swap.
+
+Also fixed in this round, all nonblocking:
+- `oracle_trace_get`'s `next_trace_id` is now tested for both cases: a single successor, and `null` plus `semantic_change` on a fork.
+- `oracle_trace_chain` names every branch of a fork up to 100, with `truncated` beyond; before, it named only 2.
+- Both catalogue descriptions now say what changed from v3. That covers case-sensitive substring `query`, `status` limited to raw or distilled, no `total`, and forward walking with forks.
+- A well-formed trace id that names nothing is `no_results` in `oracle_trace_get` and `oracle_trace_distill`. It was `kernel_error` with no wrapped envelope.
+- `oracle_trace_distill` names v3's `oracle`, `source`, `finding` and `metadata` arguments `argument_ignored`.
+
+Not changed, and disclosed. `oracle_trace_distill`'s `operation_id` is still random unless the caller passes `idempotency_key`. V3-PARITY §4.3 specifies `"v3-distill:"+sha256(canonical input)`. That would make an identical re-distill replay the first node instead of adding a second, which contradicts the same section's "re-distilling adds a second node" and v3's own behavior. The choice is left to the design owner. D11 is unchanged: linking two existing traces stays not carried.
+
+**Tests:** `test/trace-list-tie.test.ts`, `test/trace-list-heads.test.ts` (new); `test/trace-list-service.test.ts`, `test/trace-list-cursor.test.ts`, `test/mcp-v3-trace.test.ts`, `test/mcp-v3-trace-list-walk.test.ts` (extended).

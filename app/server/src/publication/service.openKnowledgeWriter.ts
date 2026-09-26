@@ -52,7 +52,10 @@ export async function openKnowledgeWriter(
     { clock, newRevisionId: options.newRevisionId },
     core,
   );
-  const taxonomy = createTaxonomyWriterService(adapter, core, { clock });
+  const taxonomy = createTaxonomyWriterService(adapter, core, {
+    clock,
+    taxonomyOperator: options.taxonomyOperator === true,
+  });
 
   const { close: _ownedByTheBundle, ...publicationData } = publication;
   return Object.freeze({

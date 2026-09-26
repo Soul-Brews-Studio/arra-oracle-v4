@@ -52,6 +52,7 @@ import {
   runGated,
   runOwnedChild,
 } from "../../helpers/publication-fixture";
+import { testTimeout } from "../../helpers/timing.testTimeout";
 
 const TEST_DIR = resolve(import.meta.dir, "..", "..");
 const SERVER_DIR = resolve(TEST_DIR, "..");
@@ -62,7 +63,7 @@ const HELPER_MODULE = join(TEST_DIR, "helpers", "publication-fixture.ts");
 
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
-const TEST_TIMEOUT_MS = 180_000;
+const TEST_TIMEOUT_MS = testTimeout(180_000);
 const FIXED_CLOCK_MS = 1_789_905_600_000;
 
 // ── case description, shared with the child ──────────────────────────────────

@@ -35,11 +35,16 @@
  * open `openKnowledgeReader` / `openEvidenceReader`, which take no gate at
  * all. A future CLI writer must be started only while this server is stopped,
  * or must be pointed at a different dataset root.
+ *
+ * Chat (#32 slice A, overnight ruling R9): `answerChat` persists nothing, so
+ * it runs on the READER bundle's `chat` facade, composed here with the
+ * configured model. No request path opens, closes or releases a writer --
+ * the per-request "ephemeral writer" that chat used to take is gone, because
+ * in one gated process it both contended for the single owner slot and, on
+ * close, released the process's only inherited writer gate.
  */
 
 import { randomBytes } from "node:crypto";
-import { admit, type AdmissionTarget } from "../auth/policy";
-import { loadPolicy } from "../auth/loader";
 import {
   checkBodyEncoding,
   errorResponse,
@@ -49,8 +54,14 @@ import {
 } from "../auth/http";
 import { ContractError } from "../contracts/errors";
 import { parseStrictBytes, type JcsObject, type JcsValue } from "../contracts/jcs";
-import { openEvidenceReader, openEvidenceWriter } from "../publication/service";
-import { KNOWLEDGE_METHODS, type KnowledgeAction, type KnowledgeBundle } from "./registry";
+import type { ChatModelFn, ChatSettings } from "../publication/chat";
+import { type DigestProbeFn, type EmbedFn } from "../publication/search-chunk.types";
+import { openEvidenceReader, openEvidenceWriter, type QueryEmbedder } from "../publication/service";
+import { createChatService } from "../publication/service.createChatService";
+import { KNOWLEDGE_METHODS, type KnowledgeAction, type KnowledgeBundle, type KnowledgeReaderBundle, type RequestAuthority } from "./registry";
+import { KnowledgeAuthDenied, admitKnowledgeAction, type KnowledgeAuthFailure } from "./transport.admitKnowledgeAction";
+import { requireBoundPeers } from "./transport.requireBoundPeers";
+import { indexProfile, type IndexProfile } from "./transport.indexProfile";
 
 /** Matches the governed kernel's own request cap exactly (publication/service.ts). */
 export const MAX_KNOWLEDGE_REQUEST_BYTES = 1024 * 1024;
@@ -154,6 +165,13 @@ const STATUS_FOR_CODE: Readonly<Record<string, number>> = Object.freeze({
   unsupported_dataset: 400,
   recovery_required: 503,
   limit_exceeded: 413,
+  // #87 / R3: the admitted caller's own authority does not cover the request.
+  forbidden: 403,
+  // #32 / R9: no chat model configured, or it could not answer. Never 500.
+  model_unavailable: 503,
+  // #30 / R20: the dataset's pinned embedding model is not the one serving
+  // now. A state conflict an operator resolves by re-indexing, not a retry.
+  embedding_profile_mismatch: 409,
 });
 
 /**
@@ -203,15 +221,7 @@ export function peekWorkspaceName(bytes: Uint8Array, scopePath: readonly string[
 
 // ── admission ────────────────────────────────────────────────────────────
 
-export type KnowledgeAuthFailure = "unauthenticated" | "forbidden" | "policy_unavailable";
-
-export class KnowledgeAuthDenied extends Error {
-  readonly code: KnowledgeAuthFailure;
-  constructor(code: KnowledgeAuthFailure) {
-    super(code);
-    this.code = code;
-  }
-}
+export { KnowledgeAuthDenied, admitKnowledgeAction, type KnowledgeAuthFailure } from "./transport.admitKnowledgeAction";
 
 const AUTH_STATUS_FOR: Readonly<Record<KnowledgeAuthFailure, number>> = Object.freeze({
   unauthenticated: 401,
@@ -219,34 +229,7 @@ const AUTH_STATUS_FOR: Readonly<Record<KnowledgeAuthFailure, number>> = Object.f
   policy_unavailable: 503,
 });
 
-/**
- * Admit exactly one workspace action, reusing the #25 admission primitives
- * (`admit`, `loadPolicy`) directly — the same pure decision the memories
- * transport in `auth/service.ts` is built on. This module does not reinvent
- * policy evaluation; it only supplies the target for a different domain.
- */
-export function admitKnowledgeAction(
-  policyPath: string,
-  authorization: string | null,
-  workspace: string,
-  action: KnowledgeAction,
-): void {
-  let policy;
-  try {
-    policy = loadPolicy(policyPath);
-  } catch {
-    throw new KnowledgeAuthDenied("policy_unavailable");
-  }
-  const target: AdmissionTarget = { kind: "workspace", workspace, action };
-  try {
-    admit(policy, { authorization, now_ms: Date.now(), target });
-  } catch (error) {
-    const code = (error as { code?: string }).code;
-    if (code === "unauthenticated") throw new KnowledgeAuthDenied("unauthenticated");
-    if (code === "forbidden") throw new KnowledgeAuthDenied("forbidden");
-    throw new KnowledgeAuthDenied("policy_unavailable");
-  }
-}
+export { requireBoundPeers } from "./transport.requireBoundPeers";
 
 // ── dataset access (writer-ownership decision lives here) ─────────────────
 
@@ -265,6 +248,39 @@ function randomNanoid21(): string {
 export type KnowledgeDatasetConfig = {
   readonly datasetRoot: string | undefined;
   readonly env?: NodeJS.ProcessEnv;
+  /**
+   * #32 / R9: the chat model and its effective settings, trusted composition
+   * input (`composition.ts` builds them from env via `src/chat-model.ts`),
+   * never request data. Absent means unconfigured: `answerChat` answers
+   * `model_unavailable` and `getChatSettings` answers `{model: null}`.
+   */
+  readonly chat?: { readonly model?: ChatModelFn; readonly settings: ChatSettings | null };
+  /**
+   * #30: the trusted query embedder semantic search is composed with
+   * (`composition.ts`: local Ollama; tests: a stub), handed to the READER only
+   * (`openEvidenceReader(root, {embedder})`), like the chat model above --
+   * never a writer option. Absent, or on any embedder failure, means
+   * `searchKnowledgeSemantic` answers the closed `model_unavailable` code
+   * (overnight R21, aligned with #32 / R9's chat code).
+   */
+  readonly embedder?: QueryEmbedder;
+  /**
+   * #30 R8's embed worker DOCUMENT embedder (`embedPendingChunks`), wired by
+   * `composition.ts`'s `composeKnowledgeAccess` from `embed.ts`'s Ollama
+   * `embed()`. Unlike the query `embedder` above it is a WRITER option:
+   * `embedPendingChunks` is a real, durable write of `search_chunks_v1`
+   * vectors, so it runs on the one cached writer. Absent (e.g. every existing
+   * test's fake config) means `embedPendingChunks` still runs -- content-hash
+   * reuse needs no embedder at all -- but any chunk it cannot satisfy that
+   * way fails closed with `embedder_unavailable` rather than making a
+   * network call this transport was never told about.
+   */
+  readonly documentEmbedder?: EmbedFn;
+  /** #30 R20's model-digest probe, wired by `composeKnowledgeAccess`, a
+   *  WRITER option beside `documentEmbedder`. Absent means every
+   *  `embedPendingChunks` run is `blocked: "digest_unmeasured"` and writes
+   *  nothing -- never a vector without a measured digest. */
+  readonly digestProbe?: DigestProbeFn;
 };
 
 /**
@@ -272,24 +288,15 @@ export type KnowledgeDatasetConfig = {
  * eagerly; the persisting writer is opened lazily on first use and never
  * released by a request path (see file header: writer-ownership decision).
  *
- * `getEphemeralWriter` is the ONE exception to "never released by a request
- * path", added for #33's `answerChat`: that method is defined only on the
- * writer facade (it needs the injected `model` only a writer carries) but
- * PERSISTS NOTHING (chat.ts: "must not share the write queue or the poison
- * state that guards actual persistence"). Handing it the SAME cached,
- * never-closed `writer` promise would seize the exclusive dataset gate
- * (`OWNERS` in publication/service.ts) on its first call and hold it for the
- * rest of the process -- for a call that cannot durably write anything and,
- * at this deployment, cannot even succeed (no model configured; see
- * registry.ts). A migration tool or a second server instance would then be
- * locked out by a feature that never persists. `getEphemeralWriter` opens its
- * own, uncached writer instance and the caller MUST close it once its single
- * call completes -- see `handleKnowledgeRequest`'s `finally` block, the only
- * place in this transport allowed to call `.close()` on a writer bundle.
+ * The reader bundle carries the `chat` facade, built over that reader's own
+ * `getContext` with the configured model, so every chat call is a read; and
+ * its context facade carries the #30 searches, opened with the configured
+ * query embedder, so every search is a read too.
  */
 export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
-  let reader: Promise<KnowledgeBundle> | null = null;
+  let reader: Promise<KnowledgeReaderBundle> | null = null;
   let writer: Promise<Omit<import("../publication/service").EvidenceWriterBundle, "close">> | null = null;
+  const chatOptions = { model: config.chat?.model, settings: config.chat?.settings ?? null };
 
   const requireRoot = (): string => {
     if (config.datasetRoot === undefined) {
@@ -309,8 +316,11 @@ export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
     return config.datasetRoot;
   };
 
-  /** Trusted operator configuration shared by every writer open, cached or
-   *  ephemeral -- never request data (see the cached path's own note below). */
+  /** Trusted operator configuration for the one cached writer -- never
+   *  request data. No model travels here any more (#32 / R9), and no query
+   *  embedder either (#30): both are READER composition. What does travel
+   *  here is the embed worker's document embedder and R20's digest probe:
+   *  `embedPendingChunks` writes vectors, so it is writer composition. */
   const writerOptions = () => ({
     newRevisionId: randomNanoid21,
     clock: Date.now,
@@ -319,9 +329,16 @@ export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
     // exposes local intake only. A namespaced source feed is a future
     // deployment decision, not something a caller's bytes can select.
     sourceNamespace: null,
+    documentEmbedder: config.documentEmbedder,
+    digestProbe: config.digestProbe,
   });
 
   return {
+    /** Advertising only (#31): false hides kb_* and the v3 family from tools/list. */
+    datasetConfigured: config.datasetRoot !== undefined,
+    /** Server-chosen chunk-index settings for adapter writes (R18 V1). */
+    indexProfile: indexProfile(),
+
     async getBundle(action: KnowledgeAction): Promise<KnowledgeBundle> {
       // Every action except `content:write` is a READ (#94 widened
       // `KnowledgeAction` to add `audit:read`): branching on `!== "content:write"`
@@ -329,8 +346,11 @@ export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
       // are added, instead of silently routing a new read action into the
       // writer-gate path below, which would require a writer for a call that
       // never mutates anything and could deadlock a reader-only deployment.
+      // `answerChat` (#32 / R9) and the #30 searches are among these reads.
       if (action !== "content:write") {
-        reader ??= openEvidenceReader(requireRoot());
+        reader ??= openEvidenceReader(requireRoot(), { embedder: config.embedder }).then((bundle) =>
+          Object.freeze({ ...bundle, chat: createChatService(bundle.context, chatOptions) }),
+        );
         return reader;
       }
       // Write path: cache only a SUCCESSFUL open. A failed attempt (writer
@@ -345,30 +365,19 @@ export function createKnowledgeAccess(config: KnowledgeDatasetConfig) {
       }
       return writer;
     },
-
-    /** A fresh, UNCACHED writer for one non-persisting call. Contends with
-     *  the cached writer through the same `OWNERS` gate `openEvidenceWriter`
-     *  already enforces (an active real write correctly refuses this with
-     *  `writer_unavailable`, exactly as it would refuse a second real
-     *  writer) but is never itself retained past the call that opened it. */
-    async getEphemeralWriter(): Promise<import("../publication/service").EvidenceWriterBundle> {
-      return openEvidenceWriter(requireRoot(), writerOptions());
-    },
   };
 }
 
 /**
- * `getEphemeralWriter` is declared OPTIONAL here even though the real
- * `createKnowledgeAccess` always provides it: several existing tests type a
- * hand-written fake as `KnowledgeAccess` with only `getBundle` (they never
- * exercise an `ephemeralWrite` method), and an explicit interface -- rather
- * than `ReturnType<typeof createKnowledgeAccess>`, which would make the new
- * method silently required everywhere -- keeps those fakes valid without
- * editing files this task does not own.
+ * What both transports need from dataset access: one bundle per action. There
+ * is deliberately no second, per-request writer here any more (#32 / R9).
  */
 export type KnowledgeAccess = {
+  /** False only when no dataset root is configured; see `transport.isDatasetConfigured.ts`. */
+  readonly datasetConfigured?: boolean;
+  /** Absent on test fakes; `mcp/legacy-v3/dispatchLegacyV3.ts` then uses the defaults. */
+  readonly indexProfile?: IndexProfile;
   getBundle(action: KnowledgeAction): Promise<KnowledgeBundle>;
-  getEphemeralWriter?(): Promise<import("../publication/service").EvidenceWriterBundle>;
 };
 
 // ── HTTP handler ────────────────────────────────────────────────────────
@@ -379,7 +388,9 @@ export type KnowledgeAccess = {
  * Order, fixed: validate the route scope grammar and the method name (pure
  * routing, no policy I/O), check body encoding, read the bounded raw bytes,
  * peek the body's own scope claim with the governed parser and require it to
- * equal the route bank, THEN admit, THEN dispatch the ORIGINAL bytes to the
+ * equal the route bank, THEN admit (which also yields the request's #87
+ * `RequestAuthority`), THEN refuse any caller-asserted peer outside the
+ * grant's binding, THEN dispatch the ORIGINAL bytes and that authority to the
  * registered method. A malformed or oversized body never reaches admission
  * with a false success, but a body-format fault surfaces its own governed
  * envelope rather than a generic 400 wherever this module can tell the two
@@ -410,37 +421,33 @@ export async function handleKnowledgeRequest(
   }
   if (scoped === null || scoped !== params.bank) return errorResponse(400);
 
+  let authority: RequestAuthority;
   try {
-    admitKnowledgeAction(ctx.policyPath, readAuthorization(request), params.bank, entry.action);
+    authority = admitKnowledgeAction(ctx.policyPath, readAuthorization(request), params.bank, entry.action);
   } catch (error) {
     if (error instanceof KnowledgeAuthDenied) return errorResponse(AUTH_STATUS_FOR[error.code]);
     return errorResponse(503);
   }
-
-  // A method marked `ephemeralWrite` (currently only `answerChat`) must run
-  // against a writer bundle THIS REQUEST opened and THIS REQUEST closes --
-  // never the process-lifetime cached one `getBundle` returns for a real
-  // persisting write. See `createKnowledgeAccess`'s own comment for why: that
-  // cached writer is never released by a request path, and this call
-  // persists nothing, so sharing it would seize the exclusive dataset gate
-  // for the rest of the process over a call that cannot durably write.
-  let closeEphemeral: (() => Promise<void>) | null = null;
   try {
-    let bundle: KnowledgeBundle;
-    if (entry.ephemeralWrite === true) {
-      if (ctx.access.getEphemeralWriter === undefined) {
-        // Declared ephemeral but this `access` cannot open one: fail closed,
-        // the same way an absent dataset root does, rather than silently
-        // falling back to the cached writer this branch exists to avoid.
-        return errorResponse(503);
-      }
-      const opened = await ctx.access.getEphemeralWriter();
-      closeEphemeral = opened.close;
-      bundle = opened;
-    } else {
-      bundle = await ctx.access.getBundle(entry.action);
+    requireBoundPeers(params.method, raw.bytes, authority);
+  } catch (error) {
+    return knowledgeErrorResponse(error) ?? errorResponse(400);
+  }
+
+  try {
+    // Operations-root methods (R5) never touch the knowledge bundle at all --
+    // checked BEFORE `getBundle`, which would otherwise throw
+    // `unsupported_dataset` whenever `ARRA_KNOWLEDGE_DATASET_ROOT` is unset,
+    // even though `entry.call` would never have used the bundle it opened.
+    if (entry.operations !== undefined) {
+      const result = await entry.operations(raw.bytes);
+      return new Response(JSON.stringify(result ?? null), {
+        status: 200,
+        headers: { "content-type": "application/json", "cache-control": "no-store" },
+      });
     }
-    const result = await entry.call(bundle, raw.bytes);
+    const bundle = await ctx.access.getBundle(entry.action);
+    const result = await entry.call(bundle, raw.bytes, authority);
     return new Response(JSON.stringify(result ?? null), {
       status: 200,
       headers: { "content-type": "application/json", "cache-control": "no-store" },
@@ -452,9 +459,5 @@ export async function handleKnowledgeRequest(
       status: 500,
       headers: { "content-type": "application/json", "cache-control": "no-store" },
     });
-  } finally {
-    // Released unconditionally -- success, a governed refusal and a thrown
-    // 500 all end this one request's hold on the gate the same way.
-    if (closeEphemeral !== null) await closeEphemeral().catch(() => undefined);
   }
 }

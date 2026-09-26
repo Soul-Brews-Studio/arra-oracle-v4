@@ -1,0 +1,224 @@
+[p1 "arra-oracle-v4 — memory" | space "ui-33 fix-round 2 proof"(88): 1 managed, 0 untracked — p1* "arra-oracle-v4 — memory"]
+root
+  container
+    container
+      text "BANK"
+      textbox [ref=1, loc=css:input[placeholder="default"]]
+        text "default"
+    container
+      text "WORKSPACE"
+      textbox [ref=2, loc=css:input[placeholder="workspace_name"]]
+        text "default"
+    container
+      text "TOKEN"
+      textbox [ref=3, loc=css:input[placeholder="bearer…"]]
+    button [ref=4]
+      text "ping"
+  container
+    button [ref=5]
+      text "overview"
+    button [ref=6]
+      text "explore"
+    button [ref=7]
+      text "messages"
+    button [ref=8]
+      text "forum"
+    button [ref=9]
+      text "knowledge"
+  container
+    container
+      text "Workspaces"
+      text ">"
+      text "default"
+      button [ref=35]
+        text "Back"
+    container
+      container
+        text "1"
+        text "PEERS"
+      text "|"
+      container
+        text "0"
+        text "SESSIONS"
+      text "|"
+      container
+        text "6"
+        text "NODES"
+      button [ref=36]
+        text "refresh all"
+    container
+      container
+        container
+          container
+            button [ref=37]
+              text "⌄"
+            text "PEERS"
+            button [ref=38]
+              text "↻"
+          textbox [ref=39, loc=css:input[placeholder="filter loaded peers…"]]
+            text "filter loaded peers…"
+          button [ref=40]
+            text "alice"
+          container
+            container
+              text "showing"
+              text "1"
+              text "of 1"
+            container
+              text "page"
+              text "1"
+              text "(walked)"
+            container
+              button [ref=41]
+                text "‹ prev"
+              button [ref=42]
+                text "next ›"
+        container
+          container
+            button [ref=43]
+              text "⌄"
+            text "SESSIONS"
+            button [ref=44]
+              text "↻"
+          textbox [ref=45, loc=css:input[placeholder="filter loaded sessions…"]]
+            text "filter loaded sessions…"
+          container
+            paragraph
+              text "no sessions"
+            paragraph
+              text "nothing on this page matches."
+          container
+            container
+              text "showing"
+              text "0"
+              text "of 0"
+            container
+              text "page"
+              text "1"
+              text "(walked)"
+            container
+              button [ref=46]
+                text "‹ prev"
+              button [ref=47]
+                text "next ›"
+      container
+        container
+          button [ref=48]
+            text "Nodes"
+          button [ref=49]
+            text "Chat"
+          button [ref=50]
+            text "Messages"
+          button [ref=51]
+            text "Evidence"
+          button [ref=52]
+            text "Config"
+        container [ref=53]
+          container
+            heading
+              text "TRACE"
+            container
+              textbox [ref=54, loc=css:input[placeholder="trace id (nanoid21)"]]
+                text "trace id (nanoid21)"
+              button [ref=55]
+                text "Look up"
+            container
+              paragraph
+                text "no trace looked up"
+              paragraph
+                text "paste a trace id above"
+          container
+            container
+              heading
+                text "SESSION LINKS"
+              button [ref=56]
+                text "from"
+              button [ref=57]
+                text "to"
+            container
+              paragraph
+                text "no session selected"
+              paragraph
+                text "pick a session on the left to see its links"
+          container
+            heading
+              text "DIRECT EVIDENCE"
+            container
+              container
+                container
+                  text "rev"
+                  text "LESodafF"
+                  text "…"
+                text "head"
+              paragraph
+                text "TERMS ("
+                text "1"
+                text ")"
+              unordered_list
+                list_item
+                  text "type"
+                  text ":"
+                  text "note"
+              paragraph
+                text "LINKS ("
+                text "3"
+                text ")"
+              unordered_list
+                list_item
+                  text "url"
+                  text "supports"
+                  paragraph
+                    text "{"url":"https://example.com/lancedb-timestamp-notes"}"
+                  text "locator only"
+                  paragraph
+                    text "locator only"
+                    text ":"
+                    text "only the locator was recorded when cited; no content was captured to check it against"
+                list_item
+                  text "code"
+                  text "derived_from"
+                  paragraph
+                    text "{"commit":{"algorithm":"sha1","oid":"acb70ac5f8a55c006123576057b46d031dc979a0"},"line_end":"61","line_start":"48","path":"app/server/src/publication/service.writeLifecycleEventFresh.ts","repo":"soul-b..."
+                  text "unresolved"
+                  paragraph
+                    text "unresolved"
+                    text ":"
+                    text "the citing author could not resolve this target when citing it"
+                list_item
+                  text "node_revision"
+                  text "related_to"
+                  paragraph
+                    text "{"node_id":"9Ghlywcyh94XmnDgvLPtV","revision_id":"jVcCZrCnXQCnikLw1cDes"}"
+                  text "captured"
+                  text "stale: not head"
+                  text "target superseded/retired"
+                  paragraph
+                    text "stale: not head"
+                    text ":"
+                    text "cites an older revision; that node's head is now XrNOoz7G…"
+                  paragraph
+                    text "target superseded/retired"
+                    text ":"
+                    text "the cited node is no longer recall-eligible (getRecallEligibility)"
+          container
+            heading
+              text "REVERSE EVIDENCE"
+            paragraph
+              text "nothing cites this revision"
+            paragraph
+              text "no other node's current head links here"
+          container
+            heading
+              text "LIFECYCLE"
+            text "eligible for recall"
+            paragraph
+              text "no lifecycle events"
+            paragraph
+              text "never superseded or retired"
+          container
+            heading
+              text "LIFECYCLE ACTIONS"
+            button [ref=58]
+              text "Retire…"
+            button [ref=59]
+              text "Supersede…"

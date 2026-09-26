@@ -31,11 +31,13 @@ import { join, resolve } from "node:path";
 import { createContextFixture } from "./helpers/context-fixture";
 import { PYTHON, runGated, runOwnedChild, spawnGatedChild } from "./helpers/publication-fixture";
 import { traceId, hitInput } from "./helpers/trace-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const TEST_DIR = import.meta.dir;
 const SERVER_DIR = resolve(TEST_DIR, "..");
 const OWNERSHIP_CHILD = join(TEST_DIR, "fixtures", "trace-v1", "ownership", "trace-child.ts");
-const TEST_TIMEOUT_MS = 180_000;
+const TEST_TIMEOUT_MS = testTimeout(180_000);
 const ALPHA = "alpha-workspace";
 
 // ── independent oracles, authored from the contract ──────────────────────────
@@ -54,22 +56,31 @@ const RUNTIME_EXPORTS = [
   "openPublicationReader",
   "openPublicationWriter",
 ].join(",");
-/** §1: twenty-two on every context WRITER facade, eleven on every context
+/** §1: thirty-three on every context WRITER facade, twenty-one on every context
  *  READER facade — derived from `service.ts`'s actual returned method sets
- *  across all five integrated kernels (createTrace/getTrace/listTraceHits and
- *  indexRevisionChunks/listSearchChunks/reconcileSearchChunks included),
- *  independently confirmed by reading the source, not handed a count. */
+ *  across all five integrated kernels (createTrace/getTrace/listTraceHits/
+ *  listTraces and indexRevisionChunks/listSearchChunks/
+ *  reconcileSearchChunks included), independently confirmed by reading the
+ *  source, not handed a count. `listTraces` is K5 (docs/overnight/
+ *  V3-PARITY.md §5, overnight R18), added the same slice as `oracle_trace`. */
+// #30 overnight R7/R8: `getSearchFreshness` (read) and `embedPendingChunks`
+// (write-only) join the context facade -- both lists below grew accordingly.
+// Overnight R18: + closeSession (K9, D7) on every writer, + listSessionMembers (K10) on both.
+// Overnight R18 (V3 + K5 + V7): + listTraces (K5) on both.
 const CONTEXT_WRITE_METHODS =
-  "advanceReadCursor,answerChat,appendMessages,createSessionLink,createTrace,getContext," +
-  "getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
+  "advanceReadCursor,appendMessages,closeSession,createSessionLink,createTrace,embedPendingChunks," +
+  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
+  "getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
-  "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessions,listTraceHits," +
-  "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
+  "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits," +
+  "listTraces,reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
   "writeChunkEmbedding";
 const CONTEXT_READ_METHODS =
-  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
+  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
+  "getSession,getTrace," +
   "listConnections,listLifecycleHistory,listMcpCalls,listMessages,listPeers," +
-  "listSearchChunks,listSessionLinks,listSessions,listTraceHits";
+  "listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits,listTraces," +
+  "searchKnowledgeKeyword,searchKnowledgeSemantic";
 const CONTEXT_WRITER_KEYS = "close,context,publication,taxonomy";
 const EVIDENCE_WRITER_KEYS = "close,context,evidence,publication,taxonomy";
 const CONTEXT_READER_KEYS = "context,publication,taxonomy";
@@ -241,7 +252,7 @@ afterAll(async () => {
 
 describe("context facades across all four factories", () => {
   test(
-    "each writer facade carries twenty-two methods and each reader facade eleven, with exports unchanged",
+    "each writer facade carries thirty-three methods and each reader facade twenty-one, with exports unchanged",
     async () => {
       const root = await freshDataset("facades");
       for (const [factory, keys] of [
@@ -423,7 +434,7 @@ describe("shared owner: queue, poison in both directions, one-shot close", () =>
             ].join("\n"),
             root,
           ],
-          { deadlineMs: 30_000 },
+          { deadlineMs: scaledMs(30_000) },
         );
         expect({ code: contender.code, events: eventsOf(contender.stdout) }).toEqual({
           code: 0,

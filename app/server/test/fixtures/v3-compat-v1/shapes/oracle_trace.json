@@ -1,0 +1,24 @@
+{
+  "tool": "oracle_trace",
+  "v3Source": {
+    "handler": "arra-oracle-v3 src/tools/trace.ts:167-183 (handleTrace success)",
+    "usageError": "arra-oracle-v3 src/tools/trace.ts:150-161 (isError:true)",
+    "commit": "61e5f8b6"
+  },
+  "success": {
+    "success": { "type": "boolean" },
+    "trace_id": { "type": "string" },
+    "depth": { "type": "number" },
+    "summary": {
+      "type": "object",
+      "shape": {
+        "file_count": { "type": "number" },
+        "commit_count": { "type": "number" },
+        "issue_count": { "type": "number" },
+        "total_dig_points": { "type": "number" }
+      }
+    },
+    "message": { "type": "string" }
+  },
+  "notes": "The result rows for foundFiles/foundCommits/foundIssues are v3's own input, unrepresentable_commits/unrepresentable_issues counted only in v4 (V3-PARITY.md §4.2) -- trace.ts:167-183 itself only echoes the four summary counts and does not enumerate hits back to the caller. A real hash shorter than 40/64 hex (e.g. a git short hash) has no full-length representation in either v3 or v4; V3-PARITY.md routes it to unrepresentable_commits rather than a fabricated full hash."
+}

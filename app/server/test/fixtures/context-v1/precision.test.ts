@@ -37,10 +37,16 @@ import { join } from "node:path";
 import * as service from "../../../src/publication/service";
 import { CHILD_DEADLINE_MS, runGated } from "../../helpers/publication-fixture";
 import { createTaxonomyFixture, type TaxonomyFixture } from "../../helpers/taxonomy-fixture";
+// #87 / R3: message reads take the transport-built authority. These precision
+// lanes read through the audit:read operator view, which is what they always
+// measured; the membership boundary itself is pinned in context-read-boundary.
+import { OPERATOR } from "../../helpers/read-boundary-fixture";
+import { scaledMs } from "../../helpers/timing.scaledMs";
+import { testTimeout } from "../../helpers/timing.testTimeout";
 
 const CHILD = new URL("./precision/seed-child.ts", import.meta.url).pathname;
-const SEED_DEADLINE_MS = 300_000;
-const TEST_TIMEOUT_MS = 600_000;
+const SEED_DEADLINE_MS = scaledMs(300_000);
+const TEST_TIMEOUT_MS = testTimeout(600_000);
 
 /** Contract §6 and §4, restated here rather than imported. */
 const RESPONSE_BUDGET_BYTES = 16 * 1024 * 1024;
@@ -488,8 +494,8 @@ describe("exact wire values", () => {
         const reader = await openContextReader(fixture.datasetRoot);
         const error = await rejection(
           (reader as never as {
-            context: { getMessage(bytes: Uint8Array): Promise<unknown> };
-          }).context.getMessage(encodeRequest({ workspace_name: WORKSPACE, public_id: publicId })),
+            context: { getMessage(bytes: Uint8Array, authority: unknown): Promise<unknown> };
+          }).context.getMessage(encodeRequest({ workspace_name: WORKSPACE, public_id: publicId }), OPERATOR),
         );
         expectEnvelope(error, {
           name: "PublicationError",
@@ -522,9 +528,10 @@ describe("exact wire values", () => {
         const reader = await openContextReader(fixture.datasetRoot);
         for (const seed of seeds) {
           const row = await (reader as never as {
-            context: { getMessage(bytes: Uint8Array): Promise<Record<string, unknown>> };
+            context: { getMessage(bytes: Uint8Array, authority: unknown): Promise<Record<string, unknown>> };
           }).context.getMessage(
             encodeRequest({ workspace_name: WORKSPACE, public_id: seed.public_id }),
+            OPERATOR,
           );
           // Field-by-field equality against an expectation this file authored,
           // in the literal physical order, with Int64 as decimal TEXT.
@@ -583,12 +590,12 @@ describe("keyset pagination", () => {
         const list = (bytes: Uint8Array) =>
           (reader as never as {
             context: {
-              listMessages(b: Uint8Array): Promise<{
+              listMessages(b: Uint8Array, authority: unknown): Promise<{
                 rows: Record<string, unknown>[];
                 next_after_seq: string | null;
               }>;
             };
-          }).context.listMessages(bytes);
+          }).context.listMessages(bytes, OPERATOR);
 
         const first = await list(
           encodeRequest({
@@ -829,7 +836,7 @@ describe("response wire budget", () => {
         const reader = await openContextReader(fixture.datasetRoot);
         const page = await (reader as never as {
           context: {
-            listMessages(b: Uint8Array): Promise<{ rows: Record<string, unknown>[] }>;
+            listMessages(b: Uint8Array, authority: unknown): Promise<{ rows: Record<string, unknown>[] }>;
           };
         }).context.listMessages(
           encodeRequest({
@@ -838,6 +845,7 @@ describe("response wire budget", () => {
             after_seq: null,
             limit: count,
           }),
+          OPERATOR,
         );
         // Equality is accepted: the served array is exactly the budget.
         expect(page.rows.length).toBe(count);
@@ -877,7 +885,7 @@ describe("response wire budget", () => {
         const reader = await openContextReader(fixture.datasetRoot);
         const error = await rejection(
           (reader as never as {
-            context: { listMessages(b: Uint8Array): Promise<unknown> };
+            context: { listMessages(b: Uint8Array, authority: unknown): Promise<unknown> };
           }).context.listMessages(
             encodeRequest({
               workspace_name: WORKSPACE,
@@ -885,6 +893,7 @@ describe("response wire budget", () => {
               after_seq: null,
               limit: count,
             }),
+            OPERATOR,
           ),
         );
         expectEnvelope(error, {
@@ -920,8 +929,8 @@ describe("response wire budget", () => {
         const reader = await openContextReader(fixture.datasetRoot);
         const error = await rejection(
           (reader as never as {
-            context: { getMessage(b: Uint8Array): Promise<unknown> };
-          }).context.getMessage(encodeRequest({ workspace_name: WORKSPACE, public_id: publicId })),
+            context: { getMessage(b: Uint8Array, authority: unknown): Promise<unknown> };
+          }).context.getMessage(encodeRequest({ workspace_name: WORKSPACE, public_id: publicId }), OPERATOR),
         );
         expectEnvelope(error, {
           name: "PublicationError",

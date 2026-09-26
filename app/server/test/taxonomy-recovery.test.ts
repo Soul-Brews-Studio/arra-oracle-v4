@@ -54,6 +54,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { connect } from "@lancedb/lancedb";
 import { PYTHON, runOwnedChild, spawnGatedChild } from "./helpers/publication-fixture";
+import { scaledMs } from "./helpers/timing.scaledMs";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 // ── dependencies ────────────────────────────────────────────────────────────
 
@@ -86,7 +88,7 @@ if (existsSync(SERVICE_MODULE) && !readFileSync(SERVICE_MODULE, "utf8").includes
 const PENDING = MISSING.length > 0;
 const reason = PENDING ? ` [PENDING: ${MISSING.join(", ")}]` : "";
 /** Real fixtures and two or three gated processes per case; 5s is the machinery. */
-const CASE_TIMEOUT_MS = 240_000;
+const CASE_TIMEOUT_MS = testTimeout(240_000);
 type CaseBody = () => void | Promise<unknown>;
 const recoveryTest = PENDING
   ? (name: string, fn: CaseBody) => test.skip(name + reason, fn, CASE_TIMEOUT_MS)
@@ -277,7 +279,7 @@ type ResumableChild = {
 };
 
 /** Every parent wait in this file is bounded by this, not by the test runner. */
-const HANDSHAKE_DEADLINE_MS = 60_000;
+const HANDSHAKE_DEADLINE_MS = scaledMs(60_000);
 /**
  * Cap on RETAINED stderr, in UTF-16 code units (JS string length), not bytes.
  *
@@ -883,7 +885,7 @@ recoveryTest("T8b the parent's own deadline fires: a silent child is killed and 
   // timeout. Scheduling jitter makes a strict upper bound of 1.5s a flaky
   // claim, so it is not made.
   expect(elapsedMs).toBeGreaterThan(configuredMs * 0.9);
-  expect(elapsedMs).toBeLessThan(30_000);
+  expect(elapsedMs).toBeLessThan(scaledMs(30_000));
   // nextEvent kills and reaps on the way out, so this returns immediately.
   await child.killAndReap(5_000);
 });

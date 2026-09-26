@@ -3,8 +3,9 @@
 //
 // Lives under test fixtures on purpose: it is not a runtime worker and not a
 // CLI surface. ARRA_PUB_* are test-harness inputs, never product config.
+import { readArgPayload } from "../../helpers/argv.readArgPayload";
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   request: unknown;
   revisionIds: string[];
   clockMs: number;

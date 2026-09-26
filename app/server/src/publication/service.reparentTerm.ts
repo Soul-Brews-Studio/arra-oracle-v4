@@ -5,11 +5,12 @@ import { TERMS, VOCABULARIES } from "./service.constants";
 import { lookupTermById } from "./service.lookupTermById";
 import { lookupVocabularyById } from "./service.lookupVocabularyById";
 import { mutateTaxonomyWrite } from "./service.mutateTaxonomyWrite";
+import { refuseSealedVocabulary } from "./service.refuseSealedVocabulary";
 import { requireTaxonomyWorkspaceRow } from "./service.requireTaxonomyWorkspaceRow";
-import { type Clock, type DatasetAdapter, type MutationOutcome, type OwnerCore } from "./service.types";
+import { type DatasetAdapter, type MutationOutcome, type OwnerCore, type TaxonomyWriteOptions } from "./service.types";
 import { updateTerm } from "./service.updateTerm";
 
-export function reparentTerm(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock }, requestBytes: Uint8Array): Promise<MutationOutcome> {
+export function reparentTerm(writer: DatasetAdapter, core: OwnerCore, options: TaxonomyWriteOptions, requestBytes: Uint8Array): Promise<MutationOutcome> {
 return mutateTaxonomyWrite(core, async () => {
         const request = parseReparentTerm(requestBytes);
         await requireTaxonomyWorkspaceRow(writer, request.workspace_name);
@@ -25,7 +26,8 @@ return mutateTaxonomyWrite(core, async () => {
           stored.vocabulary_id as string,
         );
         if (vocabulary === null) failTaxonomy("integrity_failure", "");
-        const hierarchy = encodeVocabularyRow(vocabulary).hierarchy;
+        const vocabularyRow = encodeVocabularyRow(vocabulary);
+        const hierarchy = vocabularyRow.hierarchy;
 
         if (hierarchy !== "tree") {
           // A flat vocabulary accepts only a null desired parent, and a
@@ -46,6 +48,10 @@ return mutateTaxonomyWrite(core, async () => {
             request.parent_id,
           );
         }
+
+        // R6: the requested parent has been validated; a sealed vocabulary
+        // now refuses, before the satisfied and expected-parent checks.
+        refuseSealedVocabulary(vocabularyRow, options, "/term_id");
 
         if (stored.parent_id === request.parent_id) {
           return { outcome: "already_satisfied" as const, row: stored };

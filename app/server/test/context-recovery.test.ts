@@ -46,6 +46,8 @@ import { fileURLToPath } from "node:url";
 import { connect } from "@lancedb/lancedb";
 import { PYTHON } from "./helpers/publication-fixture";
 import { createTaxonomyFixture } from "./helpers/taxonomy-fixture";
+import { scaledMs } from "./helpers/timing.scaledMs";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 // ── dependencies ────────────────────────────────────────────────────────────
 
@@ -76,7 +78,7 @@ if (existsSync(SERVICE_MODULE) && !readFileSync(SERVICE_MODULE, "utf8").includes
 const PENDING = MISSING.length > 0;
 const reason = PENDING ? ` [PENDING: ${MISSING.join(", ")}]` : "";
 /** Real fixtures and two or three gated processes per case. */
-const CASE_TIMEOUT_MS = 240_000;
+const CASE_TIMEOUT_MS = testTimeout(240_000);
 type CaseBody = () => void | Promise<unknown>;
 const recoveryTest = PENDING
   ? (name: string, fn: CaseBody) => test.skip(name + reason, fn, CASE_TIMEOUT_MS)
@@ -202,7 +204,7 @@ type Plan = {
 
 const INTAKE_MS = 1_789_920_000_000;
 /** Every parent wait is bounded by this, never by the test runner. */
-const HANDSHAKE_DEADLINE_MS = 60_000;
+const HANDSHAKE_DEADLINE_MS = scaledMs(60_000);
 /** Retained stderr cap, in UTF-16 code units (JS string length), not bytes. */
 const MAX_CAPTURED_STDERR_UNITS = 64 * 1024;
 
@@ -933,7 +935,7 @@ recoveryTest("R9 the parent deadline fires: a silent child is killed and reaped"
   // deadline firing, and to have returned far inside the runner timeout. A
   // strict upper bound of 1.5s would be a flaky claim under jitter.
   expect(elapsedMs).toBeGreaterThan(configuredMs * 0.9);
-  expect(elapsedMs).toBeLessThan(30_000);
+  expect(elapsedMs).toBeLessThan(scaledMs(30_000));
   await child.killAndReap(5_000);
   expect(await snapshot(root)).toEqual([]);
 });

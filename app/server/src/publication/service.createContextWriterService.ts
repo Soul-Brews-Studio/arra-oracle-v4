@@ -1,10 +1,11 @@
-import { type ChatModelFn } from "./chat";
+import { type DigestProbeFn, type EmbedFn } from "./search-chunk.types";
 import { advanceReadCursor } from "./service.advanceReadCursor";
-import { answerChat } from "./service.answerChat";
 import { appendMessages } from "./service.appendMessages";
+import { closeSession } from "./service.closeSession";
 import { createContextReadMethods } from "./service.createContextReadMethods";
 import { createSessionLink } from "./service.createSessionLink";
 import { createTrace } from "./service.createTrace";
+import { embedPendingChunks } from "./service.embedPendingChunks";
 import { indexRevisionChunks } from "./service.indexRevisionChunks";
 import { joinSession } from "./service.joinSession";
 import { reconcileSearchChunks } from "./service.reconcileSearchChunks";
@@ -13,14 +14,27 @@ import { registerSession } from "./service.registerSession";
 import { retireNode } from "./service.retireNode";
 import { supersedeNode } from "./service.supersedeNode";
 import { writeChunkEmbedding } from "./service.writeChunkEmbedding";
+import { type RequestAuthority } from "./context";
 import { type Clock, type DatasetAdapter, type OwnerCore } from "./service.types";
 
 export function createContextWriterService(
   writer: DatasetAdapter,
   core: OwnerCore,
-  options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn },
+  options: {
+    clock: Clock;
+    sourceNamespace: string | null;
+    /** #30 R8: the embed worker's DOCUMENT embedder (`embedPendingChunks`).
+     *  A writer option because that method writes vectors; distinct from the
+     *  reader-only query embedder semantic search uses. No chat model here
+     *  (#32 / R9). */
+    documentEmbedder?: EmbedFn;
+    digestProbe?: DigestProbeFn;
+    /** Canonical dataset root, for R20's pin file (`embedPendingChunks`,
+     *  `getSearchFreshness`). */
+    datasetRoot: string;
+  },
 ) {
-  const reads = createContextReadMethods(writer);
+  const reads = createContextReadMethods(writer, options.datasetRoot);
   return {
     ...reads,
 
@@ -32,10 +46,21 @@ export function createContextWriterService(
     indexRevisionChunks: (requestBytes: Uint8Array) => indexRevisionChunks(writer, core, options, requestBytes),
     writeChunkEmbedding: (requestBytes: Uint8Array) => writeChunkEmbedding(writer, core, options, requestBytes),
     reconcileSearchChunks: (requestBytes: Uint8Array) => reconcileSearchChunks(writer, core, options, requestBytes),
+    embedPendingChunks: (requestBytes: Uint8Array) => embedPendingChunks(writer, core, options, requestBytes),
     registerPeer: (requestBytes: Uint8Array) => registerPeer(writer, core, options, requestBytes),
     registerSession: (requestBytes: Uint8Array) => registerSession(writer, core, options, requestBytes),
     joinSession: (requestBytes: Uint8Array) => joinSession(writer, core, options, requestBytes),
     appendMessages: (requestBytes: Uint8Array) => appendMessages(writer, core, options, requestBytes),
-    answerChat: (requestBytes: Uint8Array) => answerChat(writer, core, options, requestBytes),
+    // K9 (overnight R18 D7): the one-way close, recorded in internal_metadata.
+    // K9 takes the transport-built authority: a close naming no peer is the
+    // audit:read operator path (R3 terms, overnight R18 fix round).
+    closeSession: (requestBytes: Uint8Array, authority: RequestAuthority) => closeSession(writer, core, options, requestBytes, authority),
+    // No `answerChat` here any more (#32 slice A, R9): it persists nothing, so
+    // it is composed over the READER (service.createChatService.ts) and never
+    // needs, holds or releases this writer.
+    // No `searchKnowledgeKeyword`/`searchKnowledgeSemantic` either (#30), for
+    // the same reason: they are READER-only (service.createSearchService.ts),
+    // and the query embedder is never a writer option. What the writer keeps
+    // is the keyword index MAINTENANCE, inside `indexRevisionChunks`.
   };
 }

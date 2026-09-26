@@ -29,6 +29,7 @@ import {
   validateWorkspaceRow,
   WORKSPACE_FIELDS,
 } from "../src/publication/read-cursor";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 /**
  * PREFLIGHT, recorded once.
@@ -60,16 +61,16 @@ describe("preflight: the required surface", () => {
       for (const factory of readers) {
         const bundle = await (service as Record<string, any>)[factory](fixture.datasetRoot);
         expect(Object.keys(bundle.context).sort()).toEqual([
-          "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
-          "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks", "listSessionLinks", "listSessions",
-          "listTraceHits",
+          "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSearchFreshness", "getSession", "getTrace",
+          "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks", "listSessionLinks", "listSessionMembers", "listSessions",
+          "listTraceHits", "listTraces", "searchKnowledgeKeyword", "searchKnowledgeSemantic",
         ]);
         expect("close" in bundle.context).toBe(false);
       }
     } finally {
       await fixture.cleanup();
     }
-  }, 120_000);
+  }, testTimeout(120_000));
 });
 
 describe("real persistence: cursors inside the real gate", () => {
@@ -107,19 +108,21 @@ describe("real persistence: cursors inside the real gate", () => {
   ];
   const SEED = 4;
 
-  test("BOTH writer factories expose the twenty-seven context methods, with no nested close", async () => {
+  test("BOTH writer factories expose the thirty-two context methods, with no nested close", async () => {
     for (const factory of ["context", "evidence"] as const) {
       const fixture = await createReadCursorFixture([ALPHA]);
       try {
         const parsed = await drive(fixture.datasetRoot, [], { factory });
         // The writer's context facade spreads the full read-method set in
         // (`{ ...reads, ...writeOnly }`), so this is that union, not just the
-        // thirteen write-only methods.
+        // write-only methods. #30 R7/R8 added embedPendingChunks (write-only)
+        // and getSearchFreshness (read); overnight R18 added closeSession
+        // (write-only) and listSessionMembers (read).
         expect(parsed.contextMethods).toEqual([
-          "advanceReadCursor", "answerChat", "appendMessages", "createSessionLink", "createTrace", "getContext",
-          "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
+          "advanceReadCursor", "appendMessages", "closeSession", "createSessionLink", "createTrace", "embedPendingChunks", "getContext",
+          "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSearchFreshness", "getSession", "getTrace",
           "indexRevisionChunks", "joinSession", "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks",
-          "listSessionLinks", "listSessions", "listTraceHits", "reconcileSearchChunks", "registerPeer", "registerSession",
+          "listSessionLinks", "listSessionMembers", "listSessions", "listTraceHits", "listTraces", "reconcileSearchChunks", "registerPeer", "registerSession",
           "retireNode", "supersedeNode", "writeChunkEmbedding",
         ]);
         expect(parsed.contextHasClose).toBe(false);
@@ -130,7 +133,7 @@ describe("real persistence: cursors inside the real gate", () => {
         await fixture.cleanup();
       }
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("absent reads as null, then creation persists all five physical fields", async () => {
     const fixture = await createReadCursorFixture([ALPHA]);
@@ -162,7 +165,7 @@ describe("real persistence: cursors inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a retained NULL pointer advances through the composed IS NULL + TIMESTAMP cast", async () => {
     /**
@@ -218,7 +221,7 @@ describe("real persistence: cursors inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   describe("the post-write readback discriminates its failure classes", () => {
     /**
@@ -267,7 +270,7 @@ describe("real persistence: cursors inside the real gate", () => {
       expect(parsed[`op${SEED + 1}`].code).toBe("recovery_required");
       // after_readback never fired for the failed write.
       expect(parsed.trace.filter((b: string) => b === "after_readback")).toHaveLength(6);
-    }, 300_000);
+    }, testTimeout(300_000));
 
     test("a DUPLICATED target is corruption and keeps integrity_failure", async () => {
       const parsed = await readback("duplicate");
@@ -283,7 +286,7 @@ describe("real persistence: cursors inside the real gate", () => {
       // Corruption poisons too, and the class is preserved through the
       // shared boundary rather than normalized to recovery_required.
       expect(parsed[`op${SEED + 1}`].ok).toBe(false);
-    }, 300_000);
+    }, testTimeout(300_000));
 
     test("a DIFFERENT legacy id under the same public_id and ordinal is caught", async () => {
       /**
@@ -301,7 +304,7 @@ describe("real persistence: cursors inside the real gate", () => {
         path: "",
       });
       expect(parsed[`op${SEED + 1}`].ok).toBe(false);
-    }, 300_000);
+    }, testTimeout(300_000));
   });
 
   test("replay and both conflicts NEVER sample the clock", async () => {
@@ -352,7 +355,7 @@ describe("real persistence: cursors inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });
 
 describe("the stored row codec refuses what it cannot vouch for", () => {
@@ -755,7 +758,7 @@ describe("raw byte handling is DELEGATED to the accepted strict parser", () => {
   });
 });
 
-describe("stored names, pointers and safe-number timestamps", () => {
+describe("stored names, pointers and raw-microsecond timestamps", () => {
   const MICROS = BigInt(Date.parse("2026-09-21T00:00:00.000Z")) * 1000n;
   const row = (o: Record<string, unknown> = {}) => ({
     workspace_name: "alpha-workspace", peer_name: "peer-a", session_name: "sess-a",
@@ -800,16 +803,24 @@ describe("stored names, pointers and safe-number timestamps", () => {
     corrupt(row({ last_read_message_id: "42" }));
   });
 
-  test("a SAFE-NUMBER timestamp converts exactly, like a bigint", () => {
-    // Arrow can hand back either representation; both must render the same
-    // instant, and an unsafe number is refused rather than rounded.
-    // Derived from the SAME instant rather than a hand-typed literal, which is
-    // how an earlier revision of this test silently compared a 2025 value.
-    const asNumber = encodeReadCursorRow(row({ last_read_at: Number(MICROS) }));
+  test("a bigint timestamp converts exactly; a JS number is now refused (#105 amendment)", () => {
+    // CORRECTED 2026-09-26 (overnight R1, docs/overnight/DECISIONS.md): this
+    // test previously asserted that a safe-integer `number` converts exactly
+    // "like a bigint", reasoning that "Arrow can hand back either
+    // representation". Measured false (LANCEDB-FACTS.md §1): the client's
+    // lossy `toArray()`/`.get()` accessor -- the only thing that could ever
+    // hand this kernel a plain `number` -- always returns MILLISECONDS, never
+    // raw microseconds. `decodeArrowRows`/`rawRows` (storage.ts) return the
+    // raw microsecond value as a `bigint`, always. So a real `number` reaching
+    // this row's `last_read_at` is not "the same instant, differently typed"
+    // -- it is a millisecond value 1000x smaller than the microseconds it
+    // would be mistaken for, which is exactly the #105 latent hazard. There is
+    // no legitimate production path that hands this encoder a `number`; the
+    // fix is to refuse one rather than accept it as equivalent to a `bigint`.
     const asBigInt = encodeReadCursorRow(row({ last_read_at: MICROS }));
+    expect(asBigInt.last_read_at).toBe("2026-09-21T00:00:00.000Z");
     expect(Number.isSafeInteger(Number(MICROS))).toBe(true);
-    expect(asNumber.last_read_at).toBe("2026-09-21T00:00:00.000Z");
-    expect(asNumber).toEqual(asBigInt);
+    corrupt(row({ last_read_at: Number(MICROS) }));
     corrupt(row({ last_read_at: Number(MICROS) + 0.5 }));
   });
 });

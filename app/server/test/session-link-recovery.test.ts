@@ -69,6 +69,8 @@ import { fileURLToPath } from "node:url";
 import { connect } from "@lancedb/lancedb";
 import { PYTHON } from "./helpers/publication-fixture";
 import { createSessionLinkFixture } from "./helpers/session-link-fixture";
+import { scaledMs } from "./helpers/timing.scaledMs";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 // -- dependencies -------------------------------------------------------------
 
@@ -99,7 +101,7 @@ if (existsSync(SERVICE_MODULE)) {
 
 const PENDING = MISSING.length > 0;
 const reason = PENDING ? ` [PENDING: ${MISSING.join(", ")}]` : "";
-const CASE_TIMEOUT_MS = 300_000;
+const CASE_TIMEOUT_MS = testTimeout(300_000);
 type CaseBody = () => void | Promise<unknown>;
 const recoveryTest = PENDING
   ? (name: string, fn: CaseBody) => test.skip(name + reason, fn, CASE_TIMEOUT_MS)
@@ -176,7 +178,7 @@ type Plan = {
   steps: Step[];
 };
 
-const HANDSHAKE_DEADLINE_MS = 60_000;
+const HANDSHAKE_DEADLINE_MS = scaledMs(60_000);
 /** Retained stderr cap, in UTF-16 code units (JS string length), not bytes. */
 const MAX_CAPTURED_STDERR_UNITS = 64 * 1024;
 
@@ -1025,7 +1027,7 @@ recoveryTest("G1 the parent deadline fires: a silent child is killed and reaped"
   // returned far inside the runner timeout. A strict upper bound would be a
   // flaky claim under scheduling jitter.
   expect(elapsedMs).toBeGreaterThan(configuredMs * 0.9);
-  expect(elapsedMs).toBeLessThan(30_000);
+  expect(elapsedMs).toBeLessThan(scaledMs(30_000));
   await child.killAndReap(5_000);
   expect(await linkRows(created.datasetRoot)).toEqual([]);
 });

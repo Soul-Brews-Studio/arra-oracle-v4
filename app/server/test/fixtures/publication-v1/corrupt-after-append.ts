@@ -7,8 +7,9 @@
 //
 // It corrupts through its own connection, legitimately: this process is the
 // gate holder, so it is the one party allowed to write here.
+import { readArgPayload } from "../../helpers/argv.readArgPayload";
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   first: unknown;
   second: unknown;
   revisionIds: string[];

@@ -2,8 +2,9 @@
 //
 // Records the boundary trace in firing order AND the persisted derived-row
 // identities separately: counts alone cannot prove WHICH row was written.
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   ops: Array<{
     facade?: "evidence" | "publication" | "taxonomy" | "harness";
     method: string;

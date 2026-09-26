@@ -1,5 +1,4 @@
 import { targetOp } from "../contracts/evidence-v1";
-import { type ChatModelFn } from "./chat";
 import { PublicationError, failPublication } from "./errors";
 import { timestampToMicros } from "./rows";
 import { quote } from "./storage";
@@ -13,7 +12,7 @@ import { requireContextWorkspaceRow } from "./service.requireContextWorkspaceRow
 import { type Clock, type DatasetAdapter, type OwnerCore } from "./service.types";
 import { writeContextRow } from "./service.writeContextRow";
 
-export function createTrace(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn }, requestBytes: Uint8Array) {
+export function createTrace(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null }, requestBytes: Uint8Array) {
 // STATIC validation precedes owner work, as with every other mutation.
       const request = parseCreateTrace(requestBytes);
       // Target normalization is PURE and needs only this request's own
@@ -173,6 +172,7 @@ export function createTrace(writer: DatasetAdapter, core: OwnerCore, options: { 
         // workspace -- invalid_reference at its own pointer. Anything wrong
         // DEEPER in that chain is stored corruption or a bound, never the
         // caller's fault, which is why the walk below reports differently.
+        let parentDepth: bigint | null = null;
         if (request.parent_id !== null) {
           await writer.refresh(TRACES);
           const parent = await contextOne(
@@ -182,6 +182,7 @@ export function createTrace(writer: DatasetAdapter, core: OwnerCore, options: { 
           );
           if (parent === null) failPublication("invalid_reference", "/parent_id");
           await assertTraceChain(writer, request.workspace_name, parent, "parent_id");
+          parentDepth = BigInt(encodeTraceRow(parent).depth as string);
         }
         if (request.prev_id !== null) {
           await writer.refresh(TRACES);
@@ -193,6 +194,18 @@ export function createTrace(writer: DatasetAdapter, core: OwnerCore, options: { 
           if (prev === null) failPublication("invalid_reference", "/prev_id");
           await assertTraceChain(writer, request.workspace_name, prev, "prev_id");
         }
+
+        // K13 (v3-parity hygiene review, docs/overnight/V3-PARITY.md):
+        // `depth` was a caller-supplied field with no contract bound on a
+        // fresh write -- measured to accept ANY nonnegative value regardless
+        // of the resolved parent's own stored depth. `depth` documents a
+        // position in the `parent_id` tree (DESIGN.md section 10: "derived/
+        // cache, not another edge"), so it must actually agree with that
+        // tree: exactly one more than the parent's own depth, or exactly 0
+        // with no parent. `prev_id` (the readable-sequence pointer) has no
+        // bearing on depth -- only `parent_id` does.
+        const expectedDepth = parentDepth === null ? 0n : parentDepth + 1n;
+        if (BigInt(request.depth) !== expectedDepth) failPublication("invalid_request", "/depth");
 
         // TR-1(b): build EVERY physical hit row -- INCLUDING running it
         // through `encodeTraceHitRow`'s own shape check -- in a PRE-WRITE

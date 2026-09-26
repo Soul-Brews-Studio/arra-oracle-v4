@@ -179,3 +179,54 @@ Within semantic validation: prepareNew checks mode/config before supplied-digest
 ## 10. Bounded acceptance clarification
 
 The section7 allocation/no-write expectations for a real ingestion service remain #28 gates. For this isolated slice prove purity (injected time and identity retained, no allocator/clock/database/model dependencies), exact mapping and existing classifier composition instead; do not claim actual durable replay or uniqueness. Test all16 source-presence combinations, per-operation missing/extra/wrong values and deterministic competing-error cases; fixed expected outputs for local, sourced and legacy modes; negative epoch and far-calendar physical microseconds; namespace injection and source ID leading zeros. Preserve existing message byte vectors and all active paths. Collision handling and sourced legacy migration remain explicit #34 gates, not silently declared complete by a single-row fixture.
+
+## Amendment 2026-09-26 (overnight R11 + R17)
+
+Appended, not rewritten. Rulings: [`docs/overnight/DECISIONS.md`](../../../docs/overnight/DECISIONS.md) R11 and R17 (the #34 copy rehearsal).
+
+**What changed.** The legacy-copy path described in section 3 ("For a LEGACY COPY under #34") and section 8.3 now exists for whole datasets (`arra-migrate-copy`):
+
+- `ingested_at` is the ONE frozen `--intake-at` value for every copied message, and the report lists the assumption `ingested_at=migration_intake;original_ingestion_unknown`. It is never `created_at`.
+- A legacy `public_id` that is not nanoid21 is mapped deterministically (`id_map.jsonl` records every mapping; nanoid21 handles are kept). `in_reply_to` is rewritten through the same map. A reply whose target did not migrate keeps the message, stores NULL, and is reported as an unresolved `messages.in_reply_to` pointer with the legacy value.
+- A `created_at` or `read_at` that is not millisecond-exact is REJECTED with a per-record report entry (`sub_millisecond_timestamp`, pointer `/created_at` or `/read_at`), never rounded. The row stays in the untouched source.
+- Duplicate `(workspace, session, seq_in_session)` or duplicate public ids are rejected per record. The collision handling this contract held for #34 is therefore per dataset, not per row.
+
+Active-15 `messages` have no source columns, so no sourced legacy rows exist to hold; the sourced-legacy path stays unimplemented.
+
+**Fix round, same night.** Appended. The claim above that `ingested_at` is the frozen `--intake-at` and never `created_at` is now asserted per row (`test_messages_are_stamped_with_the_frozen_intake_time_never_created_at`). Before this, only the assumption string was checked, and a mutation to `created_at` still passed.
+
+## Amendment 2026-09-26 (overnight R15)
+
+**Change**: `messages.ingested_at` (target-19, `arra_migrate.target_v1.core.Message`) is
+recorded here as an explicit, permanent exception to SPEC §15.1's tier-1 rule ("v4 may
+add **nullable** columns and nothing else") and to §15.2 invariant 1 ("additive nullable
+columns only"). `ingested_at` is `NOT NULL` on the target-19 physical schema
+(`app/migrate-py/src/arra_migrate/target_v1/core.py`) and on the golden schema fixture,
+by original design (§4 above: "`ingested_at` is the service-selected intake time for the
+new accepted record, not caller input and not recomputed on retry"). A nullable
+`ingested_at` would let a row exist with no recorded intake time, which this contract's
+§2/§3 never permitted for either the sourced or the locally-authored path.
+
+**Reason**: issue #8 (SPEC §15.5 round-trip proof) measured this contradiction directly
+against the physical schema (`.tmp/understand/issue-8/repro_output.txt`, finding under
+"TYPE / NULLABILITY": *"messages.ingested_at is a NOT NULL v4 addition ... This
+contradicts §15.1/§15.2 inv.1 'nullable columns only'"*). The column was correct when
+this contract was written; §15.1's blanket nullability rule is what did not anticipate a
+column whose whole job is to always carry a real value. Making it nullable to satisfy
+§15.1 literally would reopen exactly the ambiguity §4 was written to close (a row with an
+unrecorded, unknowable ingestion time) for one clause's sake.
+
+**Scope**: this is a recorded exception, not a precedent for future NOT-NULL additions --
+each one still needs its own reviewed exception here, argued the same way. The Honcho
+round-trip harness (`app/migrate-py/src/arra_migrate/honcho_roundtrip/bundle.py`,
+`LOSSY_FIELDS`) declares `messages.ingested_at` lossy for exactly this reason: stock
+Honcho's `Message` schema has no ingestion-time concept at all, so the column cannot
+round-trip regardless of its nullability.
+
+**Cites**: `docs/overnight/DECISIONS.md` R15 (`v4-overnight`, 2026-09-26); SPEC.md §15.1,
+§15.2 invariant 1.
+
+*(Corrected 2026-09-26, fix round two: both citations above originally read "§2 above" --
+the quoted intake-time sentence is at line 31, inside §4 "Time policy", not §2 "Namespace
+and source identity". An independent verifier caught the mismatch; the heading, the R15
+citation and the substance were already correct.)*

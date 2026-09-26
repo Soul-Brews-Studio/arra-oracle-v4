@@ -34,7 +34,18 @@ echo "== legacy-15 dataset ($LDATA) =="
 ARRA_DATA_DIR="$LDATA" "$PY" -m arra_migrate
 
 echo "== target19 dataset ($KDATA) =="
-"$PY" "$SCRIPTS/create_target19_dataset.py" "$KDATA"
+# create_target19_dataset.py itself refuses (exit 1, nothing deleted) rather
+# than seed on top of an existing 'default' workspace row whose created_at is
+# sub-millisecond (#75/#105 -- see docs/overnight/DECISIONS.md R1). Give the
+# operator the exact dev-stack remedy here rather than only the script's
+# generic dataset_root message.
+if ! "$PY" "$SCRIPTS/create_target19_dataset.py" "$KDATA"; then
+  echo "== ABORTED: $KDATA has a sub-millisecond default workspace created_at ==" >&2
+  echo "   This dataset predates the R1 fix, or was corrupted some other way." >&2
+  echo "   Regenerate it -- nothing here was deleted automatically:" >&2
+  echo "     rm -rf \"$KDATA\" && \"$0\"" >&2
+  exit 1
+fi
 
 echo "== dev policy =="
 "$PY" "$SCRIPTS/write_dev_policy.py" "$TMP" "$WORKSPACE" "$PRINCIPAL"

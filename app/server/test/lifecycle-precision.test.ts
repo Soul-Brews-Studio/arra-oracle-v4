@@ -23,6 +23,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { createFixture, idSource, revisionEnvelope, runGated, type Fixture } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/lifecycle-v1/precision/seed-child.ts", import.meta.url).pathname;
 const ALPHA = "alpha-workspace";
@@ -95,7 +96,9 @@ describe("all sixteen physical columns wire exactly", () => {
         ctx("supersedeNode", {
           workspace_name: ALPHA, node_id: nodeA, expected_revision_id: revA,
           new_node_id: nodeB, new_revision_id: revB, reason: "superseded",
-          peer_name: "peer-a", operation_id: "op-supersede",
+          // A seeded peer of ALPHA: peer_name is a scoped reference since the
+          // lifecycle-v1 amendment of 2026-09-26 (#10).
+          peer_name: alpha.peer_names[0], operation_id: "op-supersede",
         }),
         ctx("listLifecycleHistory", { workspace_name: ALPHA, node_id: nodeA, after_event_id: null, limit: 10 }),
       ], [revA, revB]);
@@ -110,7 +113,7 @@ describe("all sixteen physical columns wire exactly", () => {
         workspace_name: ALPHA, old_id: nodeA, old_revision_id: revA,
         old_title: "a title", old_type: alpha.term_ids.type.note.name, old_source: null,
         new_id: nodeB, new_revision_id: revB, new_title: "a title", new_source: null,
-        reason: "superseded", peer_name: "peer-a", superseded_at: CLOCK_ISO,
+        reason: "superseded", peer_name: alpha.peer_names[0], superseded_at: CLOCK_ISO,
         operation_id: "op-supersede", h_metadata: null,
       });
 
@@ -122,7 +125,7 @@ describe("all sixteen physical columns wire exactly", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });
 
 describe("the Int64 ceiling: an allocation that would overflow stops BEFORE any write", () => {
@@ -164,7 +167,7 @@ describe("the Int64 ceiling: an allocation that would overflow stops BEFORE any 
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("one BELOW the ceiling allocates exactly the ceiling, as canonical decimal TEXT", async () => {
     const fixture = await createFixture([ALPHA]);
@@ -192,7 +195,7 @@ describe("the Int64 ceiling: an allocation that would overflow stops BEFORE any 
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });
 
 describe("superseded_at: timestamp[us] precision", () => {
@@ -215,7 +218,7 @@ describe("superseded_at: timestamp[us] precision", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("the Gregorian endpoints render exactly; one microsecond outside never does", async () => {
     const MIN_MS = -62135596800000n; // 0001-01-01T00:00:00.000Z
@@ -273,7 +276,7 @@ describe("superseded_at: timestamp[us] precision", () => {
         await fixture.cleanup();
       }
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });
 
 describe("the half-null successor pair has no event-kind column to fall back on", () => {
@@ -297,5 +300,5 @@ describe("the half-null successor pair has no event-kind column to fall back on"
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });

@@ -17,6 +17,7 @@ import {
 } from "./helpers/publication-fixture";
 import {
   CHUNKER_VERSION,
+  activeEmbeddingProfileId,
   chunkText,
   deriveChunkId,
   encodeSearchChunkRow,
@@ -24,6 +25,7 @@ import {
 } from "../src/publication/search-chunk";
 import { ContractError } from "../src/contracts/errors";
 import { PublicationError } from "../src/publication/errors";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const pad = (seed: string) => `${seed}${"0".repeat(Math.max(0, 21 - seed.length))}`.slice(0, 21);
 
@@ -64,7 +66,7 @@ describe("F3: chunker_version is a closed grammar, not free text", () => {
     node_id: pad("node1"),
     revision_id: pad("rev1"),
     chunker_version: CHUNKER_VERSION,
-    embedding_profile: { name: "profile-a", dims: 384 },
+    embedding_profile: { name: activeEmbeddingProfileId(), dims: 384 },
     ...overrides,
   });
 
@@ -156,7 +158,7 @@ describe("preflight: the required surface", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 120_000);
+  }, testTimeout(120_000));
 });
 
 describe("real persistence: search chunks inside the real gate", () => {
@@ -168,7 +170,8 @@ describe("real persistence: search chunks inside the real gate", () => {
   const REV_A1 = pad("revA1");
   const REV_B1 = pad("revB1");
   const CHUNKER_VERSION = "chunker/v1";
-  const PROFILE = { name: "test-profile", dims: 384 };
+  // #30 R7: index/list refuse any `embedding_profile` outside the registry.
+  const PROFILE = { name: activeEmbeddingProfileId(), dims: 384 };
 
   const drive = async (
     root: string,
@@ -283,9 +286,16 @@ describe("real persistence: search chunks inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("F5: listSearchChunks is scoped to one embedding_profile, not merged across all of them", async () => {
+    // #30 R7: the closed registry refuses any request naming a non-active
+    // profile, so the second profile's row (one table, several profiles, as
+    // built) is planted directly, like F8's stored states -- a row from before
+    // the registry, or from a since-retired profile. The scoping property is
+    // unchanged: `listSearchChunks` never merges rows across profiles.
+    const LEGACY_PROFILE = "ollama/all-minilm@legacy000000/384/none";
+    const LEGACY_CHUNK_ID = "1".repeat(64);
     const fixture = await createFixture([ALPHA]);
     try {
       const seeded = fixture.workspaces[ALPHA]!;
@@ -293,19 +303,27 @@ describe("real persistence: search chunks inside the real gate", () => {
         fixture.datasetRoot,
         [
           publish(seeded, NODE_A, "op-pub-a1"),
-          ctx("indexRevisionChunks", {
-            ...indexRequest(NODE_A, REV_A1),
-            embedding_profile: { name: "profile-a", dims: 384 },
-          }),
-          ctx("indexRevisionChunks", {
-            ...indexRequest(NODE_A, REV_A1),
-            embedding_profile: { name: "profile-b", dims: 384 },
+          ctx("indexRevisionChunks", indexRequest(NODE_A, REV_A1)),
+          hx("insertLegacyProfileChunk", {
+            id: LEGACY_CHUNK_ID,
+            workspace_name: ALPHA,
+            node_id: NODE_A,
+            revision_id: REV_A1,
+            chunk_index: "0",
+            embedding_profile: LEGACY_PROFILE,
+            type_term_id: seeded.term_ids.type.note.id,
           }),
           ctx("listSearchChunks", {
             workspace_name: ALPHA,
             revision_id: REV_A1,
             chunker_version: CHUNKER_VERSION,
-            embedding_profile: "profile-a",
+            embedding_profile: PROFILE.name,
+          }),
+          ctx("listSearchChunks", {
+            workspace_name: ALPHA,
+            revision_id: REV_A1,
+            chunker_version: CHUNKER_VERSION,
+            embedding_profile: LEGACY_PROFILE,
           }),
         ],
         { revisionIds: [REV_A1] },
@@ -314,21 +332,31 @@ describe("real persistence: search chunks inside the real gate", () => {
       expect(parsed.op1.ok, JSON.stringify(parsed.op1)).toBe(true);
       expect(parsed.op2.ok, JSON.stringify(parsed.op2)).toBe(true);
 
-      // Both indexing runs produced a real row under their OWN profile.
+      // The active-profile index produced its own real row, distinct from
+      // the legacy row planted directly.
       expect(parsed.op1.value.rows).toHaveLength(1);
-      expect(parsed.op2.value.rows).toHaveLength(1);
-      expect(parsed.op1.value.rows[0].id).not.toBe(parsed.op2.value.rows[0].id);
+      expect(parsed.op1.value.rows[0].id).not.toBe(LEGACY_CHUNK_ID);
 
-      // The list, scoped to profile-a, returns ONLY profile-a's row -- not
-      // both profiles merged under one non-unique chunk_index.
+      // The list, scoped to the active profile, returns ONLY the active
+      // row -- not both profiles merged under one non-unique chunk_index,
+      // even though a second profile's row genuinely exists in the same
+      // table for the same (workspace, revision, chunker_version).
       const listed = parsed.op3;
+      expect(listed.ok, JSON.stringify(listed)).toBe(true);
       expect(listed.value).toHaveLength(1);
-      expect(listed.value[0].embedding_profile).toBe("profile-a");
+      expect(listed.value[0].embedding_profile).toBe(PROFILE.name);
       expect(listed.value[0].id).toBe(parsed.op1.value.rows[0].id);
+
+      // A list request naming the legacy (non-active) profile is refused
+      // outright, per the same closed registry `indexRevisionChunks` enforces
+      // -- it is not merely "zero rows", the request itself is invalid_value.
+      const legacyListed = parsed.op4;
+      expect(legacyListed.ok).toBe(false);
+      expect(legacyListed).toMatchObject({ code: "invalid_value", path: "/embedding_profile" });
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("F8: a snapshot with two reserved-type assignments is stored corruption, not a silent last-match pick", async () => {
     const fixture = await createFixture([ALPHA]);
@@ -374,7 +402,7 @@ describe("real persistence: search chunks inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("F2: the readback is scoped to the requesting workspace, not id alone", async () => {
     // Two workspaces, same fixture, with the SAME revision id forced in
@@ -414,7 +442,7 @@ describe("real persistence: search chunks inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("reconcile reports a missing revision and none for an indexed one", async () => {
     const fixture = await createFixture([ALPHA]);
@@ -446,7 +474,7 @@ describe("real persistence: search chunks inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("an unresolvable node or revision is invalid_reference, at the right pointer", async () => {
     const fixture = await createFixture([ALPHA]);
@@ -468,5 +496,5 @@ describe("real persistence: search chunks inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });

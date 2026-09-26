@@ -1,0 +1,214 @@
+[p1 "arra-oracle-v4 — memory" | space "ui-33 fix-round proof"(86): 1 managed, 0 untracked — p1* "arra-oracle-v4 — memory"]
+root
+  container
+    container
+      text "BANK"
+      textbox [ref=402, loc=css:input[placeholder="default"]]
+        text "default"
+    container
+      text "WORKSPACE"
+      textbox [ref=403, loc=css:input[placeholder="workspace_name"]]
+        text "default"
+    container
+      text "TOKEN"
+      textbox [ref=404, loc=css:input[placeholder="bearer…"]]
+    button [ref=405]
+      text "ping"
+  container
+    button [ref=406]
+      text "overview"
+    button [ref=407]
+      text "explore"
+    button [ref=408]
+      text "messages"
+    button [ref=409]
+      text "forum"
+    button [ref=410]
+      text "knowledge"
+  container
+    container
+      text "Workspaces"
+      text ">"
+      text "default"
+      button [ref=411]
+        text "Back"
+    container
+      container
+        text "4"
+        text "PEERS"
+      text "|"
+      container
+        text "2"
+        text "SESSIONS"
+      text "|"
+      container
+        text "7"
+        text "NODES"
+      button [ref=412]
+        text "refresh all"
+    container
+      container
+        container
+          container
+            button [ref=413]
+              text "⌄"
+            text "PEERS"
+            button [ref=414]
+              text "↻"
+          textbox [ref=415, loc=css:input[placeholder="filter loaded peers…"]]
+            text "filter loaded peers…"
+          container
+            button [ref=416]
+              text "alice"
+            button [ref=417]
+              text "bob"
+            button [ref=418]
+              text "carol"
+            button [ref=419]
+              text "dave"
+          container
+            container
+              text "showing"
+              text "4"
+              text "of 4"
+            container
+              text "page"
+              text "1"
+              text "(walked)"
+            container
+              button [ref=420]
+                text "‹ prev"
+              button [ref=421]
+                text "next ›"
+        container
+          container
+            button [ref=422]
+              text "⌄"
+            text "SESSIONS"
+            button [ref=423]
+              text "↻"
+          textbox [ref=424, loc=css:input[placeholder="filter loaded sessions…"]]
+            text "filter loaded sessions…"
+          container
+            button [ref=425]
+              text "sess-a"
+            button [ref=426]
+              text "sess-b"
+          container
+            container
+              text "showing"
+              text "2"
+              text "of 2"
+            container
+              text "page"
+              text "1"
+              text "(walked)"
+            container
+              button [ref=427]
+                text "‹ prev"
+              button [ref=428]
+                text "next ›"
+      container
+        container
+          button [ref=429]
+            text "Nodes"
+          button [ref=430]
+            text "Chat"
+          button [ref=431]
+            text "Messages"
+          button [ref=432]
+            text "Evidence"
+          button [ref=433]
+            text "Config"
+        container [ref=434]
+          container
+            heading
+              text "TRACE"
+            container
+              textbox [ref=435, loc=css:input[placeholder="trace id (nanoid21)"]]
+                text "trace id (nanoid21)"
+              button [ref=436]
+                text "Look up"
+            container
+              paragraph
+                text "no trace looked up"
+              paragraph
+                text "paste a trace id above"
+          container
+            container
+              heading
+                text "SESSION LINKS"
+              button [ref=437]
+                text "from"
+              button [ref=438]
+                text "to"
+            unordered_list
+              list_item
+                container
+                  text "sess-a"
+                  container
+                    text "--"
+                    text "continues"
+                    text "-->"
+                  text "sess-b"
+                container
+                  text "alice"
+                  text "2026-09-26T18:58:33.580Z"
+          container
+            heading
+              text "DIRECT EVIDENCE"
+            container
+              container
+                container
+                  text "rev"
+                  text "o3AnF7Ci"
+                  text "…"
+                text "head"
+              container
+                paragraph
+                  text "TERMS ("
+                  text "1"
+                  text ")"
+                unordered_list
+                  list_item
+                    text "type"
+                    text ":"
+                    text "note"
+              container
+                paragraph
+                  text "LINKS ("
+                  text "1"
+                  text ")"
+                unordered_list
+                  list_item
+                    container
+                      text "node_revision"
+                      text "derived_from"
+                    paragraph
+                      text "{"node_id":"9N0gc2veVoTXu9Bme1Lo5","revision_id":"r_jcGH7HWp_Jqre4CeSt2"}"
+          container
+            heading
+              text "REVERSE EVIDENCE"
+            paragraph
+              text "nothing cites this revision"
+            paragraph
+              text "no other node's current head links here"
+          container
+            heading
+              text "LIFECYCLE"
+            text "eligible for recall"
+            paragraph
+              text "no lifecycle events"
+            paragraph
+              text "never superseded or retired"
+          container
+            heading
+              text "LIFECYCLE ACTIONS"
+            paragraph
+              text "Retire this node. This is a lifecycle event, not a delete -- the revision stays, but the node stops being recall-eligible."
+            textbox [ref=439, loc=css:textarea[placeholder="reason (required)…"]]
+              text "reason (required)…"
+            button [ref=440]
+              text "Confirm retire"
+            button [ref=441]
+              text "Cancel"

@@ -40,24 +40,29 @@ export type ContextItem = {
   created_at: string;
 };
 
-/** Mirrors `chat.ExcludedContextItem`. `unauthorized` is correct access
- *  control, NOT incompleteness -- only a budget/count stop flips coverage. */
-export type ExcludedItem = {
-  reason: "unauthorized" | "budget_exceeded";
-  session_name: string;
-  public_id: string | null;
-};
+/** Mirrors `chat.ExcludedContextItem` (#85, overnight ruling R4).
+ *  Unauthorized exclusions are ONE anonymous count, never listed by id: the
+ *  ids were the leak. Budget/count stops keep their identifiers; both-null
+ *  is the linked-session bound, which names no session on purpose. */
+export type ExcludedItem =
+  | { reason: "budget_exceeded"; session_name: string; public_id: string }
+  | { reason: "budget_exceeded"; session_name: null; public_id: null }
+  | { reason: "unauthorized"; count: number };
 
+/** `coverage` is `"full"` only when nothing at all was excluded. */
 export type ContextResult = {
   items: ContextItem[];
   coverage: "full" | "partial";
   excluded: ExcludedItem[];
+  /** Budget entries not listed because `excluded` hit its byte bound. */
+  excluded_omitted: number;
 };
 
 export type ChatAnswer = {
   answer: string;
   coverage: "full" | "partial";
   excluded: ExcludedItem[];
+  excluded_omitted: number;
   items_used: string[];
 };
 
@@ -88,8 +93,24 @@ export const registerSession = (b: Bank, session_name: string) => call(b, "regis
 export const joinSession = (b: Bank, session_name: string, peer_name: string) =>
   call(b, "joinSession", { session_name, peer_name });
 
-export const listMessages = (b: Bank, session_name: string, limit = 50, after_seq: string | null = null) =>
-  call(b, "listMessages", { session_name, limit, after_seq });
+/** #87 / R3: membership is a read boundary on `listMessages`/`getMessage`.
+ *  Name a `requester_peer_name` and the server answers only if that peer is a
+ *  CURRENT member of the session. Omit it and the call is the operator view,
+ *  which needs `audit:read` on the bank -- the dev-stack operator token has it;
+ *  a `content:read`-only token gets 403 `forbidden`. */
+export const listMessages = (
+  b: Bank,
+  session_name: string,
+  limit = 50,
+  after_seq: string | null = null,
+  requester_peer_name: string | null = null,
+) =>
+  call(b, "listMessages", {
+    session_name,
+    limit,
+    after_seq,
+    ...(requester_peer_name === null ? {} : { requester_peer_name }),
+  });
 
 /** `message` and `source` are CLOSED objects server-side: an extra key is a
  *  refusal, not an ignored field. Keys here match `MESSAGE_KEYS` exactly. */

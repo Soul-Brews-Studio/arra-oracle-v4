@@ -40,6 +40,7 @@ import {
   seedTermRows,
   seedVocabularyRows,
 } from "../src/publication/taxonomy";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const WS = "alpha-workspace";
 const ALPHA = "alpha-workspace";
@@ -485,7 +486,7 @@ describe("the fixture helper really builds a dataset", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 180_000);
+  }, testTimeout(180_000));
 });
 
 describe("real persistence: the bootstrap seed against a seeded dataset", () => {
@@ -566,7 +567,7 @@ describe("real persistence: the bootstrap seed against a seeded dataset", () => 
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("re-running an identical seed is already_satisfied and emits NO boundaries", async () => {
     const fixture = await createTaxonomyFixture([ALPHA]);
@@ -588,7 +589,7 @@ describe("real persistence: the bootstrap seed against a seeded dataset", () => 
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("the seeded rows carry the contract's literal physical state", async () => {
     const fixture = await createTaxonomyFixture([ALPHA]);
@@ -616,7 +617,7 @@ describe("real persistence: the bootstrap seed against a seeded dataset", () => 
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("an absent row reads as exactly null, not an empty list or a status", async () => {
     const fixture = await createTaxonomyFixture([ALPHA]);
@@ -630,7 +631,7 @@ describe("real persistence: the bootstrap seed against a seeded dataset", () => 
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });
 
 describe("real persistence: resume, conflict and the SHARED owner", () => {
@@ -706,24 +707,31 @@ describe("real persistence: resume, conflict and the SHARED owner", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a CHANGED seed row conflicts, and is not silently repaired", async () => {
     const fixture = await createTaxonomyFixture([ALPHA]);
     try {
-      const parsed = await drive(fixture.datasetRoot, [
-        op("seedReservedVocabularies", seedManifest(ALPHA)),
-        // Rename a reserved term: allowed lifecycle, per the ruling.
-        op("renameTerm", {
-          workspace_name: ALPHA,
-          term_id: id("tnote"),
-          expected_name: "note",
-          name: "renamed-note",
-        }),
-        // Re-seeding now meets a changed row. Terminal through this slice:
-        // reconciliation is out of scope and must NOT be invented here.
-        op("seedReservedVocabularies", seedManifest(ALPHA)),
-      ]);
+      const parsed = await drive(
+        fixture.datasetRoot,
+        [
+          op("seedReservedVocabularies", seedManifest(ALPHA)),
+          // Rename a reserved term: allowed OPERATOR lifecycle, per the ruling.
+          op("renameTerm", {
+            workspace_name: ALPHA,
+            term_id: id("tnote"),
+            expected_name: "note",
+            name: "renamed-note",
+          }),
+          // Re-seeding now meets a changed row. Terminal through this slice:
+          // reconciliation is out of scope and must NOT be invented here.
+          op("seedReservedVocabularies", seedManifest(ALPHA)),
+        ],
+        // R6 (#27, docs/overnight/DECISIONS.md): `type` is sealed, so only the
+        // trusted in-process operator may rename its terms. An ordinary owner
+        // is refused; taxonomy-seal.test.ts pins that side.
+        { operator: true },
+      );
       expect((parsed.op1 as { ok: boolean; value: Record<string, unknown> }).value.outcome).toBe(
         "updated",
       );
@@ -737,7 +745,7 @@ describe("real persistence: resume, conflict and the SHARED owner", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a taxonomy failure POISONS the shared owner for later taxonomy writes", async () => {
     const fixture = await createTaxonomyFixture([ALPHA]);
@@ -766,7 +774,7 @@ describe("real persistence: resume, conflict and the SHARED owner", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });
 
 describe("real persistence: owner exclusion, reads, and the OTHER poison direction", () => {
@@ -809,7 +817,7 @@ describe("real persistence: owner exclusion, reads, and the OTHER poison directi
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("reads stay available while POISONED, and are refused after RELEASE", async () => {
     const fixture = await createTaxonomyFixture([ALPHA]);
@@ -837,7 +845,7 @@ describe("real persistence: owner exclusion, reads, and the OTHER poison directi
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a PUBLICATION failure poisons later TAXONOMY writes — the other direction", async () => {
     const fixture = await createTaxonomyFixture([ALPHA]);
@@ -865,7 +873,7 @@ describe("real persistence: owner exclusion, reads, and the OTHER poison directi
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a pre-write refusal leaves the owner USABLE — the positive control", async () => {
     const fixture = await createTaxonomyFixture([ALPHA]);
@@ -891,7 +899,7 @@ describe("real persistence: owner exclusion, reads, and the OTHER poison directi
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });
 
 describe("real persistence: a genuine SDK write failure, then repair", () => {
@@ -938,7 +946,7 @@ describe("real persistence: a genuine SDK write failure, then repair", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });
 
 describe("real persistence: term lifecycle, tree structure and the ABA hazard", () => {
@@ -948,8 +956,11 @@ describe("real persistence: term lifecycle, tree structure and the ABA hazard", 
   const drive = async (
     root: string,
     ops: Array<{ method: string; request: unknown }>,
+    // R6: only `{ operator: true }` is passed here, by the one case that
+    // retires reserved `type` terms.
+    extra: Record<string, unknown> = {},
   ): Promise<Record<string, any>> => {
-    const result = await runGated(root, CHILD, [root, JSON.stringify({ ops, clockMs: CLOCK })]);
+    const result = await runGated(root, CHILD, [root, JSON.stringify({ ops, clockMs: CLOCK, ...extra })]);
     if (result.code !== 0) throw new Error(`child exited ${result.code}: ${result.stderr.slice(0, 600)}`);
     const line = result.stdout.trim().split("\n").filter(Boolean).at(-1);
     if (line === undefined) throw new Error(`no output: ${result.stderr.slice(0, 600)}`);
@@ -986,7 +997,7 @@ describe("real persistence: term lifecycle, tree structure and the ABA hazard", 
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("retiring again is already_satisfied, and there is no reactivation", async () => {
     const fixture = await createTaxonomyFixture([ALPHA]);
@@ -1011,22 +1022,28 @@ describe("real persistence: term lifecycle, tree structure and the ABA hazard", 
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("the LAST active term of a required vocabulary cannot be retired", async () => {
     const fixture = await createTaxonomyFixture([ALPHA]);
     try {
       const manifest = seedManifest(ALPHA) as { type: { terms: { note: string } } };
-      const parsed = await drive(fixture.datasetRoot, [
-        op("seedReservedVocabularies", manifest),
-        // `type` is required and seeded with five terms, so four retirements
-        // are fine and the fifth must be refused.
-        op("retireTerm", { workspace_name: ALPHA, term_id: id("tconcl") }),
-        op("retireTerm", { workspace_name: ALPHA, term_id: id("tlearn") }),
-        op("retireTerm", { workspace_name: ALPHA, term_id: id("tdisc") }),
-        op("retireTerm", { workspace_name: ALPHA, term_id: id("tcorr") }),
-        op("retireTerm", { workspace_name: ALPHA, term_id: manifest.type.terms.note }),
-      ]);
+      const parsed = await drive(
+        fixture.datasetRoot,
+        [
+          op("seedReservedVocabularies", manifest),
+          // `type` is required and seeded with five terms, so four retirements
+          // are fine and the fifth must be refused.
+          op("retireTerm", { workspace_name: ALPHA, term_id: id("tconcl") }),
+          op("retireTerm", { workspace_name: ALPHA, term_id: id("tlearn") }),
+          op("retireTerm", { workspace_name: ALPHA, term_id: id("tdisc") }),
+          op("retireTerm", { workspace_name: ALPHA, term_id: id("tcorr") }),
+          op("retireTerm", { workspace_name: ALPHA, term_id: manifest.type.terms.note }),
+        ],
+        // R6: retiring reserved `type` terms is operator lifecycle; an
+        // ordinary owner is refused before the last-required check runs.
+        { operator: true },
+      );
       for (const key of ["op1", "op2", "op3", "op4"]) {
         expect(parsed[key].ok, `${key} should have retired`).toBe(true);
       }
@@ -1036,7 +1053,7 @@ describe("real persistence: term lifecycle, tree structure and the ABA hazard", 
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a cycle and a self-parent are both refused, and a flat vocabulary takes no parent", async () => {
     const fixture = await createTaxonomyFixture([ALPHA]);
@@ -1064,7 +1081,7 @@ describe("real persistence: term lifecycle, tree structure and the ABA hazard", 
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("the expected-value guard is not a version journal: the ABA hazard is REAL", async () => {
     /**
@@ -1094,7 +1111,7 @@ describe("real persistence: term lifecycle, tree structure and the ABA hazard", 
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });
 
 describe("root review findings — these must FAIL before the repair", () => {
@@ -1135,7 +1152,7 @@ describe("root review findings — these must FAIL before the repair", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("(1b) #49's case: a bad workspace outranks a vocabulary that exists elsewhere", async () => {
     // The vocabulary DOES exist, but in another workspace. Precedence decides
@@ -1154,7 +1171,7 @@ describe("root review findings — these must FAIL before the repair", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("(2) a matching seed ID does not excuse a duplicate scoped NAME", async () => {
     const fixture = await createTaxonomyFixture([ALPHA]);
@@ -1200,7 +1217,7 @@ describe("root review findings — these must FAIL before the repair", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("(3) a horizon collision points at the horizon, not at /type/terms", async () => {
     const fixture = await createTaxonomyFixture([ALPHA]);
@@ -1237,7 +1254,7 @@ describe("root review findings — these must FAIL before the repair", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("(4) a corrupted post-update readback is REFUSED, not returned", async () => {
     // The hook returns normally and the row is durable and wrong, so this is
@@ -1273,7 +1290,7 @@ describe("root review findings — these must FAIL before the repair", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("(5) a deliberate post-write integrity_failure is PRESERVED, not collapsed", async () => {
     // Corrupt an enum so the final verification's encoder raises a deliberate
@@ -1303,7 +1320,7 @@ describe("root review findings — these must FAIL before the repair", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });
 
 describe("root review residuals — these must FAIL before the second repair", () => {
@@ -1365,7 +1382,7 @@ describe("root review residuals — these must FAIL before the second repair", (
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("(R1b) renameTerm: an already-satisfied rename still validates the name", async () => {
     const fixture = await createTaxonomyFixture([ALPHA]);
@@ -1412,7 +1429,7 @@ describe("root review residuals — these must FAIL before the second repair", (
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("(R1c) retireTerm: an inactive term still validates its vocabulary", async () => {
     // The early inactive return skipped the vocabulary lookup entirely, so an
@@ -1446,7 +1463,7 @@ describe("root review residuals — these must FAIL before the second repair", (
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("(R2) createTerm validates the whole ancestry, not just the immediate parent", async () => {
     const fixture = await createTaxonomyFixture([ALPHA]);
@@ -1497,7 +1514,7 @@ describe("root review residuals — these must FAIL before the second repair", (
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("(R3) a FORGED contract error is normalized, not passed through", async () => {
     /**
@@ -1520,7 +1537,7 @@ describe("root review residuals — these must FAIL before the second repair", (
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });
 
 describe("why the boundary must not use the name-only helper", () => {
@@ -1596,5 +1613,5 @@ describe("taxonomy READ methods carry the taxonomy envelope", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });

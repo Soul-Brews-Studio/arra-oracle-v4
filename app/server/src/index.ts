@@ -10,9 +10,11 @@
 import { createApp } from "./app";
 import { configureKnowledgeAccess, createMcpAdapter } from "./mcp";
 import {
+  checkChatConfig,
   checkSupportedRuntime,
   composeKnowledgeAccess,
   composeService,
+  composeV3Compat,
   GLOBAL_BODY_BACKSTOP,
   readConfig,
   runStartupIndexWork,
@@ -20,14 +22,23 @@ import {
 import { loadPolicy } from "./auth/loader";
 
 /** Build a fully wired app from explicit configuration. */
-export async function buildApp(config: { policyPath: string; origin: string; assets?: string }) {
-  const service = await composeService({ policyPath: config.policyPath, origin: config.origin, port: 0 });
+export async function buildApp(config: { policyPath: string; origin: string; assets?: string; v3Compat?: boolean }) {
+  // R18 D10: explicit configuration wins; otherwise the operator's env. Read
+  // once, so the service and the X-Arra-Peer header read agree.
+  const v3Compat = config.v3Compat ?? composeV3Compat();
+  const service = await composeService({
+    policyPath: config.policyPath,
+    origin: config.origin,
+    port: 0,
+    v3Compat,
+  });
   // #31: the same process is the sole knowledge writer (see
   // knowledge/transport.ts's file header). Opened once here and shared by
-  // both the HTTP route and the MCP `kb_*` tools below.
-  const access = composeKnowledgeAccess();
+  // both the HTTP route and the MCP `kb_*` tools below. The chat model (#32 /
+  // R9) is composed inside it, from the same env.
+  const access = await composeKnowledgeAccess();
   configureKnowledgeAccess(access);
-  return createApp({ origin: config.origin }, service, createMcpAdapter(service), {
+  return createApp({ origin: config.origin, v3Compat }, service, createMcpAdapter(service), {
     assets: config.assets,
     knowledge: { policyPath: config.policyPath, access },
   });
@@ -59,8 +70,11 @@ export async function startup(
   const runtime = (deps.runtime ?? checkSupportedRuntime)();
   if (!runtime.ok) throw new Error(`startup refused: ${runtime.reason}`);
 
-  // 2. Configuration, read exactly once and passed on from here.
+  // 2. Configuration, read exactly once and passed on from here. The chat
+  //    model settings (#32 / R9) are validated with it: a malformed
+  //    ARRA_CHAT_* refuses startup rather than failing the first question.
   const config = readConfig(deps.env ?? process.env);
+  await checkChatConfig(deps.env ?? process.env);
 
   // 3. An unreadable or invalid policy stops startup rather than silently
   //    leaving the service open.

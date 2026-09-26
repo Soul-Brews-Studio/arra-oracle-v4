@@ -7,8 +7,9 @@
 // `trace_hits.position` (TR-3), a negative stored `position` (TR-7), a
 // stored empty-string nullable text column (TR-11), and a stored
 // `parent_id`/`prev_id` outside the nanoid21 namespace (TR-4).
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   ops: Array<{ facade?: "context" | "publication" | "taxonomy" | "harness"; method: string; request: any }>;
   clockMs?: number | number[] | "throw";
 };
@@ -82,6 +83,41 @@ const harness: Record<string, (request: any) => Promise<unknown>> = {
       } as never) as never,
     );
     return { planted: true };
+  },
+  /** Same shape as `insertRawTrace`, but ALL requests in ONE `tbl.add` call
+   *  (one Arrow batch, one commit) instead of one round trip per row --
+   *  scale fixtures for the K5 keyset cursor (docs/overnight/V3-PARITY.md
+   *  §5) need hundreds to thousands of rows, and a thousand sequential
+   *  single-row commits would make the fixture itself the slow part of the
+   *  test. */
+  async insertRawTraces(request: { rows: Record<string, unknown>[] }) {
+    const tbl = await harnessTable("traces");
+    const rows = request.rows;
+    await tbl.add(
+      tableFromArrays({
+        id: rows.map((r) => r.id),
+        name: rows.map((r) => r.name ?? "trace"),
+        workspace_name: rows.map((r) => r.workspace_name),
+        session_name: rows.map((r) => r.session_name ?? null),
+        peer_name: rows.map((r) => r.peer_name ?? null),
+        query: rows.map((r) => r.query ?? "q"),
+        mode: rows.map((r) => r.mode ?? null),
+        session_id: rows.map((r) => r.session_id ?? null),
+        session_from_ts: rows.map((r) => (r.session_from_ts_millis != null ? BigInt(r.session_from_ts_millis as any) : null)),
+        session_to_ts: rows.map((r) => (r.session_to_ts_millis != null ? BigInt(r.session_to_ts_millis as any) : null)),
+        friction_score: rows.map((r) => r.friction_score ?? null),
+        confidence: rows.map((r) => r.confidence ?? null),
+        parent_id: rows.map((r) => r.parent_id ?? null),
+        prev_id: rows.map((r) => r.prev_id ?? null),
+        depth: rows.map((r) => BigInt((r.depth as any) ?? 0)),
+        status: rows.map((r) => r.status ?? "open"),
+        h_metadata: rows.map((r) => r.h_metadata ?? null),
+        internal_metadata: rows.map((r) => r.internal_metadata ?? null),
+        created_at: rows.map((r) => BigInt(r.created_at_millis as any)),
+        updated_at: rows.map((r) => BigInt(r.updated_at_millis as any)),
+      } as never) as never,
+    );
+    return { planted: rows.length };
   },
 };
 

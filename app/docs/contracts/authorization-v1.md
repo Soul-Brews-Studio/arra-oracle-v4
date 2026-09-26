@@ -130,3 +130,118 @@ Additionally test malformed UTF-8 bytes, exact original-byte limit including whi
 Use literal synthetic credential inputs with independently computed digest expectations. Cover every policy closed-shape and duplicate rule; every limit at boundary and boundary+1; raw escape/whitespace size; immutable nested collections; bad flags and times; credential references; missing/invalid/unknown/expired/not-yet-valid/revoked/disabled cases; exact not-before and expiry edges; principal/grant separation; case-sensitive workspace mismatch; empty deny-all grants; content write not implying read/audit/global access; and two principals across two workspaces. No test may use a real credential or mutate operator policy.
 
 The first slice explicitly excludes file loader, live revocation reload, route wiring, MCP discovery, browser Origin/Host checks, CLI/browser plumbing, audit persistence, and external deployment. Those are mandatory later #25 integration work, not waived acceptance items. No #25 closure from the pure module.
+
+## Amendment 2026-09-26 (overnight R3)
+
+Appended, not rewritten: §1–§7 stand except where this section says otherwise.
+Authority: `docs/overnight/DECISIONS.md` R3 (issue #87). This section adds an optional
+peer binding to the `arra-auth/v1` policy document. The document version does not change,
+because every existing policy stays valid and means exactly what it meant before.
+
+**Grammar change to §7.** A workspace grant is `{name, actions[, peers]}`:
+
+- `peers` is optional, and the only optional key anywhere in the document.
+- When present it is an array of at most 256 entries. Each entry is a nonempty string of
+  at most 256 UTF-8 bytes, with no trim and no case folding, which is the context kernel's
+  peer-name grammar. Entries are unique within the grant.
+- Anything else is `policy_invalid`. Duplicate entries are checked with the other
+  per-principal duplicates.
+- Field order is name, actions, peers. Extras still reject at every level. An empty array
+  is valid and binds the grant to no peer at all.
+
+```json
+{"name": "alpha", "actions": ["content:read", "content:write"], "peers": ["peer-a"]}
+```
+
+**Meaning.**
+
+- The binding is anti-spoofing only. It grants no action and no visibility.
+- When a grant carries `peers`, every peer name the caller ASSERTS in a request admitted
+  by that grant must be in the list. This covers every surface such a grant admits
+  today: the knowledge methods (`/api/knowledge`, MCP `kb_*`) and the legacy memories
+  write (MCP `remember`, HTTP `POST /api/memories`). The table below lists every field.
+- The refusal happens after admission and before any dataset writer is opened, any
+  kernel runs, or any row is stored. Each surface refuses in its own existing error
+  shape:
+  - knowledge methods: HTTP 403 and MCP `isError`, both carrying the
+    `arra-publication-error/v1` envelope with code `forbidden`, whose path points at the
+    offending field;
+  - `POST /api/memories`: HTTP 403 with the fixed body `{"error":"forbidden"}` that every
+    memories-route 403 already uses (`auth/http.ts` `ERROR_BODIES`);
+  - `remember`: an MCP `isError` tool result whose text is `forbidden`. It is audited
+    like every other admitted tool failure.
+- When `peers` is absent, nothing is checked and the trust unit remains the workspace, as
+  before.
+- This does not contradict §2 ("principal is not a peer"). A principal is still never
+  automatically any peer; an operator binds one explicitly, per workspace grant.
+
+**Which fields are asserted peers.**
+
+| Role | Surface | Field |
+|---|---|---|
+| requester | `getMessage`, `listMessages` | `/requester_peer_name` |
+| requester | `getContext`, `answerChat` | `/peer_name` |
+| reader | `getReadCursor`, `advanceReadCursor` | `/peer_name` |
+| joining peer | `joinSession` | `/peer_name` |
+| author | `appendMessages` | `/items/i/message/peer_name` |
+| author, observer | `publishRevision` | `/content/author_peer_name`, `/content/observer_peer_name` |
+| author | legacy `remember`, `POST /api/memories` | `peer_name` |
+
+Lookup targets (`getPeer.peer_name`, `registerPeer.name`), `list_memories`' `peer_name`
+filter, and the subject of a revision or memory (`subject_peer_name`) are not bound.
+Naming a peer, or writing ABOUT one, is not acting as it.
+
+Where each surface is declared:
+
+- The knowledge rows are data in `app/server/src/knowledge/registry.peerFields.ts`. That
+  table is exhaustive over the registry, and `[]` there is a reviewed "asserts no peer".
+- A knowledge method the table does not classify is refused outright under a binding,
+  at the request root (path `""`). It is never let through unchecked.
+- `transport-peer-fields.test.ts` fails while any registered method is unclassified.
+  So a future method with an acting-peer field is classified when it is exposed. Examples
+  are #28's `created_by_peer_name` and `traces.peer_name` (DECISIONS.md R7), and a
+  lifecycle `peer_name`.
+- The legacy row is checked in `app/server/src/auth/service.ts`, in both insert paths,
+  through `service.isBoundAuthor.ts`.
+
+**Pure-module surface (§7) is unchanged.**
+
+- `src/auth/policy.ts` still exports exactly two runtime functions, `parsePolicy` and
+  `admit`.
+- An Admission is still exactly `{policy_version, principal_id, credential_id, target}`,
+  with no policy data and no peer identity.
+- The binding is read by a sibling pure helper, `peerBinding(policy, admission)` in
+  `src/auth/policy.peerBinding.ts`, which the barrel does not export. It returns the
+  grant's frozen list, or null when the grant carries none.
+- `peerBinding` answers `invalid_request` for:
+  - a snapshot this module did not parse;
+  - a global admission;
+  - an admission naming a principal or grant the snapshot does not hold.
+
+**How it reaches the services.** The transport builds a
+`RequestAuthority {operator, peers}` from the same snapshot that admitted the request:
+
+- `peers` comes from `peerBinding`.
+- `operator` means the principal also holds `audit:read` on the workspace. HTTP checks it
+  with a second `admit` on the same snapshot and clock value. MCP takes it from the
+  four-action projection.
+
+The transport enforces the binding itself, and passes the authority to the message reads,
+which recheck their own requester (context-ingestion-v1.md, amendment of this date). The
+MCP request context is unchanged: the authority travels as data on the per-request
+`ToolOperations`, never as a capability.
+
+**Evidence.**
+
+- `app/server/test/auth-peer-binding.test.ts`: grammar, limits, lookup, frozen surface.
+- `app/server/test/transport-read-boundary.test.ts`: HTTP and MCP refusals and the unbound
+  control.
+- `app/server/test/auth-legacy-peer-binding.test.ts`: the legacy author over the service,
+  HTTP and MCP. A refused write stores nothing; the subject stays free; the unbound
+  control is unchanged.
+- `app/server/test/transport-peer-fields.test.ts`: the table equals the registry, and an
+  unclassified method fails closed.
+
+All four were seen red before the change. The legacy and classification rows were added
+in a fix round after verification showed a bound principal could still store
+`peer_name: "outsider"` through `remember` and `POST /api/memories`.

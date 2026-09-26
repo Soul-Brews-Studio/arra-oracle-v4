@@ -31,12 +31,13 @@ import {
 } from "../src/publication/trace";
 import { microsToTimestamp } from "../src/publication/rows";
 import { ContractError } from "../src/contracts/errors";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const CHILD = new URL("./fixtures/trace-v1/precision/seed-child.ts", import.meta.url).pathname;
 const ALPHA = "alpha-workspace";
 const CLOCK_MS = Date.parse("2026-09-21T00:00:00.000Z");
 const CLOCK_ISO = new Date(CLOCK_MS).toISOString();
-const TEST_TIMEOUT_MS = 600_000;
+const TEST_TIMEOUT_MS = testTimeout(600_000);
 
 const MIN_EPOCH_MS = -62135596800000n; // 0001-01-01T00:00:00.000Z
 const MAX_EPOCH_MS = 253402300799999n; // 9999-12-31T23:59:59.999Z
@@ -146,9 +147,17 @@ describe("all physical columns wire exactly", () => {
     const fixture = await createTraceFixture([ALPHA]);
     try {
       const id = traceId("wireTrace");
+      // K13 (docs/overnight/V3-PARITY.md): `depth` must actually agree with
+      // the resolved `parent_id` chain now, so a depth of 3 needs a REAL
+      // three-deep parent chain -- not just an arbitrary wire value -- for
+      // this create to succeed at all. Three cheap ancestor creates first.
+      const grandparentId = traceId("wireGrandparent");
+      const parentId = traceId("wireParent");
+      const rootId = traceId("wireRoot");
       const capturedAt = "2026-09-21T00:00:00.456Z";
       const request = createTraceRequest(ALPHA, {
         id,
+        parent_id: grandparentId,
         mode: "deep",
         session_id: "ext-session",
         session_from_ts: CLOCK_ISO,
@@ -161,11 +170,18 @@ describe("all physical columns wire exactly", () => {
         })],
       });
       const parsed = await drive(fixture, [
+        ctx("createTrace", createTraceRequest(ALPHA, { id: rootId, parent_id: null, depth: "0" })),
+        ctx("createTrace", createTraceRequest(ALPHA, { id: parentId, parent_id: rootId, depth: "1" })),
+        ctx("createTrace", createTraceRequest(ALPHA, { id: grandparentId, parent_id: parentId, depth: "2" })),
         ctx("createTrace", request),
         ctx("getTrace", { workspace_name: ALPHA, id }),
         ctx("listTraceHits", { workspace_name: ALPHA, trace_id: id, after_position: null, limit: 10 }),
       ]);
-      const created = parsed.op0;
+      for (const ancestor of [parsed.op0, parsed.op1, parsed.op2]) {
+        expect(ancestor.ok, JSON.stringify(ancestor)).toBe(true);
+      }
+
+      const created = parsed.op3;
       expect(created.ok, JSON.stringify(created)).toBe(true);
       expect(Object.keys(created.value.row)).toEqual([...TRACE_FIELDS]);
       expect(Object.keys(created.value.hits[0])).toEqual([...TRACE_HIT_FIELDS]);
@@ -177,10 +193,10 @@ describe("all physical columns wire exactly", () => {
       expect(created.value.hits[0].captured_at).toBe(capturedAt);
       expect(created.value.hits[0].position).toBe("0");
 
-      expect(parsed.op1.ok, JSON.stringify(parsed.op1)).toBe(true);
-      expect(parsed.op1.value).toEqual(created.value.row as never);
-      expect(parsed.op2.ok, JSON.stringify(parsed.op2)).toBe(true);
-      expect(parsed.op2.value.rows).toEqual(created.value.hits as never);
+      expect(parsed.op4.ok, JSON.stringify(parsed.op4)).toBe(true);
+      expect(parsed.op4.value).toEqual(created.value.row as never);
+      expect(parsed.op5.ok, JSON.stringify(parsed.op5)).toBe(true);
+      expect(parsed.op5.value.rows).toEqual(created.value.hits as never);
     } finally {
       await fixture.cleanup();
     }

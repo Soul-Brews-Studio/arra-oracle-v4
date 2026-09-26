@@ -32,6 +32,9 @@ import { handleKnowledgeRequest, type KnowledgeAccess } from "./knowledge/transp
 export type AppConfig = {
   /** Exact scheme/authority this process answers for, e.g. http://127.0.0.1:3939 */
   readonly origin: string;
+  /** R18 D10: the v3-compatible MCP family flag. Only with it on is
+   *  X-Arra-Peer read; absent = off, so the header is ignored as before. */
+  readonly v3Compat?: boolean;
 };
 
 /** A bounded-body rejection raised from inside a post-admission hook. */
@@ -147,6 +150,12 @@ export function createApp(
         // policy I/O, so an over-long bank is 400 rather than a 503 from the
         // loader doing work for a request that was never valid.
         if (!isValidWorkspace(params.bank)) return errorResponse(400);
+        // A7/D8 (R18): X-Arra-Peer is the connection-level speaker ASSERTION,
+        // part of the v3 family: with the flag off it is not read at all.
+        // Same bounded name grammar as the bank, checked before any policy
+        // I/O; whether this credential may assert it is the service's call.
+        const peerHeader = config.v3Compat === true ? request.headers.get("x-arra-peer") : null;
+        if (peerHeader !== null && !isValidWorkspace(peerHeader)) return errorResponse(400);
         const encoding = checkBodyEncoding(request);
         if (encoding) return errorResponse(encoding.status);
 
@@ -205,6 +214,7 @@ export function createApp(
           readAuthorization(request),
           readEnvelope,
           request.headers.get("user-agent") ?? "",
+          peerHeader,
         );
         if (pending.handshake !== null) {
           pending.handshake.headers.set("cache-control", "no-store");
@@ -276,7 +286,7 @@ export function createApp(
       const mode = url.searchParams.get("mode") ?? "text";
       const limit = positiveInt(url.searchParams.get("limit") ?? undefined, 10);
       return guarded(async () => {
-        const rows = await service.searchMemories(
+        const result = await service.searchMemories(
           readAuthorization(request),
           bank,
           typeof q === "string" ? q : "",
@@ -289,7 +299,11 @@ export function createApp(
             return null;
           },
         );
-        return { mode, count: rows.length, rows };
+        // Text mode says how it matched (R14): "ngram", or "substring_scan" for
+        // a query under 3 code points. Vector mode has no match mode to report.
+        return result.match === undefined
+          ? { mode, count: result.rows.length, rows: result.rows }
+          : { mode, match: result.match, count: result.rows.length, rows: result.rows };
       });
     })
 

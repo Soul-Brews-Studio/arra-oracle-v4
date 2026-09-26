@@ -9,3 +9,6 @@ __pycache__/
 # UI POC builds — rebuildable, never reviewed
 app/ui/*/node_modules/
 app/ui/*/dist/
+
+# Scratch and dev-stack state anywhere in the tree (datasets, dev token, logs)
+.tmp/

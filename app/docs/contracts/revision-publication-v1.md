@@ -159,3 +159,28 @@ Allowed new tests/helpers: `app/server/test/publication-{service,recovery,owners
 `export_publication_fixture.py` is the ONLY new fixture creator/migration participant: it acquires writer_gate before writable connect/create, seeds independently authored rows against existing Python models/golden and refuses existing dataset replacement. Its migration-contention test proves rejection before connect. TS publication owners use the same gate. Existing target-schema fixture exporter/tests continue on their own disjoint ephemeral datasets unchanged; they are NOT claimed retroactively to participate in this lock protocol. No arbitrary external tool is prevented from bypassing a cooperative lock.
 
 Existing file expansion allowed only if necessary: `app/migrate-py/tests/test_revision_v1.py` IsolationTests to add EXACT publication-file helper exemptions and complementary bounded no-active-import checks, preserving auth/composition boundaries and all unrelated test classes. No blanket publication/ or target_v1/ exclusion. The exact expansion is: add only publication/errors.ts, publication/rows.ts, publication/storage.ts and publication/service.ts to HELPER_REUSE_ALLOWED; retain all current auth exemptions, adapter files, floors, existing assertions and unrelated test classes. Add a complementary recursive scan of server/src OUTSIDE those exact four files plus app/cli.ts for enumerated publication-import strings, and Python src outside writer_gate.py for enumerated writer_gate imports. Assertions must prove scan selection is nonempty with existing floors, and sensitivity fixtures must be hand-written independent source in TemporaryDirectory, not generated from searched patterns or written into product source. Document these as bounded source-text checks, not module resolution or dynamic-import proof. Existing runtime/auth/codecs/schema/goldens/manifests/lockfiles, accepted fixtures and exporter remain byte-unchanged. Root owns this contract, DESIGN/status, issues and acceptance. Neo-claude owns only the named implementation/tests; no commit until leader evidence handoff.
+
+## Amendment 2026-09-26 (overnight R7 (#29 part))
+
+**What changed.** §2 pins `getAcceptedHead`'s return shape as exactly `{node,revision}` (or `null`
+if the node is absent). It now returns `{node,revision,lifecycle}`: an additive third field, `null`
+when the node carries no terminal `supersede_log` event, else `{event_id, kind:
+"retired"|"superseded", new_id, new_revision_id, reason, superseded_at}` -- the same shape
+`lifecycle-v1.md` §12 point 3 documents for both `getAcceptedHead` and `listAcceptedHistory`
+(`listAcceptedHistory` gains the identical field on the same commit; this file pins
+`getAcceptedHead` specifically because §2 above is the section that named its exact shape).
+
+**Why.** `docs/overnight/DECISIONS.md` R7's `#29` bullets require the centralized normal-read
+eligibility rule DESIGN.md §9 describes, and a retired or superseded node's history/direct-read
+surfaces (this method is one) to stay readable but clearly LABELLED rather than indistinguishable
+from an active one (§9's "no event-kind column" rule already exists; this reuses it, decoded once,
+via `service.terminalEventsFor.ts`).
+
+**Not changed here.** `node` and `revision` keep their exact existing shape and meaning; a node's
+absence still returns exactly `null`, never a differently-shaped absence. No new method, no new
+table, no schema change -- `lifecycle` is derived entirely from the existing `supersede_log` table
+this contract's sibling `lifecycle-v1.md` already governs.
+
+**Evidence.** `app/server/test/lifecycle-eligibility.test.ts`'s `getAcceptedHead A`/`getAcceptedHead
+B`/`getAcceptedHead C` assertions (a retired node, a superseded node, and an untouched node,
+respectively) and `service.getAcceptedHead.ts`'s own doc comment.

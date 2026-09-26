@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ChatAnswer } from "../api/memory";
+import { ChatError } from "./ChatError";
 import { CoverageBadge } from "./CoverageBadge";
 import { ExcludedList } from "./ExcludedList";
 import { ModelNote } from "./ModelNote";
@@ -76,13 +77,13 @@ export function DialecticPanel({
         </button>
       </div>
 
-      {error && <p className="text-[11px] text-rose-300">{error}</p>}
+      <ChatError code={error} />
 
       {answer && (
         <div className="flex flex-col gap-3 rounded border border-edge bg-panel p-3">
           <p className="whitespace-pre-wrap text-sm text-slate-100">{answer.answer}</p>
           <CoverageBadge coverage={answer.coverage} />
-          <ExcludedList excluded={answer.excluded} />
+          <ExcludedList excluded={answer.excluded} omitted={answer.excluded_omitted} />
           <div>
             <p className="text-[11px] font-medium uppercase tracking-wide text-muted">
               items_used ({answer.items_used.length})

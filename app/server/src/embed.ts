@@ -11,12 +11,19 @@ export const DIMS = Number(process.env.EMBEDDING_DIMENSIONS ?? 384);
 
 export type EmbedHealth = { ok: boolean; model: string; dims: number; detail: string };
 
-export async function embed(texts: string[]): Promise<number[][]> {
+// `model` defaults to EMBEDDING_MODEL. The #30 knowledge embedders
+// (`composition.ts`) pass the registry's active profile model here, so the
+// profile a chunk or a semantic search reports and the model that embedded it
+// are one value. `signal` lets the #30 R8 embed worker abort a call it has
+// already timed out (it enforces the timeout itself; see
+// `service.embedPendingChunks.ts`).
+export async function embed(texts: string[], model: string = MODEL, signal?: AbortSignal): Promise<number[][]> {
   if (texts.length === 0) return [];
   const res = await fetch(`${OLLAMA_URL}/api/embed`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model: MODEL, input: texts }),
+    body: JSON.stringify({ model, input: texts }),
+    signal,
   });
   if (!res.ok) throw new Error(`embed failed: ${res.status} ${await res.text()}`);
   const json = (await res.json()) as { embeddings?: unknown };
@@ -37,8 +44,8 @@ export async function embed(texts: string[]): Promise<number[][]> {
   return json.embeddings as number[][];
 }
 
-export async function embedOne(text: string): Promise<number[]> {
-  return (await embed([text]))[0]!;
+export async function embedOne(text: string, model: string = MODEL): Promise<number[]> {
+  return (await embed([text], model))[0]!;
 }
 
 export async function health(): Promise<EmbedHealth> {

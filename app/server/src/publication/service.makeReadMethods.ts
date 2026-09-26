@@ -7,6 +7,8 @@ export function makeReadMethods(reader: DatasetAdapter): PublicationReaderServic
   return {
     getAcceptedHead: (requestBytes: Uint8Array) => getAcceptedHead(reader, requestBytes),
     listAcceptedHistory: (requestBytes: Uint8Array) => listAcceptedHistory(reader, requestBytes),
-    listNodes: (requestBytes: Uint8Array) => listNodes(reader, requestBytes),
+    // `requestTimeMs`: the transport's request time, read only by the
+    // `eligible_only` recall view (R18 D3; see `service.listNodes.ts`).
+    listNodes: (requestBytes: Uint8Array, requestTimeMs?: number) => listNodes(reader, requestBytes, requestTimeMs),
   };
 }

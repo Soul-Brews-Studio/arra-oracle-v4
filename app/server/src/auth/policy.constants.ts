@@ -31,4 +31,9 @@ export const GLOBAL_ACTIONS: readonly GlobalAction[] = ["maintenance:backfill", 
 export const ROOT_KEYS = ["version", "principals", "credentials"] as const;
 export const PRINCIPAL_KEYS = ["id", "disabled", "workspaces", "global_actions"] as const;
 export const WORKSPACE_KEYS = ["name", "actions"] as const;
+/** #87 / R3: the one OPTIONAL workspace-grant key, admitted only when present. */
+export const WORKSPACE_PEERS_KEY = "peers";
+/** Same bound as workspaces per principal; peer names use the context grammar's 256 UTF-8 bytes. */
+export const MAX_PEERS_PER_GRANT = 256;
+export const MAX_PEER_NAME_BYTES = 256;
 export const CREDENTIAL_KEYS = ["id", "principal_id", "sha256", "not_before", "expires_at", "revoked"] as const;

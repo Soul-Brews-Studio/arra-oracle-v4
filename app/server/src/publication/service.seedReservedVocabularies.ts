@@ -6,12 +6,13 @@ import { lookupTermByName } from "./service.lookupTermByName";
 import { lookupVocabularyById } from "./service.lookupVocabularyById";
 import { lookupVocabularyByName } from "./service.lookupVocabularyByName";
 import { mutateTaxonomyWrite } from "./service.mutateTaxonomyWrite";
+import { refuseSealedVocabulary } from "./service.refuseSealedVocabulary";
 import { requireTaxonomyWorkspaceRow } from "./service.requireTaxonomyWorkspaceRow";
 import { sameExcept } from "./service.sameExcept";
-import { type Clock, type DatasetAdapter, type OwnerCore, type TaxonomyRow } from "./service.types";
+import { type DatasetAdapter, type OwnerCore, type TaxonomyRow, type TaxonomyWriteOptions } from "./service.types";
 import { writeTaxonomyRow } from "./service.writeTaxonomyRow";
 
-export function seedReservedVocabularies(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock }, requestBytes: Uint8Array) {
+export function seedReservedVocabularies(writer: DatasetAdapter, core: OwnerCore, options: TaxonomyWriteOptions, requestBytes: Uint8Array) {
 async function seedReserved(requestBytes: Uint8Array) {
     const request = parseSeedRequest(requestBytes);
     const workspace = request.workspace_name;
@@ -79,6 +80,23 @@ async function seedReserved(requestBytes: Uint8Array) {
         continue;
       }
       resolved.push({ table: VOCABULARIES, want, stored: null, pointer });
+    }
+
+    // ---- R6: the seal, after every manifest conflict above. A missing term
+    // whose sealed vocabulary is ALREADY stored would be appended to a sealed
+    // term set, which only trusted operator configuration may do. This seed
+    // never leaves that state itself (terms are staged before vocabularies,
+    // so an interrupted run leaves terms without their vocabulary, not the
+    // reverse). Reaching it takes a reserved name freed by a rename and
+    // re-seeded under a new id, or rows written outside this kernel.
+    for (const entry of resolved) {
+      if (entry.table !== TERMS || entry.stored !== null) continue;
+      const vocabulary = resolved.find(
+        (candidate) => candidate.table === VOCABULARIES && candidate.want.id === entry.want.vocabulary_id,
+      );
+      if (vocabulary !== undefined && vocabulary.stored !== null) {
+        refuseSealedVocabulary(vocabulary.stored, options, entry.pointer);
+      }
     }
 
     // ---- Stage ONLY what is missing, in literal manifest order: the seven

@@ -12,9 +12,10 @@ is outside what this task authorizes without asking first.
 
 See `../pin.py` — `HONCHO_V3_2_0`: git ref `v3.2.0`
 (`210b56cf953fcf447ffafcb428d4b4f1823b83fd`), auth off, disposable Postgres,
-deriver disabled. Every route/field name `../target.py` and `../bundle.py`
-use was read from that exact ref's `src/routers/*.py` and `src/schemas/api.py`
-on 2026-09-21 — re-verify them if this pin is ever bumped.
+deriver and embedding disabled. Every route/field name `../target.py` and
+`../bundle.py` use was read from that exact ref's `src/routers/*.py` and
+`src/schemas/api.py` on 2026-09-21 — re-verify them if this pin is ever
+bumped.
 
 ## Steps
 
@@ -27,11 +28,14 @@ cd /tmp/honcho-roundtrip-pin
 git rev-parse HEAD  # must print 210b56cf953fcf447ffafcb428d4b4f1823b83fd — if not, STOP
 
 # 2. Copy the example compose file and env template, then apply pin.py's env
-#    (AUTH_USE_AUTH=false, DERIVER_WORKERS=0, the Postgres URI already
-#    matches docker-compose.yml.example's own database service).
+#    (AUTH_USE_AUTH=false, DERIVER_ENABLED=false, EMBED_MESSAGES=false, the
+#    Postgres URI already matches docker-compose.yml.example's own database
+#    service). NOT DERIVER_WORKERS=0 -- that fails Honcho's own
+#    `WORKERS: Field(gt=0)` check at settings-import time and the api
+#    container never boots (measured 2026-09-26 against the pinned commit).
 cp docker-compose.yml.example docker-compose.yml
 cp .env.template .env
-#   edit .env: AUTH_USE_AUTH=false, DERIVER_WORKERS=0
+#   edit .env: AUTH_USE_AUTH=false, DERIVER_ENABLED=false, EMBED_MESSAGES=false
 
 # 3. Bring up ONLY api + database (skip deriver/redis/mcp — out of tier-1
 #    scope and this avoids needing an LLM credential for anything).

@@ -10,6 +10,7 @@ import { runGated } from "./helpers/publication-fixture";
 import { createTraceFixture, createTraceRequest, hitInput, traceId } from "./helpers/trace-fixture";
 import { parseCreateTrace } from "../src/publication/trace";
 import { ContractError } from "../src/contracts/errors";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 describe("real persistence: trace + trace_hit inside the real gate", () => {
   const CHILD = new URL("./fixtures/trace-v1/core/gated-trace.ts", import.meta.url).pathname;
@@ -119,7 +120,7 @@ describe("real persistence: trace + trace_hit inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a different payload under the SAME id conflicts, not overwrites", async () => {
     const fixture = await createTraceFixture([ALPHA]);
@@ -134,7 +135,7 @@ describe("real persistence: trace + trace_hit inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("TR-1: a year-0000 captured_at is refused at its field pointer, writes nothing, and does NOT poison the owner", async () => {
     const fixture = await createTraceFixture([ALPHA]);
@@ -166,7 +167,7 @@ describe("real persistence: trace + trace_hit inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("TR-3: a non-contiguous stored position is refused on the read path", async () => {
     const fixture = await createTraceFixture([ALPHA]);
@@ -195,7 +196,7 @@ describe("real persistence: trace + trace_hit inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("TR-2: a prefix-matching retry after a simulated ambiguous partial write recovers, not conflicts", async () => {
     const fixture = await createTraceFixture([ALPHA]);
@@ -218,7 +219,7 @@ describe("real persistence: trace + trace_hit inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("TR-4: a stored parent_id outside the nanoid21 namespace is refused on read", async () => {
     const fixture = await createTraceFixture([ALPHA]);
@@ -234,7 +235,7 @@ describe("real persistence: trace + trace_hit inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("TR-7: a stored negative position is refused, distinctly from a mere gap", async () => {
     const fixture = await createTraceFixture([ALPHA]);
@@ -271,7 +272,7 @@ describe("real persistence: trace + trace_hit inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("TR-11: a stored empty-string nullable text column is refused, not served as legitimate", async () => {
     const fixture = await createTraceFixture([ALPHA]);
@@ -299,7 +300,74 @@ describe("real persistence: trace + trace_hit inside the real gate", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
+
+  describe("K13 (v3-parity hygiene review): depth must be parent.depth + 1, or 0 with no parent", () => {
+    // .tmp/understand/analysis-28.json / docs/overnight/V3-PARITY.md K13:
+    // "createTrace accepts any depth" -- measured, no check existed. A
+    // caller could name ANY nonnegative depth regardless of the resolved
+    // parent's own depth, or a nonzero depth with no parent at all.
+    const ROOT = traceId("k13Root");
+    const CHILD_OK = traceId("k13ChildOk");
+
+    test("a root trace (no parent_id) with a nonzero depth is refused", async () => {
+      const fixture = await createTraceFixture([ALPHA]);
+      try {
+        const parsed = await drive(fixture.datasetRoot, [
+          ctx("createTrace", createTraceRequest(ALPHA, { id: ROOT, parent_id: null, depth: "5" })),
+        ]);
+        const attempt = parsed.op0;
+        expect(attempt.ok).toBe(false);
+        expect(attempt.code).toBe("invalid_request");
+        expect(attempt.path).toBe("/depth");
+      } finally {
+        await fixture.cleanup();
+      }
+    }, testTimeout(300_000));
+
+    test("a child whose depth disagrees with parent.depth + 1 is refused", async () => {
+      const fixture = await createTraceFixture([ALPHA]);
+      try {
+        const parsed = await drive(fixture.datasetRoot, [
+          ctx("createTrace", createTraceRequest(ALPHA, { id: ROOT, parent_id: null, depth: "0" })),
+          // The root's OWN depth is 0, so a child must be exactly 1 -- not 2,
+          // not 0, not the root's own value.
+          ctx("createTrace", createTraceRequest(ALPHA, {
+            id: traceId("k13ChildBad"), parent_id: ROOT, depth: "2",
+          })),
+        ]);
+        expect(parsed.op0.ok, JSON.stringify(parsed.op0)).toBe(true);
+        const attempt = parsed.op1;
+        expect(attempt.ok).toBe(false);
+        expect(attempt.code).toBe("invalid_request");
+        expect(attempt.path).toBe("/depth");
+      } finally {
+        await fixture.cleanup();
+      }
+    }, testTimeout(300_000));
+
+    test("depth exactly one more than the resolved parent's depth is accepted", async () => {
+      const fixture = await createTraceFixture([ALPHA]);
+      try {
+        const parsed = await drive(fixture.datasetRoot, [
+          ctx("createTrace", createTraceRequest(ALPHA, { id: ROOT, parent_id: null, depth: "0" })),
+          ctx("createTrace", createTraceRequest(ALPHA, { id: CHILD_OK, parent_id: ROOT, depth: "1" })),
+          // A grandchild built on the CHILD's own depth (1), so its correct
+          // depth is 2 -- proves the check reads the resolved parent's
+          // actual stored depth, not merely "parent_id set => 1".
+          ctx("createTrace", createTraceRequest(ALPHA, {
+            id: traceId("k13Grandchild"), parent_id: CHILD_OK, depth: "2",
+          })),
+        ]);
+        for (const op of [parsed.op0, parsed.op1, parsed.op2]) {
+          expect(op.ok, JSON.stringify(op)).toBe(true);
+          expect(op.value.outcome).toBe("created");
+        }
+      } finally {
+        await fixture.cleanup();
+      }
+    }, testTimeout(300_000));
+  });
 });
 
 describe("the pure request grammar refuses a malformed target statically", () => {

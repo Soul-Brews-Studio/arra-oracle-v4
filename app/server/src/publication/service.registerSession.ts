@@ -1,11 +1,10 @@
-import { type ChatModelFn } from "./chat";
 import { SESSION_FIELDS as SESSION_FIELDS_LOCAL, encodeSessionRow, parseRegisterSession } from "./context";
 import { SESSIONS } from "./service.constants";
 import { mutateContextWrite } from "./service.mutateContextWrite";
 import { registerNamed } from "./service.registerNamed";
 import { type Clock, type ContextRegistration, type DatasetAdapter, type OwnerCore } from "./service.types";
 
-export function registerSession(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn }, requestBytes: Uint8Array): Promise<ContextRegistration> {
+export function registerSession(writer: DatasetAdapter, core: OwnerCore, options: { clock: Clock; sourceNamespace: string | null }, requestBytes: Uint8Array): Promise<ContextRegistration> {
 return mutateContextWrite(core, async () => {
         const request = parseRegisterSession(requestBytes);
         return registerNamed(writer, core, options, 
@@ -18,7 +17,9 @@ return mutateContextWrite(core, async () => {
             name: request.name,
             workspace_name: request.workspace_name,
             is_active: true,
-            h_metadata: null,
+            // K12a (overnight R18): the canonical {title} text, or null. A
+            // replay keeps the ORIGINAL row (registerNamed), title included.
+            h_metadata: request.h_metadata,
             internal_metadata: null,
             configuration: null,
             created_at,

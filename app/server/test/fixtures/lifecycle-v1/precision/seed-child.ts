@@ -17,8 +17,9 @@
 // half-null `new_id`/`new_revision_id` pair -- all ENGINE-ADMITTED corruption
 // no service call can produce, plus a raw table snapshot to prove a refused
 // allocation left the table untouched.
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   ops: Array<{ facade?: "context" | "publication" | "taxonomy" | "harness"; method: string; request: any }>;
   revisionIds?: string[];
   clockMs?: number | number[];

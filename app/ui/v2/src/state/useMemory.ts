@@ -42,9 +42,10 @@ function describe(result: ApiResult): string {
 }
 
 /** `listMessages` answers `{ rows, next_after_seq }` -- NOT `{ items }`.
- *  `getContext` answers `{ items, coverage, excluded }`. The two read paths
- *  use different envelope keys, and reading the wrong one fails silently as
- *  an empty transcript against a server that returned five messages. */
+ *  `getContext` answers `{ items, coverage, excluded, excluded_omitted }`.
+ *  The two read paths use different envelope keys, and reading the wrong
+ *  one fails silently as an empty transcript against a server that
+ *  returned five messages. */
 function rows(body: unknown): MessageRow[] {
   const value = (body as { rows?: unknown })?.rows;
   return Array.isArray(value) ? (value as MessageRow[]) : [];
@@ -118,6 +119,10 @@ export function useMemory() {
     }
     setLoadingMessages(true);
     setMessageError(null);
+    // The transcript pane is the OPERATOR view (no requester): it shows the
+    // whole session whichever peer is selected, and needs audit:read (#87 /
+    // R3). A token without it gets 403 here, surfaced by `describe` below;
+    // the selected peer's own view is the getContext column.
     const result = await listMessages(b, session, 50, null);
     setLoadingMessages(false);
     if (!result.ok) {

@@ -4,12 +4,14 @@ import { fileURLToPath } from "node:url";
 import { LIMITS, jsonByteLength, parseStrict as parseJcs } from "../src/contracts/jcs";
 import { BATCH_VERSION, dispatchBatch } from "../src/contracts/batch-v1";
 import { parseStrict } from "../src/contracts/jcs";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const worker = fileURLToPath(new URL("../src/contracts/batch-worker.ts", import.meta.url));
 const cwd = fileURLToPath(new URL("..", import.meta.url));
 
 function runWorker(input: string | Uint8Array): { status: number | null; stdout: string; stderr: string } {
-  const r = spawnSync("bun", ["run", worker], { input, cwd, encoding: "utf8", timeout: 30_000, maxBuffer: 64 * 1024 * 1024 });
+  const r = spawnSync("bun", ["run", worker], { input, cwd, encoding: "utf8", timeout: scaledMs(30_000), maxBuffer: 64 * 1024 * 1024 });
   if (r.error) throw r.error;
   return { status: r.status, stdout: r.stdout, stderr: r.stderr };
 }
@@ -206,4 +208,4 @@ test("§7 per-payload bound measures RAW wire bytes: whitespace- and escape-heav
   const dupAfterRaw = `{"version":"${BATCH_VERSION}","items":[{"id":"w1","op":"target","payload":${wsText}},{"id":"d","op":"target","payload":${base}},{"id":"d","op":"target","payload":${base}}]}`;
   const dup = parse(runWorker(dupAfterRaw).stdout);
   expect([dup.error.item_id, dup.error.detail.code, dup.error.detail.path]).toEqual([null, "invalid_value", "/items/2/id"]);
-}, 30_000);
+}, testTimeout(30_000));

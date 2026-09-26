@@ -47,6 +47,13 @@ const ids = payload.seed_ids;
 const bundle = await openKnowledgeWriter(root!, {
   newRevisionId: () => "r".repeat(21),
   clock: () => FIXED_CLOCK_MS,
+  // R6 (#27, docs/overnight/DECISIONS.md): `type` is sealed. Retirement and the
+  // documented ABA rename exercise the OPERATOR lifecycle this contract
+  // specifies, so those two modes open as the trusted in-process operator.
+  // "references" and "tree-boundary" stay ordinary owners: their expected
+  // codes are unchanged because structure and references outrank the seal
+  // (taxonomy-write-v1.md, R6 amendment; taxonomy-seal.test.ts).
+  taxonomyOperator: mode === "retirement" || mode === "aba",
 });
 const taxonomy = bundle.taxonomy;
 const send = (method: string, body: Json) => taxonomy[method]!(encodeRequest(body));

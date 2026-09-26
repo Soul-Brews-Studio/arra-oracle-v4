@@ -53,6 +53,8 @@ import {
   runGated,
   spawnGatedChild,
 } from "./helpers/publication-fixture";
+import { scaledMs } from "./helpers/timing.scaledMs";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 /** Contract §3 literals, taken from the contract rather than from the source. */
 const LOCK_FILENAME = ".arra-writer.lock";
@@ -66,8 +68,8 @@ const SERVICE_MODULE = join(SERVER_DIR, "src", "publication", "service.ts");
 const HELPER_MODULE = join(import.meta.dir, "helpers", "publication-fixture.ts");
 
 /** Parent-enforced ceiling on every child. No child outlives its test. */
-const CHILD_DEADLINE_MS = 30_000;
-const TEST_TIMEOUT_MS = 120_000;
+const CHILD_DEADLINE_MS = scaledMs(30_000);
+const TEST_TIMEOUT_MS = testTimeout(120_000);
 
 /** Deterministic operator injections (§9 fault-test seam). Never request data. */
 const FIXED_REVISION_ID = "a".repeat(21);

@@ -587,10 +587,20 @@ class IsolationTests(unittest.TestCase):
         ``ARRA_DATA_DIR``. What this test still guards is the thing that
         matters: the PRODUCTION migrator entrypoint (``__main__.py``) does not
         pull the unreviewed candidate into the path that creates real tables.
+
+        ``copy_migration/`` (issue #34, overnight rulings R11 + R17) is
+        excluded DELIBERATELY, as a whole package, for the same reason as
+        ``rehearsal.py``: it is the operator-only copy migration, whose job is
+        to create the 19 target tables in a NEW empty candidate directory under
+        the writer gate. It has its own entry point (``arra-migrate-copy``),
+        never touches ``ARRA_DATA_DIR`` and only reads a snapshot copy of the
+        source. The exclusion is by directory, not by substring, and the two
+        assertions after the loop keep the production entry point from
+        reaching either the candidate or the copy path.
         """
         scanned = [
             p for p in self.SOURCE_ROOT.rglob("*.py")
-            if "target_v1" not in p.parts and p.name != "rehearsal.py"
+            if "target_v1" not in p.parts and "copy_migration" not in p.parts and p.name != "rehearsal.py"
         ]
         # Floor: today that is 8 root modules + 17 models. If a reorg makes this
         # scan collapse, the assertion fails instead of the loop finding nothing.
@@ -602,6 +612,11 @@ class IsolationTests(unittest.TestCase):
             "target_v1",
             (self.SOURCE_ROOT / "__main__.py").read_text(encoding="utf-8"),
             "the real migrator entrypoint must still never import the candidate",
+        )
+        self.assertNotIn(
+            "copy_migration",
+            (self.SOURCE_ROOT / "__main__.py").read_text(encoding="utf-8"),
+            "the real migrator entrypoint must never reach the #34 copy migration either",
         )
 
 

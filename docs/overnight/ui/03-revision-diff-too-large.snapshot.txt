@@ -1,0 +1,235 @@
+[p1 "arra-oracle-v4 — memory" | space "ui-33 fix-round proof"(86): 1 managed, 0 untracked — p1* "arra-oracle-v4 — memory"]
+root
+  container
+    container
+      text "BANK"
+      textbox [ref=218, loc=css:input[placeholder="default"]]
+        text "default"
+    container
+      text "WORKSPACE"
+      textbox [ref=219, loc=css:input[placeholder="workspace_name"]]
+        text "default"
+    container
+      text "TOKEN"
+      textbox [ref=220, loc=css:input[placeholder="bearer…"]]
+    button [ref=221]
+      text "ping"
+  container
+    button [ref=222]
+      text "overview"
+    button [ref=223]
+      text "explore"
+    button [ref=224]
+      text "messages"
+    button [ref=225]
+      text "forum"
+    button [ref=226]
+      text "knowledge"
+  container
+    container
+      container
+        text "NODES"
+        button [ref=227]
+          text "new"
+      container
+        textbox [ref=228, loc=css:input[placeholder="node id…"]]
+          text "node id…"
+        button [ref=229]
+          text "add"
+      text "no nodes bookmarked yet"
+    container [ref=230]
+      container
+        container
+          text "SoLnDJvXXH"
+          text "…"
+        text "note"
+      container [ref=231]
+        container
+          heading
+            text "Large body: too-large-to-diff proof"
+          text "note"
+        paragraph
+          text "LINE-0 LINE-1 LINE-2 LINE-3 LINE-4 LINE-5 LINE-6 LINE-7 LINE-8 LINE-9 LINE-10 LINE-11 LINE-12 LINE-13 LINE-14 LINE-15 LINE-16 LINE-17 LINE-18 LINE-19 LINE-20 LINE-21 LINE-22 LINE-23 LINE-24 LINE-25 LI..."
+        unordered_list
+          list_item
+            text "revision"
+          list_item
+            text "2"
+          list_item
+            text "created"
+          list_item
+            text "2026-09-26T18:58:34.294Z"
+          list_item
+            text "active"
+          list_item
+            text "yes"
+          list_item
+            text "digest"
+          list_item
+            text "2f7e11dfb10b…"
+      container [ref=232]
+        button [ref=233]
+          container
+            container
+              text "#"
+              text "2"
+            text "HEAD"
+          text "Large body: too-large-to-diff proof"
+          text "every line changed, on purpose"
+          container
+            text "2026-09-26T18:58:34.294Z"
+            container
+              text "⤷ base:"
+              container
+                text "yd-mgg42"
+                text "…"
+        button [ref=234]
+          container
+            text "#"
+            text "1"
+          text "Large body: too-large-to-diff proof"
+          container
+            text "2026-09-26T18:58:34.245Z"
+            container
+              text "⤷ base:"
+              text "none (first revision)"
+      container
+        container
+          text "DIFF"
+          combobox [ref=235]
+            text "#1 — Large body: too-large-to-diff proof"
+          text "vs"
+          combobox [ref=236]
+            text "#2 — Large body: too-large-to-diff proof"
+        container
+          container
+            container
+              paragraph
+                text "FROM · REV"
+                text "1"
+              paragraph
+                text "Large body: too-large-to-diff proof"
+            container
+              paragraph
+                text "TO · REV"
+                text "2"
+              paragraph
+                text "Large body: too-large-to-diff proof"
+          table
+            table_row
+              table_cell
+                text "author"
+              table_cell
+                text "alice"
+              table_cell
+                text "alice"
+            table_row
+              table_cell
+                text "observer"
+              table_cell
+                text "—"
+              table_cell
+                text "—"
+            table_row
+              table_cell
+                text "subject"
+              table_cell
+                text "—"
+              table_cell
+                text "—"
+            table_row
+              table_cell
+                text "session"
+              table_cell
+                text "sess-a"
+              table_cell
+                text "sess-a"
+            table_row
+              table_cell
+                text "is_active"
+              table_cell
+                text "true"
+              table_cell
+                text "true"
+            table_row
+              table_cell
+                text "valid_from"
+              table_cell
+                text "—"
+              table_cell
+                text "—"
+            table_row
+              table_cell
+                text "valid_to"
+              table_cell
+                text "—"
+              table_cell
+                text "—"
+            table_row
+              table_cell
+                text "change_reason"
+              table_cell
+                text "—"
+              table_cell
+                text "every line changed, on purpose"
+            table_row
+              table_cell
+                text "fields"
+              table_cell
+                text "{}"
+              table_cell
+                text "{}"
+          text "Body too large to diff ("
+          text "2,001"
+          text "vs"
+          text "2,001"
+          text "lines) — field changes above are still complete."
+          paragraph
+            text "TERMS ("
+            text "0"
+            text ")"
+          paragraph
+            text "no term changes"
+          paragraph
+            text "LINKS ("
+            text "0"
+            text ")"
+          paragraph
+            text "no link changes"
+      paragraph
+        text "Seed the reserved vocabularies first — a revision needs exactly one type term."
+      textbox [ref=237, loc=css:input[placeholder="title…"]]
+        text "title…"
+      textbox [ref=238, loc=css:textarea[placeholder="body…"]]
+        text "body…"
+      container
+        text "FORMAT"
+        combobox [ref=239]
+          text "text"
+      container
+        text "TYPE"
+        combobox [ref=240]
+          text "note"
+      container
+        text "HORIZON"
+        combobox [ref=241]
+          text "none"
+      textbox [ref=242, loc=css:input[placeholder="change reason (optional)…"]]
+        text "change reason (optional)…"
+      button [ref=243]
+        text "publish revision"
+    container
+      container
+        container
+          paragraph
+            text "Reserved vocabularies not seeded"
+          paragraph
+            text "Every revision needs exactly one `type` term, and this workspace has no vocabulary/term ids for `type` or `memory_horizon` yet. Seeding mints them CLIENT-side and holds them only in this browser -- th..."
+        button [ref=244]
+          text "seed reserved vocabularies"
+      container
+        paragraph
+          text "TYPE"
+        button [ref=245]
+          text "note"
+          text "3"

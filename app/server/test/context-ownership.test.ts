@@ -31,6 +31,8 @@ import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { PYTHON, runGated, runOwnedChild, spawnGatedChild } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const TEST_DIR = import.meta.dir;
 const SERVER_DIR = resolve(TEST_DIR, "..");
@@ -38,7 +40,7 @@ const OWNERSHIP_CHILD = join(TEST_DIR, "fixtures", "context-v1", "ownership", "c
 const RAW_MUTATE = join(TEST_DIR, "fixtures", "context-v1", "ownership", "raw-mutate.ts");
 /** Trusted operator configuration for the sourced writer instance, never request data. */
 const SOURCE_NAMESPACE = "ownership-probe";
-const TEST_TIMEOUT_MS = 180_000;
+const TEST_TIMEOUT_MS = testTimeout(180_000);
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
 
@@ -47,25 +49,37 @@ const BETA = "beta-workspace";
 /** §1: writer {publication,taxonomy,context,close}; reader {publication,taxonomy,context}. */
 const WRITER_KEYS = "close,context,publication,taxonomy";
 const READER_KEYS = "context,publication,taxonomy";
-/** §8: context writer has exactly these twenty-two (its own eleven plus the
- *  eleven reader methods it spreads in); the reader exactly the eleven. */
+/** §8: context writer has exactly these thirty-three (its own fourteen plus the
+ *  nineteen reader methods it spreads in); the reader exactly the nineteen plus
+ *  the two reader-only #30 searches, twenty-one. */
+// #30 overnight R7/R8: `getSearchFreshness` (read) and `embedPendingChunks`
+// (write-only) join the context facade -- both lists below grew accordingly.
+// Overnight R18: + closeSession (K9, D7) on every writer, + listSessionMembers (K10) on both.
+// Overnight R18 (V3 + K5 + V7): + listTraces (K5, docs/overnight/V3-PARITY.md §5), a
+// read on the reader and spread onto the writer.
 const CONTEXT_WRITE_METHODS =
-  "advanceReadCursor,answerChat,appendMessages,createSessionLink,createTrace,getContext," +
-  "getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
+  "advanceReadCursor,appendMessages,closeSession,createSessionLink,createTrace,embedPendingChunks," +
+  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
+  "getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
-  "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessions,listTraceHits," +
-  "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
+  "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits," +
+  "listTraces,reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
   "writeChunkEmbedding";
 const CONTEXT_READ_METHODS =
-  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
+  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
+  "getSession,getTrace," +
   "listConnections,listLifecycleHistory,listMcpCalls,listMessages,listPeers," +
-  "listSearchChunks,listSessionLinks,listSessions,listTraceHits";
+  "listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits,listTraces," +
+  "searchKnowledgeKeyword,searchKnowledgeSemantic";
 /** Existing facades keep their exact key sets and carry no close. */
 const PUBLICATION_WRITE_METHODS = "getAcceptedHead,listAcceptedHistory,listNodes,publishRevision";
 const PUBLICATION_READ_METHODS = "getAcceptedHead,listAcceptedHistory,listNodes";
 const TAXONOMY_WRITE_METHODS =
-  "createTerm,createVocabulary,getTerm,getVocabulary,renameTerm,reparentTerm,retireTerm,seedReservedVocabularies";
-const TAXONOMY_READ_METHODS = "getTerm,getVocabulary";
+  // K6+K7 (R18 (K6+K7+V8)): term listing, term usage counts and workspace stats.
+  "createTerm,createVocabulary,getTerm,getVocabulary,knowledgeStats,listTermUsage,listTerms," +
+  "lookupTermByName,lookupVocabularyByName,renameTerm,reparentTerm,retireTerm,seedReservedVocabularies";
+// K2 (R18): the two by-name reads are on every taxonomy reader and writer facade.
+const TAXONOMY_READ_METHODS = "getTerm,getVocabulary,knowledgeStats,listTermUsage,listTerms,lookupTermByName,lookupVocabularyByName"; // K6/K7 (R18 (K6+K7+V8))
 
 /** §6: persistence/reference/state failures reuse the publication envelope, unchanged. */
 const PUB_ERR = "PublicationError arra-publication-error/v1";
@@ -607,7 +621,7 @@ describe.skipIf(!READY)(`shared owner lifecycle [${PENDING}]`, () => {
             ].join("\n"),
             root,
           ],
-          { deadlineMs: 30_000 },
+          { deadlineMs: scaledMs(30_000) },
         );
         expect(eventsOf(contender.stdout)).toContain("gate:acquired");
       } finally {

@@ -98,6 +98,9 @@ function useCursorList<T>(fetchPage: (after: string | null, includeTotal: boolea
 export function useListing(b: Bank) {
   const scope = useMemo(() => `${b.bank}:${b.workspace}`, [b.bank, b.workspace]);
   const [typeTerm, setTypeTerm] = useState<string | null>(null);
+  // #29 slice B: "show history" -- false is the ordinary view (retired and
+  // superseded nodes excluded); true includes them, labelled.
+  const [includeInactive, setIncludeInactive] = useState(false);
 
   const peers = useCursorList<PeerRow>(
     useCallback((after, includeTotal) => listPeers(b, after, PAGE_SIZE, includeTotal), [b]),
@@ -107,8 +110,8 @@ export function useListing(b: Bank) {
   );
   const nodes = useCursorList<NodeRow>(
     useCallback(
-      (after, includeTotal) => listNodes(b, after, PAGE_SIZE, includeTotal, typeTerm),
-      [b, typeTerm],
+      (after, includeTotal) => listNodes(b, after, PAGE_SIZE, includeTotal, typeTerm, includeInactive),
+      [b, typeTerm, includeInactive],
     ),
   );
 
@@ -127,5 +130,20 @@ export function useListing(b: Bank) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope]);
 
-  return { peers, sessions, nodes, typeTerm, setTypeTerm, refreshAll };
+  // Toggling "show history" changes what `nodes.refresh` fetches (its
+  // callback identity just changed above), so re-fire it explicitly rather
+  // than waiting on the NEXT unrelated refresh to notice. Skipped on the
+  // FIRST render: the `scope` effect above already covers the initial
+  // fetch, and firing both here would double it.
+  const mounted = useRef(false);
+  useEffect(() => {
+    if (!mounted.current) {
+      mounted.current = true;
+      return;
+    }
+    nodes.refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [includeInactive]);
+
+  return { peers, sessions, nodes, typeTerm, setTypeTerm, includeInactive, setIncludeInactive, refreshAll };
 }

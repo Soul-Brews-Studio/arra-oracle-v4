@@ -9,11 +9,17 @@
 // `service.ts` and stated as the derivation this file is authored from, the
 // same discipline `read-cursor-ownership.test.ts` applies to its own contract.
 //
-// DERIVATION, stated once and re-verified independently of the coordinator's
-// count: `service.ts` defines `getContext` inside `createContextReadMethods`
-// (the reader) and `answerChat` inside `createContextWriterService` only,
-// spread into the writer bundle via `...reads` plus twelve writer-only
-// methods. Grep evidence:
+// AMENDED for #32 slice A (overnight ruling R9): `answerChat` is no longer a
+// writer method at all. It persists nothing, so it moved to the reader-side
+// chat facade (`service.createChatService.ts`); the writer's context facade
+// keeps `getContext` (spread from `reads`) and loses `answerChat`. The chat
+// cases below drive that facade over the SAME owner's context reads.
+//
+// DERIVATION (as originally authored), stated once and re-verified
+// independently of the coordinator's count: `service.ts` defines `getContext`
+// inside `createContextReadMethods` (the reader) and `answerChat` inside
+// `createContextWriterService` only, spread into the writer bundle via
+// `...reads` plus twelve writer-only methods. Grep evidence:
 //   - `grep -c '^export '` on service.ts → 9 VALUE/TYPE exports of which
 //     exactly 9 are runtime bindings (`PublicationError` + eight `open*`
 //     functions) -- confirmed below by re-deriving the list in the child.
@@ -51,10 +57,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createContextFixture } from "./helpers/context-fixture";
 import { runGated, spawnGatedChild } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const TEST_DIR = import.meta.dir;
 const CHILD = join(TEST_DIR, "fixtures", "chat-v1", "ownership", "chat-child.ts");
-const TEST_TIMEOUT_MS = 180_000;
+const TEST_TIMEOUT_MS = testTimeout(180_000);
 const ALPHA = "alpha-workspace";
 
 /** §1, re-derived independently, not copied from the coordinator's message. */
@@ -69,12 +76,16 @@ const RUNTIME_EXPORTS = [
   "openPublicationReader",
   "openPublicationWriter",
 ].join(",");
+// #30 overnight R7/R8: `getSearchFreshness` (read) and `embedPendingChunks`
+// (write-only) join the context facade -- the list below grew accordingly.
+// Overnight R18: + closeSession (K9, D7) on every writer, + listSessionMembers (K10) on both.
 const CONTEXT_WRITE_METHODS =
-  "advanceReadCursor,answerChat,appendMessages,createSessionLink,createTrace,getContext," +
-  "getMessage,getPeer,getReadCursor,getRecallEligibility,getSession,getTrace," +
+  "advanceReadCursor,appendMessages,closeSession,createSessionLink,createTrace,embedPendingChunks," +
+  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
+  "getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
-  "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessions,listTraceHits," +
-  "reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
+  "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits," +
+  "listTraces,reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
   "writeChunkEmbedding";
 const CONTEXT_WRITER_KEYS = "close,context,publication,taxonomy";
 
@@ -170,7 +181,7 @@ afterAll(async () => {
 
 describe("closed facade surfaces, re-derived from service.ts directly", () => {
   test(
-    "the writer carries 24 methods including answerChat/getContext, the reader 12, and exports stay at 9",
+    "the writer carries getContext but not answerChat (R9), and exports stay at 9",
     async () => {
       const root = await freshDataset("surfaces");
       const writerEvents = await runChildOk(root, ["writer-surface", root, payloadFile("writer-surface", {})], "writer-surface");
@@ -186,7 +197,7 @@ describe("closed facade surfaces, re-derived from service.ts directly", () => {
   );
 
   test(
-    "BITE TEST: a writer surface missing answerChat would be caught -- proven by mutating the expectation, not the source",
+    "BITE TEST: a writer surface still carrying answerChat would be caught -- proven by mutating the expectation, not the source",
     async () => {
       // §-anti-pattern guard: an assertion never observed failing is not
       // evidence. This does not edit service.ts (forbidden); it proves the
@@ -194,7 +205,8 @@ describe("closed facade surfaces, re-derived from service.ts directly", () => {
       // confirming Bun reports a real mismatch, then discarding that result.
       const root = await freshDataset("bite-surfaces");
       const writerEvents = await runChildOk(root, ["writer-surface", root, payloadFile("bite-writer-surface", {})], "bite-writer-surface");
-      const wrongList = CONTEXT_WRITE_METHODS.replace("answerChat,", "");
+      const wrongList = CONTEXT_WRITE_METHODS.replace("advanceReadCursor,", "advanceReadCursor,answerChat,");
+      expect(wrongList).not.toBe(CONTEXT_WRITE_METHODS);
       let threw = false;
       try {
         expect(eventFor(writerEvents, "writer:context")).toBe(`writer:context ${wrongList}`);
@@ -319,7 +331,8 @@ describe("chat is queue-transparent: neither blocked by poison, nor a source of 
       }
       const failedAnswer = errorLineOf(events, "answerChat:model-failed");
       expect(failedAnswer).toContain('"ok":false');
-      expect(failedAnswer).toContain("writer_unavailable");
+      // #32 / R9: a model failure is `model_unavailable`, never a writer code.
+      expect(failedAnswer).toContain("model_unavailable");
       // The owner is NOT poisoned: a genuine write right after succeeds.
       const followUp = okValue(events, "write:after-model-failure") as { outcome?: string };
       expect(followUp.outcome).toBe("created");

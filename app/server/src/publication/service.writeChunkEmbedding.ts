@@ -1,4 +1,3 @@
-import { type ChatModelFn } from "./chat";
 import { failPublication } from "./errors";
 import { encodeSearchChunkRow, parseWriteChunkEmbedding, SEARCH_CHUNK_FIELDS, storedTermIds } from "./search-chunk";
 import { quote } from "./storage";
@@ -31,7 +30,7 @@ import { type Clock, type DatasetAdapter, type OwnerCore } from "./service.types
 export function writeChunkEmbedding(
   writer: DatasetAdapter,
   core: OwnerCore,
-  options: { clock: Clock; sourceNamespace: string | null; model?: ChatModelFn },
+  options: { clock: Clock; sourceNamespace: string | null },
   requestBytes: Uint8Array,
 ) {
   const request = parseWriteChunkEmbedding(requestBytes);

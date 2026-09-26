@@ -5,12 +5,12 @@ import { renameTerm } from "./service.renameTerm";
 import { reparentTerm } from "./service.reparentTerm";
 import { retireTerm } from "./service.retireTerm";
 import { seedReservedVocabularies } from "./service.seedReservedVocabularies";
-import { type Clock, type DatasetAdapter, type OwnerCore } from "./service.types";
+import { type DatasetAdapter, type OwnerCore, type TaxonomyWriteOptions } from "./service.types";
 
 export function createTaxonomyWriterService(
   writer: DatasetAdapter,
   core: OwnerCore,
-  options: { clock: Clock },
+  options: TaxonomyWriteOptions,
 ) {
   const reads = createTaxonomyReadMethods(writer);
   return {

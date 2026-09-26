@@ -1,5 +1,0 @@
-$36c13b4d-0803-43ba-bcb5-d56e38c922e2²™id ÿÿÿÿÿÿÿÿÿ*string8'workspace_name ÿÿÿÿÿÿÿÿÿ*string8 node_id ÿÿÿÿÿÿÿÿÿ*string8#revision_no ÿÿÿÿÿÿÿÿÿ*int648+base_revision_id ÿÿÿÿÿÿÿÿÿ*string08%operation_id ÿÿÿÿÿÿÿÿÿ*string8title ÿÿÿÿÿÿÿÿÿ*string8body ÿÿÿÿÿÿÿÿÿ*string8$body_format ÿÿÿÿÿÿÿÿÿ*string8fields	 ÿÿÿÿÿÿÿÿÿ*string8+author_peer_name
- ÿÿÿÿÿÿÿÿÿ*string08-observer_peer_name ÿÿÿÿÿÿÿÿÿ*string08,subject_peer_name ÿÿÿÿÿÿÿÿÿ*string08'session_name ÿÿÿÿÿÿÿÿÿ*string08 	is_active ÿÿÿÿÿÿÿÿÿ*bool8-
-valid_from ÿÿÿÿÿÿÿÿÿ*timestamp:us:-08+valid_to ÿÿÿÿÿÿÿÿÿ*timestamp:us:-08(change_reason ÿÿÿÿÿÿÿÿÿ*string08+
-created_at ÿÿÿÿÿÿÿÿÿ*timestamp:us:-8&schema_version ÿÿÿÿÿÿÿÿÿ*int648*canonical_version ÿÿÿÿÿÿÿÿÿ*string8'content_digest ÿÿÿÿÿÿÿÿÿ*string8+term_snapshot_json ÿÿÿÿÿÿÿÿÿ*string8+link_snapshot_json ÿÿÿÿÿÿÿÿÿ*string8%
-h_metadata ÿÿÿÿÿÿÿÿÿ*string08,internal_metadata ÿÿÿÿÿÿÿÿÿ*string08

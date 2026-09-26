@@ -1,8 +1,9 @@
 // Owned test child for the #30 search-chunk kernel. Runs INSIDE the real
 // gate. Adapted from the #71 read-cursor kernel's gated-cursor.ts: same
 // generic op-dispatch shape, so a driver in the test file looks identical.
+import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 const [, , datasetRoot, payloadJson] = Bun.argv;
-const payload = JSON.parse(payloadJson ?? "{}") as {
+const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
   ops: Array<{ facade?: "context" | "publication" | "taxonomy" | "harness"; method: string; request: any }>;
   clockMs?: number;
   revisionIds?: string[];
@@ -12,7 +13,27 @@ const servicePath = new URL("../../../../src/publication/service.ts", import.met
 const { openContextWriter } = await import(servicePath);
 const { rawRows } = await import(new URL("../../../../src/publication/storage.ts", import.meta.url).pathname);
 const { connect } = await import("@lancedb/lancedb");
-const { tableFromArrays } = await import("apache-arrow");
+const {
+  tableFromArrays, vectorFromArray, FixedSizeList, List, Field, Float32, Utf8, makeData, Vector,
+} = await import("apache-arrow");
+const EMBEDDING_DIMENSION = 384;
+const TERM_IDS_TYPE = new List(new Field("item", new Utf8(), true));
+
+/** Same hand-built all-null vector the accepted production writer uses
+ *  (`service.makeAdapter.ts`'s `buildSearchChunkVectors`) -- see
+ *  `precision/seed-child.ts`'s own copy of this same construction for the
+ *  measured reason a plain `vectorFromArray` cannot build this column. */
+function allNullEmbeddingVector(rowCount: number) {
+  const child = makeData({ type: new Float32(), data: new Float32Array(rowCount * EMBEDDING_DIMENSION) });
+  const listData = makeData({
+    type: new FixedSizeList(EMBEDDING_DIMENSION, new Field("item", new Float32(), true)),
+    length: rowCount,
+    nullCount: rowCount,
+    nullBitmap: new Uint8Array(Math.ceil(rowCount / 8)),
+    child,
+  });
+  return new Vector([listData]);
+}
 
 let harnessConn: Awaited<ReturnType<typeof connect>> | null = null;
 const harnessTable = async (name: string) => {
@@ -102,6 +123,50 @@ const harness: Record<string, (request: any) => Promise<unknown>> = {
     for (const key of Object.keys(copy)) columns[key] = [copy[key]];
     await tbl.add(tableFromArrays(columns as never) as never);
     return { corrupted: request.revision_id };
+  },
+  /**
+   * Plant ONE `search_chunks_v1` row directly, bypassing
+   * `indexRevisionChunks` (and therefore the closed embedding-profile
+   * registry it enforces) entirely. #30 R7 amendment: the registry closes
+   * off which profile a REQUEST may write or list, not what the physical
+   * table may hold -- "one table holds several embedding profiles, as
+   * built". This is how F5 reaches a second, non-active profile's row to
+   * prove `listSearchChunks` still scopes to the one it was asked for.
+   */
+  async insertLegacyProfileChunk(request: {
+    id: string;
+    workspace_name: string;
+    node_id: string;
+    revision_id: string;
+    chunk_index: string;
+    embedding_profile: string;
+    type_term_id: string;
+  }) {
+    const tbl = await harnessTable("search_chunks_v1");
+    const columns: Record<string, unknown> = {
+      id: [request.id],
+      workspace_name: [request.workspace_name],
+      node_id: [request.node_id],
+      revision_id: [request.revision_id],
+      chunk_index: [BigInt(request.chunk_index)],
+      text: ["legacy profile body"],
+      content_hash: ["c".repeat(64)],
+      chunker_version: ["chunker/v1"],
+      embedding_profile: [request.embedding_profile],
+      embedding: allNullEmbeddingVector(1),
+      type_term_id: [request.type_term_id],
+      term_ids: vectorFromArray([[]] as (string | null)[][], TERM_IDS_TYPE),
+      observer_peer_name: [null],
+      subject_peer_name: [null],
+      session_name: [null],
+      status: ["pending"],
+      attempts: [0n],
+      last_attempt_at: [null],
+      embedded_at: [null],
+      error_code: [null],
+    };
+    await tbl.add(tableFromArrays(columns as never) as never);
+    return { inserted: request.id };
   },
 };
 

@@ -13,10 +13,12 @@ export function sampleBody(method: string, workspace: string): string {
       return pick({ peer_name: "alice" });
     case "getSession":
       return pick({ session_name: "sess-a" });
+    // #87 / R3: requester_peer_name is optional. null (or omitted) is the
+    // operator view and needs audit:read; a peer name must be a current member.
     case "getMessage":
-      return pick({ public_id: "" });
+      return pick({ public_id: "", requester_peer_name: null });
     case "listMessages":
-      return pick({ session_name: "sess-a", limit: 20, after_seq: null });
+      return pick({ session_name: "sess-a", limit: 20, after_seq: null, requester_peer_name: null });
     case "getContext":
       return pick({ peer_name: "alice", session_name: "sess-a", max_items: 10 });
     case "answerChat":

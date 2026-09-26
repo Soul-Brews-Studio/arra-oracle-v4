@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { type Bank, newPublicId } from "./api/memory";
-import { horizonOf, parseTerms, typeOf } from "./api/knowledge";
+import { horizonOf, parseTerms, type RevisionRow, typeOf } from "./api/knowledge";
 import { EmptyState } from "./components/EmptyState";
 import { ErrorNote } from "./components/ErrorNote";
 import { HorizonBadge } from "./components/HorizonBadge";
 import { NodeHead } from "./components/NodeHead";
 import { NodeRail } from "./components/NodeRail";
 import { PublishForm } from "./components/PublishForm";
+import { RevisionDiff } from "./components/RevisionDiff";
 import { RevisionHistory } from "./components/RevisionHistory";
 import { TaxonomySetup } from "./components/TaxonomySetup";
 import { TermCloud } from "./components/TermCloud";
 import { TermCloudEmpty } from "./components/TermCloudEmpty";
 import { TypeBadge } from "./components/TypeBadge";
+import { compareRevisionNo } from "./state/compareRevisionNo";
 import { useKnowledge } from "./state/useKnowledge";
 
 /** The knowledge half: nodes, immutable revisions, type and tags.
@@ -40,6 +42,33 @@ export function KnowledgeView({
   const [termFilter, setTermFilter] = useState<string | null>(null);
 
   const terms = useMemo(() => parseTerms(k.head?.revision ?? null), [k.head]);
+
+  // #33 revision diff: newest first, the order a "pick two to compare" list
+  // wants -- `k.history` itself stays in whatever order the server sent (see
+  // `RevisionHistory`'s own comment), this sort is local to the picker.
+  const sortedHistory = useMemo(
+    () => [...k.history].sort((a, b) => compareRevisionNo(a.revision_no, b.revision_no)),
+    [k.history],
+  );
+  const [diffFromId, setDiffFromId] = useState<string | null>(null);
+  const [diffToId, setDiffToId] = useState<string | null>(null);
+  useEffect(() => {
+    const stillValid = (id: string | null) => id !== null && sortedHistory.some((r) => r.id === id);
+    if (sortedHistory.length === 0) {
+      setDiffFromId(null);
+      setDiffToId(null);
+      return;
+    }
+    // Default to the two newest -- the edit most likely worth reviewing --
+    // falling back to comparing the only revision against itself when there
+    // is just one, which the render below shows as "pick two different
+    // revisions" rather than a diff.
+    if (!stillValid(diffToId)) setDiffToId(sortedHistory[0]!.id);
+    if (!stillValid(diffFromId)) setDiffFromId((sortedHistory[1] ?? sortedHistory[0])!.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortedHistory]);
+  const diffFrom: RevisionRow | null = sortedHistory.find((r) => r.id === diffFromId) ?? null;
+  const diffTo: RevisionRow | null = sortedHistory.find((r) => r.id === diffToId) ?? null;
 
   // The URL owns the selection here too, so a `#/knowledge?node=…` link opens
   // that node directly and Back leaves it the way clicking got you there.
@@ -100,16 +129,61 @@ export function KnowledgeView({
               error={null}
             />
             <RevisionHistory
-              revisions={k.history}
+              // Newest first, matching this component's own documented
+              // contract ("`revisions` is NOT re-sorted here -- the caller
+              // decides order"). Fix-round finding: this used to pass
+              // `k.history` straight through, which is whatever order the
+              // server sent (oldest first) -- the opposite of what the
+              // component's own comment promised.
+              revisions={sortedHistory}
               headRevisionId={k.snapshotHead ?? k.head?.revision?.id ?? null}
               loading={k.loading}
               error={null}
-              onSelect={() => {
-                /* POC: history is a record to read, not a checkout. Selecting
-                   a past revision would imply a restore this kernel does not
-                   have -- supersede is a new revision, never a rewind. */
+              onSelect={(id) => {
+                // POC: history is a record to read, not a checkout --
+                // selecting a past revision does not restore it, supersede is
+                // a new revision, never a rewind. What selecting DOES do is
+                // pick it as the base ("from") side of the diff below, so
+                // clicking any past entry immediately shows "that revision
+                // vs whatever `to` is" (head, by default).
+                setDiffFromId(id);
               }}
             />
+            {sortedHistory.length >= 2 && (
+              <div className="flex flex-col gap-2 border-t border-edge p-3">
+                <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
+                  <span className="uppercase tracking-wide">diff</span>
+                  <select
+                    value={diffFromId ?? ""}
+                    onChange={(e) => setDiffFromId(e.target.value)}
+                    className="rounded border border-edge bg-ink px-2 py-1 text-slate-100 outline-none focus:border-accent"
+                  >
+                    {sortedHistory.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        #{r.revision_no} — {r.title}
+                      </option>
+                    ))}
+                  </select>
+                  <span>vs</span>
+                  <select
+                    value={diffToId ?? ""}
+                    onChange={(e) => setDiffToId(e.target.value)}
+                    className="rounded border border-edge bg-ink px-2 py-1 text-slate-100 outline-none focus:border-accent"
+                  >
+                    {sortedHistory.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        #{r.revision_no} — {r.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {diffFrom !== null && diffTo !== null && diffFrom.id !== diffTo.id ? (
+                  <RevisionDiff from={diffFrom} to={diffTo} />
+                ) : (
+                  <p className="text-[11px] text-muted">pick two different revisions to diff</p>
+                )}
+              </div>
+            )}
             <PublishForm
               onPublish={(input) => {
                 void k.actions.publish(input, target).then(() => {

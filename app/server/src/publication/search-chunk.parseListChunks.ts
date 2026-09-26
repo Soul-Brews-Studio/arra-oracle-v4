@@ -3,6 +3,7 @@ import { chunkerVersion } from "./search-chunk.chunkerVersion";
 import { name } from "./search-chunk.name";
 import { nanoidField } from "./search-chunk.nanoidField";
 import { parseRequest } from "./search-chunk.parseRequest";
+import { requireRegisteredEmbeddingProfileName } from "./search-chunk.requireRegisteredEmbeddingProfileName";
 
 // scoped on the SAME tuple the chunk id is keyed on: `indexRevisionChunks` is
 // explicitly re-callable for one revision under different chunker versions
@@ -23,6 +24,12 @@ export function parseListChunks(bytes: Uint8Array): ListChunksRequest {
     workspace_name: name(request.get("workspace_name"), ["workspace_name"]),
     revision_id: nanoidField(request.get("revision_id"), ["revision_id"]),
     chunker_version: chunkerVersion(request.get("chunker_version"), ["chunker_version"]),
-    embedding_profile: name(request.get("embedding_profile"), ["embedding_profile"]),
+    // #30 R7: same closed registry `indexRevisionChunks` enforces via
+    // `embeddingProfile()` -- a list request naming any other profile is
+    // refused here rather than silently returning zero rows.
+    embedding_profile: requireRegisteredEmbeddingProfileName(
+      name(request.get("embedding_profile"), ["embedding_profile"]),
+      ["embedding_profile"],
+    ),
   };
 }

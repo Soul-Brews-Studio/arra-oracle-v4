@@ -22,6 +22,7 @@ import {
   sessionRequest,
   sourcedItem,
 } from "./helpers/context-fixture";
+import { OPERATOR } from "./helpers/read-boundary-fixture";
 import { ContractError } from "../src/contracts/errors";
 import { prepareNewMessage } from "../src/contracts/source-ingestion-v1";
 import { PublicationError } from "../src/publication/errors";
@@ -48,6 +49,7 @@ import {
   parseRegisterSession,
   rowWireBytes,
 } from "../src/publication/context";
+import { testTimeout } from "./helpers/timing.testTimeout";
 
 const WS = "alpha-workspace";
 const id = (seed: string) => `${seed}${"0".repeat(Math.max(0, 21 - seed.length))}`.slice(0, 21);
@@ -92,7 +94,8 @@ describe("request grammar is closed, and keeps the GOVERNED envelope", () => {
     const peer = { workspace_name: WS, peer_id: id("p1"), name: "peer-a" };
     expect(parseRegisterPeer(bytes(peer))).toEqual(peer);
     const session = { workspace_name: WS, session_id: id("s1"), name: "sess-a" };
-    expect(parseRegisterSession(bytes(session))).toEqual(session);
+    // K12a (overnight R18): the omitted optional title reads back as an explicit null.
+    expect(parseRegisterSession(bytes(session))).toEqual({ ...session, h_metadata: null });
   });
 
   test("shape failures keep arra-error/v1, not a context envelope", () => {
@@ -174,7 +177,9 @@ describe("request grammar is closed, and keeps the GOVERNED envelope", () => {
   test("listPeers/listSessions: limit is 1..100, after_name is a nullable NAME (not Int64), include_total is a required boolean", () => {
     for (const parse of [parseListPeers, parseListSessions] as const) {
       const ok = { workspace_name: WS, after_name: null, limit: 50, include_total: false };
-      expect(parse(bytes(ok))).toEqual(ok);
+      // K10 (overnight R18): listSessions' omitted optional filters read back as explicit nulls.
+      const filters: Record<string, unknown> = parse === parseListSessions ? { is_active: null, member_peer_name: null } : {};
+      expect(parse(bytes(ok)) as Record<string, unknown>).toEqual({ ...ok, ...filters });
       expect(parse(bytes({ ...ok, after_name: "peer-a" })).after_name).toBe("peer-a");
       expect(parse(bytes({ ...ok, include_total: true })).include_total).toBe(true);
       for (const bad of [0, 101, 1.5, "10"]) {
@@ -196,7 +201,10 @@ describe("request grammar is closed, and keeps the GOVERNED envelope", () => {
   test("the read requests are closed too", () => {
     expect(parseGetPeer(bytes({ workspace_name: WS, peer_name: "p" }))).toEqual({ workspace_name: WS, peer_name: "p" });
     expect(parseGetSession(bytes({ workspace_name: WS, session_name: "s" }))).toEqual({ workspace_name: WS, session_name: "s" });
-    expect(parseGetMessage(bytes({ workspace_name: WS, public_id: id("m1") }))).toEqual({ workspace_name: WS, public_id: id("m1") });
+    // #87 / R3: the omitted optional requester reads back as an explicit null.
+    expect(parseGetMessage(bytes({ workspace_name: WS, public_id: id("m1") }))).toEqual({
+      workspace_name: WS, public_id: id("m1"), requester_peer_name: null,
+    });
     expect(parseJoinSession(bytes({ workspace_name: WS, session_name: "s", peer_name: "p" }))).toEqual({
       workspace_name: WS, session_name: "s", peer_name: "p",
     });
@@ -519,7 +527,9 @@ describe("real persistence: registration, shapes and reads", () => {
     if (line === undefined) throw new Error(`no output: ${result.stderr.slice(0, 600)}`);
     return JSON.parse(line);
   };
-  const op = (method: string, request: unknown) => ({ method, request });
+  // #87 / R3: message reads take the transport-built authority; these lanes
+  // read through the audit:read operator view unless a test says otherwise.
+  const op = (method: string, request: unknown, authority: unknown = OPERATOR) => ({ method, request, authority });
 
   test("the writer bundle has EXACTLY the contracted shape", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -528,12 +538,12 @@ describe("real persistence: registration, shapes and reads", () => {
       expect(parsed.writerKeys).toEqual(["close", "context", "publication", "taxonomy"]);
       // The writer's context facade spreads the full read-method set in
       // (`{ ...reads, ...writeOnly }`), so this is that union, not just the
-      // eleven write-only methods.
+      // fourteen write-only methods (overnight R18 added closeSession, K9).
       expect(parsed.contextMethods).toEqual([
-        "advanceReadCursor", "answerChat", "appendMessages", "createSessionLink", "createTrace", "getContext",
-        "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
+        "advanceReadCursor", "appendMessages", "closeSession", "createSessionLink", "createTrace", "embedPendingChunks", "getContext",
+        "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSearchFreshness", "getSession", "getTrace",
         "indexRevisionChunks", "joinSession", "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks",
-        "listSessionLinks", "listSessions", "listTraceHits", "reconcileSearchChunks", "registerPeer", "registerSession",
+        "listSessionLinks", "listSessionMembers", "listSessions", "listTraceHits", "listTraces", "reconcileSearchChunks", "registerPeer", "registerSession",
         "retireNode", "supersedeNode", "writeChunkEmbedding",
       ]);
       // Only the BUNDLE closes the owner.
@@ -543,7 +553,7 @@ describe("real persistence: registration, shapes and reads", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a fresh registration writes one row and emits one literal triple", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -561,7 +571,7 @@ describe("real persistence: registration, shapes and reads", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("an identical re-registration is already_satisfied and emits NO boundary", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -577,7 +587,7 @@ describe("real persistence: registration, shapes and reads", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("ID and NAME collisions report their own reason, and neither writes", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -597,7 +607,7 @@ describe("real persistence: registration, shapes and reads", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a missing workspace is an invalid REFERENCE, in the publication envelope", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -615,7 +625,7 @@ describe("real persistence: registration, shapes and reads", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("joinSession requires an active session and a real peer", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -639,7 +649,7 @@ describe("real persistence: registration, shapes and reads", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("reads return the row or exactly null, never not_found", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -665,7 +675,7 @@ describe("real persistence: registration, shapes and reads", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("an empty page has rows:[] and a null cursor", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -678,7 +688,7 @@ describe("real persistence: registration, shapes and reads", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("listPeers pages by name ascending, keyset resumes past the cursor, and total is opt-in", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -709,7 +719,7 @@ describe("real persistence: registration, shapes and reads", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("listSessions pages by name ascending and stays workspace-scoped", async () => {
     const BETA = "beta-workspace";
@@ -731,7 +741,7 @@ describe("real persistence: registration, shapes and reads", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a second writer on the same root is refused while the first holds it", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -747,7 +757,7 @@ describe("real persistence: registration, shapes and reads", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("reads after RELEASE are refused with the full envelope", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -764,7 +774,7 @@ describe("real persistence: registration, shapes and reads", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });
 
 describe("real persistence: ordered batch ingestion", () => {
@@ -783,7 +793,9 @@ describe("real persistence: ordered batch ingestion", () => {
     if (line === undefined) throw new Error(`no output: ${result.stderr.slice(0, 600)}`);
     return JSON.parse(line);
   };
-  const op = (method: string, request: unknown) => ({ method, request });
+  // #87 / R3: message reads take the transport-built authority; these lanes
+  // read through the audit:read operator view unless a test says otherwise.
+  const op = (method: string, request: unknown, authority: unknown = OPERATOR) => ({ method, request, authority });
 
   /** Peer, session and membership, so messages have somewhere to land. */
   const setup = () => [
@@ -828,7 +840,7 @@ describe("real persistence: ordered batch ingestion", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("an identical local replay is idempotent and allocates nothing new", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -853,7 +865,7 @@ describe("real persistence: ordered batch ingestion", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("item 0 is durable, item 1 stops the batch, item 2 is NEVER attempted", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -886,7 +898,7 @@ describe("real persistence: ordered batch ingestion", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a changed payload under the same public_id is a CONFLICT, not an error", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -909,7 +921,7 @@ describe("real persistence: ordered batch ingestion", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a self reply is refused, and a reply to an earlier item resolves", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -937,7 +949,7 @@ describe("real persistence: ordered batch ingestion", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });
 
 describe("core: the sourced path and the reader bundle", () => {
@@ -962,7 +974,9 @@ describe("core: the sourced path and the reader bundle", () => {
     if (line === undefined) throw new Error(`no output: ${result.stderr.slice(0, 600)}`);
     return JSON.parse(line);
   };
-  const op = (method: string, request: unknown) => ({ method, request });
+  // #87 / R3: message reads take the transport-built authority; these lanes
+  // read through the audit:read operator view unless a test says otherwise.
+  const op = (method: string, request: unknown, authority: unknown = OPERATOR) => ({ method, request, authority });
   const setup = () => [
     op("registerPeer", peerRequest(ALPHA)),
     op("registerSession", sessionRequest(ALPHA)),
@@ -988,7 +1002,7 @@ describe("core: the sourced path and the reader bundle", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a sourced replay returns the ORIGINAL identity and allocates nothing", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -1016,7 +1030,7 @@ describe("core: the sourced path and the reader bundle", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a replay into the WRONG session is a governed scope_mismatch", async () => {
     const fixture = await createContextFixture([ALPHA]);
@@ -1050,7 +1064,7 @@ describe("core: the sourced path and the reader bundle", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
   test("a LOCAL replay into the wrong session carries the SAME governed envelope", async () => {
     // Local and sourced wrong-destination share semantics, so they must share
@@ -1076,9 +1090,9 @@ describe("core: the sourced path and the reader bundle", () => {
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 
-  test("the READER bundle has exactly three facades and fourteen context methods", async () => {
+  test("the READER bundle has exactly three facades and twenty context methods", async () => {
     const fixture = await createContextFixture([ALPHA]);
     try {
       const parsed = await drive(
@@ -1087,16 +1101,19 @@ describe("core: the sourced path and the reader bundle", () => {
         { freshReader: true },
       );
       expect(parsed.readerKeys).toEqual(["context", "publication", "taxonomy"]);
-      // Exactly the fourteen READ methods; no mutator reachable from a reader.
+      // Exactly the twenty READ methods (#30's two searches and, from
+      // search-embed R7/R8, getSearchFreshness included; overnight R18's
+      // listSessionMembers too); no mutator -- embedPendingChunks and
+      // closeSession included -- reachable from a reader.
       expect(parsed.readerContextMethods).toEqual([
-        "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSession", "getTrace",
-        "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks", "listSessionLinks", "listSessions",
-        "listTraceHits",
+        "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSearchFreshness", "getSession", "getTrace",
+        "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks", "listSessionLinks", "listSessionMembers", "listSessions",
+        "listTraceHits", "listTraces", "searchKnowledgeKeyword", "searchKnowledgeSemantic",
       ]);
       // A gateless reader works AFTER the writer released its gate.
       expect(parsed.freshReaderPeer.name).toBe("peer-a");
     } finally {
       await fixture.cleanup();
     }
-  }, 300_000);
+  }, testTimeout(300_000));
 });

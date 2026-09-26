@@ -86,3 +86,51 @@ Eleven exact non-document paths, four new fixture prefixes, one root document. N
 Readiness is advice, not product correctness. Accepted changes: all four factories named; explicit raw-microsecond clock comparison; explicit post-attempt corruption versus ambiguous readback classification; the exact two-constants-per-file amendments; future timestamp blocking until clock catches up; historical docs not rewritten. Rejected overclaims: NULL schema declaration proves physical impossibility; unknown update count must be success; retry always converges; governed deterministic error text cannot be asserted. The actual retained-null update statement and all product fault paths remain unmeasured until implementation tests. No prefreeze SDK probe is claimed.
 
 Root records original draft406b0edf and corrected readiness notes separately. No live dataset or retained compatibility inspection, no Honcho claim, no authorization/admission or transport activation. Conditional retry, cooperative lock, bounded result versus engine work, instrumented versus real fault, and process death versus power loss remain distinct claims. Parent28 and all unrelated remaining issues stay open until their own evidence is complete.
+
+## Amendment 2026-09-26 (overnight R1 + R2)
+
+Made by v4-overnight (Claude Opus 5.5, AI) under `docs/overnight/DECISIONS.md` R1
+and R2. This is an appended amendment, not an edit to §§1–9 above: every byte
+above is unchanged, per this repo's own rule that a frozen contract is never
+rewritten in place.
+
+**R2 · digest ruling.** Issue #75 pinned `read-cursor-v1.md` SHA256
+`164d3e91211552e5146b36d8d8e0cb22a628e4aa7f22d1fe2b70ae9a9f6a9508` as
+authoritative. That text does not exist anywhere in this repository's git
+history — `git log --all` finds no blob with that hash for this path, and the
+only committed version of this file, at every commit since `d42ee3e9`, hashes
+to `04f553dd20f572d6bc9c83b1c8752e69018ff5556ad2b2b1b1308162ca82f24f`
+(`shasum -a 256 app/docs/contracts/read-cursor-v1.md`, verified against this
+file both before and after this amendment's own §§1–9 bytes). **`04f553dd…`
+is authoritative.** `read-cursor-service.test.ts` and
+`read-cursor-recovery.test.ts` already cite `04f553dd…` correctly;
+`read-cursor-recovery.test.ts` additionally records, honestly, that it was
+*authored against* the nonexistent `164d3e91…` and explains the §8-only
+difference. `read-cursor-ownership.test.ts:6` cited `164d3e91…` as `Authority`
+rather than `authored against`; that stale citation is corrected to `04f553dd…`
+alongside this amendment (comment-only, no behavioral change — the digest is
+never asserted programmatically in that file).
+
+**R2 · workspace `created_at` validation stays, at millisecond precision.**
+§3's rule that a stored workspace `created_at` with a non-zero microsecond
+remainder is `integrity_failure` — enforced by `validateWorkspaceRow` (this
+kernel) via `resolveCursorScope` — is **intentional and unchanged.** #105
+misdiagnosed this as a client/kernel unit bug; it measured false
+(`docs/overnight/LANCEDB-FACTS.md`, `docs/overnight/DECISIONS.md` R1): the
+physical `timestamp[us]` column and this kernel's raw-microsecond read/write
+path are both correct, and every context method already accepts every
+millisecond-aligned row. The actual #75 defect was a data producer,
+`app/just/scripts/create_target19_dataset.py`, seeding
+`workspaces.created_at` with genuine microsecond precision
+(`datetime.now()`), which this validator correctly refused. The fix is at the
+producer (truncate to the millisecond before writing, and refuse rather than
+silently accept an existing sub-millisecond `default` row), not in this
+contract or in `validateWorkspaceRow`. **Done means:** on a dataset produced
+by the fixed script, `advanceReadCursor` and then `getReadCursor` succeed live
+against nonzero millisecond `last_read_at`/`created_at` values — see
+`docs/overnight/DECISIONS.md` R1/R2 and the live proof under
+`app/server/test/fixtures/read-cursor-v1/live-r2/`.
+
+**Reverse by:** striking this amendment section. Nothing above it changes as
+a result; the digest and validation behavior simply return to being
+unrecorded rather than recorded.

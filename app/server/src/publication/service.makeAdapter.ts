@@ -1,5 +1,8 @@
+import { MatchQuery } from "@lancedb/lancedb";
+import { ensureFtsIndexOn, ftsIndexStatus, refreshStaleFtsIndexOn } from "../fts/fts";
 import { failPublication } from "./errors";
 import { EMBEDDING_DIMENSION } from "./search-chunk";
+import { SEARCH_CHUNKS, SEARCH_HIT_COLUMNS } from "./service.constants";
 import { type Connection, type Table, TARGET_TABLES, decodeArrowRows, quote, rawRows } from "./storage";
 import { Field as ArrowField, FixedSizeList, Float32, List as ArrowList, Table as ArrowTable, TimestampMicrosecond, Utf8, Vector as ArrowVector, makeData, tableFromArrays, vectorFromArray } from "apache-arrow";
 import { type DatasetAdapter } from "./service.types";
@@ -192,11 +195,16 @@ export function makeAdapter(connection: Connection, onRelease: () => void): Data
     async orderedProjection(table, predicate, columns, ordering, limit) {
       const tbl = await handle(table);
       await tbl.checkoutLatest();
+      // A single ordering object OR an already-compound array, normalized to
+      // the array shape `.orderBy` (and the SDK's own `mcp/calls.ts:174`
+      // precedent) takes -- see the type's own doc comment for why a caller
+      // wanting a deterministic tie-break passes more than one column here.
+      const columnOrdering = Array.isArray(ordering) ? ordering : [ordering];
       const arrow = await tbl
         .query()
         .where(predicate)
         .select(columns)
-        .orderBy([{ columnName: ordering.column, ascending: ordering.ascending }])
+        .orderBy(columnOrdering.map((o) => ({ columnName: o.column, ascending: o.ascending })))
         .limit(limit)
         .toArrow();
       // Same decoder as rawRows, deliberately: a second decoding path is how a
@@ -278,6 +286,64 @@ export function makeAdapter(connection: Connection, onRelease: () => void): Data
       // never created. This can only UPDATE a chunk `append` already wrote.
       await tbl.mergeInsert(["id"]).whenMatchedUpdateAll().execute(new ArrowTable(vecs as never) as never);
       return tbl.version();
+    },
+    // ── #30 retrieval over search_chunks_v1 (R7 #30 part + R14) ───────────
+    // Hardcoded to one table and one column each, like
+    // `updateSearchChunkEmbedding`: no caller names a table or a column here.
+    async ensureSearchChunkTextIndex() {
+      // Writer maintenance: see the type's doc. `checkoutLatest` so the index
+      // decision is made against the latest version, including the rows the
+      // turn before this one wrote.
+      const tbl = await handle(SEARCH_CHUNKS);
+      await tbl.checkoutLatest();
+      const labels = await ensureFtsIndexOn(tbl, "text", false);
+      return (await refreshStaleFtsIndexOn(tbl, "text")) ? (await tbl.listIndices()).map((i) => `${i.name}:${i.indexType}`) : labels;
+    },
+    async searchChunkTextIndexStatus() {
+      const tbl = await handle(SEARCH_CHUNKS);
+      await tbl.checkoutLatest();
+      return ftsIndexStatus(await tbl.listIndices(), "text");
+    },
+    async fullTextSearchChunks(query, predicate, limit) {
+      const tbl = await handle(SEARCH_CHUNKS);
+      await tbl.checkoutLatest();
+      // A `MatchQuery`, never a bare string: LanceDB parses a bare string, and
+      // a quoted one becomes a phrase query this position-less index cannot
+      // serve (the same reason as `fts.substringSearch`).
+      const arrow = await tbl
+        .query()
+        .fullTextSearch(new MatchQuery(query, "text"))
+        .where(predicate)
+        .select([...SEARCH_HIT_COLUMNS, "_score"])
+        .limit(limit)
+        .toArrow();
+      return decodeArrowRows(arrow);
+    },
+    async vectorSearchChunks(vector, predicate, limit) {
+      const tbl = await handle(SEARCH_CHUNKS);
+      await tbl.checkoutLatest();
+      const arrow = await tbl
+        .vectorSearch(vector)
+        .column("embedding")
+        .distanceType("l2")
+        .where(predicate)
+        .select([...SEARCH_HIT_COLUMNS, "_distance"])
+        .limit(limit)
+        .toArrow();
+      return decodeArrowRows(arrow);
+    },
+    async textIndexStats(table, column) {
+      const tbl = await handle(table);
+      await tbl.checkoutLatest();
+      const indices = await tbl.listIndices();
+      const match = indices.find(
+        (index) =>
+          ["FTS", "INVERTED"].includes(index.indexType.toUpperCase()) && index.columns.includes(column),
+      );
+      if (match === undefined) return null;
+      const stats = await tbl.indexStats(match.name);
+      if (stats === undefined) return null;
+      return { indexedRows: stats.numIndexedRows, unindexedRows: stats.numUnindexedRows };
     },
     async updateWhere(table, predicate, assignments) {
       const tbl = await handle(table);

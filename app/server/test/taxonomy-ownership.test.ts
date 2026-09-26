@@ -29,6 +29,8 @@ import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { PYTHON, revisionEnvelope, runGated, runOwnedChild, spawnGatedChild } from "./helpers/publication-fixture";
+import { testTimeout } from "./helpers/timing.testTimeout";
+import { scaledMs } from "./helpers/timing.scaledMs";
 
 const TEST_DIR = import.meta.dir;
 const SERVER_DIR = resolve(TEST_DIR, "..");
@@ -37,7 +39,7 @@ const KNOWLEDGE_CHILD = join(OWNERSHIP_DIR, "knowledge-child.ts");
 const STRUCTURE_CHILD = join(OWNERSHIP_DIR, "structure-child.ts");
 const STAGE_CHAIN = join(OWNERSHIP_DIR, "stage-chain.py");
 
-const TEST_TIMEOUT_MS = 180_000;
+const TEST_TIMEOUT_MS = testTimeout(180_000);
 const ALPHA = "alpha-workspace";
 const BETA = "beta-workspace";
 
@@ -71,6 +73,14 @@ const TAXONOMY_METHODS = [
   "createVocabulary",
   "getTerm",
   "getVocabulary",
+  // K6+K7 (R18 (K6+K7+V8)): term listing, term usage counts and workspace
+  // stats, spread into the writer facade with the other reads.
+  "knowledgeStats",
+  "listTermUsage",
+  "listTerms",
+  // K2 (R18): by-name reads, spread into the writer facade with the other reads.
+  "lookupTermByName",
+  "lookupVocabularyByName",
   "renameTerm",
   "reparentTerm",
   "retireTerm",
@@ -78,7 +88,9 @@ const TAXONOMY_METHODS = [
 ].join(",");
 const PUBLICATION_WRITE_METHODS = "getAcceptedHead,listAcceptedHistory,listNodes,publishRevision";
 const PUBLICATION_READ_METHODS = "getAcceptedHead,listAcceptedHistory,listNodes";
-const TAXONOMY_READ_METHODS = "getTerm,getVocabulary";
+// K2 (R18) + K6/K7 (R18 (K6+K7+V8)): every taxonomy reader and writer facade
+// carries the same read methods.
+const TAXONOMY_READ_METHODS = "getTerm,getVocabulary,knowledgeStats,listTermUsage,listTerms,lookupTermByName,lookupVocabularyByName";
 
 /** nanoid21 identities supplied by this file, so no builder invents them. */
 const id = (slug: string): string => `${slug}${"_".repeat(Math.max(0, 21 - slug.length))}`.slice(0, 21);
@@ -426,7 +438,7 @@ describe.skipIf(!READY)(`one-shot close lifetime [${PENDING}]`, () => {
             ].join("\n"),
             root,
           ],
-          { deadlineMs: 30_000 },
+          { deadlineMs: scaledMs(30_000) },
         );
         expect(eventsOf(contender.stdout)).toContain("gate:acquired");
       } finally {
@@ -485,7 +497,7 @@ describe.skipIf(!READY)(`scoped references and policy refusals [${PENDING}]`, ()
         // Setup only: the chain is staged directly because reaching 1024 through
         // the kernel would be 1024 writes. The kernel decides only the boundary.
         const staged = await runOwnedChild(PYTHON, [STAGE_CHAIN, root, ALPHA, vocabularyId, String(depth), moverId], {
-          deadlineMs: 120_000,
+          deadlineMs: scaledMs(120_000),
         });
         expect({ depth, code: staged.code, stderr: staged.stderr.slice(-200) }).toEqual({
           depth,

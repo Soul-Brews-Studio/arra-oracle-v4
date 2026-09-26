@@ -36,6 +36,7 @@
 export { MAX_HITS, parseCreateTrace } from "./trace.parseCreateTrace";
 export { parseGetTrace } from "./trace.parseGetTrace";
 export { MAX_PAGE_LIMIT, parseListTraceHits } from "./trace.parseListTraceHits";
+export { MAX_LIST_TRACES_LIMIT, parseListTraces } from "./trace.parseListTraces";
 
 export { TRACE_STATUSES, type TraceStatus } from "./trace.types";
 export type {
@@ -43,6 +44,7 @@ export type {
   CreateTraceRequest,
   GetTraceRequest,
   ListTraceHitsRequest,
+  ListTracesRequest,
 } from "./trace.types";
 
 export { TRACE_FIELDS, encodeTraceRow } from "./trace.encodeTraceRow";

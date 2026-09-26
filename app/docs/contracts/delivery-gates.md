@@ -55,3 +55,71 @@ Limits: header checks reject the measured post-flattening grammar, not raw line 
 Earlier source-contract evidence at `33e3c44`: accepted stable-tree Python discovery 79 tests; Bun full app/CLI suite 168 tests /1520 assertions; strict TypeScript, build and whitespace checks passed. Root independently verified the four committed blobs, exact changed-file set and parent against captured acceptance evidence, and ran 61 independent source-boundary assertions before commit. Whole-tree lint is not claimed clean. No push, release, production authorization or service-invariant proof is claimed.
 
 See [source acceptance](https://github.com/Soul-Brews-Studio/arra-oracle-v4/issues/23#issuecomment-5749867140) and [scope closure](https://github.com/Soul-Brews-Studio/arra-oracle-v4/issues/24#issuecomment-5749732127). Earlier physical/byte evidence remains in #23; this ledger does not replace it.
+
+## Amendment 2026-09-26 (overnight R11 + R17)
+
+Appended; the table row "Copy migration and release" above is left as recorded. Rulings: [`docs/overnight/DECISIONS.md`](../../../docs/overnight/DECISIONS.md) R11 and R17.
+
+**What changed.** #34 has a non-destructive rehearsal: `arra-migrate-copy` (Python orchestrator, `app/migrate-py/src/arra_migrate/copy_migration/`) plus the Bun knowledge worker (`app/server/src/migration/`). Evidence lives in `app/migrate-py/tests/test_copy_migration.py` and `app/server/test/migration-copy.test.ts` (`bun run test:migration`). The latter runs the real server on the legacy source before and after the migration: legacy MCP recall answers identically (the rollback leg: the source is never replaced), and a server mounting the candidate serves the migrated nodes through `listNodes` / `getAcceptedHead`.
+
+**Still excluded, on every report.** `release_exclusions` names #7 (relevance judgments), #8 (stock Honcho container round-trip) and #10's quality half, and `release_ready` is always `false`. R2 is out of scope: `://` roots are refused. No cutover is implied; the source remains the served dataset.
+
+**Fix round, same night.** Appended. More evidence for the "Copy migration and release" row:
+
+- **Rollback leg.** It compares the FULL legacy MCP responses (`recall` for three queries, `get_memory`, `list_memories`) as JSON, not only sorted ids. It now also restarts the server on the source ALONE after the candidate was mounted.
+- **Projection rebuild.** In a copy of the candidate, `node_revision_terms` and `revision_links` are emptied, and the kernel's `reconcileRevisionAssociations` rebuilds them to identical rows.
+- **Crash.** A deterministic SIGKILL mid-knowledge-phase, at the kernel's `after_revision_append` boundary on the third publish, leaves no table in the candidate, and a rerun converges.
+
+Still NOT covered on this slice, so #34 is not closable on it:
+
+- the rev-2 release-audit items;
+- a browser check;
+- a standalone release-audit document.
+
+The #7/#8/#10 exclusions are carried in every `report.json` and in this amendment.
+
+## Amendment 2026-09-26 (overnight R13 (CI must actually pass))
+
+Appended; the ledger and verification scope above are left as recorded. Ruling: [`docs/overnight/DECISIONS.md`](../../../docs/overnight/DECISIONS.md) R13.
+
+**What changed.** GitHub Actions CI (`.github/workflows/ci.yml`) had never passed on
+`v4/overnight-26sep`. The shard failures were read from the runs' shard logs, and most were not
+timing:
+
+- **E2BIG, three suites.** Linux refuses any single argv/env string over 131071 bytes; macOS does
+  not. `mcp-v3-writes` (312355 bytes; its `beforeAll` threw, reported as "(unnamed)"),
+  `session-link-service`'s WIDE node (250968) and `list-pagination-isolation` (146307; an error
+  "between tests") passed locally and died at `posix_spawn`. `runGated`/`spawnGatedChild` now
+  spill arguments over 64 KiB to a file the child reads with `readArgPayload`, and
+  `runOwnedChild` refuses an oversized string on every platform.
+- **A wall-clock ordering bound.** `search-chunk-embed-worker` asserted a publish took under
+  250 ms; the runner measured 260-351 ms with nothing wrong. It is now proven by settle order and
+  a held embedder (search-chunk-v1 §19), and the M4 mutation is still caught.
+- **A teardown hang.** The chat model stub's `stop()` waited on a handler that never settles; on
+  Bun 1.3.14 `server.stop(true)` then resolves only if something else wakes the event loop. It
+  hit the 30 s hook bound on the runner and reproduced locally. The stub now settles what it holds.
+- **A platform-specific exclusion.** `mcp-v3-writes` excluded Bun's transpiler cache only at its
+  macOS path; on Linux it lands in `HOME/.bun/install/cache/@t@`. The child now runs with the
+  cache off and the test asserts its HOME is empty.
+
+Harness: every explicit test/hook timeout goes through `testTimeout` and every child deadline,
+injected timeout and "never a hang" bound through `scaledMs` (identity locally; CI sets
+`TEST_TIME_SCALE=5` and `TEST_TIMEOUT_MS=60000`). `test.parallel.ts` names the file behind an
+unnamed failure, reports cores and CPU utilisation, streams shard logs to disk, and accepts
+`TEST_GROUPS`/`TEST_GROUP` for a matrix, which is not used: the runner has 2 cores that 4 shards
+keep 90% busy, so more shards cannot help and more machines would cost more minutes.
+
+**Evidence.**
+
+- Red, on the base `9720fb1` (run 36268048901): 1661 pass / 5 fail (plus a list-pagination file that
+  never registered its tests). Before that, runs 36260049043,
+  36265042727 and 36265462602 failed the same way.
+- After the E2BIG, embed and harness changes (run 36269825188, `37484e9`): 1777 pass / 1 fail, the
+  one being the Linux transpiler-cache path, fixed next.
+- Green (run [36271049858](https://github.com/Soul-Brews-Studio/arra-oracle-v4/actions/runs/36271049858),
+  `f7aafb0`): 1780 pass / 0 fail across 120/120 files, Python 268 (1 skipped) + 17 + 22 + 123 OK,
+  UI build OK. The job took 24 min 39 s of its 25 min cap on a slower runner, so `timeout-minutes`
+  is now 40.
+- Locally, before and after each fix: the failing-first tests were red for the measured reason (a
+  316221-byte argv string reached a child; `publishResult.elapsedMs` 322-727 ms under CPU
+  contention; `stop()` hung past 10 s; the three `.pile` files in the child's HOME) and green after.

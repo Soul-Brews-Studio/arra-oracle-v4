@@ -3,19 +3,32 @@ import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 const cli = new URL("./cli.ts", import.meta.url).pathname;
 /** A synthetic credential. Never a real token. */
 const TOKEN = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-const requests: { path: string; search: string; method: string; body: any; authorization: string | null }[] = [];
+const requests: {
+  path: string;
+  search: string;
+  method: string;
+  body: any;
+  /** The exact wire text, so a duplicate-key body's later-wins JSON.parse
+   *  result never hides that the CLI forwarded it byte-for-byte. */
+  rawBody: string | null;
+  authorization: string | null;
+}[] = [];
 let response: unknown = { jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: "[]" }] } };
+/** Non-2xx lets kb/alias tests prove a governed envelope is printed unchanged. */
+let responseStatus = 200;
 const server = Bun.serve({
   hostname: "127.0.0.1", port: 0,
   async fetch(req) {
+    const rawBody = req.method === "POST" ? await req.clone().text() : null;
     requests.push({
       path: new URL(req.url).pathname,
       search: new URL(req.url).search,
       method: req.method,
-      body: req.method === "POST" ? await req.json().catch(() => null) : null,
+      body: rawBody === null ? null : await req.json().catch(() => null),
+      rawBody,
       authorization: req.headers.get("authorization"),
     });
-    return Response.json(response);
+    return Response.json(response, { status: responseStatus });
   },
 });
 afterAll(() => server.stop(true));
@@ -23,6 +36,7 @@ beforeEach(() => {
   requests.length = 0;
   extraEnv = {};
   response = { jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: "[]" }] } };
+  responseStatus = 200;
 });
 let extraEnv: Record<string, string | undefined> = {};
 
@@ -45,6 +59,20 @@ describe("CLI transport contract", () => {
   test("help never requests backend", async () => { const r = await run("help"); expect(r.code).toBe(0); expect(r.out).toContain("remember"); expect(requests).toHaveLength(0); });
   test("unknown command is nonzero", async () => { expect((await run("wat")).code).toBe(1); expect(requests).toHaveLength(0); });
   test("valid MCP request retains envelope and bank", async () => { const r = await run("recall", "--query", "schema", "--limit", "3"); expect(r.code).toBe(0); expect(JSON.parse(r.out)).toEqual(response); expect(requests[0]).toMatchObject({ path: "/mcp/test-bank", search: "", method: "POST", body: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "recall", arguments: { query: "schema", mode: "text", limit: 3 } } } }); });
+  test("recall and search print the server's match mode, and help says what it means (R14)", async () => {
+    const answer = { mode: "text", match: "substring_scan", count: 0, rows: [] };
+    response = { jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: JSON.stringify(answer) }] } };
+    const recalled = await run("recall", "--query", "ไป");
+    expect(recalled.code).toBe(0);
+    expect(JSON.parse(JSON.parse(recalled.out).result.content[0].text)).toEqual(answer);
+    response = { ...answer, match: "ngram" };
+    const searched = await run("search", "--query", "ลืม");
+    expect(searched.code).toBe(0);
+    expect(JSON.parse(searched.out)).toEqual({ ...answer, match: "ngram" });
+    const help = await run("help");
+    expect(help.out).toContain("match");
+    expect(help.out).toContain("substring_scan");
+  });
   test("subject survives remember request", async () => { expect((await run("remember", "--content", "fact", "--subject", "nat")).code).toBe(0); expect(requests[0]?.body.params.arguments.subject_peer_name).toBe("nat"); });
   test("status carries active versus proposed contract state unchanged", async () => {
     response = { jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: JSON.stringify({ contract: { status: "proposed-not-active", active_tables: 15, target_tables: 19 } }) }] } };
@@ -232,5 +260,99 @@ describe("CLI redirect refusal and loopback literals (reviewer round)", () => {
     // 127.0.0.1 is exercised throughout; assert the rule did not over-tighten.
     expect((await run("recall", "--query", "x")).code).toBe(0);
     expect(requests[0]?.authorization).toBe(`Bearer ${TOKEN}`);
+  });
+});
+
+describe("CLI kb friendly aliases (#31 R8)", () => {
+  test("peer add registers a peer, minting a peer_id when none is given", async () => {
+    const r = await run("peer", "add", "--bank", "test-bank", "--name", "nat");
+    expect(r.code).toBe(0);
+    expect(requests[0]?.path).toBe("/api/knowledge/test-bank/registerPeer");
+    const body = requests[0]?.body;
+    expect(body).toMatchObject({ workspace_name: "test-bank", name: "nat" });
+    expect(body.peer_id).toMatch(/^[A-Za-z0-9_-]{21}$/);
+  });
+
+  test("peer add without --name exits nonzero before any network call", async () => {
+    const r = await run("peer", "add", "--bank", "test-bank");
+    expect(r.code).toBe(1);
+    expect(requests).toHaveLength(0);
+  });
+
+  test("session add registers a session", async () => {
+    const r = await run("session", "add", "--bank", "test-bank", "--name", "standup");
+    expect(r.code).toBe(0);
+    expect(requests[0]?.path).toBe("/api/knowledge/test-bank/registerSession");
+    expect(requests[0]?.body).toMatchObject({ workspace_name: "test-bank", name: "standup" });
+  });
+
+  test("message append wraps one message as the items array appendMessages expects", async () => {
+    const r = await run("message", "append", "--bank", "test-bank", "--session", "standup", "--peer", "nat", "--content", "hello");
+    expect(r.code).toBe(0);
+    expect(requests[0]?.path).toBe("/api/knowledge/test-bank/appendMessages");
+    const body = requests[0]?.body;
+    expect(body.workspace_name).toBe("test-bank");
+    expect(body.session_name).toBe("standup");
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]).toMatchObject({ message: { peer_name: "nat", content: "hello", role: null, in_reply_to: null }, source: null });
+    expect(body.items[0].public_id).toMatch(/^[A-Za-z0-9_-]{21}$/);
+  });
+
+  test("nodes list forwards paging flags with explicit nulls for the rest, and OMITS include_inactive -- the #29 fix round: this is the daily-loop alias the ordinary README example uses (`nodes list --bank example --limit 20`), byte-for-byte unchanged from before include_inactive existed on the server", async () => {
+    const r = await run("nodes", "list", "--bank", "test-bank", "--limit", "5", "--include-total");
+    expect(r.code).toBe(0);
+    expect(requests[0]?.path).toBe("/api/knowledge/test-bank/listNodes");
+    expect(requests[0]?.body).toEqual({
+      workspace_name: "test-bank", after_id: null, limit: 5, include_total: true, type_term: null,
+    });
+  });
+
+  test("nodes list --history maps to include_inactive: true, the ONLY way this alias sends that key", async () => {
+    const r = await run("nodes", "list", "--bank", "test-bank", "--limit", "5", "--history");
+    expect(r.code).toBe(0);
+    expect(requests[0]?.path).toBe("/api/knowledge/test-bank/listNodes");
+    expect(requests[0]?.body).toEqual({
+      workspace_name: "test-bank", after_id: null, limit: 5, include_total: false, type_term: null,
+      include_inactive: true,
+    });
+  });
+
+  test("context get maps onto getContext", async () => {
+    const r = await run("context", "get", "--bank", "test-bank", "--peer", "nat", "--session", "standup");
+    expect(r.code).toBe(0);
+    expect(requests[0]?.path).toBe("/api/knowledge/test-bank/getContext");
+    expect(requests[0]?.body).toMatchObject({ workspace_name: "test-bank", peer_name: "nat", session_name: "standup" });
+  });
+
+  test("chat ask maps onto answerChat", async () => {
+    const r = await run("chat", "ask", "--bank", "test-bank", "--peer", "nat", "--session", "standup", "--question", "what happened?");
+    expect(r.code).toBe(0);
+    expect(requests[0]?.path).toBe("/api/knowledge/test-bank/answerChat");
+    expect(requests[0]?.body).toMatchObject({ workspace_name: "test-bank", peer_name: "nat", session_name: "standup", question: "what happened?" });
+  });
+
+  test("aliases carry credentials under the same #25 §5 rule", async () => {
+    const r = await run("peer", "add", "--bank", "test-bank", "--name", "nat");
+    expect(r.code).toBe(0);
+    expect(requests[0]?.authorization).toBe(`Bearer ${TOKEN}`);
+  });
+});
+
+describe("CLI help marks the legacy 13 without removing them (#31 R8)", () => {
+  test("help lists every legacy command name plus a legacy label", async () => {
+    const r = await run("help");
+    expect(r.code).toBe(0);
+    for (const legacyCommand of [
+      "remember", "recall", "get-memory", "list-memories", "bank-info", "call-log",
+      "call-stats", "status", "health", "list", "search", "backfill", "reindex",
+    ]) expect(r.out).toContain(legacyCommand);
+    expect(r.out.toLowerCase()).toContain("legacy");
+  });
+
+  test("help also advertises kb and the friendly aliases", async () => {
+    const r = await run("help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("kb ");
+    expect(r.out).toContain("peer add");
   });
 });
