@@ -5,8 +5,10 @@
  *
  * Every prior association test either seeds physical rows directly
  * (`association-query.test.ts`, kernel-level fixture rows, no real session/
- * trace ever created) or exercises the 13-method transport wiring with
- * single citations (`knowledge-expose13-live.test.ts`). None of them publish
+ * trace ever created) or exercises the 13-method transport wiring for
+ * CREATING traces and session links (`knowledge-expose13-live.test.ts`) --
+ * that file never publishes a revision that cites them, and never calls
+ * `scanDependents` or `getRevisionAssociations`. None of them publish
  * ONE revision through the REAL `publishRevision` service whose
  * `link_snapshot` cites two REAL sessions (created via `registerSession` +
  * `joinSession` + `appendMessages`, with an actual message in each) and two
@@ -35,6 +37,8 @@ import {
 import { testTimeout } from "./helpers/timing.testTimeout";
 
 const ALPHA = "alpha-workspace";
+/** The cross-workspace distractor lives here -- never in ALPHA. */
+const BETA = "beta-workspace";
 const CLOCK = Date.parse("2026-09-27T00:00:00.000Z");
 const CHILD = new URL("./fixtures/association-v1/core/gated-association.ts", import.meta.url).pathname;
 
@@ -50,6 +54,8 @@ const TRACE_1 = pad("ac1trace1");
 const TRACE_2 = pad("ac1trace2");
 const MSG_1 = pad("ac1msg1");
 const MSG_2 = pad("ac1msg2");
+const DISTRACT_SESSION_ID = pad("ac1distrs");
+const DISTRACT_NODE = pad("ac1distrn");
 const REV_A = pad("ac1revA");
 
 /** Distinct relation per citation, so a mixed-up reverse lookup is caught,
@@ -134,9 +140,10 @@ describe("#28 AC1 literal: one conclusion cites 2 traces + 2 sessions; every rev
     "seeded through the REAL service (registerSession/joinSession/appendMessages/createTrace/publishRevision); " +
       "scanDependents and getRevisionAssociations both return exactly the 4 citations, with their own relations",
     async () => {
-      const fixture = await createSeededRevisionFixture([ALPHA]);
+      const fixture = await createSeededRevisionFixture([ALPHA, BETA]);
       try {
         const seeded = fixture.workspaces[ALPHA]!;
+        const seededBeta = fixture.workspaces[BETA]!;
         const ops = [
           // ── two real sessions, each with a real message ─────────────────
           ctx("registerPeer", { workspace_name: ALPHA, peer_id: PEER_1, name: "ac1-author" }), // op0
@@ -174,6 +181,28 @@ describe("#28 AC1 literal: one conclusion cites 2 traces + 2 sessions; every rev
           ev("scanDependents", scanRequest("session", { session_name: SESSION_2_NAME })), // op13
           // ── forward citations, from the conclusion's own side ────────────
           ev("getRevisionAssociations", { workspace_name: ALPHA, node_id: NODE_A, revision_id: null }), // op14
+          // ── CROSS-WORKSPACE DISTRACTOR ──────────────────────────────────
+          // beta-workspace publishes its OWN revision, on its OWN node,
+          // citing a session with the SAME NAME as SESSION_1_NAME above.
+          // `deriveLinkRows` (association.deriveLinkRows.ts) always
+          // recomputes `target_key` from the REQUESTED workspace, not the
+          // node's real one, so the only thing that keeps this distractor
+          // out of alpha-workspace's reverse lookup is the per-node
+          // workspace predicate in scanDependents (service.scanDependents.ts
+          // around line 121). If that predicate were ever dropped, this
+          // same-named session in beta-workspace would recompute to the
+          // SAME target_key as alpha-workspace's real citation and leak in.
+          ctx("registerSession", { workspace_name: BETA, session_id: DISTRACT_SESSION_ID, name: SESSION_1_NAME }), // op15
+          pub("publishRevision", {
+            operation_id: "ac1-literal-distractor-op",
+            content: revisionEnvelope(BETA, seededBeta, DISTRACT_NODE, {
+              session_name: null,
+              link_snapshot_json: JSON.stringify([
+                linkEntry(0, "related_to", "session", { session_name: SESSION_1_NAME }),
+              ]),
+            }),
+          }), // op16
+          ev("scanDependents", scanRequest("session", { session_name: SESSION_1_NAME })), // op17
         ];
 
         const parsed = await drive(fixture.datasetRoot, ops);
@@ -200,6 +229,13 @@ describe("#28 AC1 literal: one conclusion cites 2 traces + 2 sessions; every rev
           expect(result.ok).toBe(true);
           expect(result.value.outcome).toBe("page");
           expect(result.value.occurrences).toHaveLength(1);
+          // A truncated scan (MAX_* caps hit, or a bug that stops early)
+          // would still be able to carry a single occurrence -- only a null
+          // cursor proves the reverse lookup actually reached the end of
+          // this workspace's nodes rather than merely finding one match and
+          // stopping. Without this, a mutant that made the scan give up
+          // after the first hit would pass unnoticed.
+          expect(result.value.next_cursor).toBeNull();
           const occurrence = result.value.occurrences[0];
           expect(occurrence.workspace_name).toBe(ALPHA);
           expect(occurrence.node_id).toBe(NODE_A);
@@ -228,6 +264,30 @@ describe("#28 AC1 literal: one conclusion cites 2 traces + 2 sessions; every rev
           expect(link.relation).toBe(expected.relation);
           expect(link.position).toBe(String(expected.position));
         });
+
+        // The distractor setup itself really wrote, on the real service, in
+        // the real other workspace.
+        expect(parsed.op15.ok).toBe(true);
+        const distractorPublished = parsed.op16;
+        expect(distractorPublished.ok).toBe(true);
+        expect(distractorPublished.value.outcome).toBe("accepted");
+        expect(distractorPublished.value.node_id).toBe(DISTRACT_NODE);
+
+        // With the distractor now sitting in beta-workspace under the SAME
+        // session name, alpha-workspace's reverse lookup for that name must
+        // still return exactly the one alpha-workspace occurrence -- not
+        // two. This is the assertion that goes red if the workspace
+        // predicate in scanDependents is ever dropped.
+        const guarded = parsed.op17;
+        expect(guarded.ok).toBe(true);
+        expect(guarded.value.outcome).toBe("page");
+        expect(guarded.value.occurrences).toHaveLength(1);
+        expect(guarded.value.next_cursor).toBeNull();
+        const guardedOccurrence = guarded.value.occurrences[0];
+        expect(guardedOccurrence.workspace_name).toBe(ALPHA);
+        expect(guardedOccurrence.node_id).toBe(NODE_A);
+        expect(guardedOccurrence.revision_id).toBe(REV_A);
+        expect(guardedOccurrence.link.relation).toBe("discusses");
       } finally {
         await fixture.cleanup();
       }
