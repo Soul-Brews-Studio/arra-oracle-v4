@@ -65,6 +65,10 @@ export async function selectConclusions(
     workspace: string;
     observer: string | null;
     subject: string | null;
+    /** R24 (Nat D3b, #32): optional third narrowing key, SELECTION only --
+     *  the same SQL-predicate shape as observer/subject, never a
+     *  permissions check. Absent from `getRepresentation`'s call site. */
+    author?: string | null;
     asOf: number;
     maxItems: number;
     byteBudget: number;
@@ -99,6 +103,7 @@ export async function selectConclusions(
   let narrowing = " AND is_active = true";
   if (options.observer !== null) narrowing += ` AND observer_peer_name = ${quote(options.observer)}`;
   if (options.subject !== null) narrowing += ` AND subject_peer_name = ${quote(options.subject)}`;
+  if (options.author !== undefined && options.author !== null) narrowing += ` AND author_peer_name = ${quote(options.author)}`;
   const byId = new Map<string, Record<string, unknown>>();
   for (let i = 0; i < live.length; i += HEAD_BATCH) {
     const batch = live.slice(i, i + HEAD_BATCH);

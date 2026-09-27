@@ -29,12 +29,15 @@ import { TypeBreakdown, type TypeCounts } from "./TypeBreakdown";
 // uses) exactly as on MCP, and since the legacy-audit slice so are the legacy
 // memory routes, as their MCP twins; the global maintenance routes (backfill,
 // reindex) and any request refused before admission (no or bad token, no
-// grant) still move neither. The card's subline says the same in short, and
+// grant) still move neither. The maintenance routes write no row in ANY
+// workspace (a global action has no workspace to file one under; an open R5
+// deviation, #31 maint-audit), so the hint says "in any workspace", not
+// "here". The card's subline says the same in short, and
 // `OverviewView.auditCopy.test.ts` holds the two (and the shipped bundle) to
 // it. Both are claims about a COUNT, so both go through `whenCounted`: they
 // are false the moment nothing counted.
 const MCP_WHY =
-  "admitted MCP tools/call, HTTP knowledge API (/api/knowledge) and legacy HTTP memory route (/api/memories, /api/search, /api/health) calls in this workspace, successes and failures, read from the operations root (ARRA_DATA_DIR) the call log is written to — the global maintenance routes (/api/backfill, /api/reindex) and requests refused before admission are not logged here";
+  "admitted MCP tools/call, HTTP knowledge API (/api/knowledge) and legacy HTTP memory route (/api/memories, /api/search, /api/health) calls in this workspace, successes and failures, read from the operations root (ARRA_DATA_DIR) the call log is written to — the global maintenance routes (/api/backfill, /api/reindex) write no call-log row in any workspace (a global action has no workspace to file one under), and requests refused before admission are not logged";
 const CONNECTION_WHY =
   "distinct callers in this workspace — one row per credential and client label, folded from each admitted MCP tools/call, HTTP knowledge API or legacy HTTP memory route call — maintenance route callers and unauthenticated requests are not counted";
 

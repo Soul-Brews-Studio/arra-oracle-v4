@@ -36,7 +36,7 @@ describe("chat request grammar is closed, and keeps the GOVERNED envelope", () =
   test("parseGetContext and parseAnswerChat parse their exact shapes", () => {
     const getContextReq = { workspace_name: "w", peer_name: "p", session_name: "s", max_items: 5 };
     // D3b: the optional perspective keys parse to null ("any") when omitted.
-    const perspective = { observer_peer_name: null, subject_peer_name: null };
+    const perspective = { observer_peer_name: null, subject_peer_name: null, author_peer_name: null };
     expect(parseGetContext(bytes(getContextReq))).toEqual({ ...getContextReq, ...perspective });
     const answerReq = { ...getContextReq, question: "what happened?" };
     expect(parseAnswerChat(bytes(answerReq))).toEqual({ ...answerReq, ...perspective });
