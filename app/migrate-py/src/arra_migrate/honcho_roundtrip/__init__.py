@@ -35,4 +35,9 @@ Submodules:
                              ``Tier1Bundle``) and the real round-trip claim:
                              ``diff_against_input``, diffed against v4's OWN
                              input, not two Honcho reads of it.
+  ``table_map``           -- the TABLE-level column map (v4 target-19 vs the
+                             live Honcho v3.2.0 Postgres), with verdicts.
+  ``table_sql``           -- a bundle as plain SQL INSERTs, applying exactly
+                             ``table_map``'s conversions.
+  ``table_measure``       -- the per-field REST + SQL read-back diff.
 """
