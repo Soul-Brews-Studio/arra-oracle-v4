@@ -42,6 +42,14 @@ echo "pinned HEAD $HEAD_SHA"
 if curl -sf http://127.0.0.1:8000/health >/dev/null 2>&1; then
   echo "REFUSING: something already answers on 127.0.0.1:8000 -- not ours to write to"; exit 7
 fi
+# The compose also publishes the database (5432) and redis (6379) on
+# 127.0.0.1. A host postgres or redis there would make `compose up` fail
+# (fix round 2026-09-27): refuse up front, naming the port, instead.
+for port in 8000 5432 6379; do
+  if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+    echo "REFUSING: 127.0.0.1:$port is already in use -- the pinned compose publishes it"; exit 7
+  fi
+done
 
 cp docker-compose.yml.example docker-compose.yml
 cp .env.template .env
