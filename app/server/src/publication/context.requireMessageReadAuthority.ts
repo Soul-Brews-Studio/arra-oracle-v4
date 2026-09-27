@@ -5,7 +5,7 @@ import { failPublication } from "./errors";
  * `content:read` itself (#87 / R3, docs/overnight/DECISIONS.md).
  *
  * Built by the transport from the policy snapshot that admitted the request
- * (`knowledge/transport.ts` for HTTP, `auth/service.ts` for MCP) -- never from
+ * (`knowledge/transport.ts` for HTTP, `auth/service.createOperationService.ts` for MCP) -- never from
  * request bytes, which is why it travels beside them rather than inside them.
  *
  * - `operator`: the principal ALSO holds `audit:read` on this workspace, so it

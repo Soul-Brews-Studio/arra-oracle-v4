@@ -20,7 +20,7 @@ export class KnowledgeAuthDenied extends Error {
 /**
  * Admit exactly one workspace action, reusing the #25 admission primitives
  * (`admit`, `loadPolicy`) directly — the same pure decision the memories
- * transport in `auth/service.ts` is built on. This module does not reinvent
+ * transport in `auth/service.createOperationService.ts` is built on. This module does not reinvent
  * policy evaluation; it only supplies the target for a different domain.
  *
  * Returns the request's `RequestAuthority` (#87 / R3), built from the SAME
@@ -29,7 +29,7 @@ export class KnowledgeAuthDenied extends Error {
  * shape), `peers` is that grant's arra-auth/v1 binding.
  *
  * `onAdmitted` (#31 / R8 audit parity) receives the admission's non-secret
- * attribution, the same three fields `auth/service.ts` audits for MCP. It is
+ * attribution, the same three fields `auth/service.createOperationService.ts` audits for MCP. It is
  * a callback rather than a wider return so the frozen `RequestAuthority` the
  * kernels see is unchanged.
  */

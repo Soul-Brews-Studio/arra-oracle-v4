@@ -7,7 +7,7 @@ workspace.
 
 The token secret is generated ONCE and cached at `<out_dir>/dev-token.txt` so
 repeated runs of the dev stack keep serving the same bearer token instead of
-invalidating it on every restart. `loadPolicy` (auth/loader.ts) requires the
+invalidating it on every restart. `loadPolicy` (auth/loader.loadPolicy.ts) requires the
 policy file to be owned by the current uid with no group/other bits, so both
 files are written with mode 0600.
 """

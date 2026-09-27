@@ -107,7 +107,7 @@ export async function logCall(rec: CallRecord): Promise<void> {
     // #103 fix round 2: caller-supplied NAME columns are recorded only in the
     // form the reader's codec accepts -- see `calls.recordableName.ts`. The
     // other columns need no such step: `workspace_name` is the admitted
-    // policy scope, `tool` is a catalogue name (`auth/service.ts` audits no
+    // policy scope, `tool` is a catalogue name (`auth/service.createOperationService.ts` audits no
     // unknown tool), and both metadata columns are `JSON.stringify` output,
     // which is always well-formed text.
     const session = recordableName(rec.session_name);

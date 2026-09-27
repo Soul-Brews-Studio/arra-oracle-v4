@@ -44,7 +44,7 @@ export type { RequestAuthority };
  * (before fix round 2: `./calls` / `./connections`), which import `../storage`,
  * whose `DATA_DIR` is a `const` read from `process.env.ARRA_DATA_DIR` at
  * MODULE LOAD. A static import here pulls `storage.ts` into the STATIC
- * import graph of `app.ts` (via `knowledge/transport.ts` -> `composition.ts`),
+ * import graph of `app.createApp.ts` (via `knowledge/transport.ts` -> `composition.ts`),
  * which four test files (`transport-service`, `transport-ownership`,
  * `knowledge-chat-transport`, `knowledge-chat-writer-gate`) import statically
  * too -- so whichever of those Bun loads first freezes `DATA_DIR` for every
@@ -66,7 +66,7 @@ async function listConnectionsFromOperationsRoot(bytes: Uint8Array): Promise<unk
 /**
  * `audit:read` widened in for #94 (`listMcpCalls`/`listConnections`): the
  * runtime `admit()`/policy layer (`auth/policy.types.ts`'s `WorkspaceAction`)
- * already supports all four workspace actions, and `auth/service.ts`'s
+ * already supports all four workspace actions, and `auth/service.createOperationService.ts`'s
  * `KNOWLEDGE_TOOL_ACTION` already derives `kb_<method>` grants generically
  * from whatever `entry.action` says here -- this type was the only place
  * still narrowed to two, not a deliberate scope boundary. Call-log data is

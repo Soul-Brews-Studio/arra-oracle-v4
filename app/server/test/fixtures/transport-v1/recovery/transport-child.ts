@@ -2,7 +2,7 @@
 //
 // Runs inside a process that genuinely holds the writer gate (via
 // `runGated`/`arra_migrate.writer_gate.exec_with_gate`), boots the REAL HTTP
-// app from `src/app.ts` wired to the REAL `createKnowledgeAccess` from
+// app from `src/app.createApp.ts` wired to the REAL `createKnowledgeAccess` from
 // `src/knowledge/transport.ts` -- the exact production factory, not a
 // reimplementation -- and drives it with real `Request`/`app.handle()` calls.
 // No facade is called directly: every property below is observed at the wire.
