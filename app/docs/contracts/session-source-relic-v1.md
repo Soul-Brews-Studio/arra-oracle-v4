@@ -345,14 +345,26 @@ producing a codec-valid, already-canonical `relic_event`/`relic_session` object 
 ## Amendment 2026-09-26 (post-merge #28 TODO (cwd-only foreign visitor) + discussions #21/#36)
 
 **Change.** This amendment adds one invariant and its tests. No adapter code changes.
-**A shared working directory is never an input.** relic's `repo` is
-`<bank>/<cwd-derived repo_key>`. The adapter keeps only `<bank>` as `sourceBank`, and
-`SessionRef` carries no repo, cwd or worktree field. So nothing downstream can merge, scope,
-chain or import sessions because they ran in the same directory. `find` groups on
-`session_uuid` only. Two sessions that share a directory stay two sessions, with two distinct
-`relic_session` identities. The v4 grammars that could record lineage or ownership
-(`createSessionLink`, and `registerSession` including `h_metadata`) are closed objects, and
-they refuse a `cwd` key at `/cwd` and at `/h_metadata/cwd`.
+**A shared working directory never decides grouping, lineage, ownership or import.** relic's
+`repo` is `<bank>/<cwd-derived repo_key>`. The adapter keeps only `<bank>` as `sourceBank`, and
+`SessionRef` has no repo, cwd or worktree key. `find` groups on `session_uuid` only, so two
+sessions that share a directory stay two sessions, with two distinct `relic_session`
+identities. The v4 grammars that could record lineage or ownership (`createSessionLink`, and
+`registerSession` including `h_metadata`) are closed objects, and they refuse a `cwd` key at
+`/cwd` and at `/h_metadata/cwd`.
+
+**What the directory still reaches.** The directory is not erased. `SessionRef.transcriptRef`
+is relic's `file_path` (`relic.findSessions.ts` `hitToRef`, `relic.rowToSessionRef.ts`), and
+the parent of that path is the cwd-derived project folder, for example
+`/Users/nat/.claude/projects/-opt-Code-github-com-example-neo-oracle/s-owner.jsonl`.
+`buildRelicEventTarget` copies it into `relic_event.transcript_ref`, and that is an identity
+key in the #23 target codec: `contracts/evidence-v1.ts` lists it in `TARGET_KEYS.relic_event`,
+and `DISPLAY_ONLY` exempts only `relic_session.title_snapshot`. So the project folder is a
+passive locator, and it is part of `relic_event` identity. Moving only the folder changes the
+`target_key`. Two sessions in one folder still get distinct event identities, because their
+`session_uuid` and file name differ. Nothing in `app/server/src` groups on `transcriptRef` or
+`transcript_ref` today, but the codec does not stop a later consumer from grouping on the
+folder inside it. Doing so would be a new cwd rule and would need its own ruling.
 
 **Reason.** The #28 TODO says to "exclude cwd-only foreign visitors". The defining text is a
 prohibition. Discussion #20 §10 says: "A visitor session sharing cwd does not become part of
@@ -363,11 +375,23 @@ Boundaries rule out "automatic session ownership inference". So the visitor is e
 letting the directory decide anything. It is not excluded by a classifier, because relic's rows
 carry no ownership signal except cwd-derived ones.
 
-**Pinned by** `app/server/test/relic-foreign-visitor.test.ts` and the `__shared_cwd__`
-scenario in `test/fixtures/relic-v1/fake-relic.ts`. The tests passed on first run because the
-invariant already held, so their teeth are shown by mutants instead. M1: `findSessions`
-deduplicating on `repo` fails 2 tests. M2: `bankFromRepo` keeping the whole `repo` fails 1.
-M3: `cwd` added to `CREATE_KEYS` fails 2.
+**Pinned by** `app/server/test/relic-foreign-visitor.test.ts` (10 tests) and the
+`__shared_cwd__` scenario in `test/fixtures/relic-v1/fake-relic.ts`. The pins cover only
+these things: `find`'s grouping; `SessionRef`'s key set on both the `find` path and the `get`
+path; `sourceBank`; `relic_session` identity, checked against both spellings of the directory
+(relic's repo key and the dash-encoded folder); the `cwd` refusals; and the locator facts in
+the paragraph above. They do not prove that no later consumer groups on `transcript_ref`. The
+invariant already held, so the tests passed on first run. Their teeth are shown by mutants,
+each measured against this file:
+
+| Mutant | Fails |
+|---|---|
+| M1: `findSessions` dedups on `hit.repo` | 4 |
+| M2: `bankFromRepo` keeps the whole `repo` | 2 (the `find` and the `get` key-set tests) |
+| M3b: `createSessionLink` accepts `cwd` as an optional key | 1 (only the refusal test) |
+| M7: `rowToSessionRef` adds a `repo` key (the `get` path) | 1 |
+| M8: `transcript_ref` made display-only for `relic_event` | 1 (the identity-input test) |
+| M9: `transcriptRef` stripped to the file name | 2 |
 
 **Not decided here.** Two things are left open: an active visitor label at this boundary, and
 restricting `getContext` chain expansion to `continues`/`forked_from`. Both are NEEDS-NAT;
