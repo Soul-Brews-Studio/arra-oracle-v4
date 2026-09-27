@@ -264,3 +264,46 @@ describe("useKnowledge: B-after-S2 still ends on S2", () => {
     expect(k.get().loading).toBe(false);
   });
 });
+
+/** ui-reads2 (r3 verifier finding 3): a load-more ticket came from `peek()`,
+ *  which shares the seq of whatever read is in flight -- so a page issued for
+ *  one result was appended to the NEXT one. The ticket is now bound to the
+ *  result it extends: its key and the cursor it was issued for. */
+describe("load-more is bound to the result it extends", () => {
+  // `trace_id`/`id` names the trace, `after_position`/`cursor` the page.
+  const pageKey = (b: Record<string, unknown>) =>
+    `${String(b.trace_id ?? b.id ?? b.session_name ?? "")}|${String(b.after_position ?? b.cursor ?? "")}`;
+  const hit = (ref: string) => ({ trace_id: ref.slice(0, 2), ref, position: ref });
+  const refs = (rows: Array<{ ref: string }>) => rows.map((r) => r.ref);
+
+  test("trace hits: t1's next page answering after t2's lookup never lands on t2", async () => {
+    const pending = parkedFetch(pageKey);
+    const e = render(() => useEvidenceReview(BANK, null, null), null);
+    act(() => e.get().trace.setId("t1"));
+    act(() => e.get().trace.lookup());
+    await answer(pending, "getTrace", "t1|", { id: "t1" });
+    await answer(pending, "listTraceHits", "t1|", { rows: [hit("t1-p1")], next_after_position: "c1" });
+    act(() => e.get().trace.setId("t2"));
+    act(() => e.get().trace.lookup());
+    act(() => e.get().hits.loadMore()); // t1 is still on screen: "more of t1"
+    await answer(pending, "getTrace", "t2|", { id: "t2" });
+    await answer(pending, "listTraceHits", "t2|", { rows: [hit("t2-p1")], next_after_position: null });
+    await answerAll(pending, "t1|c1", () => ({ rows: [hit("t1-p2")], next_after_position: null }));
+    expect(e.get().trace.row?.id).toBe("t2");
+    expect(refs(e.get().hits.rows)).toEqual(["t2-p1"]);
+  });
+
+  test("session links: sA's cursor is never sent for sB, and nothing lands on sB but sB's page", async () => {
+    const pending = parkedFetch(pageKey);
+    type P = { s: string };
+    const e = render((p: P) => useEvidenceReview(BANK, null, p.s), { s: "sA" });
+    await answer(pending, "listSessionLinks", "sA|", { rows: [{ id: "A-p1" }], next_cursor: "cA" });
+    e.set({ s: "sB" });
+    act(() => e.get().sessionLinks.loadMore()); // sB's first page is still in flight
+    expect(pending.map((p) => p.key)).not.toContain("sB|cA");
+    await answerAll(pending, "sB|cA", () => ({ rows: [{ id: "B-after-cA" }], next_cursor: null }));
+    await answerAll(pending, "sA|cA", () => ({ rows: [{ id: "A-p2" }], next_cursor: null }));
+    await answer(pending, "listSessionLinks", "sB|", { rows: [{ id: "B-p1" }], next_cursor: null });
+    expect(ids(e.get().sessionLinks.rows)).toEqual(["B-p1"]);
+  });
+});

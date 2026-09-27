@@ -25,8 +25,13 @@ import { App } from "./App";
 
 let root: Root | null = null;
 let uninstall: (() => void) | null = null;
+// `installFakeDom` restores the DOM globals it replaced; `fetch` and
+// `localStorage` are replaced HERE, so they are put back here too (ui-reads2,
+// r3 finding 5: a later file in the same `bun test` process inherited them).
+let saved: { fetch: typeof fetch; localStorage: unknown } | null = null;
 
 beforeEach(() => {
+  saved = { fetch: globalThis.fetch, localStorage: (globalThis as Record<string, unknown>).localStorage };
   const store = new Map<string, string>();
   (globalThis as Record<string, unknown>).localStorage = {
     getItem: (k: string) => store.get(k) ?? null,
@@ -48,6 +53,11 @@ afterEach(() => {
   root = null;
   uninstall?.();
   uninstall = null;
+  if (saved !== null) {
+    globalThis.fetch = saved.fetch;
+    (globalThis as Record<string, unknown>).localStorage = saved.localStorage;
+    saved = null;
+  }
 });
 
 /** A generously permissive body: every field any parser in this app reads

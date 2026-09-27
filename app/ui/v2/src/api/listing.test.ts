@@ -66,3 +66,20 @@ describe("api/listing distinguishes a real auth failure from an empty page", () 
     expect(page.rows).toHaveLength(1);
   });
 });
+
+// ui-reads2 (r3 verifier finding 4): `toPage` threw on `body.rows` for a 200
+// with a null body, so the caller never reached land(). It is a malformed
+// answer, reported as one -- not a throw, and not an honest empty page.
+describe("api/listing: a 2xx with no object body is a malformed answer", () => {
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  test("200 null on listPeers: no throw, no rows, an error naming it", async () => {
+    stubFetch(200, null);
+    const page = await listPeers(bank, null, 50, true);
+    expect(page.rows).toEqual([]);
+    expect(page.supported).toBe(true);
+    expect(page.error).toBe("malformed listing response (no body)");
+  });
+});

@@ -117,60 +117,64 @@ export function useKnowledge(bank: Bank) {
   const refresh = useCallback(async () => {
     const t = read.begin();
     const { b, selected } = t.value;
-    if (selected === null) {
-      // A null key has no loading flag to latch (a workspace switch or "New"
-      // while a node is open used to latch "loading…" on the draft).
-      setHead(null);
-      setHistory([]);
-      return;
-    }
-    setError(null);
-    const headResult = await getAcceptedHead(b, selected);
-    if (!read.live(t)) return; // a node or bank already left, or a newer read
-    if (!headResult.ok) {
-      read.land(t);
-      setHead(null);
-      setHistory([]);
-      setError(describe(headResult));
-      setNodes((n) => setState(n, selected, "unknown"));
-      return;
-    }
-    // A null body is the server saying "no such node", which is an ANSWER --
-    // the bookmark is stale, not the request malformed.
-    const body = headResult.body as { node?: unknown; revision?: RevisionRow } | null;
-    if (body === null || body.revision === undefined) {
-      read.land(t);
-      setHead(null);
-      setHistory([]);
-      setNodes((n) => setState(n, selected, "missing"));
-      return;
-    }
-    setNodes((n) => setState(n, selected, "live"));
-    setTitles((t) => ({ ...t, [selected]: body.revision!.title }));
-    setHead({ node: body.node, revision: body.revision });
+    // Lands on EVERY path (ui-reads2): the dropped-read return and any throw
+    // (a malformed head body) used to skip land().
+    try {
+      if (selected === null) {
+        // A null key has no loading flag to latch (a workspace switch or "New"
+        // while a node is open used to latch "loading…" on the draft).
+        setHead(null);
+        setHistory([]);
+        return;
+      }
+      setError(null);
+      const headResult = await getAcceptedHead(b, selected);
+      if (!read.live(t)) return; // a node or bank already left, or a newer read
+      if (!headResult.ok) {
+        setHead(null);
+        setHistory([]);
+        setError(describe(headResult));
+        setNodes((n) => setState(n, selected, "unknown"));
+        return;
+      }
+      // A null body is the server saying "no such node", which is an ANSWER --
+      // the bookmark is stale, not the request malformed.
+      const body = headResult.body as { node?: unknown; revision?: RevisionRow } | null;
+      if (body === null || body.revision === undefined) {
+        setHead(null);
+        setHistory([]);
+        setNodes((n) => setState(n, selected, "missing"));
+        return;
+      }
+      setNodes((n) => setState(n, selected, "live"));
+      setTitles((t) => ({ ...t, [selected]: body.revision!.title }));
+      setHead({ node: body.node, revision: body.revision });
 
-    const historyResult = await listAcceptedHistory(b, selected);
-    if (!read.land(t)) return;
-    if (!historyResult.ok) {
-      setHistory([]);
-      setError(describe(historyResult));
-      return;
-    }
-    // THIRD envelope key in this API, and they are all different:
-    //   listMessages         -> { rows }
-    //   getContext           -> { items }
-    //   listAcceptedHistory  -> { node, snapshot_head_revision_id, revisions }
-    // None of them errors when you read the wrong one; you just get an empty
-    // list against a server that returned data. Verified by curl, not guessed.
-    const historyBody = historyResult.body as {
-      revisions?: unknown;
-      snapshot_head_revision_id?: unknown;
-    } | null;
-    setHistory(Array.isArray(historyBody?.revisions) ? (historyBody.revisions as RevisionRow[]) : []);
-    // The server states its own head here, so prefer it over re-deriving one
-    // from the separate getAcceptedHead call -- one snapshot, one answer.
-    if (typeof historyBody?.snapshot_head_revision_id === "string") {
-      setSnapshotHead(historyBody.snapshot_head_revision_id);
+      const historyResult = await listAcceptedHistory(b, selected);
+      if (!read.live(t)) return;
+      if (!historyResult.ok) {
+        setHistory([]);
+        setError(describe(historyResult));
+        return;
+      }
+      // THIRD envelope key in this API, and they are all different:
+      //   listMessages         -> { rows }
+      //   getContext           -> { items }
+      //   listAcceptedHistory  -> { node, snapshot_head_revision_id, revisions }
+      // None of them errors when you read the wrong one; you just get an empty
+      // list against a server that returned data. Verified by curl, not guessed.
+      const historyBody = historyResult.body as {
+        revisions?: unknown;
+        snapshot_head_revision_id?: unknown;
+      } | null;
+      setHistory(Array.isArray(historyBody?.revisions) ? (historyBody.revisions as RevisionRow[]) : []);
+      // The server states its own head here, so prefer it over re-deriving one
+      // from the separate getAcceptedHead call -- one snapshot, one answer.
+      if (typeof historyBody?.snapshot_head_revision_id === "string") {
+        setSnapshotHead(historyBody.snapshot_head_revision_id);
+      }
+    } finally {
+      read.land(t);
     }
     // Reads its node from `read`, not this closure; the deps only say WHEN a
     // read is due -- a new node, or a new bank/workspace/token.

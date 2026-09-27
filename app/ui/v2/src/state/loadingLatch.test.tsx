@@ -24,6 +24,7 @@ import { type Root, createRoot } from "react-dom/client";
 import type { Bank } from "../api/memory";
 import { useEvidenceReview } from "./useEvidenceReview";
 import { useKnowledge } from "./useKnowledge";
+import { useListing } from "./useListing";
 import { useMemory } from "./useMemory";
 
 const B = "nodeBBBBBBBBBBBBBBBBB";
@@ -218,5 +219,39 @@ describe("useEvidenceReview: loading settles when a lane's selection is cleared"
     view.rerender({ b: { ...BANK, workspace: "ws2" }, node: null, session: null });
     await flush();
     expect(e!.trace.loading).toBe(false);
+  });
+
+  // ui-reads2 (r3 verifier finding 1): the lookup's first read dropped by
+  // `live()` returned WITHOUT land(), so its pending marker outlived it. Back
+  // on w1, "Look up" stayed disabled on "Looking up..." with nothing in flight.
+  test("a w1 lookup answering while on w2 does not latch loading once back on w1", async () => {
+    const pending = parkedFetch();
+    let e: ReturnType<typeof useEvidenceReview> | null = null;
+    const view = render((p: Props) => void (e = useEvidenceReview(p.b, p.node, p.session)), { b: BANK, node: null, session: null });
+    act(() => e!.trace.setId("trace-1"));
+    act(() => e!.trace.lookup());
+    view.rerender({ b: { ...BANK, workspace: "ws2" }, node: null, session: null });
+    await answerAll(pending, "getTrace", { id: "trace-1" });
+    view.rerender({ b: BANK, node: null, session: null });
+    await flush();
+    expect(pending.length).toBe(0); // nothing is in flight...
+    expect(e!.trace.loading).toBe(false); // ...so nothing may read as loading
+  });
+});
+
+describe("useListing: a 200 with a null body settles loading and says so", () => {
+  // ui-reads2 (r3 verifier finding 4): `toPage` threw on `body.rows`, so the
+  // load never reached land() and the panel sat on "loading" forever.
+  test("listPeers answering 200 null: loading false, an honest error, no rows", async () => {
+    const pending = parkedFetch();
+    let l: ReturnType<typeof useListing> | null = null;
+    render((b: Bank) => void (l = useListing(b)), { bank: "b1", token: "t1", workspace: "ws1" });
+    await answerAll(pending, "listSessions", { rows: [], next_after_name: null, total: "0" });
+    await answerAll(pending, "listNodes", { rows: [], next_after_id: null, total: "0" });
+    await answerAll(pending, "listPeers", null);
+    expect(l!.peers.state.loading).toBe(false);
+    expect(l!.peers.state.rows).toEqual([]);
+    expect(l!.peers.state.error).not.toBeNull();
+    expect(l!.sessions.state.loading).toBe(false);
   });
 });

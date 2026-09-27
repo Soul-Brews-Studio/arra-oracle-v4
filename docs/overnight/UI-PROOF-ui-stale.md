@@ -660,3 +660,23 @@ verifier listed. Left as-is, stated here rather than silently dropped:
   round's rebuilt bundle inside the time box; the fixes are proven only at the hook level
   (failing-first + mutants) and by the acceptor's live probe (`run.sh`, HTTP/MCP/CLI
   surface + isolation), not by a fresh browser session. Flagged rather than claimed.
+
+## Reads, round 2 (ui-reads2, 2026-09-27)
+
+Fixes the non-blocking r3 findings (`.tmp/ui-actions-r3-findings.txt`) on the
+ui-actions base (61ab682). UI only; `app/server/src` untouched. Base 310 UI tests,
+now 401/401 across 65 files (`bun test ./src` in `app/ui/v2`).
+
+| # | Finding | Red before the fix (decisive line) | Fix |
+|---|---|---|---|
+| 1 | trace lookup dropped via `live()` skipped `land()` | `loadingLatch` "w1 lookup answering while on w2": `Expected: false, Received: true` | every `begin()` (9 sites) lands on every path, in a `finally` where a throw was possible; `useKnowledge:129` was the same shape (not latchable there, fixed anyway) |
+| 2 | seq matching unpinned | new `keyedReadSeq.test.tsx` green on base; M1 0/3 pass, M3 1/3, M4 0/3 (`Expected: true, Received: false` at the "loading stays on" line) | tests only; same counts re-run on the fixed code |
+| 3 | `peek()` aliasing | hits: `+ "t1-p2"` after `"t2-p1"`; links: `Expected to not contain: "sB\|cA"`, `Received: ["sB\|", "sB\|cA"]` | `useMorePages`: a load-more carries the result's key, values, cursor and generation; issues only while that key is on screen, lands only while that generation is. `peek()` removed. Hits, session links, dependents |
+| 4 | 200 + null body latched listing | `TypeError: null is not an object (evaluating 'body.rows')`, loading `Received: true` | `toPage` returns "malformed listing response (no body)"; `useListing.load` also catches, lands in `finally`, shows the failure |
+| 5 | carried over | ask: `Expected ["sB"], Received ["sA"]`; join guard had no test (removing the guard now reads `Received: "invalid_reference"`) | **ask sends with its ticket's values** (the selection on screen), the same values it is keyed on, as `refreshContext` does. `App.stableBank.test.tsx` restores `fetch` and `localStorage` |
+
+Not proven red: the `App.stableBank` restore (hygiene; no cross-file failure observed)
+and the dependents load-more (same `useMorePages` path as hits/links, no own test).
+Acceptor live probe (`run.sh ... ui-reads2`, HEAD 6d29166): 57 methods on HTTP/MCP/CLI,
+isolation 191 pass / 0 fail, seed errors 0, fatal none; rc 2 from 26 payload gaps, the
+same count as the accepted ui-actions base (`verify-ui-actions-2`). No browser re-run.
