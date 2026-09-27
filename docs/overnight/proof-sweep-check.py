@@ -82,6 +82,17 @@ ROWS = [
      "app/ui/v2/src/api/getSearchFreshness.ts", (21, 21), r"export function getSearchFreshness\("),
     ("docs/SCHEMA-BUILT.md", "`state/searchFreshnessView.ts:104`", None,
      "app/ui/v2/src/state/searchFreshnessView.ts", (104, 104), r"`embedPendingChunks will retry"),
+    # PROOF-SWEEP.md's own "File:line (doc)" locators into AGENTS.md (drift reports them, row 39).
+    ("docs/overnight/PROOF-SWEEP.md", "AGENTS.md:21", None, "AGENTS.md", (21, 22), r"mcp_calls  \}  written on every admitted MCP call"),
+    ("docs/overnight/PROOF-SWEEP.md", "AGENTS.md:38", None, "AGENTS.md", (38, 38), r"^- \*\*Storage\.\*\*[\s\S]*mcp_calls"),
+    ("docs/overnight/PROOF-SWEEP.md", "AGENTS.md:40", None, "AGENTS.md", (40, 40), r"capped at 1 MiB"),
+    ("docs/overnight/PROOF-SWEEP.md", "AGENTS.md:44", None, "AGENTS.md", (44, 44), r"^- \*\*MCP tools: 65\*\*"),
+    ("docs/overnight/PROOF-SWEEP.md", "AGENTS.md:45", None, "AGENTS.md", (45, 45), r"^- \*\*v3-compatible MCP adapter\*\*"),
+    ("docs/overnight/PROOF-SWEEP.md", "AGENTS.md:53", None, "AGENTS.md", (53, 53), r"X-Arra-Peer"),
+    ("docs/overnight/PROOF-SWEEP.md", "AGENTS.md:85", None, "AGENTS.md", (85, 85), r"`Host`/`Origin` gate"),
+    ("docs/overnight/PROOF-SWEEP.md", "AGENTS.md:87", None, "AGENTS.md", (87, 87), r"`/health` and the static UI"),
+    ("docs/overnight/PROOF-SWEEP.md", "AGENTS.md:98", None, "AGENTS.md", (98, 98), r"malformed `\?bank` is refused"),
+    ("docs/overnight/PROOF-SWEEP.md", "AGENTS.md:108", None, "AGENTS.md", (108, 108), r"^- \*\*UI\.\*\*"),
     # Line 461 is the last line (462 is the empty string after the final newline): 461 lines.
     ("app/docs/contracts/revision-evidence-v1.md", "is 461 lines", None,
      "app/migrate-py/src/arra_migrate/revision_v1.py", (461, 462), r"\S.*\n\Z"),

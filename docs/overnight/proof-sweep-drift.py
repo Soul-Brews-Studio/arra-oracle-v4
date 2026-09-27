@@ -73,6 +73,11 @@ KNOWN = {
     ("docs/overnight/UI-PROOF-ui-cite.md", "app/ui/v2/src/components/PublishForm.tsx:50"):
         "historical refutation record of pre-fix code (PROOF-SWEEP.md §2)",
 }
+# Whole target files whose citations from one doc are pinned line by line in proof-sweep-check.py.
+KNOWN_TARGETS = {
+    ("docs/overnight/PROOF-SWEEP.md", "AGENTS.md"):
+        "the sweep's own locators; AGENTS.md changed after they were written; pinned in proof-sweep-check.py",
+}
 checked = drifted = 0
 for doc in docs:
     for row, text in blamed_lines(doc):
@@ -96,7 +101,8 @@ for doc in docs:
             checked += 1
             moved = [n for n in nums if (then[n - 1] if n <= len(then) else None) != (now[n - 1] if n <= len(now) else None)]
             if moved:
-                known = KNOWN.get((doc, f"{current}{spec}")) or KNOWN.get((doc, f"{os.path.basename(current)}{spec}"))
+                known = (KNOWN.get((doc, f"{current}{spec}")) or KNOWN.get((doc, f"{os.path.basename(current)}{spec}"))
+                         or KNOWN_TARGETS.get((doc, current)))
                 drifted += known is None
                 label = f"KNOWN ({known})" if known else "DRIFT"
                 print(f"{label} {doc}:{row['n']} [{row['sha']}] {current}{spec} lines {moved}")

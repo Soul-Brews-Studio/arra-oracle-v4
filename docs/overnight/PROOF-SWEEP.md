@@ -68,8 +68,10 @@ was deleted. `PLAN.md` needed no correction line (see "Checked and true").
 ### 1a. Fix-round corrections (2026-09-27)
 
 Red first: `python3 docs/overnight/proof-sweep-check.py 81fe34b` (the docs as the first pass committed them) gave
-**0 ok / 30 fail**, and `python3 docs/overnight/proof-sweep-drift.py 81fe34b` gave **16 drifted**. After this round both
-are green on the fix commit (30 ok / 0 fail; 0 drifted). Rows 19-30 are the 16 drifted citations (a row
+**0 ok / 30 fail** on its first 30 rows, and `python3 docs/overnight/proof-sweep-drift.py 81fe34b` gave **16 drifted**.
+Its last 10 rows pin this file's own locators into AGENTS.md; with `b8199a3`'s AGENTS.md (a three-line diagram
+wrap, row 39) they gave 9 fail. On the final commit: **40 ok / 0 fail**, and drift reports 0 drifted, with the 3
+known citations and this file's AGENTS.md locators listed as KNOWN (the locators are pinned by the check). Rows 19-30 are the 16 drifted citations (a row
 covers every doc that carried it); 32-33 are the 3 known ones in frozen contracts; 31 and 34-42 come from the count
 pass, a hand read of the smaller unread contracts, and the verifier's non-blocking findings.
 
