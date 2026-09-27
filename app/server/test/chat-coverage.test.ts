@@ -44,6 +44,8 @@ const ORIGIN = "http://127.0.0.1:3939";
 const TOKEN = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const TOKEN_SHA256 = createHash("sha256").update(TOKEN, "ascii").digest("hex");
 
+/** The overflow scenario's anchor session (`fixtures/chat-v1/gated-coverage.ts`). */
+const OVERFLOW_MAIN = "overflow-main-".padEnd(250, "x");
 const pad = (seed: string) => `${seed}${"0".repeat(Math.max(0, 21 - seed.length))}`.slice(0, 21);
 const utf8 = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 
@@ -114,7 +116,12 @@ beforeAll(async () => {
     }),
     { encoding: "utf-8", mode: 0o600 },
   );
-  const access = createKnowledgeAccess({ datasetRoot: fixture.datasetRoot, env: {} });
+  // A stub model (never a real one), so answerChat can run over the wire too.
+  const access = createKnowledgeAccess({
+    datasetRoot: fixture.datasetRoot,
+    env: {},
+    chat: { model: async () => "stub answer", settings: null },
+  });
   configureKnowledgeAccess(access);
   // Only the audit append is reached on the kb_* path; the legacy memory
   // store is never touched by this file.
@@ -254,9 +261,9 @@ describe("the same results over the live transports (production reader, real pol
     max_items,
   });
 
-  const viaHttp = async (payload: Record<string, unknown>): Promise<Result> => {
+  const viaHttp = async (payload: Record<string, unknown>, method = "getContext"): Promise<Result> => {
     const res = await app.handle(
-      new Request(`${ORIGIN}/api/knowledge/${WS}/getContext`, {
+      new Request(`${ORIGIN}/api/knowledge/${WS}/${method}`, {
         method: "POST",
         headers: { host: "127.0.0.1:3939", authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
         body: JSON.stringify(payload),
@@ -266,7 +273,7 @@ describe("the same results over the live transports (production reader, real pol
     return res.json();
   };
 
-  const viaMcp = async (payload: Record<string, unknown>): Promise<Result> => {
+  const viaMcp = async (payload: Record<string, unknown>, method = "getContext"): Promise<Result> => {
     const res = await app.handle(
       new Request(`${ORIGIN}/mcp/${WS}`, {
         method: "POST",
@@ -275,7 +282,7 @@ describe("the same results over the live transports (production reader, real pol
           jsonrpc: "2.0",
           id: 1,
           method: "tools/call",
-          params: { name: "kb_getContext", arguments: { payload } },
+          params: { name: `kb_${method}`, arguments: { payload } },
         }),
       }),
     );
@@ -301,6 +308,30 @@ describe("the same results over the live transports (production reader, real pol
       expect(result.excluded).toEqual([]);
       expect(result.excluded_omitted).toBe(0);
     });
+
+    // #85 live overflow (acceptance-criteria slice, 2026-09-26): the excluded
+    // list forced past MAX_CONTEXT_WIRE_BYTES over the wire, for getContext
+    // AND answerChat -- the worst case was proven at service level only.
+    for (const method of ["getContext", "answerChat"]) {
+      test(`${label}: ${method} excluded-list overflow is bounded, partial and counted`, async () => {
+        const payload = { ...request(OVERFLOW_MAIN, 50), ...(method === "answerChat" ? { question: "what happened?" } : {}) };
+        const result = (await via(payload, method)) as Result & { answer?: string };
+        if (method === "answerChat") expect(result.answer).toBe("stub answer");
+        expect(result.coverage).toBe("partial");
+        expect(utf8(result.excluded)).toBeLessThanOrEqual(MAX_CONTEXT_WIRE_BYTES);
+        expect(result.excluded_omitted).toBeGreaterThan(0);
+        for (const entry of result.excluded) {
+          expect(entry.reason).toBe("budget_exceeded");
+          expect(typeof entry.session_name).toBe("string");
+          expect(typeof entry.public_id).toBe("string");
+        }
+        // 5 sessions x 51 candidates, 50 used: every other one is listed or
+        // counted as omitted, over the wire exactly as in-process.
+        expect(result.excluded.length + result.excluded_omitted).toBe(5 * 51 - 50);
+        expect(result.excluded).toEqual(scenario("overflow").excluded);
+        expect(result.excluded_omitted).toBe(scenario("overflow").excluded_omitted);
+      });
+    }
 
     test(`${label}: count truncation is partial with identifiers`, async () => {
       const result = await via(request("count-main", 2));

@@ -422,3 +422,16 @@ a member of, nor any other workspace's data. The R4 in-process stub assertions i
 `chat-production-wiring.test.ts` (HTTP, MCP and CLI; configured, unconfigured, unreachable and
 failing model; prompt isolation), `chat-model.test.ts` (config validation, request shape, timeout),
 `knowledge-chat-writer-gate.test.ts` (routing: reader only, no writer).
+
+## Amendment 2026-09-26 (post-merge R3/R4/R5 + #85/#31/#75 acceptance criteria)
+
+Evidence only; no behaviour changes. Ruling R4 (`docs/overnight/DECISIONS.md`) is
+unchanged. The worst case for the `excluded` list (5 sessions x 51 candidates at
+`max_items` 50, with 250-byte session names) is now proven over the real HTTP route
+(`POST /api/knowledge/:bank/getContext|answerChat`) and the real MCP route
+(`POST /mcp/:bank`, `kb_getContext|kb_answerChat`), not only in-process. On both
+transports and for both methods, `coverage` is `"partial"`, `excluded` stays within
+`MAX_CONTEXT_WIRE_BYTES`, `excluded_omitted` is greater than 0, `excluded.length +
+excluded_omitted` equals 205, and the wire result equals the in-process result.
+`answerChat` uses a stub model. Test: `app/server/test/chat-coverage.test.ts`, in the
+describe block "the same results over the live transports".
