@@ -775,3 +775,43 @@ by this slice.
 Tests: `app/server/test/instance-audit-reader.test.ts` (failing-first; operator via either
 global grant, workspace-scoped principal refused, anonymous refused, page bound + cursor,
 fresh-instance `[]`, redaction preserved, Thai round-trip, read-audits-itself).
+
+## Amendment 2026-09-28 (post-merge R25 (Nat D4b), fix round 2: an independent Opus verifier found the HTTP boundary itself was untested and broken; see `docs/overnight/DECISIONS.md`)
+
+The round-1 slice above described the right shape but the route (`app.instanceAuditRoute.ts`)
+did not implement it correctly, and no test ever drove the real route over HTTP -- every prior
+test called `service.readInstanceAudit(..., {})` directly. Two blocking defects, both fixed
+here, both now covered by `app/server/test/instance-audit-route-http.test.ts` (a REAL listening
+server, REAL `createApp`, REAL `appendInstanceAuditRow` writer -- never the service method
+directly):
+
+1. **Absent filters returned `[]`, not the log.** `URLSearchParams.get("route")` /
+   `.get("outcome")` return `null` for an absent param; `readInstanceAuditRows.ts` only skips a
+   filter when it is `!== undefined`, so a bare pass-through of `null` rendered as the SQL
+   literal `route = 'null' AND outcome = 'null'` and matched nothing. `GET /api/instance-audit`
+   with no filters, or with only one of the two, always answered `{rows:[],next_cursor:null}`
+   even with rows present -- the only combination that worked was both filters supplied
+   together. Fixed in `app.instanceAuditRoute.ts`: `null` from `URLSearchParams.get` is now
+   normalized to `undefined` for `limit`, `cursor`, `route` and `outcome` alike before building
+   the query.
+2. **The cursor dropped same-millisecond rows.** The prior shape ("`cursor` is the `started_at`
+   of the last row, strictly-older paging") is corrected: `cursor` is now `"<started_at>:<id>"`
+   of the last row on a page, and the next page is `started_at < X OR (started_at = X AND id <
+   Y)` -- exactly the `started_at desc, id desc` order the in-memory sort already used. The prior
+   `started_at`-only cursor silently lost every row sharing the boundary millisecond with the
+   cursor row (a realistic case for this table: a burst of refused anonymous probes, or
+   concurrent backfill/reindex calls, land on the same millisecond), and `next_cursor` then went
+   `null`, so the caller believed the log was complete when rows remained unreachable.
+
+Two nonblocking gaps closed at the same time, cheap alongside the above: an invalid cursor
+(`readInstanceAuditRows.ts`'s new `InvalidCursorError`) now 400s instead of silently restarting
+at page 1; `?limit=0` now 400s like `?limit=abc` instead of silently falling back to the default
+(both are "present but not a valid limit", and now share one code path); and the `route` filter
+now also accepts `/api/instance-audit` itself, since the reader's own self-audit rows are written
+under that route and an operator could not previously filter to them.
+
+Tests: `app/server/test/instance-audit-route-http.test.ts` (failing-first against the round-1
+code: 6 of 9 cases failed before this amendment's fix, all 9 pass after) -- no filters, route-only,
+outcome-only, both filters, workspace-scoped refusal over HTTP, anonymous refusal over HTTP,
+invalid cursor, `limit=0` vs `limit=abc` consistency, and four same-millisecond rows never
+dropped across a page boundary.

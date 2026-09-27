@@ -14,10 +14,17 @@
 // is ever written by opening the table (see `instanceAudit.appendInstanceAuditRow
 // .ts` for the one function that appends).
 //
-// Newest-first: `started_at desc`. `cursor` is the `started_at` of the last
-// row a previous page returned; the next page is every row strictly older
-// (ties broken by `id desc` so a page boundary landing mid-millisecond never
-// repeats or drops a row).
+// Newest-first: `started_at desc, id desc` (see the in-memory sort below).
+// `cursor` is `"<started_at>:<id>"` of the last row a previous page returned
+// -- BOTH fields, not `started_at` alone. A page boundary landing mid-
+// millisecond is realistic here (a burst of refused anonymous probes, or
+// concurrent backfill/reindex calls, all timestamp the same ms), and a
+// `started_at`-only cursor with a strict `<` filter silently drops every row
+// that shares the boundary millisecond with the cursor row (round-2 verifier
+// finding: 2 of 4 same-millisecond rows became unreachable). The next page
+// is every row strictly older by `started_at`, OR equal `started_at` with a
+// strictly smaller `id` -- exactly the tie-break the in-memory sort uses, so
+// paging can never repeat or drop a row.
 
 import { openInstanceAuditTable } from "./instanceAudit.openInstanceAuditTable";
 
@@ -27,7 +34,7 @@ export const INSTANCE_AUDIT_DEFAULT_LIMIT = 50;
 export type InstanceAuditQuery = {
   readonly limit?: number;
   readonly cursor?: string | null;
-  readonly route?: "/api/backfill" | "/api/reindex";
+  readonly route?: "/api/backfill" | "/api/reindex" | "/api/instance-audit";
   readonly outcome?: "admitted" | "refused";
 };
 
@@ -50,11 +57,27 @@ export type InstanceAuditPage = {
   readonly next_cursor: string | null;
 };
 
+/** Thrown for a syntactically invalid cursor -- the route maps this to 400 rather than silently starting over at page 1 (round-2 verifier nonblocking finding). */
+export class InvalidCursorError extends Error {}
+
 /** Bounded, clamped page size — never trusts a caller-supplied limit past `INSTANCE_AUDIT_MAX_LIMIT`. */
 const boundedLimit = (raw: number | undefined): number => {
   if (raw === undefined || !Number.isSafeInteger(raw) || raw < 1) return INSTANCE_AUDIT_DEFAULT_LIMIT;
   return Math.min(raw, INSTANCE_AUDIT_MAX_LIMIT);
 };
+
+const CURSOR_RE = /^(\d+):(.+)$/;
+
+/** `"<started_at>:<id>"` -> `{ startedAt, id }`, or `null`/throws for garbage input. */
+function decodeCursor(raw: string): { startedAt: number; id: string } {
+  const match = CURSOR_RE.exec(raw);
+  if (!match) throw new InvalidCursorError(`malformed cursor: ${JSON.stringify(raw)}`);
+  const startedAt = Number(match[1]);
+  if (!Number.isSafeInteger(startedAt)) throw new InvalidCursorError(`malformed cursor: ${JSON.stringify(raw)}`);
+  return { startedAt, id: match[2] };
+}
+
+const encodeCursor = (row: InstanceAuditRow): string => `${row.started_at}:${row.id}`;
 
 export async function readInstanceAuditRows(query: InstanceAuditQuery): Promise<InstanceAuditPage> {
   const limit = boundedLimit(query.limit);
@@ -65,8 +88,9 @@ export async function readInstanceAuditRows(query: InstanceAuditQuery): Promise<
   if (query.route !== undefined) filters.push(`route = '${query.route}'`);
   if (query.outcome !== undefined) filters.push(`outcome = '${query.outcome}'`);
   if (query.cursor !== null && query.cursor !== undefined) {
-    const cursorMs = Number(query.cursor);
-    if (Number.isSafeInteger(cursorMs)) filters.push(`started_at < ${cursorMs}`);
+    const cursor = decodeCursor(query.cursor);
+    const escapedId = cursor.id.replace(/'/g, "''");
+    filters.push(`(started_at < ${cursor.startedAt} OR (started_at = ${cursor.startedAt} AND id < '${escapedId}'))`);
   }
   if (filters.length > 0) builder = builder.where(filters.join(" AND "));
   const raw = (await builder.toArray()) as unknown as Record<string, unknown>[];
@@ -88,6 +112,7 @@ export async function readInstanceAuditRows(query: InstanceAuditQuery): Promise<
   }));
   const sorted = all.sort((a, b) => b.started_at - a.started_at || (a.id < b.id ? 1 : -1));
   const page = sorted.slice(0, limit);
-  const next = sorted.length > limit ? String(page[page.length - 1]?.started_at ?? "") : null;
+  const last = page[page.length - 1];
+  const next = sorted.length > limit && last !== undefined ? encodeCursor(last) : null;
   return { rows: page, next_cursor: next };
 }

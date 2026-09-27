@@ -12,7 +12,11 @@ import { Elysia } from "elysia";
 import type { OperationService } from "./auth/service.createOperationService";
 import { AuthDenied } from "./auth/service.createOperationService";
 import { errorResponse, readAuthorization } from "./auth/http";
-import type { InstanceAuditQuery } from "./audit/instanceAudit.readInstanceAuditRows";
+import {
+  InvalidCursorError,
+  INSTANCE_AUDIT_MAX_LIMIT,
+  type InstanceAuditQuery,
+} from "./audit/instanceAudit.readInstanceAuditRows";
 
 const STATUS_FOR: Readonly<Record<string, number>> = Object.freeze({
   unauthenticated: 401,
@@ -28,15 +32,26 @@ const noStore = (body: unknown, status = 200): Response =>
     headers: { "content-type": "application/json", "cache-control": "no-store" },
   });
 
-/** Same bound as `/api/backfill`'s `batch`: digits only, 1..1000 inclusive. */
-const positiveInt = (value: string | null): number | undefined => {
+const INVALID = Symbol("invalid-limit");
+
+/**
+ * Digits only, clamped to `1..INSTANCE_AUDIT_MAX_LIMIT` (the reader clamps
+ * again, so this is belt-and-suspenders, not the only guard). Distinguishes
+ * "absent" (`null` -> `undefined`, fall back to the reader's default) from
+ * "present but not a valid limit" (`INVALID` -> the route 400s) -- an absent
+ * `?limit=` and a present-but-garbage `?limit=abc` are different requests
+ * and previously got inconsistent status codes (round-2 verifier nonblocking
+ * finding); `?limit=0` is "present but not >=1", so it 400s too now.
+ */
+const positiveInt = (value: string | null): number | undefined | typeof INVALID => {
   if (value === null) return undefined;
-  if (!/^\d+$/.test(value)) return undefined;
+  if (!/^\d+$/.test(value)) return INVALID;
   const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed >= 1 ? parsed : undefined;
+  return Number.isSafeInteger(parsed) && parsed >= 1 ? Math.min(parsed, INSTANCE_AUDIT_MAX_LIMIT) : INVALID;
 };
 
-const ROUTE_VALUES = new Set(["/api/backfill", "/api/reindex"]);
+/** Filterable to any instance-audit-writing route, including this reader's own self-audit rows. */
+const ROUTE_VALUES = new Set(["/api/backfill", "/api/reindex", "/api/instance-audit"]);
 const OUTCOME_VALUES = new Set(["admitted", "refused"]);
 
 export function instanceAuditRoute(
@@ -54,16 +69,25 @@ export function instanceAuditRoute(
         const outcomeFilter = url.searchParams.get("outcome");
         if (routeFilter !== null && !ROUTE_VALUES.has(routeFilter)) return errorResponse(400);
         if (outcomeFilter !== null && !OUTCOME_VALUES.has(outcomeFilter)) return errorResponse(400);
+        const limit = positiveInt(url.searchParams.get("limit"));
+        if (limit === INVALID) return errorResponse(400);
+        // `URLSearchParams.get` returns `null` for an absent param, but
+        // `InstanceAuditQuery` (and the reader's `!== undefined` filter
+        // guard) treats "absent" as `undefined`, not `null` -- a bare pass-
+        // through here made every absent filter render as the SQL literal
+        // `'null'`, which never matches a row (round-2 verifier finding).
+        const cursorParam = url.searchParams.get("cursor");
         const query: InstanceAuditQuery = {
-          limit: positiveInt(url.searchParams.get("limit")),
-          cursor: url.searchParams.get("cursor"),
-          route: routeFilter as InstanceAuditQuery["route"],
-          outcome: outcomeFilter as InstanceAuditQuery["outcome"],
+          limit,
+          cursor: cursorParam === null ? undefined : cursorParam,
+          route: routeFilter === null ? undefined : (routeFilter as InstanceAuditQuery["route"]),
+          outcome: outcomeFilter === null ? undefined : (outcomeFilter as InstanceAuditQuery["outcome"]),
         };
         try {
           const page = await service.readInstanceAudit(readAuthorization(request), query);
           return noStore(page);
         } catch (error) {
+          if (error instanceof InvalidCursorError) return errorResponse(400);
           const code = error instanceof AuthDenied ? error.code : "policy_unavailable";
           return errorResponse(STATUS_FOR[code] ?? 503);
         }
