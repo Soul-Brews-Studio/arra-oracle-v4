@@ -10,6 +10,7 @@ import { rovingKey } from "./rovingKey";
  *    `aria-labelledby={`${idBase}-tab-${active}`}`.
  *  - Roving tabindex: only the ACTIVE tab is a Tab stop (0); the rest are
  *    -1, reachable with the arrows. Tab from the strip goes on to the panel.
+ *    An `active` that names no tab makes the first tab the stop.
  *  - Manual activation: ArrowLeft/ArrowRight/Home/End move focus only
  *    (`rovingKey`); Enter or Space on the focused tab activates it, through
  *    the native <button>. Arrowing across Explore's tabs therefore never
@@ -35,6 +36,12 @@ export function TabStrip<T extends string>({
   tabClassName?: string;
 }) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  // Fix round (verifier, blocking): `active` is whatever the caller holds --
+  // for Explore, a route string that may be a stale or hand-typed `tab`
+  // ("Nodes"). With no tab matching it, every tab was tabindex=-1 and the
+  // strip could not be reached with Tab at all. WAI-ARIA APG: when no tab is
+  // selected, the FIRST tab is the tab stop.
+  const stop = tabs.includes(active) ? active : tabs[0];
   return (
     <div role="tablist" aria-label={label} aria-orientation="horizontal" className={className}>
       {tabs.map((t, i) => {
@@ -50,7 +57,7 @@ export function TabStrip<T extends string>({
             id={`${idBase}-tab-${t}`}
             aria-selected={selected}
             aria-controls={`${idBase}-panel`}
-            tabIndex={selected ? 0 : -1}
+            tabIndex={t === stop ? 0 : -1}
             title={titles?.[t]}
             onClick={() => onActivate(t)}
             onKeyDown={(e) => rovingKey(e, i, refs.current)}

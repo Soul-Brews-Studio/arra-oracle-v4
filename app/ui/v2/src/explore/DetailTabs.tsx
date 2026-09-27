@@ -184,9 +184,11 @@ export function DetailTabs(props: {
     // shell stops pinning itself to the viewport and the document scrolls
     // (App.tsx), so this pane is exactly one viewport tall with no 24rem
     // floor: scrolled to, tab bar + transcript + composer share one screen.
+    // `h-svh`, not `h-screen`: 100vh is the LARGE viewport on a mobile
+    // browser, so the composer could sit under its toolbar (fix round).
     <section
       aria-label="Explore detail"
-      className="flex h-[80vh] max-h-full min-h-[24rem] min-w-0 shrink-0 flex-col short:h-screen short:max-h-none short:min-h-0 lg:h-auto lg:min-h-0 lg:flex-1 lg:shrink"
+      className="flex h-[80vh] max-h-full min-h-[24rem] min-w-0 shrink-0 flex-col short:h-svh short:max-h-none short:min-h-0 lg:h-auto lg:min-h-0 lg:flex-1 lg:shrink"
     >
       {/* #33 AC2 (ui-keys): a WAI-ARIA tab strip -- roving tabindex, arrows
           move focus, Enter/Space activate; see `TabStrip`. The one tabpanel

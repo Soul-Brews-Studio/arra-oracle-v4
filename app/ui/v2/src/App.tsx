@@ -10,7 +10,7 @@ import { SessionRail } from "./components/SessionRail";
 import { TabStrip } from "./components/TabStrip";
 import { Transcript } from "./components/Transcript";
 import { WorkspaceBar } from "./components/WorkspaceBar";
-import { type ExploreTab } from "./explore/DetailTabs";
+import { exploreTabOf } from "./explore/exploreTabOf";
 import { ExploreView } from "./explore/ExploreView";
 import { ForumView } from "./forum/ForumView";
 import { KnowledgeView } from "./KnowledgeView";
@@ -113,7 +113,9 @@ export function App() {
     // shell is NOT pinned to the viewport: header and tabs scroll away and
     // the document scrolls, so the explore/messages panes can each take one
     // whole viewport instead of the ~211px left under the chrome.
-    <div className="flex h-screen flex-col bg-ink text-slate-200 short:h-auto short:min-h-screen">
+    // Sized in `svh` (the SMALL viewport): on a mobile landscape browser
+    // 100vh is the large viewport, measured under the collapsed toolbar.
+    <div className="flex h-screen flex-col bg-ink text-slate-200 short:h-auto short:min-h-svh">
       <WorkspaceBar
         bank={m.bank}
         workspace={m.workspace}
@@ -161,7 +163,7 @@ export function App() {
           selectedPeer={route.peer}
           selectedSession={route.session}
           selectedNode={route.node}
-          activeTab={(route.tab as ExploreTab | null) ?? "nodes"}
+          activeTab={exploreTabOf(route.tab)}
           onSelectPeer={(name) => push({ peer: name })}
           onSelectSession={(name) => push({ session: name })}
           onSelectNode={(id) => push({ node: id })}
@@ -216,7 +218,7 @@ export function App() {
           />
         </SidebarShell>
 
-        <main className="flex min-w-0 flex-1 flex-col short:h-screen short:flex-none">
+        <main className="flex min-w-0 flex-1 flex-col short:h-svh short:flex-none">
           {m.session === null ? (
             <EmptyState
               title="No session selected"

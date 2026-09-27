@@ -24,6 +24,8 @@ import { rovingKey } from "./rovingKey";
 import { NodeHead } from "./NodeHead";
 import { DetailTabs } from "../explore/DetailTabs";
 import { ListPanel } from "../explore/ListPanel";
+import { exploreTabOf } from "../explore/exploreTabOf";
+import { RosterEntryRow } from "./RosterEntryRow";
 
 const attrs = (html: string, role: string) =>
   [...html.matchAll(new RegExp(`<[a-z]+[^>]*role="${role}"[^>]*>`, "g"))].map((m) => m[0]);
@@ -185,5 +187,83 @@ describe("NodeHead's title is a programmatic focus target", () => {
     );
     const h2 = html.match(/<h2[^>]*>/)?.[0] ?? "";
     expect(attr(h2, "tabindex")).toBe("-1");
+  });
+});
+
+// Fix round (verifier finding, blocking): a route `tab` that is not one of
+// the strip's tabs -- a hand-typed `&tab=Nodes` (the labels are CSS-
+// capitalised), a stale link -- left EVERY tab at tabindex=-1, so the strip
+// could not be reached with Tab at all. WAI-ARIA APG: with no tab selected,
+// the FIRST tab is the tab stop.
+describe("a tab strip with no matching active tab keeps one tab stop", () => {
+  const strip = (active: string) =>
+    attrs(
+      renderToStaticMarkup(
+        createElement(TabStrip<string>, { label: "Views", idBase: "v", tabs: ["one", "two", "three"], active, onActivate: () => {} }),
+      ),
+      "tab",
+    );
+
+  test("unknown active: the first tab is the only tab stop and nothing is aria-selected", () => {
+    for (const active of ["bogus", "Two", ""]) {
+      const tabs = strip(active);
+      expect(tabs.map((t) => attr(t, "tabindex"))).toEqual(["0", "-1", "-1"]);
+      expect(tabs.map((t) => attr(t, "aria-selected"))).toEqual(["false", "false", "false"]);
+    }
+  });
+
+  test("DetailTabs rendered with a stale route tab ('Nodes') still has exactly one tab stop", () => {
+    const html = renderToStaticMarkup(
+      createElement(DetailTabs, {
+        active: "Nodes",
+        onChange: () => {},
+        config: { taxonomy: null, seeded: false, onSeed: () => {}, busy: false, error: null },
+      } as unknown as Parameters<typeof DetailTabs>[0]),
+    );
+    const stops = attrs(html, "tab").filter((t) => attr(t, "tabindex") === "0");
+    expect(stops.map((t) => attr(t, "id"))).toEqual(["explore-detail-tab-nodes"]);
+  });
+
+  test("App's route coercion: an unknown or missing route tab opens 'nodes', a known one passes through", () => {
+    for (const bad of ["Nodes", "bogus", "", null]) expect(exploreTabOf(bad)).toBe("nodes");
+    for (const ok of ["nodes", "search", "chat", "messages", "evidence", "config"] as const) expect(exploreTabOf(ok)).toBe(ok);
+  });
+});
+
+describe("rail rows (peer, session, node bookmarks) announce the selected row", () => {
+  const row = (selected: boolean) =>
+    renderToStaticMarkup(
+      createElement(RosterEntryRow, {
+        entry: { name: "alice", state: "live" } as never,
+        selected,
+        onSelect: () => {},
+        onRemove: () => {},
+        onRegister: () => {},
+        registerLabel: "register",
+        busy: false,
+      }),
+    ).match(/<button[^>]*>/)?.[0] ?? "";
+
+  test("the select button carries aria-current only when selected", () => {
+    expect(attr(row(true), "aria-current")).toBe("true");
+    expect(attr(row(false), "aria-current")).toBeNull();
+  });
+});
+
+// Fix round (verifier, nonblocking): `h-screen` is 100vh, the LARGE viewport
+// on a mobile landscape browser -- the composer could sit under the
+// toolbar. The `short` layout pins to 100svh (the small viewport) instead.
+describe("the short-landscape layout sizes to the small viewport", () => {
+  test("DetailTabs' pane uses short:h-svh, never short:h-screen", () => {
+    const html = renderToStaticMarkup(
+      createElement(DetailTabs, {
+        active: "config",
+        onChange: () => {},
+        config: { taxonomy: null, seeded: false, onSeed: () => {}, busy: false, error: null },
+      } as unknown as Parameters<typeof DetailTabs>[0]),
+    );
+    const section = html.match(/<section[^>]*aria-label="Explore detail"[^>]*>/)?.[0] ?? "";
+    expect(section).toContain("short:h-svh");
+    expect(section).not.toContain("short:h-screen");
   });
 });
