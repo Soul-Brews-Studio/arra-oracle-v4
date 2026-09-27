@@ -725,3 +725,20 @@ MISNAMED_ALLOWLIST, now empty):
 
 This section is not rewritten in place; read every `auth/loader.ts`, `auth/service.ts` and
 `app.ts` mention above under its new filename.
+
+## Amendment 2026-09-26 (post-merge Nat style: one exported function per file, named after the file; #22, `mcp/connections.ts` split)
+
+`mcp/connections.ts` is now a barrel that only re-exports. The functions moved unchanged, with
+no behaviour change, into these files:
+
+- `connections.foldConnection.ts`: `foldConnection` and the documented `foldId` fold key.
+- `connections.connectionFoldFailureCount.ts`
+- `connections.resetConnectionFoldState.ts`
+- `connections.state.ts`: the shared fold state, as data.
+
+This section does not rewrite anything above it. Where the text above cites
+`mcp/connections.ts` as "the connection fold" (§ where audit rows are written), or says the
+fold key "matches the documented `foldId` in `mcp/connections.ts`", read that as
+`mcp/connections.foldConnection.ts`. Importers of the barrel are unchanged.
+`test/style-split2-guard.test.ts` checks that the barrel's re-exports are the split files'
+own exports.

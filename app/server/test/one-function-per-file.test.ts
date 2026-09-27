@@ -221,6 +221,8 @@ function measure(): FileReport[] {
 
 /** Files exporting MORE than one function, with today's exact count. */
 const MULTI_EXPORT_ALLOWLIST: Record<string, { count: number; reason: string }> = {
+  "server/src/publication/read-cursor.ts": { count: 4, reason: "frozen contract (app/docs/contracts/read-cursor-v1.md) parse/encode pipeline" },
+  "server/src/publication/session-link.ts": { count: 3, reason: "frozen contract (app/docs/contracts/session-link-v1.md) parse/encode pipeline" },
   "server/src/contracts/common.ts": { count: 19, reason: "frozen contract validators (app/docs/contracts), shared by every kernel" },
   "server/src/composition.ts": { count: 10, reason: "startup composition root; wires config/service/access checks, not independently reusable (#31 maint-audit added composeInstanceAuditSink)" },
   "server/src/contracts/evidence-v1.ts": { count: 9, reason: "frozen contract validators (app/docs/contracts/revision-evidence-v1.md), shared by every kernel" },
