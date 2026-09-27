@@ -438,3 +438,69 @@ directory").
 **Live probe** (`run.sh … ui-a11y`): `methods=57 HTTP=57 MCP=57 CLI=57 isolation_failures=0
 seed_errors=0 gaps=26 fatal=None`. Isolation is 191 pass / 0 fail, the same as round 4, and rc=2
 from the 26 payload gaps, as in round 4. This slice touches no server code.
+
+## Round 6 (verifier wave 7: Explore > Evidence, and a guard keyed on data)
+
+**What was refuted.** Round 5 claimed every verbatim-text element wrapped, but
+its source guard keyed on the idiom (`whitespace-pre*`, `font-mono`, `<pre>`,
+`<code>`), and its live scan never opened Explore > Evidence. Two plain elements
+overflowed there at 320/375: LifecyclePanel's supersede/retire `reason` `<p>`
+(user text, capped at 4096 bytes) and SessionLinksPanel's
+`created_by_peer_name` `<span>` in a `flex items-center` row.
+
+**Fix** (`8455891`). `[overflow-wrap:anywhere]` on the reason, on the
+lifecycle/session-link/write error `<p>`s, on ErrorNote's code and message, on
+ReplyComposer's "replying to", and on EmptyState's title and detail (a centred
+column item sizes to its min-content). The attribution row becomes
+`flex flex-wrap` and the peer span gets `min-w-0`. `index.css` adds
+`overflow-wrap: break-word` on `body`, an inherited backstop for any block of
+text a per-element class was missed on. It uses `break-word` rather than
+`anywhere` so nothing that already fits changes; it does not lower
+min-content, so flex, grid and centred items still need the explicit class.
+
+**Tests.** `src/components/reflowEvidence.test.ts` has 9 render tests
+(`renderToStaticMarkup`). Each puts a worst-case token in a server or user
+string field and asserts the class on the innermost element holding it. That
+catches a plain `<p>` or `<span>` whatever its classes are. Red before the fix
+was 0 pass / 9 fail (`.tmp/red-r6.txt`). The source guard in
+`reflowText.test.ts` now reads conditional and template `className={...}`
+expressions, stops treating TS generics as tags, and accepts `break-words`
+only when `min-w-0` is beside it (the diff table cells moved to
+`[overflow-wrap:anywhere]`). Four mutants each turn one test red
+(`.tmp/mutants-r6.txt`): the reason class removed, the peer span back to a
+bare `<span>`, a diff cell back to `break-words`, and a conditional className
+with `font-mono` and no wrap. UI suite: 255 pass / 0 fail.
+
+**Measured live** (`.tmp/measure-r6.mjs` → `.tmp/measure-r6.json`). Real
+Chrome via `/ego-browser`, a fresh `mktemp -d` gated stack, bundle
+`index-BjAPNrDt.js`. The data was the round 5 worst cases plus the verifier's
+wave 7 cases: node superseded with reason `superseded, see
+https://github.com/…/blob/0ccda6a…/app/server/src/knowledge/service.publishRevision.ts#L120`,
+by an 84-char peer with no hyphens, and a session link session-01 → session-03
+created by that same peer. The view was
+`#/explore?peer=peer-01&session=session-01&node=<N>&tab=evidence`.
+
+| width | doc scrollWidth | inner scrollers over | reason `<p>` client/scroll | peer span | peer row | Evidence scroller |
+|---|---|---|---|---|---|---|
+| 320 | 320 | none | 259 / 259 | 259 / 259 | 259 / 259 | 300 / 300 |
+| 375 | 375 | none | 314 / 314 | 314 / 314 | 314 / 314 | 355 / 355 |
+| 830 | 830 | none | 769 / 769 | 490 / 490 | 769 / 769 | 810 / 810 |
+| 1440 | 1440 | none | 1133 / 1133 | 490 / 490 | 1133 / 1133 | 1174 / 1174 |
+
+The verifier measured 314 / 613 for the reason `<p>` and 355 / 633 for the
+scroller at 375 (300 / 633 at 320), and 355 / 609 for the peer row's scroller.
+The remaining non-scroller "overflowing" elements are all intentional: the
+bearer `<input>` (it scrolls its own value) and two `truncate` elements (the
+peer list button and the old title), which end in an ellipsis. Knowledge on
+the replacement node also scanned clean at all four widths. Screenshots:
+`docs/overnight/ui/39-a11y-r6-{320,375,830,1440}-evidence-{lifecycle,sessionlink}.png`.
+
+**Not re-measured this round.** Knowledge on the superseded node,
+Messages+context, Explore > Messages, Forum and Overview were measured in
+round 5 and did not change here except for the body backstop. The chat answer
+and trace excerpts are still unmeasured live (they are pinned by render
+tests). The `[overflow-wrap:anywhere]` on short fixed literals (nonblocking
+noise) is left alone.
+
+**Teardown.** Server killed, mktemp root removed, the ego task space finished
+with `keep: []` after `localStorage.clear()` (0 keys left).
