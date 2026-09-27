@@ -11,7 +11,7 @@
  *
  * True when the grant carries no binding (the trust unit stays the workspace,
  * behaviour unchanged) or the row asserts no author. Both `remember` (MCP)
- * and `POST /api/memories` (HTTP) call this in `auth/service.ts`, after
+ * and `POST /api/memories` (HTTP) call this in `auth/service.createOperationService.ts`, after
  * admission and before the store is touched.
  */
 export function isBoundAuthor(row: { readonly peer_name?: string }, peers: readonly string[] | null): boolean {

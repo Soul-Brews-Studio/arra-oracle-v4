@@ -1,4 +1,4 @@
-import type { ToolOperations } from "../../auth/service";
+import type { ToolOperations } from "../../auth/service.createOperationService";
 import type { KnowledgeAccess } from "../../knowledge/transport";
 import { indexProfile } from "../../knowledge/transport.indexProfile";
 import { availability } from "./availability";

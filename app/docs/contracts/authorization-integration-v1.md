@@ -439,3 +439,21 @@ fix it failed on the recall input order (`{query, mode, limit}` on HTTP). Five
 mutants, each killed by it: `mode` checked before `limit`, `name` before `content`,
 no row for a `forbidden` refusal, a past-2^53 limit recorded as a string, and a fixed
 `{query, mode, limit}` input order.
+
+## Amendment 2026-09-26 (post-merge Nat style: one exported function per file, named after the file (ratchet: app/server/test/one-function-per-file.test.ts))
+
+Three paths cited above moved by `git mv` with no behavior change (style-shrink slice,
+`docs/overnight/DECISIONS.md`; ratchet `app/server/test/one-function-per-file.test.ts`
+MISNAMED_ALLOWLIST, now empty):
+
+- `auth/loader.ts` -> `auth/loader.loadPolicy.ts` (exports `loadPolicy`, unchanged; similarity
+  100%, no other line touched)
+- `auth/service.ts` -> `auth/service.createOperationService.ts` (exports `createOperationService`,
+  unchanged; similarity 99% -- one import line changed, `./loader` -> `./loader.loadPolicy`, to
+  follow the sibling rename above)
+- `app.ts` -> `app.createApp.ts` (exports `createApp`, unchanged; similarity 99% -- one import
+  line changed, `./auth/service` -> `./auth/service.createOperationService`, to follow the
+  rename above)
+
+This section is not rewritten in place; read every `auth/loader.ts`, `auth/service.ts` and
+`app.ts` mention above under its new filename.

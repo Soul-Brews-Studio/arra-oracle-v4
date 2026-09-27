@@ -68,8 +68,8 @@ beforeAll(async () => {
   // Explicitly injected scratch dependencies: these suites never touch the
   // real store module, so running them alongside others cannot collide on its
   // module-level connection singleton.
-  const { createOperationService } = await import("../src/auth/service");
-  const { createApp } = await import("../src/app");
+  const { createOperationService } = await import("../src/auth/service.createOperationService");
+  const { createApp } = await import("../src/app.createApp");
   const { createMcpAdapter } = await import("../src/mcp");
   const service = createOperationService(
     { policyPath: scratch.policyPath },
@@ -271,7 +271,7 @@ describe("scope-bound operations are authority and carry their own action checks
   test("a dispatcher admitted only for content:read cannot call insert", async () => {
     // The bypass: runMcp handed every dispatcher a full `ops` object, so a
     // read-only tool could simply call ops.insert and write.
-    const { createOperationService } = await import("../src/auth/service");
+    const { createOperationService } = await import("../src/auth/service.createOperationService");
     const { createScratchDependencies } = await import("./helpers/auth-fixture");
     const counters = { inserts: 0 };
     const deps = createScratchDependencies(scratch.connection) as never as Record<string, any>;
@@ -296,7 +296,7 @@ describe("scope-bound operations are authority and carry their own action checks
   });
 
   test("the tool-to-action map is owned by the service, not chosen by the caller", async () => {
-    const { createOperationService } = await import("../src/auth/service");
+    const { createOperationService } = await import("../src/auth/service.createOperationService");
     const { createScratchDependencies } = await import("./helpers/auth-fixture");
     const service = createOperationService(
       { policyPath: scratch.policyPath },
@@ -317,7 +317,7 @@ describe("scope-bound operations are authority and carry their own action checks
     // The earlier implementation probed with a list() before admitting the
     // write, which both admitted the WRONG action and touched storage for a
     // request that was about to be refused.
-    const { createOperationService } = await import("../src/auth/service");
+    const { createOperationService } = await import("../src/auth/service.createOperationService");
     const { createScratchDependencies } = await import("./helpers/auth-fixture");
     const counters = { lists: 0, inserts: 0 };
     const deps = createScratchDependencies(scratch.connection) as never as Record<string, any>;
@@ -342,7 +342,7 @@ describe("scope-bound operations are authority and carry their own action checks
   });
 
   test("an admitted insert builds its row exactly once, with no extra store call", async () => {
-    const { createOperationService } = await import("../src/auth/service");
+    const { createOperationService } = await import("../src/auth/service.createOperationService");
     const { createScratchDependencies } = await import("./helpers/auth-fixture");
     const counters = { lists: 0, builds: 0 };
     const deps = createScratchDependencies(scratch.connection) as never as Record<string, any>;
@@ -522,7 +522,7 @@ describe("request-lifetime capability and policy-failure envelope", () => {
   };
 
   const buildService = async (overrides: Record<string, any> = {}) => {
-    const { createOperationService } = await import("../src/auth/service");
+    const { createOperationService } = await import("../src/auth/service.createOperationService");
     const { createScratchDependencies } = await import("./helpers/auth-fixture");
     const deps = createScratchDependencies(scratch.connection) as never as Record<string, any>;
     return {

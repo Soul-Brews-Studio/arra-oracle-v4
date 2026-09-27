@@ -1,4 +1,4 @@
-import type { Thread } from "../forum/threads";
+import type { Thread } from "../forum/threads.buildThreads";
 import { ThreadNode } from "./ThreadNode";
 
 /** Renders a forest of root threads. Just a map over `ThreadNode` -- the

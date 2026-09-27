@@ -2,9 +2,9 @@
 // `knowledge-expose13-live.test.ts`.
 //
 // Runs INSIDE the real writer gate (`arra_migrate.writer_gate.exec_with_gate`,
-// fd 42), boots the REAL HTTP app (`src/app.ts` + `src/knowledge/transport.ts`'s
+// fd 42), boots the REAL HTTP app (`src/app.createApp.ts` + `src/knowledge/transport.ts`'s
 // `createKnowledgeAccess`) AND the REAL MCP adapter
-// (`auth/service.ts`'s `createOperationService` + `mcp/index.ts`'s
+// (`auth/service.createOperationService.ts`'s `createOperationService` + `mcp/index.ts`'s
 // `createMcpAdapter`) against the SAME `KnowledgeAccess`, exactly the way
 // `composition.ts` wires one process for both transports in production. It
 // then replays a caller-supplied list of steps at the wire — no facade is
@@ -23,9 +23,9 @@
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createApp } from "../../../../src/app";
+import { createApp } from "../../../../src/app.createApp";
 import { createKnowledgeAccess } from "../../../../src/knowledge/transport";
-import { createOperationService, type OperationService, type StoreDependencies } from "../../../../src/auth/service";
+import { createOperationService, type OperationService, type StoreDependencies } from "../../../../src/auth/service.createOperationService";
 import { createMcpAdapter, configureKnowledgeAccess } from "../../../../src/mcp";
 import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 
