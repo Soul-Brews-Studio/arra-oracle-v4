@@ -9,7 +9,18 @@
 import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 const [, , datasetRoot, payloadJson] = Bun.argv;
 const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
-  ops: Array<{ facade?: "context" | "publication" | "taxonomy" | "harness"; method: string; request: any }>;
+  ops: Array<{
+    facade?: "context" | "publication" | "taxonomy" | "harness";
+    method: string;
+    request: any;
+    /** Fix round (verifier finding M8): the transport's real request time,
+     *  forwarded as the facade call's SECOND argument -- exactly what
+     *  `service.makeReadMethods.ts`/`service.createContextReadMethods.ts` wire
+     *  a live request time through as. Needed to exercise `listNodes`'
+     *  `eligible_only: true` view (it refuses a missing one) inside the same
+     *  read-only batch the AC4 readonly test snapshots. */
+    requestTimeMs?: number;
+  }>;
   revisionIds?: string[];
   clockMs?: number | number[];
 };
@@ -102,7 +113,7 @@ try {
       }
       continue;
     }
-    const facade = (service as Record<string, Record<string, (b: Uint8Array) => Promise<unknown>>>)[
+    const facade = (service as Record<string, Record<string, (b: Uint8Array, t?: number) => Promise<unknown>>>)[
       op.facade ?? "context"
     ];
     const call = facade?.[op.method];
@@ -111,7 +122,10 @@ try {
       continue;
     }
     try {
-      results[label] = { ok: true, value: await call(new TextEncoder().encode(JSON.stringify(op.request))) };
+      results[label] = {
+        ok: true,
+        value: await call(new TextEncoder().encode(JSON.stringify(op.request)), op.requestTimeMs),
+      };
     } catch (error) {
       results[label] = { ok: false, ...describeError(error) };
     }

@@ -8,9 +8,21 @@
  * pin, proven against a real gated dataset, not the in-process kernel
  * directly.
  *
- * Both guards were verified red-by-mutation in this session (each guard
- * commented out in turn, this file's matching assertion failed, then the
- * guard was restored) rather than committing a mutation harness here.
+ * Fix round correction: the ORIGINAL header here claimed both guards were
+ * verified red-by-mutation. That is true for the cycle guard
+ * (`walkForwardChain` in `service.supersedeNode.ts`) but FALSE for the
+ * explicit self-supersede check at `service.supersedeNode.ts`'s
+ * `request.new_node_id === request.node_id` line: an independent verifier
+ * removed just that check and this test's assertion (1) still passed. The
+ * reason is structural, not a test bug -- `walkForwardChain(new_node_id)`
+ * always seeds its visited set with the START id before it ever reads a row
+ * (see that function's own comment), so for a SELF-supersede (`new_node_id
+ * === node_id`) the general cycle check a few lines below already contains
+ * `request.node_id` on its own, with no dependency on the explicit check at
+ * all. This test therefore pins the OBSERVABLE CONTRACT (a self-supersede is
+ * refused `invalid_request`/`/new_node_id`) and is red-by-mutation for the
+ * CYCLE guard specifically; it does not, and structurally cannot by itself,
+ * isolate the explicit self-check as the reason assertion (1) passes.
  */
 
 import { describe, expect, test } from "bun:test";

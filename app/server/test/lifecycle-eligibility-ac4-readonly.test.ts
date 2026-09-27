@@ -1,10 +1,22 @@
 /**
  * #29 AC4 (AC-MATRIX row, ac-guards slice): "no read-driven writes."
  * `getRecallEligibility` and `listNodes` are reads: calling either must
- * change nothing about `nodes`, `node_revisions` or `supersede_log` --
- * neither the dataset VERSION (a LanceDB table version bumps on every
- * committed write) nor the ROW COUNT. No committed test measured this;
- * analysis-29.json and the AC-MATRIX both flag it as inspection-only.
+ * change nothing about ANY of the 19 target tables -- neither the dataset
+ * VERSION (a LanceDB table version bumps on every committed write) nor the
+ * ROW COUNT. No committed test measured this; analysis-29.json and the
+ * AC-MATRIX both flag it as inspection-only.
+ *
+ * Fix round (verifier findings M5/M8): the first cut of this test snapshotted
+ * only `nodes`/`node_revisions`/`supersede_log` and never called `listNodes`
+ * with `eligible_only: true`. Both gaps were real: an independent verifier
+ * injected (a) a write to `terms` inside `getRecallEligibility` and (b) a
+ * write gated behind `listNodes`' `eligible_only` branch, and this test
+ * stayed green for both ('1 pass / 0 fail' each time) -- a widened control
+ * using all 19 `TARGET_SCHEMA` tables went red under the same mutations. So
+ * this version (1) snapshots every `TARGET_TABLES` entry, not a hand-picked
+ * three, and (2) exercises `listNodes({ eligible_only: true })` inside the
+ * same read batch, with an explicit `requestTimeMs` (that view refuses a
+ * missing one) forwarded through the gated child's `requestTimeMs` op field.
  *
  * Measured with the harness's real `snapshot` op (table version + row count
  * straight off the LanceDB handle), taken before and after a batch of reads
@@ -13,6 +25,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { TARGET_TABLES } from "../src/publication/storage";
 import { createFixture, revisionEnvelope, runGated, type Fixture } from "./helpers/publication-fixture";
 import { testTimeout } from "./helpers/timing.testTimeout";
 
@@ -31,7 +44,10 @@ const pub = (method: string, request: unknown) => ({ facade: "publication", meth
 const ctx = (method: string, request: unknown) => ({ facade: "context", method, request });
 const hx = (method: string, request: unknown) => ({ facade: "harness", method, request });
 
-const TABLES = ["nodes", "node_revisions", "supersede_log"];
+// Fix round: ALL 19 target tables, not a hand-picked subset -- a read-driven
+// write anywhere in the schema must be caught, not only on the three tables
+// this AC's own prose happens to name.
+const TABLES = [...TARGET_TABLES];
 
 const drive = async (fixture: Fixture, ops: Array<Record<string, unknown>>, revisionIds: string[]) => {
   const result = await runGated(fixture.datasetRoot, CHILD, [
@@ -50,7 +66,7 @@ const ok = (op: any, label: string) => {
 };
 
 describe("#29 AC4: getRecallEligibility and listNodes never write", () => {
-  test("dataset version and row count are byte-identical for nodes/node_revisions/supersede_log across a batch of eligibility and listNodes reads", async () => {
+  test("dataset version and row count are byte-identical across ALL 19 target tables, for a batch of eligibility and listNodes (including eligible_only) reads", async () => {
     const fixture = await createFixture([ALPHA]);
     try {
       const alpha = fixture.workspaces[ALPHA]!;
@@ -95,6 +111,22 @@ describe("#29 AC4: getRecallEligibility and listNodes never write", () => {
             type_term: null,
             include_inactive: true,
           }),
+          // Fix round (verifier finding M8): the `eligible_only` recall view
+          // is its own code path inside `listNodes` (service.listNodes.ts's
+          // `if (request.eligible_only)` branch) and was NOT exercised by
+          // either call above (`include_inactive` true/false, both with
+          // `eligible_only` omitted/false). It refuses a missing request
+          // time, so this op carries an explicit `requestTimeMs`, forwarded
+          // by the gated child as the facade call's second argument.
+          { facade: "publication", method: "listNodes", requestTimeMs: CLOCK_MS, request: {
+            workspace_name: ALPHA,
+            after_id: null,
+            limit: 100,
+            include_total: true,
+            type_term: null,
+            include_inactive: false,
+            eligible_only: true,
+          } },
           hx("snapshot", { tables: TABLES }),
         ],
         [REV_A1, REV_B1],
@@ -114,8 +146,9 @@ describe("#29 AC4: getRecallEligibility and listNodes never write", () => {
       ok(parsed.op6, "eligibility B");
       ok(parsed.op7, "listNodes default view");
       ok(parsed.op8, "listNodes include_inactive");
+      ok(parsed.op9, "listNodes eligible_only");
 
-      const after = ok(parsed.op9, "snapshot after the reads");
+      const after = ok(parsed.op10, "snapshot after the reads");
 
       expect(after).toEqual(before);
     } finally {

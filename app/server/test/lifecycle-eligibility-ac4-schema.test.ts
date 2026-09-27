@@ -11,15 +11,23 @@
  * The second test proves the pin mechanism itself would catch a real
  * regression: it runs the identical predicate against a deliberately
  * poisoned copy of the schema and expects it to report the poison.
+ *
+ * Fix round (verifier finding, nonblocking): the AC-MATRIX row asks for "no
+ * decay/heat/tier column in TARGET_SCHEMA" -- the WHOLE schema, not the three
+ * tables `getRecallEligibility`/`listNodes` happen to read. Narrowing to
+ * three also made the `if (columns === undefined) continue` guard below able
+ * to go silently vacuous if one of those three were ever renamed. Scanning
+ * every `TARGET_TABLES` entry returns the same `[]` today (confirmed), so the
+ * narrowing bought nothing and cost real coverage.
  */
 
 import { describe, expect, test } from "bun:test";
-import { TARGET_SCHEMA } from "../src/publication/storage";
+import { TARGET_SCHEMA, TARGET_TABLES } from "../src/publication/storage";
 
-/** The tables `getRecallEligibility`/`listNodes`'s `eligible_only` view and
- *  `evaluateNodeEligibility` actually read (service.evaluateNodeEligibility.ts,
- *  service.getRecallEligibility.ts, service.listNodes.ts). */
-const LIFECYCLE_ELIGIBILITY_TABLES = ["nodes", "node_revisions", "supersede_log"] as const;
+/** All 19 reviewed target tables -- a decay/heat/tier column is forbidden
+ *  anywhere in the schema, not only on the tables the lifecycle/eligibility
+ *  kernel itself reads today. */
+const LIFECYCLE_ELIGIBILITY_TABLES = TARGET_TABLES;
 
 const FORBIDDEN_NAME = /decay|heat|tier/i;
 
@@ -38,8 +46,8 @@ function forbiddenColumns(
   return hits;
 }
 
-describe("#29 AC4: no decay, heat or tier column on the lifecycle/eligibility tables", () => {
-  test("nodes, node_revisions and supersede_log declare no decay/heat/tier column", () => {
+describe("#29 AC4: no decay, heat or tier column anywhere in TARGET_SCHEMA (all 19 tables)", () => {
+  test("every TARGET_TABLES entry declares no decay/heat/tier column", () => {
     expect(forbiddenColumns(TARGET_SCHEMA, LIFECYCLE_ELIGIBILITY_TABLES)).toEqual([]);
   });
 

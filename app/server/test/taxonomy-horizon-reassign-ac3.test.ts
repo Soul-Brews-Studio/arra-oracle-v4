@@ -109,6 +109,13 @@ describe("#27 AC3: reassigning memory_horizon leaves validity, expiry and recall
         [
           // "long_term" is one of the two seeded HORIZON_TERMS names, but
           // this fixture only pre-creates "short_term" -- mint the sibling.
+          // Fix round note (verifier finding, nonblocking): this only works
+          // because the test fixture declares `memory_horizon` with
+          // term_policy "open" (migrate-py/tests/export_publication_fixture.py).
+          // The production seed (taxonomy.seedVocabularyRows.ts) makes it
+          // "sealed", where R6 would refuse this very `createTerm` call. This
+          // test therefore runs on a non-production vocabulary shape; a
+          // sealed-vocabulary version of this AC is not covered here.
           tax("createTerm", {
             workspace_name: ALPHA,
             term_id: LONG_TERM,
@@ -142,6 +149,13 @@ describe("#27 AC3: reassigning memory_horizon leaves validity, expiry and recall
       const eligAfter = ok(parsed.op5, "eligibility after reassignment");
       const headAfter = ok(parsed.op6, "head after reassignment");
       expect(termsOf(headAfter.revision, "memory_horizon")).toEqual(["long_term"]);
+
+      // Fix round (verifier finding, nonblocking): pin the STARTING state as
+      // genuinely eligible first. Without this, two equally-ineligible states
+      // (e.g. both "expired") would satisfy the toEqual below with no real
+      // proof the horizon reassignment preserved an ELIGIBLE node's
+      // eligibility, which is the AC's actual claim.
+      expect(eligBefore.eligible).toBe(true);
 
       // The horizon term changed. Nothing else did.
       expect(eligAfter).toEqual(eligBefore);
