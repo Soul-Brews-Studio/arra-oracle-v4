@@ -77,10 +77,18 @@ export function ExploreView({
   // explore history entry -- the one Back returns to from the node view --
   // always carries what is actually in the box, not whatever it held when
   // that entry was first pushed.
+  //
+  // Gated on `activeTab === "search"` (round-3 non-blocking finding): this
+  // effect used to fire on every mount and every query/mode change
+  // regardless of which tab was open, writing `mode=keyword` into the URL
+  // of e.g. the "nodes" tab even though nobody had touched search. Search's
+  // own state should only enter the URL while its tab is the one showing it;
+  // switching tabs leaves whatever was last written for Back to restore.
   useEffect(() => {
+    if (activeTab !== "search") return;
     onSearchChange(search.query, search.mode);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search.query, search.mode]);
+  }, [search.query, search.mode, activeTab]);
 
   useEffect(() => {
     m.setBank(bank.bank);

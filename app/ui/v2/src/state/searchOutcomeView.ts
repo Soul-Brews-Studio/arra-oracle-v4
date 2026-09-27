@@ -4,6 +4,7 @@ import type { SearchMode } from "./useKnowledgeSearch";
 
 export type SearchOutcomeView = {
   hits: (KeywordHitWire | SemanticHitWire)[];
+  errorCode: string | null;
   scanReason: "short_query" | "index_unavailable" | null;
   embeddingProfile: string | null;
 };
@@ -23,10 +24,19 @@ export type SearchOutcomeView = {
  * closes the window entirely: the note disappears the instant the toggle
  * changes, not ~300ms later when the semantic reply (which never carries a
  * scanReason anyway) arrives.
+ *
+ * `errorCode` is gated the same way (round-3 non-blocking finding): a
+ * failure recorded for the mode that was active when the reply landed must
+ * not keep rendering through the same debounce window after the toggle has
+ * already moved on to the other mode -- e.g. Semantic fails with
+ * `model_unavailable`, the user flips to Keyword, and for one debounce
+ * window Keyword must not show a banner that says it needs a model it does
+ * not.
  */
 export function searchOutcomeView(outcome: SearchOutcome, mode: SearchMode): SearchOutcomeView {
   return {
     hits: mode === "keyword" ? outcome.keywordHits : outcome.semanticHits,
+    errorCode: outcome.mode === mode ? outcome.errorCode : null,
     scanReason: outcome.mode === mode ? outcome.scanReason : null,
     embeddingProfile: outcome.embeddingProfile,
   };

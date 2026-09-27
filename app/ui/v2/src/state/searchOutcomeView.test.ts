@@ -58,4 +58,27 @@ describe("searchOutcomeView", () => {
     expect(view.scanReason).toBeNull();
     expect(view.embeddingProfile).toBe("e5");
   });
+
+  // Round-3 non-blocking finding: a Semantic failure (`model_unavailable`)
+  // must not keep rendering on the Keyword tab for one debounce window after
+  // the user has already switched -- the same class of bug `scanReason`'s
+  // gate above closes, applied to `errorCode`.
+  const outcomeAfterFailedSemantic: SearchOutcome = {
+    mode: "semantic",
+    errorCode: "model_unavailable",
+    keywordHits: [],
+    semanticHits: [],
+    scanReason: null,
+    embeddingProfile: null,
+  };
+
+  test("a failed semantic outcome viewed while still in semantic mode shows its own error", () => {
+    const view = searchOutcomeView(outcomeAfterFailedSemantic, "semantic");
+    expect(view.errorCode).toBe("model_unavailable");
+  });
+
+  test("switching to keyword before the debounced reply lands hides the stale semantic error immediately", () => {
+    const view = searchOutcomeView(outcomeAfterFailedSemantic, "keyword");
+    expect(view.errorCode).toBeNull();
+  });
 });

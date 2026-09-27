@@ -345,8 +345,11 @@ surfaces, with screenshots in `docs/overnight/UI-PROOF.md`:
 - traces;
 - chat with citations.
 
-*Re-measured 2026-09-27 (ui-polish fix round).* Re-running the same name scan (`git ls-files
-app/ui/v2/src`, now 109 files / 95 non-test, comments stripped, each of the 57
+*Re-measured 2026-09-27 (ui-polish fix round, round 3).* Re-running the same name scan (`find
+app/ui/v2/src -type f`, now 120 files / 101 non-test -- the round-2 count of 109/95 was already
+stale by the time it was written, predating the 7 files this round's `useKnowledgeSearch`/
+`useRoute` fixes added (`parseRoute.ts`, `formatRoute.ts`, `routeViews.ts` and their three test
+files, net of the one `useRoute.test.ts` they replaced), comments stripped, each of the 57
 `KNOWLEDGE_METHOD_NAMES` matched as a whole word) finds **33** called, not the 30 this section
 originally reported. Two of the three newly-matched names are real: the ui-search slice (PR
 #110) added `searchKnowledgeKeyword`/`searchKnowledgeSemantic`. The third, `indexRevisionChunks`,

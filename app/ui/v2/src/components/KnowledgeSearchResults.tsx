@@ -70,7 +70,16 @@ export function KnowledgeSearchResults({
                 <button onClick={() => onOpenNode(view.node_id)} className="block w-full text-left hover:text-accent">
                   <div className="flex flex-wrap items-center gap-2 text-xs">
                     <span className="shrink-0 font-mono text-muted">{view.rankLabel}</span>
-                    <span className="min-w-0 flex-1 truncate font-medium text-slate-100">{view.title}</span>
+                    {/* `min-w-[7rem]` (round-3 non-blocking finding), not `min-w-0`:
+                        `flex-1` alone means `flex-basis: 0%`, so with no floor this
+                        item can shrink all the way to zero and `flex-wrap` never has
+                        anything to wrap -- the badge just gets squeezed onto the same
+                        line as the title, which `truncate` then keeps readable but
+                        which was the bug (the wrap declaration was dead code). A
+                        real floor gives the row something to overflow on a narrow
+                        panel, so the match badge drops to its own line instead of
+                        fighting the title for space on one. */}
+                    <span className="min-w-[7rem] flex-1 truncate font-medium text-slate-100">{view.title}</span>
                     {view.matchLabel !== null && (
                       <span className="shrink-0 rounded border border-edge px-1.5 py-0.5 text-[10px] text-muted">
                         {view.matchLabel}
