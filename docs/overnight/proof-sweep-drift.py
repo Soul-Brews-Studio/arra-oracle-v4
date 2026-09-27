@@ -104,6 +104,9 @@ KNOWN = {
 KNOWN_TARGETS = {
     ("docs/overnight/PROOF-SWEEP.md", "AGENTS.md"):
         "the sweep's own locators; AGENTS.md changed after they were written; pinned in proof-sweep-check.py",
+    ("docs/overnight/PROOF-SWEEP.md", "app/README.md"):
+        "the sweep's own locators; app/README.md changed after they were written (style-shrink's"
+        " app.ts -> app.createApp.ts citation fix, #22 fix round); pinned in proof-sweep-check.py",
 }
 checked = drifted = 0
 for doc in docs:
