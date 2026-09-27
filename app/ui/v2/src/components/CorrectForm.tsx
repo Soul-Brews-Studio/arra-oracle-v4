@@ -22,7 +22,6 @@ export function CorrectForm({
   onCorrect,
   initialTitle = "",
   initialBody = "",
-  submitRef,
 }: {
   revisions: RevisionRow[];
   citeTargets: CiteTarget[];
@@ -35,7 +34,6 @@ export function CorrectForm({
    *  exist (no jsdom, so nothing can type into a field from outside). */
   initialTitle?: string;
   initialBody?: string;
-  submitRef?: { current: (() => void) | null };
 }) {
   // "" = follow the head, so a revise-then-correct targets the NEW head
   // unless another revision was picked on purpose.
@@ -73,7 +71,6 @@ export function CorrectForm({
     setReason("");
     setLinks([]);
   };
-  if (submitRef) submitRef.current = submit;
 
   return (
     <section className="flex flex-col gap-2 border-t border-edge p-3">

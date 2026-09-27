@@ -124,6 +124,35 @@ describe("PublishForm cites", () => {
     expect(received).toBe("not called");
   });
 
+  // Fix round 3 (2026-09-27): the verifier's mutant
+  // `built.entries.some((e) => e.relation === "corrects")` ->
+  // `built.entries.length > 0` survived -- no test sent a correction whose
+  // only link is some OTHER relation. This one does.
+  test("a correction whose only link is not `corrects` is still refused", () => {
+    let received: unknown = "not called";
+    const ref: { current: (() => void) | null } = { current: null };
+    const html = renderToStaticMarkup(
+      createElement(PublishForm, {
+        onPublish: (input) => {
+          received = input;
+        },
+        publishing: false,
+        disabled: false,
+        editingNode: true,
+        citeTargets: [],
+        initialTitle: "t",
+        initialBody: "b",
+        initialTypeTerm: "correction",
+        initialLinks: [{ relation: "supports", target_kind: "url", fields: { url: "https://example.com" }, note: "" }],
+        submitRef: ref,
+      }),
+    );
+    expect(disabledButton(html, "publish revision")).toBe(true);
+    expect(html).toContain("needs a corrects link");
+    ref.current!();
+    expect(received).toBe("not called");
+  });
+
   test("a corrects link on type: correction is accepted", () => {
     let received: import("./PublishForm").Draft | null = null;
     const ref: { current: (() => void) | null } = { current: null };
