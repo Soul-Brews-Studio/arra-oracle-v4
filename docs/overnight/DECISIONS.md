@@ -421,3 +421,55 @@ v3". Measured usage on this machine: 709 real v3 tool calls; `oracle_search` 46%
   mirror or restore Actions") is closed by this ruling.
 - **Reverse by:** restore `push:` / `pull_request:` in `ci.yml`, once billing is restored.
 
+
+## R24 · #32/#31 chat is grounded in peer representation, not messages alone
+
+- **Ruling (Nat, 2026-09-28, NAT-DECISIONS D3b):** peer representation and
+  node/revision-grounded context are still owed. #32 is not redefined as
+  message-grounded chat.
+- **Work:** AC-MATRIX slices 11 and then 10 (branch `v4/on-peer-representation`). It covers:
+  - `observer_peer_name` and `subject_peer_name` on getContext and chat. They
+    narrow selection only and never grant permission.
+  - Current conclusion revisions in context, with node and revision citations.
+  - A model-free, write-free `getRepresentation` (method 58) on HTTP, MCP and CLI.
+  - A token-estimate and watermark block.
+  - No new core tables (DESIGN.md §12).
+
+## R25 · #31 instance-level maintenance routes audit to a separate instance log
+
+- **Ruling (Nat, 2026-09-28, D4b):** `POST /api/backfill` and `POST /api/reindex`
+  write to a separate, append-only, instance-level audit log that sits outside every
+  workspace dataset.
+  - `mcp_calls` keeps `workspace_name NOT NULL`, and no sentinel tenant is added.
+  - Reads need an operator scope.
+  - Draft #126 (`v4/on-maint-audit`) carries the work.
+
+## R26 · #27 the legacy `remember` tool is taxonomy-validated
+
+- **Ruling (Nat, 2026-09-28, D5a):** the free-text MCP `remember` goes through the same
+  taxonomy validation as the knowledge transports. Unknown, retired or sealed terms
+  are refused with the existing closed code, and valid calls keep their golden response.
+  This resolves AC-MATRIX conflict C1 (branch `v4/on-remember-taxonomy`).
+
+## R27 · #10 closes on the target-19 design; cutover is its own issue
+
+- **Ruling (Nat, 2026-09-28, D6a and D7b):**
+  - **#10:** closed on the target-19 evidence. That is isolation 191/0, the
+    ownership suites at 110/0, and Thai retrieval at 31/0.
+  - **#34:** re-scoped to "rehearsal proven". The supervised production cutover
+    moves to **#135**, and nothing touches live data until Nat picks the window.
+
+## R28 · R2 is not a deployment target
+
+- **Ruling (Nat, 2026-09-28, D8b):** v4 is local-disk only. The #34 sub-item
+  "optional R2 restart, read-after-write and writer exclusion" is struck, and a
+  future R2 need gets its own issue.
+
+## R29 · #7 stays release-excluded; #28 keeps the pinned prohibition
+
+- **Ruling (Nat, 2026-09-28, D10b):** #7 stays outside the release (R17) until Nat
+  supplies relevance judgments that no agent wrote. The harness in
+  `app/benchmarks` is ready.
+- **D9 was not asked:** #28 was already closed on the pinned reading A (the
+  cwd-only foreign-visitor prohibition, `relic-foreign-visitor.test.ts` 10/0).
+  Readings B and C stay available if Nat reopens it.
