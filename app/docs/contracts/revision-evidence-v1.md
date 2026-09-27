@@ -255,3 +255,30 @@ Required proof:
 8. Full Python discovery, full Bun app/CLI tests, strict TS/build, scoped Ruff/compile/diff. No new dependency; active baseline protected diff. Independent reviewer reports scope and any missing proof before local commit authorization.
 
 #23 remains open until its OTHER specification/namespace/adapter gates are resolved. Auth, cardinality/reference service enforcement, head publication, crashes, cross-process exclusion and runtime migration are not delivered by a byte-contract package.
+
+## Amendment 2026-09-26 (post-merge #33 AC1/AC3 + R6 (sealed vocabulary) + R10 (conclusion reserved) + R12)
+
+No server behaviour, codec or field changes. This records a new WRITER of
+`link_snapshot_json`, the v2 UI, and the exact subset it writes, per
+`docs/overnight/DECISIONS.md` R6, R10 and R12.
+
+- **Before**: the v2 UI sent `link_snapshot_json: "[]"` on every
+  `publishRevision`, so no browser path could cite or correct (#33 AC1).
+- **Cite**: the publish form builds entries in the §4 LINK_KEYS shape: contiguous decimal
+  `position`, a `relation` from the closed six, and a closed per-kind `target` for five of
+  the eleven §5 kinds (`node_revision`, `message`, `session`, `trace`, `url`). `excerpt`,
+  `content_hash` and `captured_at` are always `null`, and `capture_status` is always
+  `locator_only`. The UI fetches and hashes nothing, and §4 says a `captured` claim is not
+  verified, so the UI never makes one. The `code`, `commit`, `issue`, `discussion` and
+  `relic_*` kinds are not offered, because their identity (a git OID or a capture digest)
+  is not something a person types. Resolution of internal kinds stays with the server
+  (`invalid_reference`), and the UI shows that refusal verbatim.
+- **Correct** is a new node with no base. Its single `type` term is `correction`, a sealed
+  TYPE_TERM (R6: the vocabulary cannot be extended from any transport, so the UI picks
+  from the existing five). It is never `conclusion`, which is a separate reserved term
+  (R10). Link 0 is `corrects` → `node_revision`, pinned to the exact revision being
+  corrected, and any extra evidence follows from position 1. The corrected revision is not
+  edited. The correction reaches it only as reverse evidence (`scanDependents`).
+- Pinned by `app/ui/v2/src/state/buildLinkSnapshot.test.ts`,
+  `buildCorrection.test.ts`, `api/publishRevision.test.ts` and
+  `components/citeCorrect.test.ts`.
