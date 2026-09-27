@@ -1379,3 +1379,49 @@ keyword` remains a disclosed gap, not a silent one.
 **Reverse by**: dropping the two `compat_warnings.push` call sites in `oracle_search.ts` and
 `oracle_ask.ts` and the three `Retrieved` fields in `search.retrieve.ts`; nothing else depends on
 them, and section 21's fields keep flowing to every other caller unchanged.
+
+## 23. Amendment 2026-09-27 (fix-round 2: correcting two of §22's own citations)
+
+Source: an independent re-verification of the v3-coverage slice (`docs/overnight/DECISIONS.md`
+R21/R22, issue `Soul-Brews-Studio/arra-oracle-v4#30`), refuting a claim §22.3 made about evidence
+-- not about the code fix itself, which the same verifier confirmed is correct and unchanged.
+Per §18's own precedent ("frozen contracts are not rewritten... this amendment is the
+correction"), §22's paragraphs are left exactly as written; this section corrects them.
+
+### 1 · §22.3's live-probe claim was false
+
+§22.3 said: *"the `--issues` live probe does **not** currently exercise the CLI's knowledge-tier
+search at all,"* reasoning only from `live-probe/payloads.py`'s `CLI['search']` fixture (the
+legacy bare `search --query` alias). That fixture is real, but it is not the only CLI path the
+probe drives. `live-probe/issue_search.py` loops `for t in ['HTTP','MCP','CLI']:` over
+`searchKnowledgeKeyword` and `searchKnowledgeSemantic` (its baseline positive controls and its
+cross-workspace / retired-node / rank checks all run three ways). `live-probe/probe.py`'s
+`call()`, for `transport=='CLI'`, does not touch the legacy alias at all -- it runs a REAL
+subprocess, `bun app/cli.ts kb <method> --bank <bank> --json <payload>`, against the real running
+server. Running `live-probe/run.sh <checkout> <label> --issues` and reading `out/<label>.json`
+shows CLI-transport records for both methods carrying `coverage`/`coverage_reason`/
+`candidate_ceiling` on the body, e.g.
+`{"match":"ngram","scan_reason":null,"coverage":"full","coverage_reason":null,
+"candidate_ceiling":4096,...}` for keyword, and the equivalent three fields for semantic.
+
+The corrected claim: the `--issues` probe DOES exercise `kb searchKnowledgeKeyword` and
+`kb searchKnowledgeSemantic` live, over a real CLI subprocess against a real server, and the
+three coverage fields land on those CLI answers today. The gap §22.3 was reaching for is real but
+narrower than it said: no test or probe in this repo drives the LEGACY-ALIAS shape,
+`bun app/cli.ts search --mode keyword`, against a real listening server --
+`cli-search.test.ts`'s `--mode keyword` test stubs the HTTP layer (wire pass-through only, as its
+own comment says), and no live-probe payload calls `search --mode keyword` by that name. The same
+correction applies to this slice's own deviations-from-ruling text, which repeated §22.3's claim
+as something it had verified; it had not run `issue_search.py` or `--issues`.
+
+### 2 · §22's own citation was not a repo path
+
+§22's opening paragraph cites `.tmp/ac-search-accept-nonblocking.txt` as evidence from "the
+acceptance verifier of the v3-coverage slice." That file is untracked and lives under a
+different worktree (`arra-oracle-v4-overnight-26sep-sat2026`) -- it holds the ac-search slice's
+own verifier notes, not this slice's, and it is not a path this repo's git tracks. The finding it
+names is still described correctly; only its provenance is corrected here.
+
+**Reverse by**: nothing to reverse -- this section changes no code and no test, only the
+provenance of two citations in §22's prose. §22 itself, and the fix it documents, stand as
+shipped.
