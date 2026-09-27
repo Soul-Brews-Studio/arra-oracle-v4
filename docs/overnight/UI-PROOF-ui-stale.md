@@ -251,9 +251,45 @@ Other checks in this round:
   191 pass / 0 fail; 26 payload gaps; 0 seed errors; fatal none; rc 2. That is the same
   result as the first round (gaps give rc 2), and this slice changes nothing on the server.
 
-The live 10/10 above ran on the first-round bundle (`index-9YwOro3f.js`) and was **not
-re-run** on this one. This round changes only the null-selection branches. The
-successor-link path always has a non-null selection, so it never reaches them.
+### Live, on this round's bundle (fresh gated stack, ego-browser space 260)
+
+The same `ui-stale-stack.sh` built a fresh mktemp stack: B and S2 were published and
+`supersedeNode(B → S2)` was run through the CLI. The server served `index-BEtvicZa.js`.
+CDP latency was 150 ms.
+
+**The latch, 5 attempts per scenario.** Scenarios:
+
+- **K1:** open B, let it settle, type `ws2` into the WorkspaceBar, click New.
+- **K2:** B's reads are held for 1.5 s in-page, and New is clicked while 2 of them are in
+  flight.
+- **F:** forum and messages views on `alice`/`s1`, then switch the workspace.
+
+| Bundle | K1: draft pane | K2: draft pane | F forum | F messages (ContextPanel button) |
+|---|---|---|---|---|
+| fixed (`index-BEtvicZa.js`) | 5/5 "no accepted revision" | 5/5 "no accepted revision" | 5/5 no "Fetching messages…" | 5/5 "Refresh" |
+| first round (`index-9YwOro3f.js`, control) | 5/5 **"loading…" + "loading history…"** | 5/5 **"loading…" + "loading history…"** | 5/5 **"Fetching messages for this session…"** | 5/5 "Refresh" |
+
+The messages control did not latch because this script switches the workspace only after
+getContext has answered. The verifier's context latch needs the switch to land while
+getContext is in flight, and the unit test covers that case. For the control, the
+first-round files were written into `app/server/public/v2` temporarily and restored with
+`git checkout` afterwards. The worktree was clean afterwards.
+
+**Successor link, re-run on this bundle** (the first round's `ui-stale-proof.mjs`):
+
+- **settle: 10/10** show S2's id, title and body, with 0 B head/history requests after
+  the click.
+- **hold: 10/10**, with B's read held in flight at the click on attempts 2–10 and dropped.
+
+**Screenshot.** `Page.captureScreenshot` timed out again, so there is still no image.
+
+**Teardown.**
+
+- The origin's localStorage went from 5 keys to 0, and sessionStorage was already 0.
+- The space was finished with `keep: []`.
+- `ui-stale-stack.sh down` ran. `kill -0` on the server pid then gave "no such process",
+  and `ls` on the mktemp root gave "No such file or directory".
+- Raw results are in `.tmp/ui-stale-fix/` (git-ignored).
 
 ### Still open, not fixed in this round
 
@@ -266,4 +302,5 @@ successor-link path always has a non-null selection, so it never reaches them.
   `loading`, and the state is correct once it settles. This predates the slice.
 - **User-triggered actions have no scope guard:** `useMemory.ask` / `verify` /
   `verifyAll` and `useKnowledge.actions.seed` / `publish`.
-- **No screenshot for this slice.** The browser evidence is DOM reads only.
+- **No screenshot for this slice.** `Page.captureScreenshot` times out in this ego-browser
+  session. The browser evidence is DOM reads only.
