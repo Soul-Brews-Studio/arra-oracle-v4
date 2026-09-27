@@ -116,7 +116,9 @@ export function OverviewView({ bank, onGo }: { bank: Bank; onGo: (view: Route["v
 
         <TypeBreakdown counts={byType} nodesTotal={c.nodes.total} limit={SAMPLE_LIMIT} />
 
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(20rem,1fr))] items-start gap-3">
+        {/* `min(20rem,100%)`: a bare 20rem track is 320px before this view's
+            padding, so at 320px the probe card overflowed (#33 AC2 round 4). */}
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(20rem,100%),1fr))] items-start gap-3">
           <ProbeTable counts={c} byType={o.byType} byTypeCheck={o.byTypeCheck} health={o.health} />
           <QuickActions
             onGo={onGo}

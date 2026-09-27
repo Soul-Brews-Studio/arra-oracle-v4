@@ -103,10 +103,12 @@ export function ProbeTable({
           <li
             key={row.key}
             title={row.title}
-            className="grid grid-cols-[minmax(7rem,1fr)_auto_minmax(9rem,1.4fr)] items-baseline gap-2 text-[11px]"
+            // `minmax(0,…)`, not 7rem/9rem floors: those alone outgrew the
+            // card at 320px; the method name already truncates (round 4).
+            className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1.4fr)] items-baseline gap-2 text-[11px]"
           >
             <span className="truncate font-mono text-slate-200">{row.method}</span>
-            <span className="font-mono tabular-nums text-muted">{row.durationMs} ms</span>
+            <span className="font-mono tabular-nums text-muted [overflow-wrap:anywhere]">{row.durationMs} ms</span>
             <span className={row.warn ? "text-[#f0a35e]" : "text-muted"}>{row.result}</span>
           </li>
         ))}

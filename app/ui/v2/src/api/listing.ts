@@ -79,6 +79,15 @@ export type Page<T> = {
   nextCursor: string | null;
   total: string | null;
   supported: boolean;
+  /** Fix-round finding (#33 a11y slice): a 401/403 (or any other real
+   *  failure that is not "this route does not exist") used to collapse into
+   *  `{rows:[], supported:true}` -- the same shape as a genuinely empty
+   *  page -- and the caller had no way left to tell "zero rows" from "the
+   *  server refused to answer". `error` carries the governed code (or
+   *  `HTTP ${status}` when there is no envelope) for exactly that case;
+   *  `null` on success AND on "unsupported", since those two already have
+   *  their own signal (`rows`/`supported`). */
+  error: string | null;
 };
 
 const call = (b: Bank, method: string, body: Record<string, unknown>): Promise<ApiResult> =>
@@ -110,13 +119,23 @@ function isUnsupported(result: ApiResult): boolean {
 
 function toPage<T>(result: ApiResult, cursorKey: string): Page<T> {
   if (!result.ok) {
-    return { rows: [], nextCursor: null, total: null, supported: !isUnsupported(result) };
+    const unsupported = isUnsupported(result);
+    return {
+      rows: [],
+      nextCursor: null,
+      total: null,
+      supported: !unsupported,
+      // `result.error` is a thrown-fetch (transport) message; prefer it,
+      // then the governed envelope code, then the bare status -- the same
+      // fallback order `describe()` uses in `useMemory.ts`/`useKnowledge.ts`.
+      error: unsupported ? null : (result.error ?? asError(result.body)?.code ?? `HTTP ${result.status}`),
+    };
   }
   const body = result.body as Record<string, unknown>;
   const rows = Array.isArray(body.rows) ? (body.rows as T[]) : [];
   const nextCursor = typeof body[cursorKey] === "string" ? (body[cursorKey] as string) : null;
   const total = typeof body.total === "string" ? body.total : null;
-  return { rows, nextCursor, total, supported: true };
+  return { rows, nextCursor, total, supported: true, error: null };
 }
 
 /** `include_total` is ALWAYS sent, never omitted.

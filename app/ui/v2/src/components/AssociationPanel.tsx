@@ -41,7 +41,7 @@ export function AssociationPanel({
       ) : (
         <div className="flex flex-col gap-2 text-[11px]">
           <div className="flex items-center gap-2">
-            <span className="font-mono text-muted" title={row.revision_id}>
+            <span className="font-mono text-muted [overflow-wrap:anywhere]" title={row.revision_id}>
               rev {row.revision_id.slice(0, 8)}…
             </span>
             {row.is_snapshot_head && (
@@ -75,7 +75,7 @@ export function AssociationPanel({
                 {row.links.map((l) => (
                   <li key={l.position} className="flex flex-col gap-0.5 rounded border border-edge px-2 py-1">
                     <div className="flex items-center gap-2">
-                      <span className="rounded border border-edge px-1 font-mono text-[10px] text-muted">
+                      <span className="rounded border border-edge px-1 font-mono text-[10px] text-muted [overflow-wrap:anywhere]">
                         {l.target_kind}
                       </span>
                       <span className="text-muted">{l.relation}</span>

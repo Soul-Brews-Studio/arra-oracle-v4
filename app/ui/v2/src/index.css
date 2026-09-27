@@ -3,5 +3,31 @@
 @tailwind utilities;
 
 :root { color-scheme: dark; }
-body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
+body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; overflow-wrap: break-word; }
 code, pre { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+/* #33 AC2/R12 (a11y slice), requirement 2: "interactive elements show a
+   visible focus ring". One rule for every button/input/select/textarea/link
+   in the app, rather than a focus-visible:ring-* utility repeated on ~60
+   individual elements across ~30 files -- a missed one there is silent, a
+   missed selector here is not. `:focus-visible` (not `:focus`) so a mouse
+   click still shows no ring, matching every per-element focus-visible: class
+   already in this codebase. */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+}
+
+/* #33 AC2 round 6: `overflow-wrap: break-word` on body above is the backstop
+   for long unbroken tokens (paths, URLs, JSON, ids) in any block of text a
+   per-element `[overflow-wrap:anywhere]` class was missed on -- the property
+   is inherited, so one rule reaches every block, the same "one rule, not 60
+   utilities" argument as the focus ring. It is `break-word`, not `anywhere`:
+   it only splits a word that would overflow its line, so nothing that already
+   fits changes. It does NOT lower min-content, so flex/grid items and centred
+   column items still need the explicit class (reflowEvidence.test.ts). */

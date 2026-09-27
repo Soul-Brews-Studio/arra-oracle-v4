@@ -118,7 +118,7 @@ export function App() {
         healthStatus={health}
       />
 
-      <nav className="flex gap-1 border-b border-edge px-4 py-1.5">
+      <nav className="flex flex-wrap gap-1 border-b border-edge px-4 py-1.5">
         {(["overview", "explore", "messages", "forum", "knowledge"] as const).map((v) => (
           <button
             key={v}
@@ -176,7 +176,7 @@ export function App() {
           onSelectNode={(id) => push({ node: id })}
         />
       ) : (
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-visible">
         <SidebarShell
           collapsed={railCollapsed}
           onToggle={() => setRailCollapsed((v) => !v)}
@@ -232,7 +232,7 @@ export function App() {
           )}
         </main>
 
-        <aside className="flex w-96 shrink-0 flex-col gap-4 overflow-y-auto border-l border-edge p-3">
+        <aside className="flex w-full shrink-0 flex-col gap-4 overflow-y-auto border-t border-edge p-3 lg:w-96 lg:border-l lg:border-t-0">
           <DialecticPanel
             onAsk={(q, n) => void m.actions.ask(q, n)}
             answer={m.answer}

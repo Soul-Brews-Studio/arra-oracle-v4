@@ -44,12 +44,12 @@ export function VocabularyTable({ vocabulary }: { vocabulary: VocabularyProps })
         {rows.map(([field, value]) => (
           <tr key={field} className="border-b border-edge last:border-0">
             <td
-              className="cursor-help py-1 pr-3 align-top font-mono text-[11px] text-muted"
+              className="cursor-help py-1 pr-3 align-top font-mono text-[11px] text-muted [overflow-wrap:anywhere]"
               title={FIELD_HINTS[field]}
             >
               {field}
             </td>
-            <td className="py-1 font-mono text-[11px] text-slate-100">{value}</td>
+            <td className="py-1 font-mono text-[11px] text-slate-100 [overflow-wrap:anywhere]">{value}</td>
           </tr>
         ))}
       </tbody>

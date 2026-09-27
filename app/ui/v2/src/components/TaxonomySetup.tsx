@@ -122,7 +122,7 @@ function CopyId({ id, hint }: { id: string; hint: string }) {
         setTimeout(() => setCopied(false), 1200);
       }}
       title={`${hint} — click to copy\n${id}`}
-      className="self-start rounded px-0 py-0 text-left font-mono text-[10px] text-muted hover:text-accent"
+      className="self-start rounded px-0 py-0 text-left font-mono text-[10px] text-muted hover:text-accent [overflow-wrap:anywhere]"
     >
       {copied ? "copied ✓" : `${id.slice(0, 6)}…${id.slice(-4)}`}
     </button>
