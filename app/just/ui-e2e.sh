@@ -28,8 +28,9 @@
 #      space (ui-e2e/teardown.mjs), stop the server, remove the mktemp root
 #
 # Verdicts are `STEP_OK name`, `STEP_FAIL name: why`, `STEP_SKIP name (why)`.
-# Any STEP_FAIL, a driver that does not reach E2E_DRIVER_DONE, or a non-zero
-# driver exit makes this script exit 1. Chat needs local Ollama (gemma3:4b);
+# Any STEP_FAIL, a driver that does not reach E2E_DRIVER_DONE, a non-zero
+# driver exit, or a browser teardown that does not prove `after=0` makes this
+# script exit 1. Chat needs local Ollama (gemma3:4b);
 # with Ollama down it prints STEP_SKIP, never STEP_OK.
 set -uo pipefail
 
