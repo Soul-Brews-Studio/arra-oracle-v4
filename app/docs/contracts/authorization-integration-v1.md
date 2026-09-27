@@ -726,6 +726,129 @@ MISNAMED_ALLOWLIST, now empty):
 This section is not rewritten in place; read every `auth/loader.ts`, `auth/service.ts` and
 `app.ts` mention above under its new filename.
 
+## Amendment 2026-09-26 (post-merge R25 (Nat D4b): the instance audit log is read only with an operator scope)
+
+`instance_audit` (written by `POST /api/backfill`/`POST /api/reindex`, amendments above) had
+no reader — AC-MATRIX #31's maintenance row was WRITE-PASS / READ-GAP. This amendment adds
+`GET /api/instance-audit` (`app.instanceAuditRoute.ts`; service method `readInstanceAudit`,
+`auth/service.makeReadInstanceAudit.ts`).
+
+**Admission**: there is no separate "operator" action in the policy grammar
+(`auth/policy.types.ts`'s `GlobalAction`), and this change does not add one. A principal
+qualifies by holding EITHER `maintenance:backfill` OR `maintenance:reindex`
+(`auth/service.admitOperator.ts`: tries the first, falls through to the second only on a
+`forbidden` denial). Justification: both existing global grants already mean "this principal
+may run instance-level maintenance", which is exactly the scope a maintenance-log reader
+needs. A workspace's `audit:read` (`WorkspaceAction`) is a different trust unit — per-workspace,
+checked against `mcp_calls`, never this table — and is deliberately refused here even when the
+principal holds it on some workspace; `/api/instance-audit` takes no `bank`/workspace parameter
+at all, since this is not a knowledge registry method and has no workspace.
+
+**Read is itself audited**: yes. `readInstanceAudit` is wrapped in the same `withInstanceAudit`
+helper as `backfill`/`reindex` (widened from the two maintenance literals to `string` route/action
+so this reader could reuse it rather than duplicating the one-row-either-way shape), writing an
+`instance-audit:read` / `/api/instance-audit` row on both an admitted read and a refusal. "Who
+read the maintenance log and when" is therefore never itself unaudited.
+
+**Shape**: newest-first (`started_at desc`, ties broken by `id desc`), `limit` (default 50,
+clamped to `INSTANCE_AUDIT_MAX_LIMIT` = 200), `cursor` (the `started_at` of the last row a
+previous page returned; strictly-older paging), optional `route`/`outcome` filters. A fresh,
+never-written instance answers `{ rows: [], next_cursor: null }` — `readInstanceAuditRows.ts`
+still calls `openInstanceAuditTable`'s existing `createEmptyTable(..., existOk: true)` rather
+than adding a second "does this table exist" code path (LanceDB has no cheaper exists-check),
+but the read never inserts a row, so the observable contract for a caller is `[]`, not "no Lance
+directory on disk." Redaction is inherited unchanged: `input_summary` was already
+`truncate()`-redacted at write time (R5), so a read replays the same redacted text — no new
+redaction logic, no new leak surface. Thai (and any UTF-8) `input_summary` text round-trips as
+stored, since `truncate()`'s JSON re-serialization does not transliterate.
+
+**CLI**: `bun app/cli.ts instance-audit-list [--limit N] [--cursor C] [--route PATH] [--outcome
+admitted|refused]`, global like `backfill`/`reindex` (no `--bank`). The CLI has no instance-level
+command *group* (`kb`/aliases are all bank-scoped); this follows the existing flat
+`backfill`/`reindex` convention rather than inventing a group syntax nothing else in `cli.ts`
+uses.
+
+**Not a knowledge method**: `/api/instance-audit` is model-free, has no workspace, and is not
+registered in `knowledge/registry.ts` — the 58-method count (AGENTS.md, DESIGN.md) is unchanged
+by this slice.
+
+Tests: `app/server/test/instance-audit-reader.test.ts` (failing-first; operator via either
+global grant, workspace-scoped principal refused, anonymous refused, page bound + cursor,
+fresh-instance `[]`, redaction preserved, Thai round-trip, read-audits-itself).
+
+## Amendment 2026-09-28 (post-merge R25 (Nat D4b), fix round 2: an independent Opus verifier found the HTTP boundary itself was untested and broken; see `docs/overnight/DECISIONS.md`)
+
+The round-1 slice above described the right shape but the route (`app.instanceAuditRoute.ts`)
+did not implement it correctly, and no test ever drove the real route over HTTP -- every prior
+test called `service.readInstanceAudit(..., {})` directly. Two blocking defects, both fixed
+here, both now covered by `app/server/test/instance-audit-route-http.test.ts` (a REAL listening
+server, REAL `createApp`, REAL `appendInstanceAuditRow` writer -- never the service method
+directly):
+
+1. **Absent filters returned `[]`, not the log.** `URLSearchParams.get("route")` /
+   `.get("outcome")` return `null` for an absent param; `readInstanceAuditRows.ts` only skips a
+   filter when it is `!== undefined`, so a bare pass-through of `null` rendered as the SQL
+   literal `route = 'null' AND outcome = 'null'` and matched nothing. `GET /api/instance-audit`
+   with no filters, or with only one of the two, always answered `{rows:[],next_cursor:null}`
+   even with rows present -- the only combination that worked was both filters supplied
+   together. Fixed in `app.instanceAuditRoute.ts`: `null` from `URLSearchParams.get` is now
+   normalized to `undefined` for `limit`, `cursor`, `route` and `outcome` alike before building
+   the query.
+2. **The cursor dropped same-millisecond rows.** The prior shape ("`cursor` is the `started_at`
+   of the last row, strictly-older paging") is corrected: `cursor` is now `"<started_at>:<id>"`
+   of the last row on a page, and the next page is `started_at < X OR (started_at = X AND id <
+   Y)` -- exactly the `started_at desc, id desc` order the in-memory sort already used. The prior
+   `started_at`-only cursor silently lost every row sharing the boundary millisecond with the
+   cursor row (a realistic case for this table: a burst of refused anonymous probes, or
+   concurrent backfill/reindex calls, land on the same millisecond), and `next_cursor` then went
+   `null`, so the caller believed the log was complete when rows remained unreachable.
+
+Two nonblocking gaps closed at the same time, cheap alongside the above: an invalid cursor
+(`readInstanceAuditRows.ts`'s new `InvalidCursorError`) now 400s instead of silently restarting
+at page 1; `?limit=0` now 400s like `?limit=abc` instead of silently falling back to the default
+(both are "present but not a valid limit", and now share one code path); and the `route` filter
+now also accepts `/api/instance-audit` itself, since the reader's own self-audit rows are written
+under that route and an operator could not previously filter to them.
+
+Tests: `app/server/test/instance-audit-route-http.test.ts` (failing-first against the round-1
+code: 6 of 9 cases failed before this amendment's fix, all 9 pass after) -- no filters, route-only,
+outcome-only, both filters, workspace-scoped refusal over HTTP, anonymous refusal over HTTP,
+invalid cursor, `limit=0` vs `limit=abc` consistency, and four same-millisecond rows never
+dropped across a page boundary.
+
+### Correction (R25 reader, fix round 3, 2026-09-28)
+
+The round-3 verifier found that `GET /api/instance-audit` checked `route`, `outcome` and
+`limit` before admission, and that it ignored a `bank` parameter. Both break line 34 of
+this contract. The route now follows the same order as `/api/backfill`:
+
+1. Any `bank` parameter gets a 400 before policy is read, and no row is written.
+2. Admission follows. An unadmitted caller gets a 401 or 403, whatever parameters it sent,
+   and the attempt is written as a `refused` row.
+3. After admission, the non-scope parameters are validated inside the audited read.
+   - A bad parameter from an admitted operator gets a 400 and is written as an `admitted`
+     row with `status: "error"`.
+   - The row's input is the raw parameters.
+
+`instance-audit-reader.test.ts` ("HTTP order ...") covers this through the route handler.
+It sends 9 requests and expects 7 self-audit rows: 3 refused, 3 admitted with an error,
+and 1 admitted and ok.
+
+### Correction (R25 reader, fix round 4, 2026-09-28)
+
+- **One snapshot and one clock sample per request (§2).** Operator admission used to call
+  `admitGlobal` twice, once for `maintenance:backfill` and then, on `forbidden`, once for
+  `maintenance:reindex`. Each call opened the policy and sampled the clock again.
+  `admitOperator` now takes one `snapshot()` and one `clock()` and tries both actions against
+  them. The test "operator admission samples the clock ONCE ..." puts the credential's expiry
+  between a first and a second sample:
+  - with this fix, a reindex-only operator is admitted after 1 sample;
+  - with the old double sample, the same operator got `unauthenticated` after 2 samples.
+- **`instance-audit-list --route`** now also accepts `/api/instance-audit`, which the server
+  already allowed, so the CLI can filter to the reader's own rows.
+- **Cursor.** The round-1 "Shape" paragraph above describes a cursor made only of
+  `started_at`. The round-2 correction (a `started_at` plus `id` cursor) supersedes it.
+
 ## Amendment 2026-09-26 (post-merge Nat style: one exported function per file, named after the file; #22, `mcp/connections.ts` split)
 
 `mcp/connections.ts` is now a barrel that only re-exports. The functions moved unchanged, with
