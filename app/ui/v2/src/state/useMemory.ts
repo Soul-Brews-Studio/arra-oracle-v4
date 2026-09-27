@@ -6,7 +6,7 @@
  * instead of spread across a dozen components, which is the only reason a POC
  * this small can stay readable.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type Bank,
   type ChatAnswer,
@@ -76,6 +76,12 @@ export function useMemory() {
   const [answer, setAnswer] = useState<ChatAnswer | null>(null);
   const [asking, setAsking] = useState(false);
   const [askError, setAskError] = useState<string | null>(null);
+  // Which transcript / context read is current. Switching session (or peer,
+  // or bank) while one is in flight must not let the old answer land last
+  // and show one session's messages under another's name -- the same race
+  // `useKnowledge.refresh` had (ui-stale). Checked after every await.
+  const messagesGen = useRef(0);
+  const contextGen = useRef(0);
 
   // The roster is per-workspace: names in one workspace mean nothing in
   // another, and carrying them across would show rows that cannot exist.
@@ -113,6 +119,7 @@ export function useMemory() {
   }, [workspace, verify]);
 
   const refreshMessages = useCallback(async () => {
+    const g = ++messagesGen.current;
     if (session === null) {
       setMessages([]);
       return;
@@ -124,6 +131,7 @@ export function useMemory() {
     // R3). A token without it gets 403 here, surfaced by `describe` below;
     // the selected peer's own view is the getContext column.
     const result = await listMessages(b, session, 50, null);
+    if (g !== messagesGen.current) return; // a newer read has started
     setLoadingMessages(false);
     if (!result.ok) {
       setMessages([]);
@@ -138,6 +146,7 @@ export function useMemory() {
   }, [refreshMessages]);
 
   const refreshContext = useCallback(async () => {
+    const g = ++contextGen.current;
     if (peer === null || session === null) {
       setContext(null);
       return;
@@ -145,6 +154,7 @@ export function useMemory() {
     setLoadingContext(true);
     setContextError(null);
     const result = await getContext(b, peer, session, 20);
+    if (g !== contextGen.current) return;
     setLoadingContext(false);
     if (!result.ok) {
       setContext(null);

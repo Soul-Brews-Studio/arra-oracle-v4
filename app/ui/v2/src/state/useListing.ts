@@ -40,6 +40,10 @@ function useCursorList<T>(fetchPage: (after: string | null, includeTotal: boolea
   // a `useCallback` dep array here would rebuild these on every fetch, which
   // is the kind of churn `useMemory` avoids by keeping fetch identity stable.
   const cursor = useRef({ pageIndex: 0, nextCursor: null as string | null });
+  // Which page load is current. A scope change, a "show history" toggle or a
+  // fast next/prev can put two loads in flight; the older must not land last
+  // and paint its rows (or its cursor) over the newer one's (ui-stale).
+  const gen = useRef(0);
   const [state, setState] = useState<ListState<T>>({
     rows: [],
     total: null,
@@ -53,9 +57,11 @@ function useCursorList<T>(fetchPage: (after: string | null, includeTotal: boolea
 
   const load = useCallback(
     async (index: number, includeTotal: boolean) => {
+      const g = ++gen.current;
       setState((s) => ({ ...s, loading: true, error: null }));
       const after = history.current[index] ?? null;
       const page = await fetchPage(after, includeTotal);
+      if (g !== gen.current) return;
       cursor.current = { pageIndex: index, nextCursor: page.nextCursor };
       setState((s) => ({
         rows: page.rows,
