@@ -49,7 +49,7 @@ test/lifecycle-precision.test.ts	14.491	0	6	0
 test/lifecycle-recovery.test.ts	19.958	0	8	0
 test/lifecycle-service.test.ts	7.189	0	5	0
 test/mcp-correctness.test.ts	0.970	0	24	0
-test/one-function-per-file.test.ts	0.617	0	7	0
+test/one-function-per-file.test.ts	1.020	0	38	0
 test/publication-ownership.test.ts	16.389	0	21	0
 test/publication-recovery.test.ts	65.329	0	26	0
 test/publication-service.test.ts	31.759	0	29	0

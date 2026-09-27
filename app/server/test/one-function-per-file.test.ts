@@ -27,15 +27,22 @@
 // of the syntax tree, so nothing inside a string, template, regex, comment,
 // parameter default or nested scope can hide or invent an export. Counted:
 // `export function f` (overloads once), `export const|let|var f = <arrow or
-// function expression>` (every declarator), `export default <function>` (as
-// "default"), `export default local` / `export { local as default }` (under
-// the local's name), and `export { local }` of a function declared here.
+// function expression>` (every declarator; a conditional whose branches are
+// both functions counts), `export declare function f` (ambient, counted: the
+// strict choice), `export default function name` / `export default local` /
+// `export { local as default }` (all under the function's own name, so the
+// naming check sees them), `export default <anonymous function>` (as
+// "default"), and `export { local }` of a function declared here.
 // Not counted: re-exports `export { x } from "./m"`, classes, interfaces,
 // types, enums, plain values, and call results (an IIFE, `memo(fn)`).
-//   - Known gap, not exercised by any file today: an anonymous
+//   - Known gaps, not exercised by any file today: an ANONYMOUS
 //     `export default function () {}` or `export default (x) => x` counts as
-//     compliant (there is no name to check). `.spec.tsx` is not excluded (no
-//     such files exist in-tree).
+//     compliant (there is no name to check); `export let f: T; f = () => ...`
+//     (assigned after declaration) does not count. `.spec.tsx` is not excluded
+//     (no such files exist in-tree).
+//   - The parser comes from app/ui/v2 and must stay TypeScript 5.x: the
+//     `typescript@7` CI installs for the server's own typecheck is the native
+//     compiler and exposes no `createSourceFile`.
 //   - History: verify rounds 2-6 attacked a hand-written lexer and found a new
 //     evasion each time; DETECTOR_CASES at the bottom pins every one of those
 //     forms against the names TypeScript reports, so the parser swap is
@@ -129,7 +136,10 @@ function unwrap(e: any): any {
 
 function isFunctionValue(e: any): boolean {
   const v = unwrap(e);
-  return !!v && (ts.isArrowFunction(v) || ts.isFunctionExpression(v));
+  if (!v) return false;
+  // `cond ? () => 1 : () => 2` is a function whichever branch runs.
+  if (ts.isConditionalExpression(v)) return isFunctionValue(v.whenTrue) && isFunctionValue(v.whenFalse);
+  return ts.isArrowFunction(v) || ts.isFunctionExpression(v);
 }
 
 /** Exported function names in one file, from TypeScript's syntax tree:
@@ -155,7 +165,9 @@ function exportedFunctionNames(text: string, relPath: string): string[] {
   for (const st of sf.statements) {
     if (ts.isFunctionDeclaration(st)) {
       if (st.name) localFunctions.add(st.name.text);
-      if (isExported(st)) names.push(isDefault(st) || !st.name ? "default" : st.name.text);
+      // A NAMED default function is checked under its name, exactly like
+      // `function helper(){}; export default helper;` (round-7 verifier).
+      if (isExported(st)) names.push(st.name ? st.name.text : "default");
     } else if (ts.isVariableStatement(st)) {
       for (const d of st.declarationList.declarations) {
         if (ts.isIdentifier(d.name) && isFunctionValue(d.initializer)) {
@@ -200,7 +212,8 @@ function measure(): FileReport[] {
 // --- ALLOWLIST -------------------------------------------------------------
 // Every entry is a file that violates the rule TODAY (measured 2026-09-27 on
 // v4/on-style-ratchet, base 9435719, with the two-step scan/classify
-// detector above -- reproduces the driver's 706/39/8 split exactly). This
+// detector's first version, and re-measured with the TypeScript-parser
+// detector below: the same 706/39/8 split). This
 // list may only shrink: removing an entry (because the file was split or
 // renamed) is always fine; growing an entry's `count`, or leaving a now-
 // lower or now-compliant file listed at its old count, fails the test below
@@ -360,7 +373,7 @@ describe("one exported function per file (ratchet)", () => {
   });
 });
 
-// Every attack form the independent verifiers found in rounds 2-5, with the
+// Every attack form the independent verifiers found in rounds 2-7, with the
 // names TypeScript's own parser reports for it (computed with the TypeScript
 // compiler API as ground truth, then frozen here). The detector must agree on
 // each: a regression here means a real violation could pass the ratchet green
@@ -395,6 +408,9 @@ const DETECTOR_CASES: { title: string; path: string; src: string; expected: stri
   { title: "r6 spaced + + before a regex", path: "server/src/x/p.spaced.ts", src: "export function spaced(a: number, s: string) { return a + +/[(]/.test(s); }\nexport function after() { return 1; }\n", expected: ["after", "spaced"] },
   { title: "r6 for await condition then regex", path: "server/src/x/p.forAwait.ts", src: "export async function forAwait(xs: AsyncIterable<string>, y: string) {\n  for await (const k of xs) /\\(/.test(y + k);\n  return 1;\n}\nexport function tail() { return 2; }\n", expected: ["forAwait", "tail"] },
   { title: "r6 one-line postfix division then template", path: "server/src/x/p.postfix.ts", src: "export function postfix(xs: string[]) { let i = 0; return [i++ / 2, xs.join(`a/b`)]; }\nexport function more() { return 1; }\n", expected: ["more", "postfix"] },
+  { title: "r7 named default function is checked under its name", path: "server/src/x/policy.admit.ts", src: "export default function wrongName() { return 1; }\n", expected: ["wrongName"] },
+  { title: "r7 named default plus its own export-list entry counts once", path: "server/src/x/p.dn.ts", src: "export default function dn() { return 1; }\nexport { dn };\n", expected: ["dn"] },
+  { title: "r7 conditional whose branches are both functions", path: "server/src/x/p.pick.ts", src: "declare const cond: boolean;\nexport const pick = cond ? () => 1 : () => 2;\nexport function second() { return 3; }\n", expected: ["pick", "second"] },
 ];
 
 describe("detector agrees with TypeScript on every verifier attack form", () => {
