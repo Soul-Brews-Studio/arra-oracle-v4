@@ -35,7 +35,12 @@ function chunk(status: string, error_code: string | null = null) {
   return { status, attempts: "0", error_code, embedding_profile: PROFILE, last_attempt_at: null };
 }
 
-const ok = (chunks: unknown[], f: unknown = freshness()): FreshnessRead => ({ phase: "ok", freshness: f, chunks });
+const ok = (chunks: unknown[], f: unknown = freshness()): FreshnessRead => ({
+  phase: "ok",
+  freshness: f,
+  chunks,
+  eligibility: { ok: true, body: { eligible: true, witness_event_id: "0", reasons: [] } },
+});
 
 describe("searchFreshnessView: one state per node, honest about each", () => {
   test("no chunks under the active profile: unindexed", () => {

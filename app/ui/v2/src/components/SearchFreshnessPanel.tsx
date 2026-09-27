@@ -1,3 +1,4 @@
+import type { SearchFindability } from "../state/searchFindability";
 import type { FreshnessState, FreshnessView } from "../state/searchFreshnessView";
 
 /** Colour per node state. `unknown` and `loading` share the muted tone: an
@@ -11,9 +12,19 @@ const TONE: Record<FreshnessState, string> = {
   loading: "border-muted text-muted",
 };
 
+/** Findability tone: only an eligible, chunked node reads in the accent. */
+const SEARCH_TONE: Record<SearchFindability["state"], string> = {
+  searchable: "text-accent",
+  not_searchable: "text-[#f0a35e]",
+  excluded: "text-[#f0a35e]",
+  unknown: "text-muted",
+};
+
 /** #33 design revision 2 "render freshness": the head revision's search state
  *  (`searchFreshnessView`), then the workspace-wide `getSearchFreshness`
- *  figures under their own heading. Indexing and embedding run outside this
+ *  figures under their own heading. Whether search RETURNS the node is its
+ *  own line (`view.search`, from recall eligibility): a retired or inactive
+ *  head can be fully indexed and still never be a hit. Indexing and embedding run outside this
  *  view (`indexRevisionChunks`, `embedPendingChunks`), so "re-check" re-reads
  *  rather than waiting for a push the server never sends. */
 export function SearchFreshnessPanel({ view, onRecheck }: { view: FreshnessView; onRecheck: () => void }) {
@@ -45,6 +56,15 @@ export function SearchFreshnessPanel({ view, onRecheck }: { view: FreshnessView;
       <p data-freshness="meaning" className="text-slate-300 [overflow-wrap:anywhere]">
         {view.meaning}
       </p>
+      {view.search !== null && (
+        <p
+          data-freshness="search"
+          data-search-state={view.search.state}
+          className={`[overflow-wrap:anywhere] ${SEARCH_TONE[view.search.state]}`}
+        >
+          {view.search.text}
+        </p>
+      )}
       {view.chunks !== null && view.chunks.total > 0 && (
         <p className="text-muted">
           this revision: {view.chunks.ready} ready · {view.chunks.pending} pending · {view.chunks.failed} failed

@@ -78,12 +78,13 @@ describe("SearchFreshnessPanel: every state renders its own label", () => {
     embedding_profile: PROFILE, last_attempt_at: null });
   const render = (view: ReturnType<typeof searchFreshnessView>) =>
     renderToStaticMarkup(createElement(SearchFreshnessPanel, { view, onRecheck: () => {} }));
+  const eligibility = { ok: true as const, body: { eligible: true, witness_event_id: "0", reasons: [] } };
 
   const cases: [string, ReturnType<typeof searchFreshnessView>][] = [
-    ["unindexed", searchFreshnessView({ phase: "ok", freshness: f, chunks: [] })],
-    ["pending", searchFreshnessView({ phase: "ok", freshness: f, chunks: [c("pending")] })],
-    ["failed", searchFreshnessView({ phase: "ok", freshness: f, chunks: [c("failed")] })],
-    ["indexed", searchFreshnessView({ phase: "ok", freshness: f, chunks: [c("ready")] })],
+    ["unindexed", searchFreshnessView({ phase: "ok", freshness: f, chunks: [], eligibility })],
+    ["pending", searchFreshnessView({ phase: "ok", freshness: f, chunks: [c("pending")], eligibility })],
+    ["failed", searchFreshnessView({ phase: "ok", freshness: f, chunks: [c("failed")], eligibility })],
+    ["indexed", searchFreshnessView({ phase: "ok", freshness: f, chunks: [c("ready")], eligibility })],
     ["unknown", searchFreshnessView({ phase: "error", stage: "freshness", message: "HTTP 503" })],
   ];
   for (const [state, view] of cases) {
@@ -104,5 +105,30 @@ describe("SearchFreshnessPanel: every state renders its own label", () => {
 
   test("failed shows the stored error code", () => {
     expect(render(cases[2]![1])).toContain("embedder_timeout");
+  });
+
+  // Fix round (2026-09-27): findability is its own line, with its own state,
+  // decided by recall eligibility -- never implied by the chunk label.
+  test("a retired, fully indexed head renders an 'excluded' search line, not a findability claim", () => {
+    const view = searchFreshnessView({
+      phase: "ok",
+      freshness: f,
+      chunks: [c("ready")],
+      eligibility: { ok: true, body: { eligible: false, witness_event_id: "1", reasons: ["retired"] } },
+    });
+    const html = render(view);
+    expect(html).toContain('data-search-state="excluded"');
+    expect(slot(html, "freshness", "search")).toContain("does not return this node");
+    expect(html).not.toMatch(/can both|find this revision/);
+  });
+
+  test("an eligible indexed head renders a 'searchable' search line", () => {
+    const html = render(cases[3]![1]);
+    expect(html).toContain('data-search-state="searchable"');
+    expect(slot(html, "freshness", "search")).toContain("keyword and semantic search can both return");
+  });
+
+  test("unknown freshness renders no search line", () => {
+    expect(render(cases[4]![1])).not.toContain("data-search-state");
   });
 });

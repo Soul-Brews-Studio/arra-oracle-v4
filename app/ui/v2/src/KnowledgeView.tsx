@@ -91,8 +91,10 @@ export function KnowledgeView({
   const citeTargets = useCiteTargets(`${bank.bank}:${bank.workspace}`, k.head?.revision ?? null, sortedHistory);
   const writable = writableHead(k.selected, k.head?.revision ?? null, sortedHistory);
   // #33 design revision 2 "render freshness": only for a head that belongs to
-  // the node on screen (the `writableHead` fence), never a draft.
-  const freshness = useSearchFreshness(bank, writable.head?.id ?? null);
+  // the node on screen (the `writableHead` fence), never a draft. The node id
+  // scopes the recall-eligibility read that decides whether search returns it
+  // (`KnowledgeView.freshness.test.tsx`).
+  const freshness = useSearchFreshness(bank, writable.head === null ? null : k.selected, writable.head?.id ?? null);
 
   return (
     // #33 AC2 round 3: below `lg` this root is the ONE scroll container -- the
