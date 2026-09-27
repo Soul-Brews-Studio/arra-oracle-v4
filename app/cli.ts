@@ -45,7 +45,9 @@ Legacy commands (13; kept for compatibility, not removed — prefer kb/aliases f
   bank-info | call-log [--limit N] [--status ok|error] | call-stats | status
   health | list [--limit N] | search --query TEXT [--mode text|vector] [--limit N]
   backfill [--batch N] | reindex
-  NOTE: backfill/reindex are GLOBAL maintenance operations, not bank-scoped.
+  instance-audit-list [--limit N] [--cursor C] [--route PATH] [--outcome admitted|refused]
+  NOTE: backfill/reindex/instance-audit-list are GLOBAL operations, not bank-scoped
+  (#31 R25: instance-audit-list requires the maintenance:backfill or maintenance:reindex grant).
 
 recall and search (text|vector) answer {mode, match, count, rows}. Text mode is a substring
 match: match is "ngram" (character-trigram index, each hit re-checked to contain
@@ -68,6 +70,7 @@ const commandFlags: Record<string, string[]> = {
   "bank-info": [], "call-log": ["limit", "status"], "call-stats": [], status: [],
   health: [], list: ["limit"], search: ["query", "mode", "limit", "profile"],
   backfill: ["batch"], reindex: [],
+  "instance-audit-list": ["limit", "cursor", "route", "outcome"],
 };
 const isObject = (v: unknown): v is Json => v !== null && typeof v === "object" && !Array.isArray(v);
 
@@ -246,6 +249,17 @@ try {
           result = await request(`/api/backfill?batch=${batch}`, { method: "POST" }); break;
         }
         case "reindex": console.error("Global reindex: --bank does not scope this operation."); result = await request("/api/reindex", { method: "POST" }); break;
+        case "instance-audit-list": {
+          // #31 R25 (Nat D4b): global, operator-scoped, model-free -- no --bank.
+          console.error("Global instance-audit-list: --bank does not scope this operation.");
+          const params = new URLSearchParams();
+          if (options.limit !== undefined) params.set("limit", String(integer("limit", 50)));
+          if (options.cursor !== undefined) params.set("cursor", String(options.cursor));
+          if (options.route !== undefined) params.set("route", choice("route", ["/api/backfill", "/api/reindex"]) ?? "");
+          if (options.outcome !== undefined) params.set("outcome", choice("outcome", ["admitted", "refused"]) ?? "");
+          result = await request(`/api/instance-audit${params.size > 0 ? `?${params}` : ""}`);
+          break;
+        }
       }
     }
     output(result);

@@ -725,3 +725,53 @@ MISNAMED_ALLOWLIST, now empty):
 
 This section is not rewritten in place; read every `auth/loader.ts`, `auth/service.ts` and
 `app.ts` mention above under its new filename.
+
+## Amendment 2026-09-26 (post-merge R25 (Nat D4b): the instance audit log is read only with an operator scope)
+
+`instance_audit` (written by `POST /api/backfill`/`POST /api/reindex`, amendments above) had
+no reader — AC-MATRIX #31's maintenance row was WRITE-PASS / READ-GAP. This amendment adds
+`GET /api/instance-audit` (`app.instanceAuditRoute.ts`; service method `readInstanceAudit`,
+`auth/service.makeReadInstanceAudit.ts`).
+
+**Admission**: there is no separate "operator" action in the policy grammar
+(`auth/policy.types.ts`'s `GlobalAction`), and this change does not add one. A principal
+qualifies by holding EITHER `maintenance:backfill` OR `maintenance:reindex`
+(`auth/service.admitOperator.ts`: tries the first, falls through to the second only on a
+`forbidden` denial). Justification: both existing global grants already mean "this principal
+may run instance-level maintenance", which is exactly the scope a maintenance-log reader
+needs. A workspace's `audit:read` (`WorkspaceAction`) is a different trust unit — per-workspace,
+checked against `mcp_calls`, never this table — and is deliberately refused here even when the
+principal holds it on some workspace; `/api/instance-audit` takes no `bank`/workspace parameter
+at all, since this is not a knowledge registry method and has no workspace.
+
+**Read is itself audited**: yes. `readInstanceAudit` is wrapped in the same `withInstanceAudit`
+helper as `backfill`/`reindex` (widened from the two maintenance literals to `string` route/action
+so this reader could reuse it rather than duplicating the one-row-either-way shape), writing an
+`instance-audit:read` / `/api/instance-audit` row on both an admitted read and a refusal. "Who
+read the maintenance log and when" is therefore never itself unaudited.
+
+**Shape**: newest-first (`started_at desc`, ties broken by `id desc`), `limit` (default 50,
+clamped to `INSTANCE_AUDIT_MAX_LIMIT` = 200), `cursor` (the `started_at` of the last row a
+previous page returned; strictly-older paging), optional `route`/`outcome` filters. A fresh,
+never-written instance answers `{ rows: [], next_cursor: null }` — `readInstanceAuditRows.ts`
+still calls `openInstanceAuditTable`'s existing `createEmptyTable(..., existOk: true)` rather
+than adding a second "does this table exist" code path (LanceDB has no cheaper exists-check),
+but the read never inserts a row, so the observable contract for a caller is `[]`, not "no Lance
+directory on disk." Redaction is inherited unchanged: `input_summary` was already
+`truncate()`-redacted at write time (R5), so a read replays the same redacted text — no new
+redaction logic, no new leak surface. Thai (and any UTF-8) `input_summary` text round-trips as
+stored, since `truncate()`'s JSON re-serialization does not transliterate.
+
+**CLI**: `bun app/cli.ts instance-audit-list [--limit N] [--cursor C] [--route PATH] [--outcome
+admitted|refused]`, global like `backfill`/`reindex` (no `--bank`). The CLI has no instance-level
+command *group* (`kb`/aliases are all bank-scoped); this follows the existing flat
+`backfill`/`reindex` convention rather than inventing a group syntax nothing else in `cli.ts`
+uses.
+
+**Not a knowledge method**: `/api/instance-audit` is model-free, has no workspace, and is not
+registered in `knowledge/registry.ts` — the 58-method count (AGENTS.md, DESIGN.md) is unchanged
+by this slice.
+
+Tests: `app/server/test/instance-audit-reader.test.ts` (failing-first; operator via either
+global grant, workspace-scoped principal refused, anonymous refused, page bound + cursor,
+fresh-instance `[]`, redaction preserved, Thai round-trip, read-audits-itself).
