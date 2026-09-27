@@ -48,12 +48,15 @@ class BodyRejected extends Error {
   }
 }
 
-/** A query parameter in its MCP argument shape: digits as a number. */
-const argValue = (raw: string): string | number => (/^\d+$/.test(raw) && Number.isSafeInteger(Number(raw)) ? Number(raw) : raw);
+/** A query parameter in its MCP argument shape: digits as the number they
+ *  spell, even past 2^53 (a JSON number MCP would refuse with the same text);
+ *  anything else, and digits too long for a finite number, as the string. */
+const argValue = (raw: string): string | number => (/^\d+$/.test(raw) && Number.isFinite(Number(raw)) ? Number(raw) : raw);
 
-/** The MCP `bounded()` text for a `limit` that `positiveInt` refused. */
+/** The MCP `bounded()` text for a `limit` that `positiveInt` refused, keyed on
+ *  the type `argValue` records, so the row's input and text agree. */
 const limitRejected = (raw: string | null) =>
-  new BodyRejected(400, raw !== null && /^\d+$/.test(raw) ? "limit must be a safe integer between 1 and 1000" : "limit must be a number");
+  new BodyRejected(400, raw !== null && typeof argValue(raw) === "number" ? "limit must be a safe integer between 1 and 1000" : "limit must be a number");
 
 const STATUS_FOR: Readonly<Record<string, number>> = Object.freeze({
   unauthenticated: 401,
@@ -303,13 +306,14 @@ export function createApp(
       const mode = url.searchParams.get("mode") ?? "text";
       const rawLimit = url.searchParams.get("limit");
       const limit = positiveInt(rawLimit ?? undefined, 10);
-      // Audited as MCP `recall` (#31 legacy-audit): only the arguments sent.
-      const rawMode = url.searchParams.get("mode");
-      const input = {
-        ...(q === null ? {} : { query: q }),
-        ...(rawMode === null ? {} : { mode: rawMode }),
-        ...(rawLimit === null ? {} : { limit: argValue(rawLimit) }),
-      };
+      // Audited as MCP `recall` (#31 legacy-audit): only the arguments sent,
+      // in the order the URL sent them (MCP records its caller's key order),
+      // each at its first occurrence, the one `get` reads.
+      const input: Record<string, string | number> = {};
+      for (const [key, raw] of url.searchParams) {
+        const arg = key === "q" ? "query" : key === "mode" || key === "limit" ? key : null;
+        if (arg !== null && !(arg in input)) input[arg] = arg === "limit" ? argValue(raw) : raw;
+      }
       const searchMode = mode === "vector" ? "vector" : "text";
       return guarded(async () => {
         const result = await service.searchMemories(

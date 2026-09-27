@@ -29,9 +29,10 @@ import { TypeBreakdown, type TypeCounts } from "./TypeBreakdown";
 // uses) exactly as on MCP, and since the legacy-audit slice so are the legacy
 // memory routes, as their MCP twins; the global maintenance routes (backfill,
 // reindex) and any request refused before admission (no or bad token, no
-// grant) still move neither. Both are
-// claims about a COUNT, so both go through `whenCounted`: they are false the
-// moment nothing counted.
+// grant) still move neither. The card's subline says the same in short, and
+// `OverviewView.auditCopy.test.ts` holds the two (and the shipped bundle) to
+// it. Both are claims about a COUNT, so both go through `whenCounted`: they
+// are false the moment nothing counted.
 const MCP_WHY =
   "admitted MCP tools/call, HTTP knowledge API (/api/knowledge) and legacy HTTP memory route (/api/memories, /api/search, /api/health) calls in this workspace, successes and failures, read from the operations root (ARRA_DATA_DIR) the call log is written to — the global maintenance routes (/api/backfill, /api/reindex) and requests refused before admission are not logged here";
 const CONNECTION_WHY =
@@ -109,7 +110,7 @@ export function OverviewView({ bank, onGo }: { bank: Bank; onGo: (view: Route["v
             label="mcp calls"
             {...probe(c.mcpCalls)}
             hint={c.mcpCalls.note ?? MCP_WHY}
-            sub={whenCounted(c.mcpCalls, "admitted MCP + HTTP knowledge calls · legacy routes not logged")}
+            sub={whenCounted(c.mcpCalls, "admitted MCP + HTTP calls · maintenance routes not logged")}
           />
           <StatCard
             label="connections"
