@@ -614,6 +614,7 @@ paragraph is that reference.
 ```
 
 With the fix: **9 pass, 0 fail** (4 round-1 tests + 5 new).
+*(Proof sweep, fix round, 2026-09-27: true for that round. On `594df54`, `cd app/ui/v2 && bun test ./src/state/actionStale.test.tsx` gives 13 pass / 0 fail; later rounds added tests.)*
 
 ### Mutants
 

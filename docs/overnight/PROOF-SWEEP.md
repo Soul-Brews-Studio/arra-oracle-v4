@@ -4,8 +4,34 @@
 (tree `a1ff626`, the same tree as main `5e890fe`, the merge of PR #127)
 **Written by**: Claude Opus 5.5 (AI). No human has reviewed this sweep.
 
-**Scope.** `git log --since='2026-09-27 00:00' --name-only -- docs app/docs/contracts AGENTS.md DESIGN.md app/README.md`.
-Every hunk added after the AC audit (`cefc8db..594df54`) was read in full: `AC-MATRIX.md`, `AC-EVIDENCE.md`,
+**Scope.** `git log --since='2026-09-27 00:00' --name-only -- docs app/docs/contracts AGENTS.md DESIGN.md app/README.md`
+lists 31 `.md` files on `594df54` (32 on `81fe34b`, which adds this file).
+
+*Fix round (2026-09-27, after an independent verifier refuted the first pass).* The first pass did **not** cover
+that whole scope, and said so only here, not in its report. It read the hunks added after the AC audit
+(`cefc8db..594df54`) by hand, listed below, and skipped the earlier 2026-09-27 hunks in `AGENTS.md` and
+`app/README.md`, which is where nine stale citations sat. The fix round added two passes over **every line
+`git blame` dates to 2026-09-27, in all 32 files**:
+
+- a citation pass: `python3 docs/overnight/proof-sweep-drift.py 81fe34b` resolves 240 `file:line` citations
+  (including bare `` `:N` `` after a file) and compares each cited line as it stood when the doc line was written
+  with the line on the tree. It found 16 drifted citations plus 3 known ones (§1a). Every citation it reports was
+  also opened by hand.
+- a count pass: every such line in the files the first pass had not read (`lifecycle-v1.md`, `trace-v1.md`,
+  `taxonomy-write-v1.md`, `context-ingestion-v1.md`, `revision-evidence-v1.md`, `revision-publication-v1.md`,
+  `docs/SCHEMA-BUILT.md`, `DECISIONS.md`, `UI-E2E.md`, `V3-PARITY.md`, `DEMO.md`) that states a test count
+  (`N pass`, `N/0`, `N tests`, `OK`, `N expect`) was listed: 27 lines. The re-runnable ones were re-run (§1a,
+  §2); the rest are browser or live-Honcho runs (§2, "Not re-checked").
+
+The fix round then read by hand every 2026-09-27 line of `revision-publication-v1.md` (25 lines),
+`taxonomy-write-v1.md` (54), `revision-evidence-v1.md` (53) and `V3-PARITY.md` (1), plus every 2026-09-27 line of
+`docs/SCHEMA-BUILT.md` that holds a number (rows 40-42 came from this). The remaining prose of `DEMO.md` (1,050
+lines dated today), `lifecycle-v1.md` (410), `UI-E2E.md` (400), `context-ingestion-v1.md` (153), `DECISIONS.md` (53)
+and `trace-v1.md` (47) got only the citation and count passes, and **was not read by hand**. Neither were the
+`PLAN.md` log hunks written before `cefc8db`, beyond the counts §2 lists. (Line counts:
+`git blame --line-porcelain 81fe34b -- <file>`, lines whose committer date is 2026-09-27 GMT+7.)
+
+First pass, read by hand in full: `AC-MATRIX.md`, `AC-EVIDENCE.md`,
 `FOREIGN-VISITOR.md`, the `PLAN.md` log, and the 2026-09-26/27 amendments in `search-chunk-v1.md` §21-§24,
 `authorization-integration-v1.md` (three amendments), `chat-v1.md`, `read-cursor-v1.md`, `delivery-gates.md` and
 `session-source-relic-v1.md`, plus the `AGENTS.md`, `DESIGN.md` and `app/README.md` diffs. The UI proof docs and
@@ -39,12 +65,61 @@ was deleted. `PLAN.md` needed no correction line (see "Checked and true").
 | 17 | round-level UI counts | UI-PROOF-ui-stale.md "Other checks"; UI-PROOF.md "Tests" | 48 total; `revisionDiff` 19; `chatError` 5 | 56 (13+30+13); 26; 8 (later rounds added tests) | `cd app/ui/v2 && bun test <files named in the doc>` |
 | 18 | C5 "not verified here" | AC-MATRIX.md §5 C5 | unchecked | checked: `fts.constants.ts:9-12` says ngram 3..3 is character trigrams and the SDK refuses `trigram`/`unicode61`, so the two rows agree | `sed -n 9,12p app/server/src/fts/fts.constants.ts` |
 
+### 1a. Fix-round corrections (2026-09-27)
+
+Red first: `python3 docs/overnight/proof-sweep-check.py 81fe34b` (the docs as the first pass committed them) gave
+**0 ok / 30 fail**, and `python3 docs/overnight/proof-sweep-drift.py 81fe34b` gave **16 drifted**. After this round both
+are green on the fix commit (30 ok / 0 fail; 0 drifted). Rows 19-30 are the 16 drifted citations (a row
+covers every doc that carried it); 32-33 are the 3 known ones in frozen contracts; 31 and 34-42 come from the count
+pass, a hand read of the smaller unread contracts, and the verifier's non-blocking findings.
+
+| # | Claim | File:line (doc) | Was | Now | Command |
+|---|---|---|---|---|---|
+| 19 | HTTP kb cap 1 MiB | AGENTS.md:40 | `knowledge/transport.ts:67` (a blank line) | `:69` | `rg -n 'MAX_KNOWLEDGE_REQUEST_BYTES =' app/server/src/knowledge/transport.ts` |
+| 20 | 8 memory tools + 57 `kb_*` | AGENTS.md:44 | `mcp/tools.ts:16,171,191` | `:16,179,199` (`KNOWLEDGE_TOOLS`, `TOOLS`). Right on `e00b50b`; PR #125 moved them. The verifier's list missed this one | `rg -n 'export const (MEMORY_TOOLS\|KNOWLEDGE_TOOLS\|TOOLS) ' app/server/src/mcp/tools.ts` |
+| 21 | v3-compat flag is exactly `1` | AGENTS.md:45; app/README.md:205 | `composition.ts:199-201` (`logCall: await composeAuditSink()`) | `:211-213` (`composeV3Compat`) | `rg -n 'ARRA_MCP_V3_COMPAT ===' app/server/src/composition.ts` |
+| 22 | `X-Arra-Peer` read only with the flag | AGENTS.md:53 | `app.ts:157` (an `// -- MCP --` comment) | `:172` | `rg -n 'x-arra-peer' app/server/src/app.ts` |
+| 23 | Host/Origin gate on every request | AGENTS.md:85; app/README.md:142 | `app.ts:137-140` (`bodyGate`) | `:152-155` (`onRequest` + `checkHostAndOrigin`) | `rg -n 'onRequest\|checkHostAndOrigin\(' app/server/src/app.ts` |
+| 24 | binds only `127.0.0.1` | AGENTS.md:85 | `index.ts:92-96` | `:95-99` (`app.listen`, `hostname` at `:97`) | `rg -n 'hostname: "127' app/server/src/index.ts` |
+| 25 | `/health` skips admission | AGENTS.md:87 | `app.ts:243` (`},`) | `:258` | `rg -n '"/health"' app/server/src/app.ts` |
+| 26 | static UI skips admission | AGENTS.md:87; app/README.md:143 | `app.ts:429-458` (the `/api/backfill` handler) | `:468-497` (`options.assets` + `staticPlugin`) | `rg -n 'options.assets' app/server/src/app.ts; wc -l app/server/src/app.ts` |
+| 27 | `?bank` parsed | AGENTS.md:98; app/README.md:152 | `app.ts:79-85` (`positiveInt`) | `:93-99` (`bankParam`) | `rg -n 'const bankParam' app/server/src/app.ts` |
+| 28 | `/api/health` 400 before admission | AGENTS.md:98; app/README.md:153 | `:253-259` | `:268-273` | `sed -n 268,273p app/server/src/app.ts` |
+| 29 | the 400 is pinned | AGENTS.md:98; app/README.md:154 | `mcp-correctness.test.ts:435-437` (`:435` blank; the file is unchanged since `cefc8db`, so this was off by one when written) | `:436-439` | `sed -n 436,439p app/server/test/mcp-correctness.test.ts`; `bun test test/mcp-correctness.test.ts` |
+| 30 | `attribution_unresolved` asserted | AC-MATRIX.md #34 "reuse vectors" row | `test_copy_migration.py:205` (a docstring) | `:244`; ruff/isort in PR #123 (`14ebc7e`, `b8ff103`) moved it. The file runs 30 tests, OK | `rg -n attribution_unresolved app/migrate-py/tests/test_copy_migration.py` |
+| 31 | the R4 amendment | AC-MATRIX.md #32 R4 row | `chat-v1.md:242-319` | `:242-314`; `:315` starts the R9 amendment | `rg -n '^## Amendment' app/docs/contracts/chat-v1.md` |
+| 32 | "the name stays the immutable identity" | context-ingestion-v1.md:233 (frozen) | `DESIGN.md:369` | `:371`; appended a PROOF.md-rule amendment, original text kept | `rg -n 'display title = optional metadata' DESIGN.md` |
+| 33 | "stale vectors never present superseded content" | search-chunk-v1.md:278, §12 (frozen) | `DESIGN.md:1119` (`:1121` when written) | `:1125`; appended §25, original text kept | `rg -n 'stale vectors never present' DESIGN.md` |
+| 34 | UI calls 30 of 57 methods, neither search method; `bun test` 106/0 across 9 files | AGENTS.md:108 | true on `e00b50b` only | 36 of 57 names match, 34 real calls (2 note-text false positives, row 42), both `searchKnowledgeKeyword` and `searchKnowledgeSemantic` called; 408/0 across 67 files. Annotated in place | `cd app/ui/v2 && bun test`; the scan is below |
+| 35 | `bun test test/lifecycle-*.test.ts` 35/0, 416 expects | lifecycle-v1.md §18 (frozen) | true for that split | 41/0, 451 expects, 12 files (PR #124 added 3 files); appended §19 | `cd app/server && bun test test/lifecycle-*.test.ts` |
+| 36 | `oracle_search`/`oracle_ask` fold partial coverage into `compat_warnings` | app/README.md:252 | incomplete: omitted `oracle_search_chain` | adds `oracle_search_chain`, OR-ed across hops (§24, PR #127) | `sed -n 81p app/server/src/mcp/legacy-v3/tools/oracle_search_chain.ts` |
+| 37 | round-level `actionStale` "9 pass" | UI-PROOF-ui-stale.md:616 | not annotated | annotated: 13 on `594df54` | `cd app/ui/v2 && bun test ./src/state/actionStale.test.tsx` |
+| 38 | #85 re-check "not from the Codex acceptor" | AC-MATRIX.md #85 caveat | stale (a race) | the acceptor re-ran it too: `TASK-10-REPORT.md:16,23` (untracked, overnight worktree), 32/0, 6108 expects, "#85 DONE" | `rg -n '#85' <overnight wt>/.tmp/acceptor/live-probe/TASK-10-REPORT.md` |
+| 39 | AGENTS.md header and diagram | AGENTS.md:3-7, :21 | Version not bumped by the first pass; `:21` was 145 chars wide | Version bumped with a sweep line; `:21-23` rewrapped to at most 100 columns; the diagram's widest line was already 102 | `awk 'NR>=15&&NR<=32{print length}' AGENTS.md` |
+| 40 | the v3 `publish()` "does not call `reconcileRevisionAssociations`" | taxonomy-write-v1.md:229 (frozen) | true on its own branch (`dd478f8`) | false after the merge: opt-in `reconcile` at `publish.ts:110-118`, set only by `oracle_trace_distill.ts:88` (`61dd298`, a parallel branch). K6's conclusion holds. Appended an amendment | `rg -n 'reconcile: true\|input.reconcile' app/server/src/mcp/legacy-v3`; `git merge-base --is-ancestor 61dd298 dd478f8` (exit 1) |
+| 41 | `revision_v1.py` "is now 465 lines" | revision-evidence-v1.md:268 (frozen) | 465 (true at `4056d9b`) | 461, already when `4e90ba8` wrote the sentence, and on `594df54`. Appended an amendment | `wc -l app/migrate-py/src/arra_migrate/revision_v1.py` |
+| 42 | UI scan: 145 files / 116 non-test, 33 names matched, `listSearchChunks`/`getSearchFreshness` absent | SCHEMA-BUILT.md, round-4 paragraph | true for round 4 | 208 / 141, 36 matched, 34 real calls; `listSearchChunks` (`api/listSearchChunks.ts:19`) and `getSearchFreshness` (`api/getSearchFreshness.ts:21`) are called; `embedPendingChunks` is a note-text false positive (`state/searchFreshnessView.ts:104`). A dated paragraph was added above round 4 | `git ls-tree -r --name-only 594df54 -- app/ui/v2/src \| wc -l`; `rg -n '\b(listSearchChunks\|getSearchFreshness\|embedPendingChunks)\b' -g '!*.test.*' app/ui/v2/src` |
+
+The UI scan in row 34: for each `KNOWLEDGE_METHODS` name, a word match against the non-test `.ts`/`.tsx` under
+`app/ui/v2/src` with `/* */` and `//` comments removed, at each revision. `e00b50b`: 30 of 57, no search method (the
+AGENTS.md figure, reproduced). `594df54`: 36 of 57, including both searches.
+
+Checked and true in the same passes (not corrected): AGENTS.md 57 methods = 33 `content:read` + 22 `content:write` +
+2 `audit:read`; the v3 catalogue has 25 tools; target19 is 19 tables / 228 fields
+(`bun -e` over `KNOWLEDGE_METHODS`, `V3_CATALOGUE`, `TARGET_SCHEMA`); v3 acceptance
+`bun test test/mcp-v3-acceptance.test.ts` prints `PASS 37 / FAIL 0 / GAP 0 of 37 steps` (39/0); `trace-v1.md` K-list
+item 1's nine test files all carry `listTraces` (`rg -c listTraces` on each); every other AGENTS.md and README
+citation opened by hand matched (`storage.ts:50-74`, `:217`, `pyproject.toml:17`, `composition.ts:33-34,66-80`,
+`:84-87`, `registry.ts:261-272`, `auth/http.ts:15`, `:23-33`, `app/cli.ts:99-103`, `tools.isAdvertised.ts:14-18`,
+`chat-model.types.ts:10-16`, `run_dev_server.py:45`, `search-chunk.profiles.ts:75-84`, `auth-integration.test.ts:97-107`,
+`service.listSessionMembers.ts:39`, `service.getMessage.ts:18-26`, `taxonomy.constants.ts:44`, `app/cli.ts:187-194`).
+
 **Row statuses re-scored (AC-MATRIX.md §1-§2), on evidence run by this sweep:**
 
 | Row | Was | Now | Evidence (run on `594df54`) |
 |---|---|---|---|
 | #27 AC3 horizon changes nothing | PARTIAL | PASS | `taxonomy-horizon-reassign-ac3.test.ts` 1/0 (69); `taxonomy-horizon-reassign-ac3-permissions.test.ts` 1/0 (147) |
-| #28 TODO foreign visitors | PARTIAL | PASS, with readings B/C as NEEDS-NAT (§4 item 11) | `relic-foreign-visitor.test.ts` 10/0 (24) |
+| #28 TODO foreign visitors | PARTIAL | ~~PASS, with readings B/C as NEEDS-NAT (§4 item 11)~~ **PARTIAL, kept** (fix round: it is a NEEDS-NAT row, §4 items 6/11, and NEEDS-NAT rows stay as they are) | `relic-foreign-visitor.test.ts` 10/0 (24) |
 | #28 AC1 (caveat) | PASS with caveat | PASS | `association-ac1-literal.test.ts` 1/0 (81) |
 | #29 AC4 no decay, read-only reads | PARTIAL | PASS | `lifecycle-eligibility-ac4-schema.test.ts` 4/0 (6); `lifecycle-eligibility-ac4-readonly.test.ts` 1/0 (16) |
 | #29 TODO self/cyclic supersede | PARTIAL | PASS | `lifecycle-supersede-self-cycle.test.ts` 1/0 (13); both cases are in one test, not two |
@@ -52,10 +127,10 @@ was deleted. `PLAN.md` needed no correction line (see "Checked and true").
 | #31 audit across transports | PARTIAL | PARTIAL (the residual is now only the maintenance routes, NEEDS-NAT §4 item 10, draft PR #126) | `transport-audit-parity.test.ts` 2/0 (266); `transport-audit-refusals.test.ts` 2/0 (114); `transport-audit-legacy.test.ts` 3/0 (379). Each file's first test is a preflight |
 | #75 independent re-certification | PARTIAL | PASS | `read-cursor-live-transport.test.ts` 2/0 (87; 1 preflight + 1 live test) |
 | #75 row 1 root-level evidence | PARTIAL | PARTIAL (lint now evidenced; no CI verdict on HEAD) | ruff command above: `All checks passed!` |
-| #85 acceptor re-certification | PARTIAL | PASS, with caveats: in-process route handlers, not TCP; largest case 7×51, not 9×51 | `chat-coverage.test.ts` 26/0 (6076) |
+| #85 acceptor re-certification | PARTIAL | PASS, with caveats: in-process route handlers, not TCP; largest case 7×51, not 9×51 | `chat-coverage.test.ts` 26/0 (6076); the Codex acceptor also re-ran it (row 38) |
 | #34 tests/typecheck/lint row | PARTIAL | PARTIAL (lint now evidenced locally; CI blocked) | ruff command above |
 
-Roll-up: 73/20/2/5 became **80 PASS / 13 PARTIAL / 2 GAP / 5 SUPERSEDED** (100 rows). NEEDS-NAT went from 12 to 13. Two
+Roll-up: 73/20/2/5 became ~~80 PASS / 13 PARTIAL~~ **79 PASS / 14 PARTIAL / 2 GAP / 5 SUPERSEDED** (100 rows; the fix round kept the #28 foreign-visitor row PARTIAL). NEEDS-NAT went from 12 to 13. Two
 §4 items were added: 10 (#31 maintenance-route audit home, draft PR #126) and 11 (#28 foreign-visitor readings B/C).
 Items 1-9 are unchanged.
 
@@ -93,8 +168,10 @@ Items 1-9 are unchanged.
 
 Batch re-runs of the AC-EVIDENCE commands are in §3.
 
-**Not re-checked, and why.** Browser runs (`UI_E2E_RESULT`, screenshots, 812×375 measurements) need ego-browser on a
-shared machine. The other mutant counts (for example "M1 fails 4") need source edits. The sweep spot-checked one (M2, above), restored it, and committed no product change. Acceptor
+**Not re-checked, and why.** Browser runs (`UI_E2E_RESULT`, screenshots, 812×375 measurements; the 21 count lines in
+`UI-E2E.md`) need ego-browser on a shared machine. `DECISIONS.md:213` (`TestLiveRoundTrip` 1 OK) is a live Honcho run.
+`lifecycle-v1.md:523-529` (VA harness PASS 10 -> 15 of 37) is a round-level record; today's harness is the v3
+acceptance run above, 37/0/0. The other mutant counts (for example "M1 fails 4") need source edits. The sweep spot-checked one (M2, above), restored it, and committed no product change. Acceptor
 figures (`task9.md`, 146/0/1) live outside the repo; the live probe below re-measures them. Historical refutation
 records that cite pre-fix code (for example UI-PROOF-ui-cite.md "`PublishForm.tsx:50`, `links: built.entries`") are
 right about the code they describe, which was later extracted into `buildPublishInput.ts`.
@@ -118,6 +195,15 @@ The Python guard (`cd app/migrate-py && PYTHONPATH=src .venv/bin/python -m unitt
 `OK (skipped=1)`.
 
 ## 4. Live probe on this tree
+
+- *Fix round, re-run on the fix-round tree (docs-only changes on top of `594df54`):* `run.sh <this worktree>
+  proof-sweep-fix` exits **rc=2**, methods 57, HTTP 57 / MCP 57 / CLI 57, isolation **191 pass / 0 fail**, seed
+  errors 0, fatal none, payload gaps 26 (the same probe-mode gaps as below). `run.sh <this worktree>
+  proof-sweep-fix-issues --issues` exits **rc=2**, payload gaps 0, isolation 191/0, issue checks **146 PASS / 0 FAIL
+  / 1 GAP** (#33 browser evidence, skipped by design). The six #85 rows (omission, truncation, control; HTTP and
+  MCP) all PASS.
+
+First pass:
 
 - `bash .../live-probe/run.sh <this worktree> proof-sweep` exits **rc=2**. Methods 57, exposed HTTP 57 / MCP 57 /
   CLI 57, isolation **191 pass / 0 fail**, seed errors 0, fatal none, **payload gaps 26**. Every non-`--issues` run

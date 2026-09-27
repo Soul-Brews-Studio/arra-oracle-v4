@@ -345,6 +345,17 @@ surfaces, with screenshots in `docs/overnight/UI-PROOF.md`:
 - traces;
 - chat with citations.
 
+*Re-measured 2026-09-27 (proof sweep, #22, on `594df54`).* The round-4 figures below are true for
+round 4 only. Later UI rounds added files and calls. The same scan on `594df54` gives **208 files / 141
+non-test**, and **36** of the 57 names match. Two of the 36 are note-text false positives of the scan:
+`indexRevisionChunks` (as before) and now `embedPendingChunks` (`state/searchFreshnessView.ts:104`). So the
+UI makes **34** real calls. The two new real ones are `listSearchChunks` (`api/listSearchChunks.ts:19`) and
+`getSearchFreshness` (`api/getSearchFreshness.ts:21`), both used by `state/useSearchFreshness.ts`. Strike
+them from the "derived search index" line of the absent list below. `embedPendingChunks` stays absent.
+Command: for each `KNOWLEDGE_METHOD_NAMES` entry, a whole-word match over
+`git ls-tree -r 594df54 app/ui/v2/src` files whose name lacks `.test.`, with `/* */` and `//` comments
+stripped (`docs/overnight/PROOF-SWEEP.md` row 42).
+
 *Re-measured 2026-09-27 (ui-polish fix round, round 4).* `git ls-tree -r HEAD app/ui/v2/src` on
 the round-4 base (`392d82b`, after the ui-cite merge) gives 142 files / 114 non-test; this round
 adds three (`explore/ExploreView.writeBack.test.tsx`, and the test-only helpers
