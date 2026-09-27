@@ -1,4 +1,5 @@
 import type { MessageRow as MessageRowType } from "../api/memory";
+import { authErrorHint } from "../state/authErrorHint";
 import { EmptyState } from "./EmptyState";
 import { MessageRow } from "./MessageRow";
 
@@ -45,7 +46,18 @@ export function Transcript({
       {/* `error` here is a plain message string set by the fetch-owning
           parent; the structured ErrorEnvelope rendering lives in
           ErrorNote, used wherever a raw ApiResult body is available. */}
-      {error && <p className="text-xs text-rose-300">{error}</p>}
+      {/* #33 AC2 round 3: the same 401/403 sentence the list panels show --
+          Explore > Messages used to print the bare code alone. The code is
+          the first word: `describe()` appends ` at <pointer>` to an
+          envelope that has one (an R3 peer-binding refusal does). */}
+      {error && (
+        <div role="alert" className="text-xs">
+          <p className="text-rose-300">{error}</p>
+          {authErrorHint(error.split(" ", 1)[0]) !== null && (
+            <p className="mt-1 text-muted">{authErrorHint(error.split(" ", 1)[0])}</p>
+          )}
+        </div>
+      )}
       {messages.length === 0 && !loading && !error && (
         <EmptyState title="No messages yet" detail="This session has no messages -- append one below." />
       )}

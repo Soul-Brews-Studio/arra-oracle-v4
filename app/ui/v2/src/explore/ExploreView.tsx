@@ -111,8 +111,16 @@ export function ExploreView({
         refreshing={listing.peers.state.loading || listing.sessions.state.loading || listing.nodes.state.loading}
       />
 
+      {/* #33 AC2 round 3: below `lg` this row stacks and is the page's one
+          scroll container. The lists are capped (their own scroller) and the
+          detail pane keeps a viewport-relative height (see `DetailTabs`), so
+          neither can squeeze the other: round 2 left the pane `flex-1
+          min-h-0` under `shrink-0` lists and it measured 0px at 375x812. */}
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-visible">
-        <div className="flex w-full shrink-0 flex-col overflow-y-auto border-b border-edge lg:w-64 lg:border-b-0 lg:border-r">
+        <div
+          aria-label="Peers and sessions"
+          className="flex max-h-[45vh] w-full shrink-0 flex-col overflow-y-auto border-b border-edge lg:max-h-none lg:w-64 lg:border-b-0 lg:border-r"
+        >
           <ListPanel
             label="peers"
             rows={listing.peers.state.rows}

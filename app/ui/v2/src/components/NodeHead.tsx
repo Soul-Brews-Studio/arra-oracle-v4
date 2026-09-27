@@ -42,8 +42,12 @@ export function NodeHead({
   // bodies, so it is worth the line even truncated.
   const digest = `${revision.content_digest.slice(0, 12)}…`;
 
+  // #33 AC2 round 3: `flex-none`, not its own scroller. As a nested
+  // `flex-1 overflow-y-auto` inside KnowledgeView's scrolling `<main>` it
+  // measured 32px tall at 1440x900 (a scroll container's automatic
+  // min-height is 0); the column around it does the scrolling instead.
   return (
-    <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
+    <div className="flex flex-none flex-col gap-3 p-4">
       <div className="flex items-start justify-between gap-3">
         {/* min-w-0 + break-words: an unbroken title (no spaces) is a flex
             item here, and a flex item's default min-width is its content

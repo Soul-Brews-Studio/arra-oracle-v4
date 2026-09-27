@@ -167,7 +167,16 @@ export function DetailTabs(props: {
     // `min-w-0`: this panel is a flex item of ExploreView's row, and without
     // it one long unbreakable line (a code target's path, measured: 1,807px)
     // set the panel's minimum width and pushed the whole page sideways.
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+    //
+    // #33 AC2 round 3: below `lg` ExploreView stacks the lists above this
+    // pane and scrolls the page, so the pane is a `shrink-0` region with a
+    // viewport-relative height (never squeezed -- round 2's `flex-1 min-h-0`
+    // measured 0px at 375x812) and the tab bodies scroll inside it. From `lg`
+    // it is the row's `flex-1` again, stretched to the row's height.
+    <section
+      aria-label="Explore detail"
+      className="flex h-[80vh] min-h-[24rem] min-w-0 shrink-0 flex-col lg:h-auto lg:min-h-0 lg:flex-1 lg:shrink"
+    >
       <div className="flex flex-wrap gap-1 border-b border-edge px-2 py-1.5">
         {EXPLORE_TABS.map((t) => (
           <button
@@ -370,6 +379,6 @@ export function DetailTabs(props: {
           />
         </div>
       )}
-    </div>
+    </section>
   );
 }

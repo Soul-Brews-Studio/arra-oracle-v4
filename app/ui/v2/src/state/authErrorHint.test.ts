@@ -17,6 +17,15 @@ describe("authErrorHint", () => {
     expect(hint).not.toBe(authErrorHint("unauthenticated"));
   });
 
+  test("403 forbidden is also true for the R3 peer-binding refusal, not only token scope", () => {
+    // #33 AC2 round 3: `transport.requireBoundPeers` answers the same governed
+    // `forbidden` when the token is not BOUND to the peer the request names
+    // -- the scope can be fine and the binding is the cause.
+    const hint = authErrorHint("forbidden")!;
+    expect(hint).toMatch(/bound|binding/i);
+    expect(hint).toMatch(/peer/i);
+  });
+
   test("any other code, or none, has no specific hint", () => {
     expect(authErrorHint("invalid_value")).toBeNull();
     expect(authErrorHint(null)).toBeNull();

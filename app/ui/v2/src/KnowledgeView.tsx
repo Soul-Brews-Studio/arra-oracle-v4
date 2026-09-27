@@ -89,8 +89,15 @@ export function KnowledgeView({
   const writable = writableHead(k.selected, k.head?.revision ?? null, sortedHistory);
 
   return (
+    // #33 AC2 round 3: below `lg` this root is the ONE scroll container -- the
+    // page scrolls, top to bottom: a height-capped bookmark rail, the node at
+    // its full height, then taxonomy and tags. Round 2 made `<main>` a second,
+    // nested `flex-1 overflow-y-auto` scroller here, and a scroll container's
+    // automatic min-height is 0, so it took all the negative free space: the
+    // node view measured 6px tall at 375x812. From `lg` it is three columns
+    // again and `<main>` scrolls on its own (`KnowledgeView.test.ts`).
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-visible">
-      <aside className="flex w-full shrink-0 flex-col gap-3 overflow-y-auto border-b border-edge p-3 lg:w-64 lg:border-b-0 lg:border-r">
+      <aside className="flex max-h-[40vh] w-full shrink-0 flex-col gap-3 overflow-y-auto border-b border-edge p-3 lg:max-h-none lg:w-64 lg:border-b-0 lg:border-r">
         <NodeRail
           entries={k.nodes}
           selected={k.selected}
@@ -109,7 +116,7 @@ export function KnowledgeView({
         />
       </aside>
 
-      <main className="flex min-w-0 flex-1 flex-col overflow-y-auto">
+      <main className="flex min-w-0 flex-none flex-col lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
         {target === null ? (
           <EmptyState
             title="No node selected"
