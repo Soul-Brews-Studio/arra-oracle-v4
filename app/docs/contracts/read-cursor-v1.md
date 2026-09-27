@@ -148,7 +148,11 @@ dataset, on both HTTP and MCP:
 - Other callers are refused with 403 `forbidden`: a peer-bound credential naming
   another peer (R3, path `/peer_name`), a credential for another workspace, and a
   `content:read`-only credential calling `advanceReadCursor`. A body naming a
-  different workspace than the route bank gets 400. None of these changes the row.
+  different workspace than the route bank gets 400; this one was replayed over HTTP
+  only. MCP refuses the same mismatch as a tool error (`isError`,
+  `payload workspace_name must match the connected bank`), not a 400; see the
+  round-3 amendment in `authorization-integration-v1.md`. None of these changes the
+  row.
 - `conflict/backward` and `conflict/expected` are returned as results, not errors. A
   wrong-session message is `invalid_reference` at `/last_read_message_id`, and `"42"`
   fails the grammar.

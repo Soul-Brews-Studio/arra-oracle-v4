@@ -212,16 +212,19 @@ audit written on every request").
   `buildApp` (`knowledge/transport.auditKnowledgeCall.ts`). `connections.method` is
   `bearer` and `principal` is the credential id (R19).
 - **What is audited.** Every admitted call on any transport writes one row, whether
-  it succeeds or fails (a bound-peer refusal, a kernel error, an internal fault). A
-  request refused before admission (bad route, encoding, size, body scope,
-  401/403/503) writes no row on either transport. The CLI's `kb` leg is audited as
-  HTTP, and its legacy commands as MCP.
-- **Parity.** An HTTP call to `<method>` writes the same row as an MCP `kb_<method>`
-  call: the same `tool` (`kb_<method>`), the same `status`, the same `input`
-  (`{payload}`, the MCP argument shape, redacted by the same writer), the same
-  `result` (the value, or the governed envelope text on error), the same `auth`,
-  and a null `session_name`, as the MCP `kb_*` path records. Only
-  `internal_metadata.transport.user_agent` differs.
+  it succeeds or fails (a body-scope refusal, a bound-peer refusal, a kernel
+  error, an internal fault). What is refused before admission is audited on
+  neither transport; the next amendment lists it exactly. The CLI's `kb` leg is
+  audited as HTTP, and its legacy commands as MCP.
+- **Parity.** An admitted HTTP call to `<method>` writes the same row as an MCP
+  `kb_<method>` call: the same `tool` (`kb_<method>`), the same `status`, the same
+  `input` (`{payload}`, the MCP argument shape, redacted by the same writer), the
+  same `result` (the value, or the governed envelope text on error), the same
+  `auth`, and a null `session_name`, as the MCP `kb_*` path records. Beyond `id`,
+  `created_at` and `duration_ms`, only `internal_metadata.transport.user_agent`
+  differs. `duration_ms` is timed from before admission on HTTP and from after it
+  on MCP, and a whitespace-only User-Agent is recorded as null on HTTP but kept on
+  MCP.
 - **Redaction.** No bearer token appears in any row. `h_metadata` has exactly the keys
   `{input, result, auth}`, and `auth` has exactly
   `{principal_id, credential_id, policy_version}`. A secret-shaped argument is
@@ -239,3 +242,59 @@ Test: `app/server/test/transport-audit-parity.test.ts`, which runs on a real lis
 server and spawns the real CLI process. Red before the change: 8 rows missing
 (`kb_getContext` x2, `kb_listNodes` x4, `kb_listMcpCalls`, `kb_listConnections`),
 because every HTTP and CLI-`kb` row was absent.
+
+## Amendment 2026-09-26 (post-merge #31 TODO 'success/failure audit consistently across all transports' + R5/R19)
+
+Behaviour change, round 3 (2026-09-27). The amendment above said a body-scope
+refusal writes no row on either transport, which was false. An independent
+verifier found the gap: MCP checked the payload's `workspace_name` AFTER
+admission (`mcp/index.ts`, inside the dispatch `runMcp` audits), so it wrote an
+error row. HTTP checked it BEFORE admission (`knowledge/transport.ts`) and wrote
+nothing. A cross-workspace attempt (an alpha route, a beta body) therefore left a
+trail on MCP and none on HTTP. Rulings: #31's TODO "success/failure audit
+consistently across all transports"; R5 in `docs/overnight/DECISIONS.md`
+(`mcp_calls` and `connections` are "operational audit written on every
+request"); R19 (`connections.method` is `bearer`, `principal` the credential
+id).
+
+- **Direction.** Both transports now audit the refusal. The other option,
+  dropping MCP's row, would erase the only trail of an authenticated
+  cross-workspace attempt.
+- **HTTP order.** The route still peeks the body scope before admission, but it
+  now admits before it refuses the mismatch. If admission fails, the response is
+  the same 400 `{"error":"bad request"}` as before and no row is written. If
+  admission succeeds, the response is also the same 400, and one `error` row is
+  written. No HTTP status or body changed.
+- **The row.** Both transports raise one refusal
+  (`knowledge/transport.bodyScopeRefusal.ts`), so both rows have
+  `tool` `kb_<method>`, `status` `error`, `input` `{payload}` (the body that
+  named the other workspace, redacted by the same writer), `result`
+  `payload workspace_name must match the connected bank`, the admitted principal
+  and credential in `auth`, and `workspace_name` set to the route workspace, never
+  the workspace the body named. The two rows differ only in `id`, `created_at` and
+  `duration_ms`. A body with no `workspace_name` at its scope path is refused and
+  audited the same way.
+- **Audited, after admission, on both transports:** every call that runs, whether it
+  succeeds or fails; a body-scope refusal; a bound-peer refusal (#87 / R3); and, on
+  MCP, a `tools/call` whose `arguments` is not an object.
+- **Not audited, on either transport:** a request with no `Authorization` header or
+  with a token no credential matches (401); a valid credential with no grant for the
+  route workspace and action (403); an unreadable policy (503); and, on HTTP, a bad
+  route, an unknown method, a bad body encoding, an oversized body, or a body the
+  governed parser refuses. On MCP, the matching refusals are an unreadable
+  envelope, a method other than `tools/call`, and an unknown or unpermitted tool.
+  Unauthenticated requests leave no row and no `connections` fold. The legacy HTTP
+  memory routes are still unaudited (see above).
+- **Response difference, unchanged.** On HTTP an unauthenticated body-scope
+  mismatch is still a 400 (the body is judged first). On MCP it is a 401 (the
+  credential is judged first).
+
+Test: `app/server/test/transport-audit-refusals.test.ts`, which runs on a real
+listening server (`fixtures/transport-v1/live-server/child.ts`). It checks that a
+body-scope refusal and a bound-peer refusal each write two equal rows (HTTP and
+MCP), and that no header, a bogus token and a foreign credential, with and without
+a scope mismatch, write no row and no fold on either transport. Before the change
+it failed with one `kb_listNodes` row missing, the HTTP body-scope refusal. Mutants,
+each killed by that test: dropping the HTTP scope audit, dropping the HTTP bound-peer
+audit, auditing a different result text on HTTP, returning the auth status for an
+unauthenticated mismatch, and auditing unadmitted HTTP requests.

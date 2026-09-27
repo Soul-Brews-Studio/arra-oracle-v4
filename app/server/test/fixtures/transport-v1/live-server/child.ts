@@ -23,10 +23,12 @@ import { join } from "node:path";
 import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 
 type TokenName = "write" | "bound" | "read" | "other" | "audit";
+/** Never admitted: `none` sends no Authorization header, `bogus` a token no credential hashes to. */
+type Unadmitted = "none" | "bogus";
 type Step = {
   label: string;
   transport: "http" | "mcp" | "cli" | "settle";
-  token: TokenName;
+  token: TokenName | Unadmitted;
   bank: "alpha" | "beta";
   /** http: registry method. mcp: the TOOL name (`kb_x` or a legacy tool). */
   method: string;
@@ -54,6 +56,7 @@ const TOKENS: Record<TokenName, string> = {
   other: "7".repeat(64),
   audit: "8".repeat(64),
 };
+const UNADMITTED: Record<Unadmitted, string | null> = { none: null, bogus: "9".repeat(64) };
 const USER_AGENT = "arra-live-parity-test";
 
 const grant = (name: string, actions: string[], peers?: string[]) =>
@@ -123,10 +126,12 @@ app.listen({ port, hostname: "127.0.0.1" });
 
 const CLI = join(import.meta.dir, "..", "..", "..", "..", "..", "cli.ts");
 
-async function runHttp(bank: string, token: string, method: string, body: unknown) {
+const bearer = (token: string | null): Record<string, string> => (token === null ? {} : { authorization: `Bearer ${token}` });
+
+async function runHttp(bank: string, token: string | null, method: string, body: unknown) {
   const res = await fetch(`${origin}/api/knowledge/${bank}/${method}`, {
     method: "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "user-agent": USER_AGENT },
+    headers: { ...bearer(token), "content-type": "application/json", "user-agent": USER_AGENT },
     body: JSON.stringify(body),
   });
   const text = await res.text();
@@ -137,10 +142,10 @@ async function runHttp(bank: string, token: string, method: string, body: unknow
   return { status: res.status, body: parsed };
 }
 
-async function runMcp(bank: string, token: string, tool: string, args: unknown) {
+async function runMcp(bank: string, token: string | null, tool: string, args: unknown) {
   const res = await fetch(`${origin}/mcp/${bank}`, {
     method: "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "user-agent": USER_AGENT },
+    headers: { ...bearer(token), "content-type": "application/json", "user-agent": USER_AGENT },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: tool, arguments: args ?? {} } }),
   });
   if (res.status !== 200) return { status: res.status, denied: await res.text() };
@@ -155,9 +160,9 @@ async function runMcp(bank: string, token: string, tool: string, args: unknown) 
   return { status: 200, isError: result.isError === true, value };
 }
 
-async function runCli(bank: string, token: string, argv: string[]) {
+async function runCli(bank: string, token: string | null, argv: string[]) {
   const child = Bun.spawn([process.execPath, CLI, ...argv, "--bank", bank], {
-    env: { PATH: process.env.PATH ?? "", HOME: workDir!, ARRA_URL: origin, ARRA_TOKEN: token },
+    env: { PATH: process.env.PATH ?? "", HOME: workDir!, ARRA_URL: origin, ...(token === null ? {} : { ARRA_TOKEN: token }) },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -193,11 +198,11 @@ async function settleFolds(folds: number, deadlineMs: number) {
   }
 }
 
-const outcomes: Record<string, unknown> = { tokens: TOKENS, userAgent: USER_AGENT };
+const outcomes: Record<string, unknown> = { tokens: { ...TOKENS, bogus: UNADMITTED.bogus }, userAgent: USER_AGENT };
 try {
   for (const step of payload.steps) {
     const bank = step.bank === "alpha" ? payload.banks.alpha : payload.banks.beta;
-    const token = TOKENS[step.token];
+    const token = step.token === "none" || step.token === "bogus" ? UNADMITTED[step.token] : TOKENS[step.token];
     try {
       if (step.transport === "settle") {
         outcomes[step.label] = await settleFolds(step.folds ?? 0, step.ms ?? 250);
