@@ -36,15 +36,15 @@ import {
   SEMANTIC,
   TAXONOMY_READS,
   TAXONOMY_WRITES,
-  obj,
-  spec,
-  str,
-  strings,
-  int,
-  type V3ToolSpec,
-} from "./catalogue.helpers";
+} from "./catalogue.vocabulary";
+import { int } from "./catalogue.int";
+import { obj } from "./catalogue.obj";
+import { spec } from "./catalogue.spec";
+import { str } from "./catalogue.str";
+import { strings } from "./catalogue.strings";
+import type { V3ToolSpec } from "./catalogue.types";
 
-export type { V3ToolSpec } from "./catalogue.helpers";
+export type { V3ToolSpec } from "./catalogue.types";
 
 export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
   spec({
