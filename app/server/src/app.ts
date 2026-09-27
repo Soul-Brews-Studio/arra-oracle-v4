@@ -420,9 +420,10 @@ export function createApp(
         // A bank never scopes a global action; supplying one is a 400.
         if (bankParam(url) !== null) return errorResponse(400);
         const batch = positiveInt(url.searchParams.get("batch") ?? undefined, 32);
-        // Not audited, by contract (#31 maint-audit): a global action has no
-        // MCP twin and no workspace for an `mcp_calls` row. See the amendment
-        // "#31 TODO 'audit consistently across all transports' + R5/R19".
+        // Not audited: a deviation from R5, open for a human (#31 maint-audit).
+        // A global action has no MCP twin and no workspace for an `mcp_calls`
+        // row. See the amendment "#31 TODO 'audit consistently across all
+        // transports' + R5/R19" for the options and measurements.
         return guarded(() =>
           service.backfill(readAuthorization(request), batch ?? 32, async () => {
             // Non-scope parameter, checked only after the global admission.

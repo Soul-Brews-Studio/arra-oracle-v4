@@ -4,8 +4,10 @@
 //
 // `POST /api/backfill` and `POST /api/reindex` admit a GLOBAL action
 // (`maintenance:backfill`, `maintenance:reindex`). They write no `mcp_calls`
-// row and no `connections` fold, on success or on an admitted failure, and
-// that is pinned here rather than changed:
+// row and no `connections` fold, on success or on an admitted failure. That is
+// a deviation from R5 ("written on every request"), OPEN for a human, and it is
+// pinned here rather than changed because every way to close it needs a
+// decision this slice cannot make:
 //   - the frozen contract (`authorization-integration-v1.md` §4) lets "only
 //     tool calls admitted for their exact action ... append scoped rows" and
 //     forbids a physical schema change for this integration;
@@ -16,7 +18,9 @@
 //     (`copy_migration/activity_tables.py`) would drop as
 //     `workspace_unresolved` and no scoped reader could ever return.
 // The amendment "#31 TODO 'audit consistently across all transports' + R5/R19"
-// states it; DECISIONS.md R5 is where a human would reverse it.
+// keeps the round-4 "Open for a human" note and lists the options; a ruling
+// lands in DECISIONS.md, and `transport-audit-maintenance-open.test.ts` makes
+// this test, that note and the `app.ts` comment move with it.
 //
 // Why a direct table read: every wire reader is scoped to one admitted
 // workspace, so a row filed under a sentinel name is invisible over HTTP and

@@ -442,49 +442,63 @@ no row for a `forbidden` refusal, a past-2^53 limit recorded as a string, and a 
 
 ## Amendment 2026-09-26 (post-merge #31 TODO 'audit consistently across all transports' + R5/R19)
 
-**Change.** None to the maintenance behaviour; this amendment records it as a
-contract rule rather than an open gap, and fixes two inaccuracies. Ruling source:
-`docs/overnight/DECISIONS.md` R5 (operations tables in `ARRA_DATA_DIR`) and R19
-(`connections.method` is `"bearer"`).
+**Change.** None to the maintenance behaviour. The maintenance-route audit gap
+stays **open for a human**, exactly as the round-4 note above leaves it; this
+amendment adds the analysis and the measurements a ruling needs, and fixes two
+inaccuracies. Ruling source: `docs/overnight/DECISIONS.md` R5 (operations tables
+in `ARRA_DATA_DIR`, "written on every request") and R19 (`connections.method` is
+`"bearer"`). Neither ruling changed, and no ruling accepts the gap.
 
-- **The maintenance routes stay unaudited, by contract.** `POST /api/backfill`
-  (`maintenance:backfill`) and `POST /api/reindex` (`maintenance:reindex`) write no
-  `mcp_calls` row and no `connections` fold, whether the call succeeds or fails after
-  admission (for example `?batch=0`, which answers the fixed 400). A request refused
-  before admission writes nothing either, as on every other route. The reasons,
-  each already frozen:
-  - §4 of this contract: "Only tool calls admitted for their exact action may append
-    scoped rows", and "Do not change physical schema for this integration". A
-    maintenance route is not a tool call and has no scope. MCP has no maintenance
-    tool: every MCP route is per workspace, and a global-maintenance-only principal
-    has no workspace discovery permission (§1).
+- **The maintenance routes are still unaudited, and that is still a deviation
+  from R5.** `POST /api/backfill` (`maintenance:backfill`) and `POST /api/reindex`
+  (`maintenance:reindex`) write no `mcp_calls` row and no `connections` fold,
+  whether the call succeeds or fails after admission (for example `?batch=0`,
+  which answers the fixed 400). A request refused before admission writes nothing
+  either, as on every other route. R5 says the two tables are "written on every
+  request", and this amendment does not narrow that. It is not a ruling: the
+  round-4 **Open for a human** note stands, and so does its reason.
+- **Why this slice did not add the audit.** Every way to write the row needs a
+  decision this contract cannot make:
+  - §4 of this contract: "Only tool calls admitted for their exact action may
+    append scoped rows", and "Do not change physical schema for this
+    integration". A maintenance route is not a tool call and has no scope. MCP
+    has no maintenance tool to copy: every MCP route is per workspace, and a
+    global-maintenance-only principal has no workspace discovery permission (§1).
   - SPEC §6.3 defines `mcp_calls.workspace_name` as NOT NULL and a key into
     `workspaces` ("THE tenant column"). SPEC §7.2 gives `connections` the same
-    column. A global action has no workspace.
-  - The only way to write such a row without a schema change is a sentinel
-    workspace name. LanceDB does accept one (`""` and `"__global__"` were both
-    written in the mutant runs below), so the refusal is a rule, not a physical
-    limit. But no scoped reader (`listMcpCalls`, `listConnections`, `call_log`,
-    `call_stats`) can return a sentinel row, because each one requires a valid
-    admitted workspace. The target copy (`copy_migration/activity_tables.py`
-    `copy_mcp_calls` / `copy_connections`) would also drop the row as
-    `workspace_unresolved`. The row would be invisible, it could not be carried
-    over, and it would put a false value in the tenant column.
-- **How R5 reads here.** R5's "written on every request" rules on WHERE the two
-  tables live and why (off the knowledge writer gate). It is read as every
-  admitted, workspace-scoped request: MCP `tools/call`, `POST /api/knowledge/…`
-  (and the CLI's `kb`), and the legacy memory routes as their MCP twins. This
-  replaces the round-4 "Open for a human" note. **Reverse by** ruling a home for
-  instance-level audit. That is a SPEC §6.3/§7.2 change: a nullable or reserved
-  tenant for global actions, or a separate instance log. It is not a transport
-  change.
+    column. A global action has no workspace, so a row needs either a schema
+    change or a value that is not a workspace.
+- **Measured, for whoever rules.** Three mutants each wrote a maintenance row
+  through the real audit sink on a live server, and
+  `app/server/test/transport-audit-maintenance.test.ts` killed each one:
+  - backfill success filed under `"__global__"`;
+  - backfill failure filed under `""`;
+  - reindex filed under a real workspace, `beta-workspace` (the verifier's
+    mutant, re-run in the fix round). The unscoped table read showed an
+    `mcp_calls` row `{"workspace_name":"beta-workspace","tool":"reindex","status":"ok"}`
+    and a `connections` fold under `beta-workspace` beside the alpha control.
+
+  So LanceDB accepts a sentinel, and the gap is not a physical limit. What the
+  runs also show is where such a row would land. A sentinel row is invisible to
+  every scoped reader (`listMcpCalls`, `listConnections`, `call_log`,
+  `call_stats`), since each needs a valid admitted workspace. The target copy
+  (`copy_migration/activity_tables.py` `copy_mcp_calls` / `copy_connections`)
+  would drop it as `workspace_unresolved`. A row filed under a real workspace
+  would claim a global action as that workspace's call.
+- **What a human can rule.** Each is a DECISIONS.md entry, not a transport change:
+  - accept the gap in an R5 amendment, which would close this note;
+  - give instance-level audit a home, which is a SPEC §6.3/§7.2 change: a
+    nullable or reserved tenant for global actions, or a separate instance log;
+  - accept a sentinel workspace name, with its reader and copy consequences
+    above.
 - **What the surfaces say.** The Overview "mcp calls" hover hint said the
   maintenance routes "are not logged here", which reads as "logged somewhere else".
   It now says they "write no call-log row in any workspace (a global action has no
-  workspace to file one under)". The subline ("admitted MCP + HTTP calls ·
-  maintenance routes not logged") and the `connections` hint were already exact
-  and are unchanged. `OverviewView.auditCopy.test.ts` holds the source and the
-  shipped bundle to the new text.
+  workspace to file one under)". That describes today's behaviour and rules
+  nothing. The subline ("admitted MCP + HTTP calls · maintenance routes not
+  logged") and the `connections` hint were already exact and are unchanged.
+  `OverviewView.auditCopy.test.ts` holds the source and the shipped bundle to the
+  new text.
 - **Correction: `knowledge/transport.auditKnowledgeCall.ts` header.** It said a
   null `session_name` "is what the MCP path records for every `kb_*` call". That is
   false: `runMcp` records a top-level string `session_name` argument. The header
@@ -504,11 +518,18 @@ that reads both operations tables directly and unscoped; every wire reader is
 scoped, so it cannot see a sentinel row). An admitted backfill (200), an admitted
 backfill failure (`?batch=0`, 400) and an admitted reindex (200) leave exactly one
 row and one fold in the whole dataset: the positive-control MCP `list_memories` in
-the alpha workspace. It pins current behaviour, so it passed before any change.
-Two mutants were killed by it: a backfill success audited under `"__global__"`,
-and a backfill failure audited under `""`.
+the alpha workspace. It pins current behaviour and passed before any change, so it
+guards against a silent row; it does not prove a fix, because there is none.
+`app/server/test/transport-audit-maintenance-open.test.ts` pins this text while R5
+is unchanged: R5 still says "written on every request", this amendment keeps the
+gap "Open for a human", and the `app.ts` backfill comment says the same. It was red
+before this wording (the text then called the gap a contract rule). When a human
+rules, it fails on purpose, and the ruling, this note and the comment move together.
 `app/server/test/transport-plain-body.test.ts` was red before the fix (module
 missing). It pins the copy (nested Maps, key order, `__proto__` copied as data,
-detached from the parsed body) and that `app.ts` swallows no copy failure.
+detached from the parsed body), checks that `plainBody` matches the old inline copy
+and does not throw on Thai and emoji text, `toJSON`/`constructor` keys, 62-deep
+nesting, `1e308`, `-0` and an integer past 2^53, and checks that the
+`POST /api/memories` handler has no swallowing `catch`.
 `app/ui/v2/src/overview/OverviewView.auditCopy.test.ts` was red before the fix
 (`not logged here` in the hint and the bundle).

@@ -30,8 +30,9 @@ import { TypeBreakdown, type TypeCounts } from "./TypeBreakdown";
 // memory routes, as their MCP twins; the global maintenance routes (backfill,
 // reindex) and any request refused before admission (no or bad token, no
 // grant) still move neither. The maintenance routes write no row in ANY
-// workspace, by contract (#31 maint-audit: a global action has no workspace
-// to file one under), so the hint says "in any workspace", not "here". The card's subline says the same in short, and
+// workspace (a global action has no workspace to file one under; an open R5
+// deviation, #31 maint-audit), so the hint says "in any workspace", not
+// "here". The card's subline says the same in short, and
 // `OverviewView.auditCopy.test.ts` holds the two (and the shipped bundle) to
 // it. Both are claims about a COUNT, so both go through `whenCounted`: they
 // are false the moment nothing counted.
