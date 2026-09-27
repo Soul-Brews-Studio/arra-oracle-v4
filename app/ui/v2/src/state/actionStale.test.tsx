@@ -269,6 +269,25 @@ describe("useMemory.ask: `asking` is keyed to the current selection", () => {
     expect(m.get().asking).toBe(false);
     expect(m.get().answer).toBe(null);
   });
+
+  // Wave-8 verifier (round 2, blocking): land() returned false for sA's
+  // dropped answer WITHOUT clearing the pending marker, so going back to sA
+  // read `asking` true forever -- no read was in flight any more.
+  test("sA's dropped answer finishing clears the pending marker: back on sA, `asking` is false", async () => {
+    const pending = parkedFetch((b) => String(b.session_name ?? ""));
+    const m = render(() => useMemory(), null);
+    act(() => m.get().setPeer("p1"));
+    act(() => m.get().setSession("sA"));
+    await answerAll(pending, "sA", (method) => (method === "getContext" ? { items: [] } : { rows: [] }));
+    act(() => void m.get().actions.ask("what happened?", 10));
+    act(() => m.get().setSession("sB"));
+    await answerAll(pending, "sB", (method) => (method === "getContext" ? { items: [] } : { rows: [] }));
+    await answer(pending, "answerChat", "sA", { answer: "sA's answer", items_used: [] });
+    act(() => m.get().setSession("sA"));
+    await answerAll(pending, "sA", (method) => (method === "getContext" ? { items: [] } : { rows: [] }));
+    expect(m.get().asking).toBe(false);
+    expect(m.get().answer).toBe(null);
+  });
 });
 
 describe("useKnowledge.publish: a scope switch after publish resolves ok drops the forced navigation for real", () => {
