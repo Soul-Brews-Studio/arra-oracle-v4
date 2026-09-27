@@ -13,7 +13,7 @@
  *     become unreachable by this UI, because nothing maps "type" back to its
  *     vocabulary_id. That is a real consequence and the setup panel says so.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type ApiResult } from "../api/client";
 import { type Bank, asError } from "../api/memory";
 import {
@@ -30,6 +30,7 @@ import {
 } from "../api/knowledge";
 import { interpretPublishResult } from "./interpretPublishResult";
 import { type Entry, addName, removeName, setState } from "./roster";
+import { useStableBank } from "./useStableBank";
 
 const NODES_KEY = "arra-ui-v2-nodes";
 const TAX_KEY = "arra-ui-v2-taxonomy";
@@ -62,7 +63,10 @@ function saveJson(key: string, value: unknown): void {
   }
 }
 
-export function useKnowledge(b: Bank) {
+export function useKnowledge(bank: Bank) {
+  // Keyed on the three strings, not the caller's object: `refresh` depends on
+  // `b`, and a parent that builds the bank inline would refetch on every render.
+  const b = useStableBank(bank);
   const scope = `${b.bank}:${b.workspace}`;
   const [nodes, setNodes] = useState<Entry[]>(() => loadJson<Entry[]>(`${NODES_KEY}:${scope}`, []));
   const [titles, setTitles] = useState<Record<string, string>>({});
@@ -78,6 +82,11 @@ export function useKnowledge(b: Bank) {
   const [error, setError] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Which `refresh` is current. Every await below re-checks it, so a response
+  // for a node already navigated away from (or a bank already left) is
+  // dropped instead of painting that node's head under the new node's id --
+  // the ui-stale bug, where the LAST response to arrive won.
+  const gen = useRef(0);
 
   useEffect(() => {
     setNodes(loadJson<Entry[]>(`${NODES_KEY}:${scope}`, []));
@@ -93,6 +102,7 @@ export function useKnowledge(b: Bank) {
   }, [scope, taxonomy]);
 
   const refresh = useCallback(async () => {
+    const g = ++gen.current;
     if (selected === null) {
       setHead(null);
       setHistory([]);
@@ -101,6 +111,7 @@ export function useKnowledge(b: Bank) {
     setLoading(true);
     setError(null);
     const headResult = await getAcceptedHead(b, selected);
+    if (g !== gen.current) return; // superseded by a newer selection or refresh
     if (!headResult.ok) {
       setLoading(false);
       setHead(null);
@@ -124,6 +135,7 @@ export function useKnowledge(b: Bank) {
     setHead({ node: body.node, revision: body.revision });
 
     const historyResult = await listAcceptedHistory(b, selected);
+    if (g !== gen.current) return;
     setLoading(false);
     if (!historyResult.ok) {
       setHistory([]);
