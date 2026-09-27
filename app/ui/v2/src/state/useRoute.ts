@@ -32,6 +32,12 @@ export type Route = {
   peer: string | null;
   session: string | null;
   node: string | null;
+  /** The Explore search tab's typed query and mode (fix-round finding, PR
+   *  #110 follow-up #2). Kept as bare strings here, the same idiom `tab`
+   *  already uses -- this router does not know about `SearchMode`; whoever
+   *  reads these casts, same as `route.tab as ExploreTab`. */
+  q: string | null;
+  mode: string | null;
 };
 
 /** Every slug this router answers to, in tab order. A list rather than a chain
@@ -57,9 +63,9 @@ function isKnownHash(hash: string): boolean {
  *  An unrecognised slug lands there too -- a stale link should arrive
  *  somewhere that explains the server rather than on a screen asking for a
  *  peer the link never named. */
-const EMPTY: Route = { view: "overview", peer: null, session: null, node: null, tab: null };
+const EMPTY: Route = { view: "overview", peer: null, session: null, node: null, tab: null, q: null, mode: null };
 
-function parse(hash: string): Route {
+export function parse(hash: string): Route {
   const raw = hash.startsWith("#") ? hash.slice(1) : hash;
   const [path, query = ""] = raw.split("?");
   const params = new URLSearchParams(query);
@@ -71,6 +77,8 @@ function parse(hash: string): Route {
     session: params.get("session"),
     node: params.get("node"),
     tab: params.get("tab"),
+    q: params.get("q"),
+    mode: params.get("mode"),
   };
 }
 
@@ -93,6 +101,11 @@ function format(route: Route): string {
     if (route.session !== null) params.set("session", route.session);
     if (route.node !== null) params.set("node", route.node);
     if (route.tab !== null) params.set("tab", route.tab);
+    // The search tab's own state (fix-round finding, PR #110 follow-up #2):
+    // carried the same way as the rest of this view's selection, so Back
+    // from the node view restores the typed query, not an empty box.
+    if (route.q !== null) params.set("q", route.q);
+    if (route.mode !== null) params.set("mode", route.mode);
   } else if (route.view === "knowledge") {
     if (route.node !== null) params.set("node", route.node);
   }
@@ -103,6 +116,8 @@ function format(route: Route): string {
   const query = params.toString();
   return `#/${route.view}${query === "" ? "" : `?${query}`}`;
 }
+
+export { format };
 
 export function useRoute(): {
   route: Route;

@@ -9,6 +9,7 @@ import type { ApiResult } from "../api/client";
 import { applySearchOutcome, type SearchOutcome } from "./applySearchOutcome";
 
 const EMPTY: SearchOutcome = {
+  mode: "keyword",
   errorCode: null,
   keywordHits: [],
   semanticHits: [],
@@ -36,6 +37,15 @@ describe("applySearchOutcome", () => {
     const out = applySearchOutcome("keyword", ok({ hits: [keywordHit], scan_reason: "short_query" }), EMPTY);
     expect(out.keywordHits).toEqual([keywordHit]);
     expect(out.scanReason).toBe("short_query");
+  });
+
+  test("records which mode produced the outcome, so a later render can tell it apart from the active toggle", () => {
+    const afterKeyword = applySearchOutcome("keyword", ok({ hits: [], scan_reason: null }), EMPTY);
+    expect(afterKeyword.mode).toBe("keyword");
+    const afterSemantic = applySearchOutcome("semantic", ok({ hits: [] }), afterKeyword);
+    expect(afterSemantic.mode).toBe("semantic");
+    const afterError = applySearchOutcome("keyword", failed(), afterSemantic);
+    expect(afterError.mode).toBe("keyword");
   });
 
   test("semantic success clears a scanReason left over from an earlier keyword search", () => {

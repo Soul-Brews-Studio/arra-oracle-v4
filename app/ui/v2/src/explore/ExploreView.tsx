@@ -5,7 +5,8 @@ import { useListing } from "../state/useListing";
 import { useMemory } from "../state/useMemory";
 import { useKnowledge } from "../state/useKnowledge";
 import { useEvidenceReview } from "../state/useEvidenceReview";
-import { useKnowledgeSearch } from "../state/useKnowledgeSearch";
+import { useKnowledgeSearch, type SearchMode } from "../state/useKnowledgeSearch";
+import { searchRouteState } from "../state/searchRouteState";
 import { CountStrip } from "./CountStrip";
 import { ListPanel } from "./ListPanel";
 import { DetailTabs, type ExploreTab } from "./DetailTabs";
@@ -40,6 +41,9 @@ export function ExploreView({
   onTabChange,
   onBack,
   onOpenSearchHit,
+  searchQuery,
+  searchMode,
+  onSearchChange,
 }: {
   bank: Bank;
   selectedPeer: string | null;
@@ -55,12 +59,28 @@ export function ExploreView({
    *  `#/knowledge?node=…`), not this view's own "nodes" tab -- see
    *  `state/searchHitRoute.ts` for why that tab is the wrong destination. */
   onOpenSearchHit: (nodeId: string) => void;
+  /** The search tab's persisted state (fix-round finding, PR #110 follow-up
+   *  #2) -- read from the route on mount via `searchRouteState`, same
+   *  `selectedPeer`/`selectedNode` contract as the rest of this view. */
+  searchQuery: string | null;
+  searchMode: string | null;
+  onSearchChange: (query: string, mode: SearchMode) => void;
 }) {
   const listing = useListing(bank);
   const k = useKnowledge(bank);
   const m = useMemory();
   const evidence = useEvidenceReview(bank, selectedNode, selectedSession, selectedPeer);
-  const search = useKnowledgeSearch(bank);
+  const search = useKnowledgeSearch(bank, searchRouteState({ q: searchQuery, mode: searchMode }));
+
+  // Writes the typed query/mode back to the route on every change, via
+  // `replace` (never `push` -- see `searchRoutePatch`), so the CURRENT
+  // explore history entry -- the one Back returns to from the node view --
+  // always carries what is actually in the box, not whatever it held when
+  // that entry was first pushed.
+  useEffect(() => {
+    onSearchChange(search.query, search.mode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search.query, search.mode]);
 
   useEffect(() => {
     m.setBank(bank.bank);

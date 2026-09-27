@@ -22,12 +22,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { type Bank } from "../api/memory";
 import { searchKnowledgeKeyword, searchKnowledgeSemantic } from "../api/search";
 import { applySearchOutcome, type SearchOutcome } from "./applySearchOutcome";
+import { searchOutcomeView } from "./searchOutcomeView";
 
 export type SearchMode = "keyword" | "semantic";
 
 const DEBOUNCE_MS = 300;
 
 const EMPTY_OUTCOME: SearchOutcome = {
+  mode: "keyword",
   errorCode: null,
   keywordHits: [],
   semanticHits: [],
@@ -35,9 +37,16 @@ const EMPTY_OUTCOME: SearchOutcome = {
   embeddingProfile: null,
 };
 
-export function useKnowledgeSearch(bank: Bank) {
-  const [query, setQuery] = useState("");
-  const [mode, setMode] = useState<SearchMode>("keyword");
+/** `initial` restores `query`/`mode` on mount -- fix-round finding #2 (PR
+ *  #110 follow-up): ExploreView remounts on the round trip to the node view
+ *  and back, which used to reset this hook's `useState` and drop whatever
+ *  was typed. The caller reads it from the route (`searchRouteState`) and is
+ *  responsible for writing it back out (`searchRoutePatch` + `route.replace`
+ *  on every `query`/`mode` change) -- this hook stays route-agnostic, same
+ *  as `useMemory`'s `peer`/`session` contract with `App.tsx`. */
+export function useKnowledgeSearch(bank: Bank, initial?: { query: string; mode: SearchMode }) {
+  const [query, setQuery] = useState(() => initial?.query ?? "");
+  const [mode, setMode] = useState<SearchMode>(() => initial?.mode ?? "keyword");
   const [loading, setLoading] = useState(false);
   const [outcome, setOutcome] = useState<SearchOutcome>(EMPTY_OUTCOME);
 
@@ -75,6 +84,12 @@ export function useKnowledgeSearch(bank: Bank) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, mode, bank.bank, bank.workspace, bank.token]);
 
+  // What to show for the CURRENTLY ACTIVE mode, decided by the pure,
+  // unit-tested `searchOutcomeView` -- see its comment for the fix-round bug
+  // (a stale scan note surviving a mode switch through the debounce window)
+  // this replaced the inline `mode === "keyword" ? ... : ...` ternary with.
+  const view = searchOutcomeView(outcome, mode);
+
   return {
     query,
     setQuery,
@@ -82,8 +97,8 @@ export function useKnowledgeSearch(bank: Bank) {
     setMode,
     loading,
     errorCode: outcome.errorCode,
-    hits: mode === "keyword" ? outcome.keywordHits : outcome.semanticHits,
-    scanReason: outcome.scanReason,
-    embeddingProfile: outcome.embeddingProfile,
+    hits: view.hits,
+    scanReason: view.scanReason,
+    embeddingProfile: view.embeddingProfile,
   };
 }

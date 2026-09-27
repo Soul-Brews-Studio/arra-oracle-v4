@@ -498,9 +498,12 @@ Token field. Explore → Search tab → typed `ลืม`:
   `ngram` (confirmed present in the DOM via `page.evaluate` — the narrow panel width clips it
   visually at the default viewport, a cosmetic layout gap, not a functional one).
 - Screenshot: `docs/overnight/ui/33-search-keyword-thai.png`.
-- Clicking a hit calls the same `onSelectNode` + tab switch to `Nodes` the plain node list
-  already uses — "opens that node in the existing node view" reuses that exact mechanism rather
-  than a second one.
+- Clicking a hit called `onSelectNode` + a tab switch to `Nodes` at the time this section was
+  written. **Superseded by the "Fix round (2026-09-27)" section below**: an independent
+  verifier found that tab is a paged, type-filterable `listNodes` list that never renders
+  title/body/history and can show nothing highlighted if the hit is off-page or filtered out, so
+  the click now routes to the existing `KnowledgeView` (`#/knowledge?node=…`) via
+  `state/searchHitRoute.ts` instead.
 - Empty-query state observed live before typing: "Type a query to search this workspace's
   knowledge." (`searchState`'s `empty_query` kind).
 

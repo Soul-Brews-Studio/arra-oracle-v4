@@ -345,18 +345,22 @@ surfaces, with screenshots in `docs/overnight/UI-PROOF.md`:
 - traces;
 - chat with citations.
 
-A name scan of the UI's non-test source (`git ls-files app/ui/v2/src`, 87 files, comments
-stripped, each of the 57 `KNOWLEDGE_METHOD_NAMES` matched as a whole word) finds 30 called.
-The other 27 are absent from the UI. Five of those are named only in comments, never called:
-`getMessage`, `getChatSettings`, `createTrace`, `createSessionLink`, `listTraces`. The other 22:
+*Re-measured 2026-09-27 (ui-polish fix round).* Re-running the same name scan (`git ls-files
+app/ui/v2/src`, now 109 files / 95 non-test, comments stripped, each of the 57
+`KNOWLEDGE_METHOD_NAMES` matched as a whole word) finds **33** called, not the 30 this section
+originally reported. Two of the three newly-matched names are real: the ui-search slice (PR
+#110) added `searchKnowledgeKeyword`/`searchKnowledgeSemantic`. The third, `indexRevisionChunks`,
+is a false positive of this scan's own method, not a new call: `state/searchState.ts`'s
+`index_unavailable` note text tells the user to "run indexRevisionChunks first", and a whole-word
+text scan cannot distinguish that string from an actual call. The other 24 are absent from the
+UI. Five of those are named only in comments, never called: `getMessage`, `getChatSettings`,
+`createTrace`, `createSessionLink`, `listTraces`. The other 19:
 
-- search: `searchKnowledgeKeyword`, `searchKnowledgeSemantic`;
 - taxonomy, everything but seeding (`seedReservedVocabularies`), `getVocabulary` and
   `getTerm`: `createVocabulary`, `createTerm`, `renameTerm`, `retireTerm`,
   `reparentTerm`, `lookupVocabularyByName`, `lookupTermByName`, `listTerms`,
   `listTermUsage`;
-- derived search index: `indexRevisionChunks`, `embedPendingChunks`,
-  `writeChunkEmbedding`, `reconcileSearchChunks`, `listSearchChunks`,
-  `getSearchFreshness`;
+- derived search index: `embedPendingChunks`, `writeChunkEmbedding`,
+  `reconcileSearchChunks`, `listSearchChunks`, `getSearchFreshness`;
 - sessions: `listSessionMembers`, `closeSession`, `advanceReadCursor`;
 - `knowledgeStats`, `reconcileRevisionAssociations`.

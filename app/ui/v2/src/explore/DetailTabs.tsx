@@ -168,7 +168,7 @@ export function DetailTabs(props: {
     // it one long unbreakable line (a code target's path, measured: 1,807px)
     // set the panel's minimum width and pushed the whole page sideways.
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="flex gap-1 border-b border-edge px-2 py-1.5">
+      <div className="flex flex-wrap gap-1 border-b border-edge px-2 py-1.5">
         {EXPLORE_TABS.map((t) => (
           <button
             key={t}
