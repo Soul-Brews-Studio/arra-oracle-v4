@@ -147,3 +147,13 @@ screenshots and is judged on its own steps.
 with value setters and DOM `.click`, DetailTabs had no tab semantics, and the 812x375 floor was
 only disclosed. Ruling: `docs/overnight/DECISIONS.md` (the #33 AC2 slice; R12 for the model split).
 Transcript and measurements: `docs/overnight/UI-PROOF-ui-keys.md`.
+
+**Fix round (same slice, after the Opus verifier's REFUTED verdict).** A route `tab` that names no
+tab (a stale or hand-typed `&tab=Nodes`) now keeps the strip reachable: `TabStrip` makes the first
+tab the tab stop when no tab is selected (WAI-ARIA APG), and `App` coerces an unknown Explore tab to
+`nodes` (`exploreTabOf`). Activating a view tab leaves focus on that tab even when the view opens a
+node. The `short` layout sizes to `100svh`, not `100vh`. Rail rows (peers, sessions, node bookmarks)
+carry `aria-current`. The focus moves are now pinned in CI by `keyboardFocus.test.tsx` (real
+components on the fake DOM), not only by the ego-browser segment, which adds a `keys-stale-tab`
+step (`ui-e2e/keysStaleTab.mjs`) and measures the Messages view at 812x375. Reason and ruling as
+above (`docs/overnight/DECISIONS.md`, #33 AC2).
