@@ -34,8 +34,10 @@ type Step = {
   body?: unknown;
   /** cli: argv after `cli.ts`; `--bank` is added from `bank`. */
   argv?: string[];
-  /** settle: milliseconds to let a fire-and-forget audit fold land. */
+  /** settle: the deadline, in ms, for the fire-and-forget folds to land. */
   ms?: number;
+  /** settle: how many folded requests the `connections` table must count. */
+  folds?: number;
 };
 
 const [, , root, workDir, payloadJson] = process.argv;
@@ -171,6 +173,26 @@ async function runCli(bank: string, token: string, argv: string[]) {
   return { exit, value, stderr: stderr.slice(0, 2000) };
 }
 
+/**
+ * Wait for the connection folds, which `composition.ts` fires without await,
+ * by reading the operations table DIRECTLY rather than over the wire: every
+ * admitted wire read is itself audited and folded, so polling over HTTP or
+ * MCP would move the count it is waiting on. Returns the settled count.
+ */
+async function settleFolds(folds: number, deadlineMs: number) {
+  const { connect } = await import("@lancedb/lancedb");
+  const deadline = Date.now() + deadlineMs;
+  let requests = 0;
+  for (;;) {
+    // Reopened each round: an open table handle keeps reading its version.
+    const table = await (await connect(opsDir)).openTable("connections");
+    const rows = await table.query().toArray();
+    requests = rows.reduce((n, row) => n + Number(row.requests), 0);
+    if (requests >= folds || Date.now() > deadline) return { requests };
+    await Bun.sleep(25);
+  }
+}
+
 const outcomes: Record<string, unknown> = { tokens: TOKENS, userAgent: USER_AGENT };
 try {
   for (const step of payload.steps) {
@@ -178,7 +200,7 @@ try {
     const token = TOKENS[step.token];
     try {
       if (step.transport === "settle") {
-        await Bun.sleep(step.ms ?? 250);
+        outcomes[step.label] = await settleFolds(step.folds ?? 0, step.ms ?? 250);
         continue;
       }
       outcomes[step.label] =

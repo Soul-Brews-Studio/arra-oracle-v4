@@ -198,25 +198,44 @@ v4-overnight, v3-search slice (Claude Opus 5.5, AI). Rulings: `docs/overnight/DE
 
 ## Amendment 2026-09-26 (post-merge R3/R4/R5 + #85/#31/#75 acceptance criteria)
 
-Evidence only, no behaviour change. This states which transport the §4 audit covers,
-as measured live, so that #31 "audit parity" means what the contract says:
+Behaviour change. The §4 audit now covers every transport, not only MCP.
+Before this change, `POST /api/knowledge/:bank/:method` wrote no audit row. So an
+HTTP call, including a `content:write` method, and the CLI's `kb <method>` leg that
+forwards to it, left no trail. Rulings: #31 TODO5 ("authz/limits/redaction/audit
+across transports"); R8 in `docs/overnight/DECISIONS.md` (keep #31's full
+contract, do not narrow it); R5 (`mcp_calls` and `connections` are "operational
+audit written on every request").
 
-- **Audited.** Only an admitted MCP `tools/call`, whether it succeeds or fails. It
-  appends one `mcp_calls` row and folds `connections` in the operations root
-  (DECISIONS.md R5). `method` is `bearer` and `principal` is the credential id (R19).
-- **Not audited.** `POST /api/knowledge/:bank/:method` is not a tool call, so HTTP
-  writes no row. The CLI's `kb <method>` leg forwards to that same HTTP route and
-  writes no row either. The CLI's legacy commands call MCP tools, so they are audited
-  exactly like a direct MCP call. The row has the same tool, status, redacted `input`
-  and `auth`, and differs only in `internal_metadata.transport.user_agent`.
+- **One sink.** `composition.ts` `composeAuditSink` is the only audit writer. It
+  appends one `mcp_calls` row and folds `connections` in the operations root (R5).
+  MCP reaches it through `appendAudit`, and the HTTP knowledge route through
+  `buildApp` (`knowledge/transport.auditKnowledgeCall.ts`). `connections.method` is
+  `bearer` and `principal` is the credential id (R19).
+- **What is audited.** Every admitted call on any transport writes one row, whether
+  it succeeds or fails (a bound-peer refusal, a kernel error, an internal fault). A
+  request refused before admission (bad route, encoding, size, body scope,
+  401/403/503) writes no row on either transport. The CLI's `kb` leg is audited as
+  HTTP, and its legacy commands as MCP.
+- **Parity.** An HTTP call to `<method>` writes the same row as an MCP `kb_<method>`
+  call: the same `tool` (`kb_<method>`), the same `status`, the same `input`
+  (`{payload}`, the MCP argument shape, redacted by the same writer), the same
+  `result` (the value, or the governed envelope text on error), the same `auth`,
+  and a null `session_name`, as the MCP `kb_*` path records. Only
+  `internal_metadata.transport.user_agent` differs.
 - **Redaction.** No bearer token appears in any row. `h_metadata` has exactly the keys
   `{input, result, auth}`, and `auth` has exactly
   `{principal_id, credential_id, policy_version}`. A secret-shaped argument is
   redacted the same way whichever client sent it.
+- **Not yet audited.** The legacy HTTP memory routes (`/api/memories*`,
+  `/api/search`, `/api/stats`, `/api/backfill`, `/api/reindex`) still write no
+  row. They are not knowledge methods, and this slice does not change them. This is
+  an open gap against #31 TODO5, not a rule.
 - **`connections` fold key.** The key is (workspace, method, principal, label), so one
   credential used by two clients gets two rows. This matches the documented `foldId`
   in `mcp/connections.ts`. It is narrower than SPEC §7.2's `'<method>:<principal>'`
   key, and this amendment records that difference without resolving it.
 
 Test: `app/server/test/transport-audit-parity.test.ts`, which runs on a real listening
-server and spawns the real CLI process.
+server and spawns the real CLI process. Red before the change: 8 rows missing
+(`kb_getContext` x2, `kb_listNodes` x4, `kb_listMcpCalls`, `kb_listConnections`),
+because every HTTP and CLI-`kb` row was absent.
