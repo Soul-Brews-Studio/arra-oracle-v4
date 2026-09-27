@@ -356,3 +356,20 @@ over it needs a composite cursor the ordered projection does not provide. Per-me
   peerless non-operator: at the kernel (`context-session-close.test.ts`,
   `context-session-reads.test.ts`) and over `kb_*` and HTTP `/api/knowledge`
   (`app/server/test/mcp-v3-forum-boundary.test.ts`).
+
+## Amendment 2026-09-26 (post-merge PROOF.md rule: every number measured, the command beside it; doc-contradicts-code is a defect)
+
+Source: `docs/overnight/DECISIONS.md` (the PROOF.md rule), issue #22, and the proof sweep
+(`docs/overnight/PROOF-SWEEP.md`). Written 2026-09-27 on `594df54`.
+
+**Change.** The R18 amendment above cites `DESIGN.md:369` for "the name stays the immutable
+identity". That line was right when it was written (`7003f41`). Lines added to DESIGN.md above it
+later that day moved it. On `594df54` the sentence it names ("display title = optional metadata,
+not another mutable identity") is at `DESIGN.md:371`. The R18 text is left as written, because
+frozen contracts are not rewritten; this amendment is the correction.
+
+**Why.** A `file:line` that no longer holds what the contract says it holds is a
+doc-contradicts-code defect under the PROOF.md rule.
+
+**Command.** `rg -n 'display title = optional metadata' DESIGN.md` prints `371:`.
+`python3 docs/overnight/proof-sweep-check.py` re-checks this row with the others.

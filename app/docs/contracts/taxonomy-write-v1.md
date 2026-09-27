@@ -248,3 +248,26 @@ v4-overnight, v3-stats slice (Claude, AI). Ruling: `docs/overnight/DECISIONS.md`
   - `listTermUsage` answered `{rows:[], total_unique:"0", coverage:"full"}` for three unreconciled heads carrying apfs ×2 and backup ×1.
   - `oracle_concepts` answered `apfs:2, backup:1` after a `kb_publishRevision` whose published terms give 3 and 2.
   - The unseeded bank answered 200.
+
+## Amendment 2026-09-26 (post-merge PROOF.md rule: every number measured, the command beside it; doc-contradicts-code is a defect)
+
+Source: `docs/overnight/DECISIONS.md` (the PROOF.md rule), issue #22, and the proof sweep
+(`docs/overnight/PROOF-SWEEP.md`). Written 2026-09-27 on `594df54`.
+
+**Change.** The R18 (K6 + K7 + V8) amendment's "v3 write path unchanged" paragraph says the
+adapter's `publish()` "does not call `reconcileRevisionAssociations`" and "is back to the base
+behaviour". It was true on the branch that wrote it (`dd478f8`). It is not literally true on
+`594df54`: the parallel V3 trace-tools slice (`61dd298`, not an ancestor of `dd478f8`; the two
+met at the merge) gave `publish()` an opt-in `reconcile` option (`mcp/legacy-v3/publish.ts:110-118`),
+and `oracle_trace_distill` sets it (`tools/oracle_trace_distill.ts:88`), as `trace-v1.md`'s K5 text
+says. What the paragraph
+means still holds: `reconcile` is set by no other v3 tool, so an ordinary v3 write
+(`oracle_learn`, `oracle_handoff`, ...) does not reconcile, and K6 reads head snapshots, which
+never needed the call. The original paragraph is left as written, because frozen contracts are not
+rewritten; this amendment is the correction.
+
+**Why.** A contract sentence that the code contradicts is a defect under the PROOF.md rule, even
+when the conclusion drawn from it survives.
+
+**Command.** `rg -n 'reconcile: true|input.reconcile' app/server/src/mcp/legacy-v3` prints
+exactly `publish.ts:110` and `tools/oracle_trace_distill.ts:88`.
