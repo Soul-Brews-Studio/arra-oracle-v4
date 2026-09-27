@@ -121,6 +121,42 @@ Where this verdict is stricter than the status column in §3, **the acceptor's v
 wins**. The PR therefore says `Fixes` only for #87, #102, #103, #105 (misdiagnosed and
 resolved) and #89 (decided). It says `Refs` for everything else, and Nat closes those.
 
+## 3c · After the merge: #110–#118 and the acceptor's re-runs (2026-09-27)
+
+Nine more PRs merged into `main` after #109 (#110–#118). Each one went through the same loop:
+implement, independent Opus refuter (mutation check plus a live ego-browser run), fix, re-verify.
+Each merged only once accepted. `PLAN.md` "after the merge" has the timestamped log.
+
+| PR | what | rounds to accept |
+|---|---|---|
+| #110 | UI search box: keyword and semantic, rank only, Thai inside-word | 2 |
+| #111 | CI concurrency: superseded runs cancel; `main` never does | — |
+| #112 | the 500-line cap enforced by tests; `revision_v1.py`, `rehearsal.py`, `catalogue.ts` split | 2 |
+| #113 | UI cite, correct and lifecycle lock (the UI used to hardcode `link_snapshot_json: "[]"`); CI runs UI tsc, UI tests and a stale-bundle check | 1 |
+| #114 | search query in the route; Back/Forward sync; wiring pinned by mutants | 4 |
+| #115 | refusals surface; a correction needs a `corrects` link; the publish call site pinned | 3 |
+| #116 | layouts usable at 320–1440px (inner-scroller scan clean); accessible names; honest 401/403 | 7 |
+| #117 | `app/just/ui-e2e.sh`, a checked-in browser test of the #33 chain (14 DOM steps) | 2 |
+| #118 | key-guarded reads: no stale node or session content after navigation or writes | 3 |
+
+**Codex TASK 7** (`b3fa70d`): 146 PASS / 0 FAIL / 1 GAP, isolation 191/0, no regressions.
+
+**Codex TASK 8** (`d949290`, after #118): the backend is unchanged at **146 PASS / 0 FAIL / 1 GAP**,
+isolation **191/0**, methods 57 × HTTP/MCP/CLI, payload gaps 0. Its independent browser run of
+`ui-e2e.sh`: **all 14 DOM steps pass**, including real local-Ollama chat. The 13 failures are all
+`Page.captureScreenshot` timeouts in ego lite on this machine. Its #33 judgement, per AC:
+
+| #33 AC | Codex | what is still missing |
+|---|---|---|
+| AC1 create → revise → cite → correct → supersede → history, peer-context chat | **PASS** | — |
+| AC2 Thai/English, long titles/paths, keyboard, narrow layouts | **PARTIAL** | native keyboard proof (the harness uses DOM events, not keys); tab roles and roving focus; the 812×375 landscape floor |
+| AC3 historic labels/body unchanged; stale/unavailable labelled | **PASS** | the dangling-target case stays SKIP: the server refuses to create one |
+| AC4 screenshots and browser evidence | **PASS**, with a capture GAP | fresh screenshots: capture currently times out |
+| revision-2: freshness, provenance, distinct author/observer/subject, missing summary visible | **PARTIAL** | the node header lacks the roles; there is no freshness or missing-summary UI |
+
+It also noted that #118 guards reads tied to a selection, not every async action: the `ask` result
+is not keyed yet. Wave 8 (keyboard, provenance/freshness, keyed actions) targets exactly these.
+
 ## 4 · Live proofs on m5 (real services, fresh datasets)
 
 - **Chat via the real local Ollama gemma3:4b** (`DEMO.md` step 15). The Thai question got
@@ -140,12 +176,16 @@ resolved) and #89 (decided). It says `Refs` for everything else, and Nat closes 
 - **Search, R22 residual.** Order is workspace-local, but when a workspace has more matches than the
   4096-candidate overfetch, *which* candidates enter can still depend on global statistics.
   A per-workspace index closes it (`search-chunk-v1.md` §20).
-- **Style debt.** 40 tracked files are over 500 lines, and 38 of them were already over at `f919369`.
-  Two legacy Python modules are over the cap (`revision_v1.py` 773, `rehearsal.py` 592). 12 of 561
-  src files export more than one function.
+- **Style debt.** Since #112, **no source file is over 500 lines**, and tests enforce the cap
+  (`test_file_size_cap.py`, `file-size-cap.test.ts`). Measured on `d949290`: 36 tracked code files
+  are over 500 lines, and all 36 are tests. Some files still export more than one function
+  (disclosed per PR).
 - **Needs you.**
   - #7 relevance judgments.
   - #8 needs a container runtime.
   - Chat providers other than local Ollama.
   - Everything in `DECISIONS.md` you want to overturn.
-- **Not merged to `main`.** That is your call, via the PR.
+- **Screenshots.** `Page.captureScreenshot` times out in ego lite on m5, even on a `data:` page,
+  and neither `bringToFront` nor focus emulation helps. The browser e2e therefore reports those
+  steps as FAIL, never as PASS. Restarting ego lite is Nat's call, because it would close his own space.
+- **Merged.** #109 went into `main` on Nat's "merge all pr", and #110–#118 followed, each once accepted.
