@@ -13,7 +13,7 @@
  *     become unreachable by this UI, because nothing maps "type" back to its
  *     vocabulary_id. That is a real consequence and the setup panel says so.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type ApiResult } from "../api/client";
 import { type Bank, asError } from "../api/memory";
 import {
@@ -93,6 +93,13 @@ export function useKnowledge(bank: Bank) {
   // where the LAST response to arrive won. `publish`'s own refresh reads the
   // node on screen, not the one its closure was bound to.
   const read = useKeyedRead({ b, selected }, nodeKey);
+  // Freshness for ACTIONS below (seed / publish): a stale `taxonomy` pin, or
+  // a stale forced `setSelected`, must not land under a workspace switched
+  // to after the request was issued. Scope, not node -- both actions are
+  // workspace-level (taxonomy ids and the node bookmark list are both
+  // persisted per `scope`), so a node switch alone does not stale them.
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
 
   useEffect(() => {
     setNodes(loadJson<Entry[]>(`${NODES_KEY}:${scope}`, []));
@@ -110,60 +117,64 @@ export function useKnowledge(bank: Bank) {
   const refresh = useCallback(async () => {
     const t = read.begin();
     const { b, selected } = t.value;
-    if (selected === null) {
-      // A null key has no loading flag to latch (a workspace switch or "New"
-      // while a node is open used to latch "loading…" on the draft).
-      setHead(null);
-      setHistory([]);
-      return;
-    }
-    setError(null);
-    const headResult = await getAcceptedHead(b, selected);
-    if (!read.live(t)) return; // a node or bank already left, or a newer read
-    if (!headResult.ok) {
-      read.land(t);
-      setHead(null);
-      setHistory([]);
-      setError(describe(headResult));
-      setNodes((n) => setState(n, selected, "unknown"));
-      return;
-    }
-    // A null body is the server saying "no such node", which is an ANSWER --
-    // the bookmark is stale, not the request malformed.
-    const body = headResult.body as { node?: unknown; revision?: RevisionRow } | null;
-    if (body === null || body.revision === undefined) {
-      read.land(t);
-      setHead(null);
-      setHistory([]);
-      setNodes((n) => setState(n, selected, "missing"));
-      return;
-    }
-    setNodes((n) => setState(n, selected, "live"));
-    setTitles((t) => ({ ...t, [selected]: body.revision!.title }));
-    setHead({ node: body.node, revision: body.revision });
+    // Lands on EVERY path (ui-reads2): the dropped-read return and any throw
+    // (a malformed head body) used to skip land().
+    try {
+      if (selected === null) {
+        // A null key has no loading flag to latch (a workspace switch or "New"
+        // while a node is open used to latch "loading…" on the draft).
+        setHead(null);
+        setHistory([]);
+        return;
+      }
+      setError(null);
+      const headResult = await getAcceptedHead(b, selected);
+      if (!read.live(t)) return; // a node or bank already left, or a newer read
+      if (!headResult.ok) {
+        setHead(null);
+        setHistory([]);
+        setError(describe(headResult));
+        setNodes((n) => setState(n, selected, "unknown"));
+        return;
+      }
+      // A null body is the server saying "no such node", which is an ANSWER --
+      // the bookmark is stale, not the request malformed.
+      const body = headResult.body as { node?: unknown; revision?: RevisionRow } | null;
+      if (body === null || body.revision === undefined) {
+        setHead(null);
+        setHistory([]);
+        setNodes((n) => setState(n, selected, "missing"));
+        return;
+      }
+      setNodes((n) => setState(n, selected, "live"));
+      setTitles((t) => ({ ...t, [selected]: body.revision!.title }));
+      setHead({ node: body.node, revision: body.revision });
 
-    const historyResult = await listAcceptedHistory(b, selected);
-    if (!read.land(t)) return;
-    if (!historyResult.ok) {
-      setHistory([]);
-      setError(describe(historyResult));
-      return;
-    }
-    // THIRD envelope key in this API, and they are all different:
-    //   listMessages         -> { rows }
-    //   getContext           -> { items }
-    //   listAcceptedHistory  -> { node, snapshot_head_revision_id, revisions }
-    // None of them errors when you read the wrong one; you just get an empty
-    // list against a server that returned data. Verified by curl, not guessed.
-    const historyBody = historyResult.body as {
-      revisions?: unknown;
-      snapshot_head_revision_id?: unknown;
-    } | null;
-    setHistory(Array.isArray(historyBody?.revisions) ? (historyBody.revisions as RevisionRow[]) : []);
-    // The server states its own head here, so prefer it over re-deriving one
-    // from the separate getAcceptedHead call -- one snapshot, one answer.
-    if (typeof historyBody?.snapshot_head_revision_id === "string") {
-      setSnapshotHead(historyBody.snapshot_head_revision_id);
+      const historyResult = await listAcceptedHistory(b, selected);
+      if (!read.live(t)) return;
+      if (!historyResult.ok) {
+        setHistory([]);
+        setError(describe(historyResult));
+        return;
+      }
+      // THIRD envelope key in this API, and they are all different:
+      //   listMessages         -> { rows }
+      //   getContext           -> { items }
+      //   listAcceptedHistory  -> { node, snapshot_head_revision_id, revisions }
+      // None of them errors when you read the wrong one; you just get an empty
+      // list against a server that returned data. Verified by curl, not guessed.
+      const historyBody = historyResult.body as {
+        revisions?: unknown;
+        snapshot_head_revision_id?: unknown;
+      } | null;
+      setHistory(Array.isArray(historyBody?.revisions) ? (historyBody.revisions as RevisionRow[]) : []);
+      // The server states its own head here, so prefer it over re-deriving one
+      // from the separate getAcceptedHead call -- one snapshot, one answer.
+      if (typeof historyBody?.snapshot_head_revision_id === "string") {
+        setSnapshotHead(historyBody.snapshot_head_revision_id);
+      }
+    } finally {
+      read.land(t);
     }
     // Reads its node from `read`, not this closure; the deps only say WHEN a
     // read is due -- a new node, or a new bank/workspace/token.
@@ -191,11 +202,20 @@ export function useKnowledge(bank: Bank) {
       if (selected === id) setSelected(null);
     },
     seed: async () => {
+      const issuedInScope = scope;
       setBusy(true);
       setError(null);
       const ids = taxonomy ?? mintTaxonomyIds();
       const result = await seedReservedVocabularies(b, ids);
       setBusy(false);
+      // Policy: DROP. Scope switched mid-seed (a workspace/bank switch): the
+      // ids this call minted are for the OLD scope's vocabularies, and the
+      // scope-switch effect above has already loaded (or not) the NEW
+      // scope's own taxonomy pin from localStorage. Landing here would
+      // overwrite that pin -- and the `useEffect` that persists `taxonomy`
+      // keys its localStorage write on the CURRENT `scope`, so it would
+      // silently save one workspace's ids under another's key.
+      if (scopeRef.current !== issuedInScope) return;
       // `already_seeded` is a success for this UI's purpose: the vocabularies
       // exist and these are the ids that reach them.
       if (!result.ok) {
@@ -221,6 +241,7 @@ export function useKnowledge(bank: Bank) {
         setError("seed the reserved vocabularies first -- a revision needs exactly one type term");
         return false;
       }
+      const issuedInScope = scope;
       setPublishing(true);
       setError(null);
       const result = await publishRevision(b, taxonomy, {
@@ -232,15 +253,39 @@ export function useKnowledge(bank: Bank) {
         base_revision_id: base !== undefined ? base : (head?.revision?.id ?? null),
       });
       setPublishing(false);
+      // Policy: keep the bookmark (it is real -- the write happened, in
+      // whatever scope it targeted), but DROP the forced navigation if the
+      // scope has since moved on: yanking the operator from a bank/workspace
+      // they have already left back onto this write's node would show it
+      // under the wrong scope's data entirely. A node switch alone (same
+      // scope) still navigates -- "go look at what you just published" is
+      // the point of `publish`, and only a scope switch changes what the
+      // rest of `head`/`history` even mean.
+      const stillInScope = scopeRef.current === issuedInScope;
       const interpreted = interpretPublishResult(result, describe);
       if (!interpreted.ok) {
-        setError(interpreted.error);
+        if (stillInScope) setError(interpreted.error);
         return false;
       }
-      setNodes((n) => addName(n, nodeId));
-      setSelected(nodeId);
+      // Also DROP the bookmark itself if the scope moved on: `nodes` is this
+      // scope's localStorage-backed roster, reloaded by the scope-switch
+      // effect the instant the switch happens, so writing here would persist
+      // one workspace's published node id into a different workspace's list.
+      if (stillInScope) {
+        setNodes((n) => addName(n, nodeId));
+        setSelected(nodeId);
+      }
       await refresh();
-      return true;
+      // Fix round (2026-09-27): this used to `return true` unconditionally.
+      // Both `KnowledgeView` call sites do
+      // `.then((ok) => { if (!ok) return; setDraftId(null); onSelectNode(target) })`
+      // -- returning `true` here after a scope switch made them navigate
+      // anyway, landing the operator on the OLD scope's node id inside the
+      // NEW scope (App.tsx's `push` -> KnowledgeView re-selects under the
+      // scope now current). The write happened and stays bookmarked; only
+      // the forced navigation is the caller's to skip, and it can only skip
+      // it if this resolves `false`.
+      return stillInScope;
     },
     refresh,
   };

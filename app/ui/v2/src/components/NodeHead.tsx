@@ -1,9 +1,12 @@
+import { useEffect, useRef } from "react";
 import { type RevisionRow, parseTerms, typeOf, horizonOf } from "../api/knowledge";
 import type { ErrorEnvelope } from "../api/memory";
 import { TypeBadge } from "./TypeBadge";
 import { HorizonBadge } from "./HorizonBadge";
 import { ErrorNote } from "./ErrorNote";
 import { EmptyState } from "./EmptyState";
+import { RevisionProvenance } from "./RevisionProvenance";
+import { RevisionRoles } from "./RevisionRoles";
 
 /** The accepted head of the selected node -- `getAcceptedHead`'s row,
  *  rendered. `node` only needs the id: this tier has no separate "node"
@@ -19,6 +22,31 @@ export function NodeHead({
   loading: boolean;
   error: ErrorEnvelope | null;
 }) {
+  // #33 AC2 (ui-keys): opening a node moves focus to its title, once per
+  // node, so a keyboard user lands on what they opened instead of on <body>
+  // (the NodeRail entry, search hit or correction form that had focus is
+  // often gone by then). Only when focus is OUTSIDE <main> or lost: a user
+  // already working in this node's forms is never pulled away. A new head
+  // revision of the SAME node also takes focus, but only if it was lost --
+  // measured by the keyboard e2e: the publish form clears on submit, its
+  // button turns disabled under the focus, and focus fell to <body>.
+  // Never off a role=tab (fix round): Enter on the "knowledge" view tab with
+  // a node in the route mounts this with focus on that tab, and the WAI-ARIA
+  // tabs pattern keeps focus on the tab you just activated.
+  const h2Ref = useRef<HTMLHeadingElement>(null);
+  const focusedFor = useRef<string | null>(null);
+  const ready = !loading && error === null && revision !== null;
+  const revisionId = revision?.id ?? null;
+  useEffect(() => {
+    if (!ready || h2Ref.current === null) return;
+    const newNode = focusedFor.current !== node.node_id;
+    focusedFor.current = node.node_id;
+    const at = document.activeElement;
+    const lost = at === null || at === document.body;
+    const onTab = at?.getAttribute("role") === "tab";
+    if (lost || (newNode && !onTab && at.closest("main") === null)) h2Ref.current.focus();
+  }, [ready, node.node_id, revisionId]);
+
   if (loading) {
     return <EmptyState title="loading…" detail={node.node_id} />;
   }
@@ -37,10 +65,6 @@ export function NodeHead({
   const terms = parseTerms(revision);
   const type = typeOf(terms);
   const horizon = horizonOf(terms);
-  // The row DOES carry content_digest -- sha256 over the canonical envelope.
-  // It is the thing that makes "same content" decidable without diffing two
-  // bodies, so it is worth the line even truncated.
-  const digest = `${revision.content_digest.slice(0, 12)}…`;
 
   // #33 AC2 round 3: `flex-none`, not its own scroller. As a nested
   // `flex-1 overflow-y-auto` inside KnowledgeView's scrolling `<main>` it
@@ -53,7 +77,7 @@ export function NodeHead({
             item here, and a flex item's default min-width is its content
             width -- without both, a long enough title pushes this row (and
             the page) wider than the viewport instead of wrapping. */}
-        <h2 className="min-w-0 break-words text-sm font-semibold text-slate-100">{revision.title}</h2>
+        <h2 ref={h2Ref} tabIndex={-1} className="min-w-0 break-words text-sm font-semibold text-slate-100">{revision.title}</h2>
         <div className="flex shrink-0 gap-1.5">
           {type && <TypeBadge type={type} />}
           {horizon && <HorizonBadge horizon={horizon} />}
@@ -72,16 +96,16 @@ export function NodeHead({
         <p className="whitespace-pre-wrap text-xs text-slate-200 [overflow-wrap:anywhere]">{revision.body}</p>
       )}
 
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-1 border-t border-edge pt-2 text-[11px] text-muted">
-        <dt>revision</dt>
-        <dd className="text-slate-200">{revision.revision_no}</dd>
-        <dt>created</dt>
-        <dd className="text-slate-200">{revision.created_at}</dd>
-        <dt>active</dt>
-        <dd className="text-slate-200">{revision.is_active ? "yes" : "no"}</dd>
-        <dt>digest</dt>
-        <dd className="font-mono text-slate-200 [overflow-wrap:anywhere]">{digest}</dd>
-      </dl>
+      {/* #33 design revision 2: roles and provenance for the head itself,
+          not only inside a diff -- a lone head has no other place to say who
+          wrote it, whose view it is, who it is about, or where it came from. */}
+      <section aria-label="roles and provenance" className="flex flex-col gap-2 border-t border-edge pt-2">
+        <RevisionRoles revision={revision} />
+        <RevisionProvenance revision={revision} />
+        <p className="text-[11px] text-muted">
+          active: <span className="text-slate-200">{revision.is_active ? "yes" : "no"}</span>
+        </p>
+      </section>
     </div>
   );
 }

@@ -80,3 +80,35 @@ describe("ui-e2e harness: driver lifetime", () => {
     expect(lines()).toEqual([]);
   });
 });
+
+// #33 AC2 (ui-keys): the keyboard segment is proof by the KEYBOARD only.
+// Checked statically: nothing in keys.mjs / keyNav.mjs clicks, focuses or
+// sets a value through the DOM, fills forms through the harness (`h.act`),
+// navigates by hash (`h.go`), or uses `page.press(selector, …)` (which
+// focuses an element for you). Comment lines are ignored.
+describe("ui-e2e keyboard segment: keyboard input only", () => {
+  const code = (f: string) =>
+    readFileSync(join(import.meta.dir, "ui-e2e", f), "utf8")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+  const banned = [/\.click\(/, /\.focus\(/, /\bh\.act\(/, /\bact\(/, /\bh\.go\(/, /\.value\s*=[^=]/, /dispatchEvent/, /page\.press\(/, /location\.hash\s*=/, /\.fill\(/, /insertText/];
+  for (const f of ["keys.mjs", "keyNav.mjs"]) {
+    test(`${f} uses no DOM click/focus/value setter/hash navigation`, () => {
+      const src = code(f);
+      for (const re of banned) expect({ file: f, rule: String(re), hit: re.test(src) }).toEqual({ file: f, rule: String(re), hit: false });
+    });
+  }
+  // Fix round: keysStaleTab.mjs's one navigation (`h.go`, the hand-typed
+  // stale link) is its premise; everything else there is keyboard too.
+  test("keysStaleTab.mjs: no DOM click/focus/value setter; h.go only for the stale link", () => {
+    const src = code("keysStaleTab.mjs");
+    for (const re of banned.filter((r) => String(r) !== String(/\bh\.go\(/))) expect({ rule: String(re), hit: re.test(src) }).toEqual({ rule: String(re), hit: false });
+    expect(src.match(/\bh\.go\(/g)).toHaveLength(1);
+  });
+  test("keyNav drives input only through page.keyboard.press/type", () => {
+    const src = code("keyNav.mjs");
+    expect(src).toContain("h.page.keyboard");
+    expect([...src.matchAll(/\bkb\.(\w+)\(/g)].map((m) => m[1]).sort()).toEqual(["press", "type"]);
+  });
+});

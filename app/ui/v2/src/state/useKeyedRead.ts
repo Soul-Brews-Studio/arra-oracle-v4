@@ -28,24 +28,32 @@ export type ReadTicket<T> = { key: string | null; value: T; seq: number };
  *     longer be a read for somewhere already left.
  *   - `loading` is derived: true only while the CURRENT key has a read
  *     pending. A deselect or scope change moves the key, so a dropped read
- *     can no longer latch the flag on (the round-1 latch). */
+ *     can no longer latch the flag on (the round-1 latch).
+ *   - the pending marker records WHICH read set it (its `seq`), and that read
+ *     clears it when it finishes, whether or not its result is used. Clearing
+ *     only on a live landing latched the flag the other way (wave-8 verifier):
+ *     ask in sA, switch to sB, sA's answer is dropped, back on sA -> `loading`
+ *     read true forever with nothing in flight.
+ *   - every `begin()` must reach `land()` on EVERY path: an early return
+ *     through `live()` or a throw left the marker behind (ui-reads2: a trace
+ *     lookup dropped mid-flight, a 200 with a null listing body). Callers land
+ *     in a `finally`.
+ *   - "load more" is not a read of this hook: it extends one RESULT, not the
+ *     selection, so it is bound by `useMorePages` (`peek()` is gone -- it
+ *     handed a page the seq of whatever read was in flight, ui-reads2). */
 export function useKeyedRead<T>(value: T, keyOf: (v: T) => string | null) {
   const key = keyOf(value);
   const now = useRef({ key, value });
   now.current = { key, value };
   const seq = useRef(0);
-  const [pendingKey, setPendingKey] = useState<string | null>(null);
+  const [pending, setPending] = useState<{ key: string | null; seq: number } | null>(null);
 
   /** Start a read for whatever is selected NOW. */
   const begin = useCallback((): ReadTicket<T> => {
     const ticket = { ...now.current, seq: ++seq.current };
-    setPendingKey(ticket.key);
+    setPending({ key: ticket.key, seq: ticket.seq });
     return ticket;
   }, []);
-
-  /** The current read's ticket WITHOUT starting a new one -- for a "load
-   *  more" that appends to the page on screen rather than replacing it. */
-  const peek = useCallback((): ReadTicket<T> => ({ ...now.current, seq: seq.current }), []);
 
   /** Is this still the read for what is on screen? */
   const live = useCallback(
@@ -53,15 +61,15 @@ export function useKeyedRead<T>(value: T, keyOf: (v: T) => string | null) {
     [],
   );
 
-  /** `live`, and if so the read is finished: its loading flag goes down. */
+  /** The read is finished: if it is the one that set the pending marker, the
+   *  marker goes (used or dropped). Returns `live` -- whether to use it. */
   const land = useCallback(
     (t: ReadTicket<T>) => {
-      if (!live(t)) return false;
-      setPendingKey(null);
-      return true;
+      setPending((p) => (p !== null && p.seq === t.seq ? null : p));
+      return live(t);
     },
     [live],
   );
 
-  return { key, now, begin, peek, live, land, loading: key !== null && pendingKey === key };
+  return { key, now, begin, live, land, loading: key !== null && pending !== null && pending.key === key };
 }

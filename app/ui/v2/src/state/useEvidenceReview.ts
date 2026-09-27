@@ -29,9 +29,10 @@
  *      node / session / scope it was issued for is still the one on screen,
  *      and every refresh -- including the one after a lifecycle write --
  *      reads that selection at call time, never from a stale closure.
- *   2. `hitsNextAfter` is reset on every trace-lookup or hits-read failure,
+ *   2. the hits cursor is reset on every trace-lookup or hits-read failure,
  *      so "load more" can never send one trace's cursor against a different
- *      `trace_id`.
+ *      `trace_id` -- and since ui-reads2 every load-more (hits, session
+ *      links, dependents) is bound by `useMorePages` to the result it extends.
  *   3. session links page past their first 50 via `next_cursor`, with a
  *      `hasMore`/`loadMore` the panel can show instead of silently stopping.
  *   4. a looked-up trace (and its hits) resets when the bank/workspace scope
@@ -66,6 +67,7 @@ import {
 } from "../api/evidenceReview";
 import { describeResult as describe } from "./describeResult";
 import { useKeyedRead } from "./useKeyedRead";
+import { useMorePages } from "./useMorePages";
 import { useLifecycleWrites } from "./useLifecycleWrites";
 import { useEvidenceStatus } from "./useEvidenceStatus";
 
@@ -92,9 +94,10 @@ export function useEvidenceReview(
   const [trace, setTrace] = useState<TraceRow | null>(null);
   const [traceError, setTraceError] = useState<string | null>(null);
   const [hits, setHits] = useState<TraceHitRow[]>([]);
-  const [hitsNextAfter, setHitsNextAfter] = useState<string | null>(null);
   const [hitsError, setHitsError] = useState<string | null>(null);
   const traceRead = useKeyedRead(b, (v) => k(v.bank, v.workspace, v.token));
+  // "More hits" extends ONE looked-up trace, not whatever is in flight.
+  const hitsMore = useMorePages<{ b: Bank; id: string }, string>(traceRead.now);
 
   // A trace is scoped to a dataset -- it must not survive a bank/workspace
   // switch just because no new lookup was made yet.
@@ -105,95 +108,108 @@ export function useEvidenceReview(
     setTrace(null);
     setTraceError(null);
     setHits([]);
-    setHitsNextAfter(null);
+    hitsMore.reset(null, null, null);
     setHitsError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `reset` is stable
   }, [scope]);
 
   const lookupTrace = useCallback(
     async (id: string) => {
       const t = traceRead.begin();
       const b = t.value;
-      setTraceError(null);
-      setHitsError(null);
-      const traceResult = await getTrace(b, id);
-      if (!traceRead.live(t)) return; // superseded by a newer lookup or a scope change
-      if (!traceResult.ok) {
+      // Lands on EVERY path (ui-reads2): the dropped-read return below used
+      // to skip land(), so back on this scope "Look up" read "Looking up..."
+      // forever with nothing in flight.
+      try {
+        setTraceError(null);
+        setHitsError(null);
+        const traceResult = await getTrace(b, id);
+        if (!traceRead.live(t)) return; // superseded by a newer lookup or a scope change
+        if (!traceResult.ok) {
+          setTrace(null);
+          setHits([]);
+          hitsMore.reset(null, null, null);
+          setTraceError(describe(traceResult));
+          return;
+        }
+        const found = traceOf(traceResult);
+        setTrace(found);
+        if (found === null) {
+          // Not an error: `getTrace` answers `null` for an id it does not
+          // have, same as `getAcceptedHead` for a node it does not have.
+          setHits([]);
+          hitsMore.reset(null, null, null);
+          return;
+        }
+        const hitsResult = await listTraceHits(b, id, null, HITS_PAGE);
+        if (!traceRead.live(t)) return;
+        if (!hitsResult.ok) {
+          setHits([]);
+          hitsMore.reset(null, null, null);
+          setHitsError(describe(hitsResult));
+          return;
+        }
+        const page = hitsOf(hitsResult);
+        setHits(page.rows);
+        hitsMore.reset(t.key, { b, id }, page.nextAfterPosition);
+      } finally {
         traceRead.land(t);
-        setTrace(null);
-        setHits([]);
-        setHitsNextAfter(null);
-        setTraceError(describe(traceResult));
-        return;
       }
-      const found = traceOf(traceResult);
-      setTrace(found);
-      if (found === null) {
-        // Not an error: `getTrace` answers `null` for an id it does not
-        // have, same as `getAcceptedHead` for a node it does not have.
-        traceRead.land(t);
-        setHits([]);
-        setHitsNextAfter(null);
-        return;
-      }
-      const hitsResult = await listTraceHits(b, id, null, HITS_PAGE);
-      if (!traceRead.land(t)) return;
-      if (!hitsResult.ok) {
-        setHits([]);
-        setHitsNextAfter(null);
-        setHitsError(describe(hitsResult));
-        return;
-      }
-      const page = hitsOf(hitsResult);
-      setHits(page.rows);
-      setHitsNextAfter(page.nextAfterPosition);
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `hitsMore.reset` is stable
     [traceRead],
   );
 
   const loadMoreHits = useCallback(async () => {
-    if (trace === null || hitsNextAfter === null) return;
-    const t = traceRead.peek();
-    const hitsResult = await listTraceHits(t.value, trace.id, hitsNextAfter, HITS_PAGE);
-    if (!traceRead.live(t)) return;
+    const m = hitsMore.next();
+    if (m === null) return;
+    const hitsResult = await listTraceHits(m.of.b, m.of.id, m.cursor, HITS_PAGE);
+    if (!hitsMore.shows(m)) return; // another trace (or page) is on screen now
     if (!hitsResult.ok) {
       setHitsError(describe(hitsResult));
       return;
     }
     const page = hitsOf(hitsResult);
+    hitsMore.extend(m, page.nextAfterPosition);
     setHits((prev) => [...prev, ...page.rows]);
-    setHitsNextAfter(page.nextAfterPosition);
-  }, [traceRead, trace, hitsNextAfter]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- all stable
+  }, []);
 
   // ---- session links: follow the selected session ------------------------
   const [linkDirection, setLinkDirection] = useState<"from" | "to">("from");
   const [sessionLinks, setSessionLinks] = useState<SessionLinkRow[]>([]);
-  const [sessionLinksNextCursor, setSessionLinksNextCursor] = useState<string | null>(null);
   const [sessionLinksError, setSessionLinksError] = useState<string | null>(null);
   const linksRead = useKeyedRead({ b, sessionName, linkDirection }, (v) =>
     v.sessionName === null ? null : k(v.b.bank, v.b.workspace, v.b.token, v.sessionName, v.linkDirection),
   );
+  type LinksOf = { b: Bank; sessionName: string; linkDirection: "from" | "to" };
+  const linksMore = useMorePages<LinksOf, string>(linksRead.now);
 
   const refreshSessionLinks = useCallback(async () => {
     const t = linksRead.begin();
     const { b, sessionName, linkDirection } = t.value;
-    if (sessionName === null) {
-      setSessionLinks([]);
-      setSessionLinksNextCursor(null);
+    try {
+      if (sessionName === null) {
+        setSessionLinks([]);
+        linksMore.reset(null, null, null);
+        setSessionLinksError(null);
+        return;
+      }
       setSessionLinksError(null);
-      return;
+      const result = await listSessionLinks(b, sessionName, linkDirection, null, LINKS_PAGE);
+      if (!linksRead.live(t)) return;
+      if (!result.ok) {
+        setSessionLinks([]);
+        linksMore.reset(null, null, null);
+        setSessionLinksError(describe(result));
+        return;
+      }
+      const page = sessionLinksOf(result);
+      setSessionLinks(page.rows);
+      linksMore.reset(t.key, { b, sessionName, linkDirection }, page.nextCursor);
+    } finally {
+      linksRead.land(t);
     }
-    setSessionLinksError(null);
-    const result = await listSessionLinks(b, sessionName, linkDirection, null, LINKS_PAGE);
-    if (!linksRead.land(t)) return;
-    if (!result.ok) {
-      setSessionLinks([]);
-      setSessionLinksNextCursor(null);
-      setSessionLinksError(describe(result));
-      return;
-    }
-    const page = sessionLinksOf(result);
-    setSessionLinks(page.rows);
-    setSessionLinksNextCursor(page.nextCursor);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- selection read from `linksRead`
   }, [b, sessionName, linkDirection]);
 
@@ -201,20 +217,23 @@ export function useEvidenceReview(
     void refreshSessionLinks();
   }, [refreshSessionLinks]);
 
+  // Sends the cursor with the session it came FROM, and only while that
+  // session is still the one selected -- never sA's cursor under sB's name.
   const loadMoreSessionLinks = useCallback(async () => {
-    const t = linksRead.peek();
-    const { b, sessionName, linkDirection } = t.value;
-    if (sessionName === null || sessionLinksNextCursor === null) return;
-    const result = await listSessionLinks(b, sessionName, linkDirection, sessionLinksNextCursor, LINKS_PAGE);
-    if (!linksRead.live(t)) return;
+    const m = linksMore.next();
+    if (m === null) return;
+    const { b, sessionName, linkDirection } = m.of;
+    const result = await listSessionLinks(b, sessionName, linkDirection, m.cursor, LINKS_PAGE);
+    if (!linksMore.shows(m)) return;
     if (!result.ok) {
       setSessionLinksError(describe(result));
       return;
     }
     const page = sessionLinksOf(result);
+    linksMore.extend(m, page.nextCursor);
     setSessionLinks((prev) => [...prev, ...page.rows]);
-    setSessionLinksNextCursor(page.nextCursor);
-  }, [linksRead, sessionLinksNextCursor]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- all stable
+  }, []);
 
   // ---- lifecycle + recall eligibility: follow the selected node ----------
   const [lifecycle, setLifecycle] = useState<LifecycleEventRow[]>([]);
@@ -227,6 +246,7 @@ export function useEvidenceReview(
     const t = lifecycleRead.begin();
     const { b, nodeId } = t.value;
     if (nodeId === null) {
+      lifecycleRead.land(t); // every begin() lands (ui-reads2)
       setLifecycle([]);
       setLifecycleError(null);
       setRecall(null);
@@ -235,14 +255,19 @@ export function useEvidenceReview(
     }
     setLifecycleError(null);
     setRecallError(null);
-    const [historyResult, recallResult] = await Promise.all([
-      listLifecycleHistory(b, nodeId, null, LIFECYCLE_PAGE),
-      getRecallEligibility(b, nodeId),
-    ]);
+    let historyResult, recallResult;
+    try {
+      [historyResult, recallResult] = await Promise.all([
+        listLifecycleHistory(b, nodeId, null, LIFECYCLE_PAGE),
+        getRecallEligibility(b, nodeId),
+      ]);
+    } finally {
+      lifecycleRead.land(t);
+    }
     // A response for a node the caller has already navigated AWAY from must
     // never land on the now-selected one -- switching nodes quickly must not
     // show node A's recall verdict under node B.
-    if (!lifecycleRead.land(t)) return;
+    if (!lifecycleRead.live(t)) return;
     if (!historyResult.ok) {
       setLifecycle([]);
       setLifecycleError(describe(historyResult));
@@ -274,12 +299,13 @@ export function useEvidenceReview(
   const [association, setAssociation] = useState<AssociationResult | null>(null);
   const [associationError, setAssociationError] = useState<string | null>(null);
   const [dependents, setDependents] = useState<DependentOccurrence[]>([]);
-  const [dependentsNextCursor, setDependentsNextCursor] = useState<DependentsCursor | null>(null);
   // The key whose reverse read is in flight; `loading` only while it is the
   // key on screen, so a dropped chain cannot latch the flag.
   const [dependentsFor, setDependentsFor] = useState<string | null>(null);
   const [dependentsError, setDependentsError] = useState<string | null>(null);
   const associationRead = useKeyedRead({ b, nodeId }, nodeKey);
+  type DependentsOf = { b: Bank; target: { node_id: string; revision_id: string } };
+  const dependentsMore = useMorePages<DependentsOf, DependentsCursor>(associationRead.now);
 
   const fetchDependentsPage = useCallback(
     async (b: Bank, target: { node_id: string; revision_id: string }, cursor: DependentsCursor | null) => {
@@ -303,44 +329,51 @@ export function useEvidenceReview(
     // failed or empty association) would otherwise leave that read's flag on.
     setDependentsFor(null);
     if (nodeId === null) {
+      associationRead.land(t); // every begin() lands (ui-reads2)
       setAssociation(null);
       setAssociationError(null);
       setDependents([]);
-      setDependentsNextCursor(null);
+      dependentsMore.reset(null, null, null);
       setDependentsError(null);
       return;
     }
     setAssociationError(null);
-    const result = await getRevisionAssociations(b, nodeId, null);
-    if (!associationRead.land(t)) return;
+    let result;
+    try {
+      result = await getRevisionAssociations(b, nodeId, null);
+    } finally {
+      associationRead.land(t);
+    }
+    if (!associationRead.live(t)) return;
     if (!result.ok) {
       setAssociation(null);
       setAssociationError(describe(result));
       setDependents([]);
-      setDependentsNextCursor(null);
+      dependentsMore.reset(null, null, null);
       return;
     }
     const row = associationsOf(result);
     setAssociation(row);
     if (row === null) {
       setDependents([]);
-      setDependentsNextCursor(null);
+      dependentsMore.reset(null, null, null);
       setDependentsError(null);
       return;
     }
     setDependentsFor(t.key);
     setDependentsError(null);
-    const page = await fetchDependentsPage(b, { node_id: row.node_id, revision_id: row.revision_id }, null);
+    const target = { node_id: row.node_id, revision_id: row.revision_id };
+    const page = await fetchDependentsPage(b, target, null);
     if (!associationRead.live(t)) return;
     setDependentsFor(null);
     if (!page.ok) {
       setDependents([]);
-      setDependentsNextCursor(null);
+      dependentsMore.reset(null, null, null);
       setDependentsError(page.error);
       return;
     }
     setDependents(page.occurrences);
-    setDependentsNextCursor(page.nextCursor);
+    dependentsMore.reset(t.key, { b, target }, page.nextCursor);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- node read from `associationRead`
   }, [b, nodeId, fetchDependentsPage]);
 
@@ -348,22 +381,20 @@ export function useEvidenceReview(
     void refreshAssociation();
   }, [refreshAssociation]);
 
+  // Bound to the exact revision whose dependents are on screen (ui-reads2).
   const loadMoreDependents = useCallback(async () => {
-    if (association === null || dependentsNextCursor === null) return;
-    const t = associationRead.peek();
-    const page = await fetchDependentsPage(
-      t.value.b,
-      { node_id: association.node_id, revision_id: association.revision_id },
-      dependentsNextCursor,
-    );
-    if (!associationRead.live(t)) return;
+    const m = dependentsMore.next();
+    if (m === null) return;
+    const page = await fetchDependentsPage(m.of.b, m.of.target, m.cursor);
+    if (!dependentsMore.shows(m)) return;
     if (!page.ok) {
       setDependentsError(page.error);
       return;
     }
+    dependentsMore.extend(m, page.nextCursor);
     setDependents((prev) => [...prev, ...page.occurrences]);
-    setDependentsNextCursor(page.nextCursor);
-  }, [associationRead, association, dependentsNextCursor, fetchDependentsPage]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- all stable
+  }, [fetchDependentsPage]);
 
   // ---- lifecycle writes: retire / supersede (#29, #33 R12) ----------------
   const lifecycleActions = useLifecycleWrites(b, nodeId, peerName, lifecycleRead.key, refreshLifecycle);
@@ -382,7 +413,7 @@ export function useEvidenceReview(
     },
     hits: {
       rows: hits,
-      hasMore: hitsNextAfter !== null,
+      hasMore: hitsMore.cursor !== null,
       error: hitsError,
       loadMore: () => void loadMoreHits(),
     },
@@ -392,7 +423,7 @@ export function useEvidenceReview(
       error: sessionLinksError,
       direction: linkDirection,
       setDirection: setLinkDirection,
-      hasMore: sessionLinksNextCursor !== null,
+      hasMore: linksMore.cursor !== null,
       loadMore: () => void loadMoreSessionLinks(),
       refresh: () => void refreshSessionLinks(),
     },
@@ -416,7 +447,7 @@ export function useEvidenceReview(
       rows: dependents,
       loading: dependentsFor !== null && dependentsFor === associationRead.key,
       error: dependentsError,
-      hasMore: dependentsNextCursor !== null,
+      hasMore: dependentsMore.cursor !== null,
       loadMore: () => void loadMoreDependents(),
       citingStatus: evidenceStatus.citing,
     },

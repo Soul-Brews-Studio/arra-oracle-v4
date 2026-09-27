@@ -96,6 +96,24 @@ class FakeElement extends FakeNode {
   removeEventListener(type: string, fn: (e: unknown) => void) {
     this.listeners.get(type)?.delete(fn);
   }
+  // Focus model (ui-keys fix round, #33 AC2): `focus()` makes this the
+  // document's `activeElement` -- all that `rovingKey` and `NodeHead`'s
+  // focus effect read -- and `closest` walks `parentNode` for a bare tag
+  // name (`main`) or one attribute selector (`[role="tab"]`), the two
+  // shapes the components use. Anything else throws, so a component that
+  // starts relying on a richer selector fails loudly here, not silently.
+  focus() {
+    (this.ownerDocument as { activeElement: unknown }).activeElement = this;
+  }
+  closest(sel: string): FakeElement | null {
+    const attr = sel.match(/^\[([\w-]+)="([^"]*)"\]$/);
+    if (attr === null && !/^[a-z][a-z0-9]*$/.test(sel)) throw new Error(`fake closest(): unsupported selector ${sel}`);
+    const hit = (el: FakeElement) => (attr ? el.getAttribute(attr[1]!) === attr[2] : el.tagName === sel.toUpperCase());
+    for (let n: FakeNode | null = this; n !== null; n = n.parentNode) {
+      if (n instanceof FakeElement && hit(n)) return n;
+    }
+    return null;
+  }
   // `<select>` controlled-value reconciliation reads `.options` (an
   // `HTMLOptionElement` collection) to set each option's `.selected`.
   get options(): FakeElement[] {
