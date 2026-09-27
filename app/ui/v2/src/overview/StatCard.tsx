@@ -1,5 +1,3 @@
-import type { Count } from "../api/overview";
-
 /** One measured number, with enough beside it to be trusted.
  *
  * Two display rules, both learned the hard way against this server:
@@ -57,23 +55,9 @@ export type StatCardProps = {
   method?: string | null;
 };
 
-/** `CountOutcome` mapped onto this card ONCE, so no caller decides again what
- *  `failed` looks like. Translated by hand at four call sites, `failed`
- *  eventually renders as a 0 somewhere -- the single thing this page exists
- *  to prevent. `tone` stays the caller's job: whether a zero is meaningful is
- *  not knowable from the outcome. */
-export function statFromCount(
-  count: Count,
-  status: number | null = null,
-): Pick<StatCardProps, "value" | "hint" | "meta" | "supported" | "method"> {
-  return {
-    value: count.outcome === "counted" ? count.total : null,
-    hint: count.note ?? `${count.method} · include_total: true`,
-    meta: `${status ?? "—"} · ${count.durationMs} ms`,
-    supported: count.outcome !== "absent",
-    method: count.method,
-  };
-}
+// statFromCount moved out (style-ui-split, docs/overnight/DECISIONS.md): its
+// own file, named after itself. Re-exported here so importers do not churn.
+export { statFromCount } from "./StatCard.statFromCount";
 
 const VALUE_CLASS: Record<StatTone, string> = {
   normal: "text-slate-100",
