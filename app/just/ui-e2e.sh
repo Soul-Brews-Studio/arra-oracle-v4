@@ -11,6 +11,9 @@
 # app/server/public/v2 from app/ui/v2 (by default it rebuilds, so a change to
 # the UI source is what gets tested; an unchanged tree rebuilds byte-identical).
 # UI_E2E_DRIVER_BUDGET (seconds, default 600) bounds the browser driver.
+# UI_E2E_SEGMENT picks what the driver runs: "all" (default: the form-driven
+# chain, then the keyboard-only segment ui-e2e/keys.mjs), "keys" (only the
+# keyboard segment -- what app/just/ui-e2e-keys.sh sets) or "chain".
 #
 # Order:
 #   1. build the UI bundle (vite) into app/server/public/v2
@@ -169,13 +172,14 @@ LEASE="$ROOT/driver-lease"
 BUDGET="${UI_E2E_DRIVER_BUDGET:-600}"
 "$PY" - "$CFG" "$ORIGIN" "$PORT" "$TOKEN" "$OUT" "$ROOT/ego-space-id" "$OLLAMA_UP" "$OLLAMA_BASE" \
   "$CHAT_PEER" "$CHAT_SESSION" "$CANARY" "$LEASE" "$BUDGET" "${VISIBLE_IDS[@]}" <<'PY'
-import json, sys, time
+import json, os, sys, time
 (cfg, origin, port, token, out, space, up, base, peer, session, canary, lease, budget), ids = sys.argv[1:14], sys.argv[14:]
 json.dump({"origin": origin, "port": port, "token": token, "outDir": out, "spaceFile": space,
            "ollamaUp": up == "1", "ollamaBase": base, "peer": peer, "session": session,
            "canary": canary, "visibleMessageIds": ids,
            "transcript": out + "/transcript.txt", "teardownLog": out + "/teardown.txt",
-           "lease": lease, "deadline": int(time.time() * 1000) + int(budget) * 1000}, open(cfg, "w"))
+           "lease": lease, "deadline": int(time.time() * 1000) + int(budget) * 1000,
+           "segment": os.environ.get("UI_E2E_SEGMENT", "all")}, open(cfg, "w"))
 PY
 
 # One driver attempt, never a retry. Measured on ego-browser 0.5.1.13:

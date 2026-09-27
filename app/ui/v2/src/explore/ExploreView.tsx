@@ -151,7 +151,7 @@ export function ExploreView({
           detail pane keeps a viewport-relative height (see `DetailTabs`), so
           neither can squeeze the other: round 2 left the pane `flex-1
           min-h-0` under `shrink-0` lists and it measured 0px at 375x812. */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-visible">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto short:overflow-visible lg:flex-row lg:overflow-visible">
         {/* a <section>, not a <div>: ARIA forbids naming a generic element,
             so the label was ignored by assistive tech (round 4). */}
         <section

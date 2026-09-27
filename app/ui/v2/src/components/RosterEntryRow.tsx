@@ -34,7 +34,14 @@ export function RosterEntryRow({
         selected ? "bg-accent/15 text-slate-100" : "text-slate-200 hover:bg-panel"
       }`}
     >
-      <button onClick={onSelect} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+      {/* aria-current (ui-keys fix round, #33 AC2): the selected peer,
+          session or node bookmark says so to a screen reader too, same as
+          Explore's ListPanel rows. */}
+      <button
+        onClick={onSelect}
+        aria-current={selected ? true : undefined}
+        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+      >
         <StateDot state={entry.state} />
         <span className="truncate">{entry.name}</span>
       </button>
