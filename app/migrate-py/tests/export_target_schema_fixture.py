@@ -14,6 +14,7 @@ from pathlib import Path
 
 import lancedb
 import pyarrow as pa
+
 from arra_migrate.contract_v1 import parse_int64, parse_timestamp
 from arra_migrate.target_v1 import (
     TARGET_REGISTRY_VERSION,

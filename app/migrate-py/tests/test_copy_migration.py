@@ -39,16 +39,14 @@ import unittest
 from pathlib import Path
 
 import lancedb
+
 from arra_migrate.target_v1 import TARGET_TABLE_NAMES, TARGET_TABLES
 from arra_migrate.target_v1.schema import describe_schema
 
 # The fixture builder is a sibling script, importable under both
 # `unittest discover -s tests` and `python -m unittest tests.test_copy_migration`.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from copy_migration_support import legacy_node_id, records
-from copy_migration_support import rows as _rows
-from copy_migration_support import run as _run
-from copy_migration_support import tree as _tree
+from copy_migration_support import legacy_node_id, records, rows as _rows, run as _run, tree as _tree
 from export_legacy_fixture import (
     LAB,
     LONG_TYPE,

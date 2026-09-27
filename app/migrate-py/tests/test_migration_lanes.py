@@ -47,6 +47,7 @@ import unittest
 from pathlib import Path
 
 import pyarrow as pa
+
 from arra_migrate.rehearsal import (
     MS_VALUE,
     _ReadOnlySource,

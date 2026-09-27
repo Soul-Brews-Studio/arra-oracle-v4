@@ -25,6 +25,7 @@ import traceback
 from pathlib import Path
 
 import lancedb
+
 from arra_migrate.writer_gate import WriterUnavailableError
 
 REFUSED_BEFORE_CONNECT = 0

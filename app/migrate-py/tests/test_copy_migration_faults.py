@@ -27,9 +27,7 @@ from unittest import mock
 import lancedb
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from copy_migration_support import INTAKE_AT, records, tree
-from copy_migration_support import rows as _rows
-from copy_migration_support import run as _run
+from copy_migration_support import INTAKE_AT, records, rows as _rows, run as _run, tree
 from export_legacy_fixture import LAB, LONG_TYPE, build_legacy_fixture
 
 CRASH_CHILD = Path(__file__).resolve().parents[2] / "server" / "test" / "fixtures" / "migration" / "crash-worker.ts"

@@ -45,6 +45,7 @@ from pathlib import Path
 
 import lancedb
 import pyarrow as pa
+
 from arra_migrate.target_v1 import TARGET_TABLE_NAMES, TARGET_TABLES
 from arra_migrate.target_v1.schema import describe_schema
 from arra_migrate.writer_gate import UnsupportedDatasetError, writer_gate

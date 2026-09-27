@@ -82,12 +82,13 @@ jobs:
       - name: uv sync (app/migrate-py, frozen)
         run: uv sync --project app/migrate-py --frozen
 
-      # R13 follow-up (2026-09-27, issues #34/#75, .tmp/AC-MATRIX.md): the AC
-      # audit found no Python lint in CI. Pinned via `uvx ruff@<version>` so it
-      # adds no project dependency (app/migrate-py's lockfile has no ruff).
-      # Rule set and the one honest exclusion (E501) are in the repo-root
-      # ruff.toml, which this reads with no flags. Fails the build on any hit;
-      # exit 0 was measured locally after the fixes in this same commit.
+      # R13 follow-up (2026-09-27, issues #34/#75, docs/overnight/DECISIONS.md
+      # R13): the acceptance-criteria audit found no Python lint in CI.
+      # Pinned via `uvx ruff@<version>` so it adds no project dependency
+      # (app/migrate-py's lockfile has no ruff). Rule set and the one honest
+      # exclusion (E501) are in the repo-root ruff.toml, which this reads with
+      # no flags. Fails the build on any hit; exit 0 was measured locally
+      # after the fixes in this same commit.
       - name: Lint (ruff, app/migrate-py + app/just/scripts)
         run: uvx ruff@0.16.4 check app/migrate-py/src app/migrate-py/tests app/just/scripts
 

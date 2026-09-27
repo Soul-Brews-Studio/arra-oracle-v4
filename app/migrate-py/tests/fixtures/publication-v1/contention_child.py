@@ -20,6 +20,7 @@ import traceback
 from pathlib import Path
 
 import lancedb
+
 from arra_migrate.writer_gate import WriterUnavailableError
 from export_publication_fixture import create_publication_fixture
 

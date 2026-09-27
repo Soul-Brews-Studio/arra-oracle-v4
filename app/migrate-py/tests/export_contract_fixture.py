@@ -6,13 +6,14 @@ from datetime import datetime
 from pathlib import Path
 
 import lancedb
+from lancedb.pydantic import LanceModel, Vector
+
 from arra_migrate.contract_v1 import (
     canonical_message,
     message_digest,
     parse_timestamp,
     validate_id,
 )
-from lancedb.pydantic import LanceModel, Vector
 
 
 class CodecFixture(LanceModel):

@@ -4,10 +4,22 @@
 #
 # Why this file exists: docs/overnight/DECISIONS.md R13 promised Python lint
 # in CI and it was never added; the 2026-09-27 acceptance-criteria audit
-# (.tmp/AC-MATRIX.md, issues #34 and #75) found none. This is the ac-lint
-# slice's fix. See .github/workflows/ci.yml for the step that runs this.
-target-version = "py312"
-line-length = 88
+# (issues #34 and #75) found none. This is the ac-lint slice's fix. See
+# .github/workflows/ci.yml for the step that runs this.
+#
+# Fix round (2026-09-27, post-merge #34/#75 verifier): target-version matches
+# app/migrate-py/pyproject.toml's `requires-python = ">=3.10"` (was "py312",
+# which would silently miss syntax that only works on 3.11/3.12). line-length
+# raised to 120: E501 is ignored below regardless, so 88 did nothing except
+# make isort wrap otherwise-fine import lines, which pushed
+# tests/test_honcho_roundtrip.py from 498 to 504 lines and broke this repo's
+# 500-line-per-file cap. `src` + isort's known-first-party are set so ruff
+# recognizes `arra_migrate` as first-party instead of third-party — without
+# them isort merged the blank line that normally separates stdlib/third-party
+# imports from local ones in 11 files.
+target-version = "py310"
+line-length = 120
+src = ["app/migrate-py/src", "app/migrate-py/tests", "app/just/scripts"]
 
 [lint]
 # E/F = pycodestyle errors + pyflakes: real defects (unused imports/vars,
@@ -28,3 +40,13 @@ ignore = [
     # change that added this file, not blanket-ignored.
     "E501",
 ]
+
+[lint.isort]
+# Without this, `src` alone still left ruff treating arra_migrate (and local
+# test modules like export_publication_fixture) as third-party in some
+# layouts; being explicit is cheap and removes the ambiguity for good.
+known-first-party = ["arra_migrate"]
+# Without this, `from .x import TABLE as CONNECTIONS, Connection` (this
+# codebase's model-registry idiom) gets split onto two lines per import --
+# purely cosmetic, but it inflated models/__init__.py's diff for no reason.
+combine-as-imports = true
