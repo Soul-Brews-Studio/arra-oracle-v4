@@ -52,14 +52,26 @@ describe("lifecycleGate", () => {
     expect(gate.successor).toEqual({ node_id: "nodeBBBBBBBBBBBBBBBBB", revision_id: "revBBBBBBBBBBBBBBBBBB", title: "v2" });
     expect(gate.explanation).toContain("v2");
     expect(gate.explanation).toContain("obsolete");
+    // Fix round (2026-09-27): the disclosure must say the SERVER itself
+    // refuses publish here, and only name correction as this client's own
+    // choice -- the prior wording claimed the whole block (publish AND
+    // correct) was "a UI-side choice, not a server rule", which overstated
+    // publish (service.publishRevision.ts returns node_retired for it).
+    expect(gate.explanation).toContain("Publishing here would also be refused by the server itself");
+    expect(gate.explanation).toContain("this client's own choice");
   });
 
-  test("a retire event blocks writes and has no successor", () => {
+  test("a retire event blocks writes, has no successor, and discloses the SAME UI-side scope as superseded", () => {
     const gate = lifecycleGate({ nodeId: NODE, loading: false, error: null, rows: [event({ reason: "wrong" })] });
     expect(gate.state).toBe("retired");
     expect(gate.blocked).toBe(true);
     expect(gate.successor).toBeNull();
     expect(gate.explanation).toContain("wrong");
+    // Fix round (2026-09-27): an earlier pass fixed only the superseded
+    // branch and the proof doc wrongly claimed both were fixed. The
+    // retired branch must carry the identical disclosure.
+    expect(gate.explanation).toContain("Publishing here would also be refused by the server itself");
+    expect(gate.explanation).toContain("this client's own choice");
   });
 
   test("while the read is in flight writes wait, so a click cannot race a terminal node", () => {
