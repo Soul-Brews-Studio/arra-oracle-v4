@@ -80,6 +80,7 @@ Items 1-9 are unchanged.
 | one error-text function used by `runMcp`, the legacy routes and the kb audit | same | `rg -l auditErrorText app/server/src` | 4 files, as stated |
 | FOREIGN-VISITOR §1-§2 citations: DESIGN.md:66-67, :91, :392, :415, :881, :1138; AGENTS.md:123; `relic.findSessions.ts:25`; `relic.rowToSessionRef.ts:29`; `evidence-v1.ts:51,:60-61`; `service.getContext.ts:34-47`; relic `cli.ts:59-61,:1306-1308`, `query.ts:1857` | FOREIGN-VISITOR.md; session-source-relic-v1.md | `sed -n <line>p <file>` for each | all true |
 | `relic-foreign-visitor.test.ts` has 10 tests | same | `bun test test/relic-foreign-visitor.test.ts` | 10/0 (24) |
+| mutant M2 (`bankFromRepo` keeps the whole `repo`) fails 2 tests, the `find` and `get` key-set tests | FOREIGN-VISITOR.md §3; session-source-relic-v1.md | replace `relic.bankFromRepo.ts`'s return with `return repo;`, run the file, then `git checkout --` the file | 8 pass / 2 fail, exactly those two tests; restored, then 10/0 and `git status` clean |
 | `registry.ts:261-272` reads `listMcpCalls`/`listConnections` | AGENTS.md:38 | `sed -n 259,273p app/server/src/knowledge/registry.ts` | true |
 | `KNOWLEDGE_METHODS` at `registry.ts:157` has 57 entries | AC-MATRIX #31 | `bun -e` over `Object.keys(KNOWLEDGE_METHODS).length` | 57 |
 | `mcp/tools.ts:29` "planned, not implemented" | AC-MATRIX #27, §4 item 5 | `sed -n 29p app/server/src/mcp/tools.ts` | true |
@@ -93,7 +94,7 @@ Items 1-9 are unchanged.
 Batch re-runs of the AC-EVIDENCE commands are in §3.
 
 **Not re-checked, and why.** Browser runs (`UI_E2E_RESULT`, screenshots, 812×375 measurements) need ego-browser on a
-shared machine. Mutant counts (for example "M1 fails 4") need source edits; the sweep made no product change. Acceptor
+shared machine. The other mutant counts (for example "M1 fails 4") need source edits. The sweep spot-checked one (M2, above), restored it, and committed no product change. Acceptor
 figures (`task9.md`, 146/0/1) live outside the repo; the live probe below re-measures them. Historical refutation
 records that cite pre-fix code (for example UI-PROOF-ui-cite.md "`PublishForm.tsx:50`, `links: built.entries`") are
 right about the code they describe, which was later extracted into `buildPublishInput.ts`.
