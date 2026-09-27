@@ -171,7 +171,17 @@ gap plus several honesty problems in this doc. Addressed here:
      of the 5 tests fail (`.toContain` on a non-string throws).
    - Both mutants reverted; suite back to green. `useKnowledge.publish` now calls
      `interpretPublishResult(result, describe)` instead of inlining the `outcome ===
-     "conflict"` check, so the exact code path the verifier flagged is the one under test.
+     "conflict"` check.
+   - **Correction (round 3): the next two claims this item made were false.** It said
+     "the exact code path the verifier flagged is the one under test" and that mutants G
+     and F were killed. The round-2 verifier showed that neither was true at the call
+     site. Reverting only `useKnowledge.ts` to `84061c9` left `bun test src` at **173
+     pass, 0 fail**. So did G moved to the call site
+     (`interpretPublishResult({ ...result, body: null }, describe)`) and F at its real
+     location (`setError(interpreted.error)` -> `setError(null)`). The mutants above were
+     killed only after being redefined as edits inside `interpretPublishResult.ts`. The
+     red shown above is a module-not-found red, not a behavioural one. Round 3 below
+     closes the gap and gives the red lines.
 2. **`UI-PROOF-ui-cite.md` overclaimed the lifecycle-gate disclosure.** Item 5 above said
    `lifecycleGate.ts`'s explanation "now says this in both the superseded and retired
    cases"; the diff had touched only the superseded branch, and the retired branch
@@ -215,4 +225,58 @@ gap plus several honesty problems in this doc. Addressed here:
    Python architecture guard, and the mutant runs above were prioritized over a repeat
    browser pass. `CorrectForm.submitRef` (a test-only seam no test currently drives) and
    the "form clears typed links after a conflict" known limit were left as-is, matching
-   the verifier's own nonblocking/no-regression read of them.
+   the verifier's own nonblocking/no-regression read of them. (Round 3 removed
+   `CorrectForm.submitRef`.)
+
+## Hardening round 3 (2026-09-27, on `fc72916`, which merges main `883fca7`)
+
+The round-2 verifier refuted item 1 above: the call in `useKnowledge.publish` was still
+unpinned. What is true now:
+
+1. **`state/useKnowledge.publish.test.tsx` drives the real hook.** `react-dom/client`
+   renders a harness into a fake container object, so no jsdom and no new dependency are
+   needed. The harness returns `null`, which means react-dom never creates a host node. It
+   only needs `addEventListener`, `tagName` and a `window` holding `HTMLIFrameElement`.
+   `fetch` is stubbed, and a seeded taxonomy sits in a stubbed `localStorage`. The harness
+   captures `actions` and every rendered `error`/`selected`, awaits `publish(...)` inside
+   `act`, and asserts the settled state. `renderToStaticMarkup` could only have pinned the
+   resolved value: a setState after the render is a no-op on the server, so the
+   `setError(null)` mutant would be invisible there. Three tests:
+   - a 200 `{outcome:"conflict", reason:"node_retired"}` resolves `false`, `error` is
+     the `describeConflict` text, nothing is selected, and no refresh fetch is made
+   - a 409 `{error:{code:"conflict", pointer}}` resolves `false` and `error` is
+     `"conflict at /content/base_revision_id"`
+   - control: a 200 `{outcome:"accepted"}` resolves `true`, `error` stays `null`, the
+     node is selected and `getAcceptedHead` is fetched
+
+   Each of the following was applied alone, run, and reverted with `git checkout HEAD`:
+
+   | Mutant (in `useKnowledge.ts`) | Red lines |
+   |---|---|
+   | whole file reverted to `84061c9` | conflict test: `Expected: false` / `Received: true` (file 2 pass / 1 fail; `bun test src` **198 pass / 1 fail**) |
+   | G at the call site: `interpretPublishResult({ ...result, body: null }, describe)` | conflict test: `Expected: false` / `Received: true`; 409 test: `Expected: "conflict at /content/base_revision_id"` / `Received: "HTTP 409"` (1 pass / 2 fail) |
+   | F at the call site: `setError(interpreted.error)` -> `setError(null)` | conflict test: `Expected: "publish refused: this node was superseded or retired -- publishing here is disabled"` / `Received: null`; 409 test: `Received: null` (1 pass / 2 fail) |
+
+   The whole-file revert keeps the `!result.ok` path, so the 409 test passing under it is
+   expected. The conflict test is the one that sees the revert.
+2. **Correction guard, relation half now pinned.** The verifier's mutant
+   `built.entries.some((e) => e.relation === "corrects")` -> `built.entries.length > 0`
+   survived. A new `citeCorrect.test.ts` case sends type `correction` with one `supports`
+   URL link and expects the button disabled and `submit()` to refuse. Against the mutant
+   it gives `Expected: true` / `Received: false` (14 pass / 1 fail). **Still open:** a
+   `corrects` link whose target is a URL rather than a `node_revision` passes the guard,
+   although the copy says "pointing at the revision this corrects". Tightening the guard
+   would change behaviour, so it was left for a round that can re-run the browser proof.
+3. **`CorrectForm.submitRef` removed.** It was a test-only seam that no test used.
+4. **Round-2 report correction.** The round-2 report said the live probe ran "with all
+   four commits already made". That was false. `.tmp/acceptor/live-probe/out/ui-cite2.md`
+   recorded `Start HEAD: 3f4e537`, and the probe finished before commit `956ce82`. The
+   verifier re-ran it at `188af50` and got the same results, so nothing functional
+   changed, but the statement was wrong.
+5. **No new screenshots this round.** No user-visible behaviour changed: the hook,
+   `interpretPublishResult` and the guard logic are the same, and the new code is tests
+   plus the removal of an unused prop. `38-cite2-01` still shows the pre-round-2
+   `CORRECTION_NEEDS_LINK` wording.
+
+Totals: `bun test src` (app/ui/v2) **200 pass, 0 fail** across 33 files. `tsc --noEmit`
+is clean.
