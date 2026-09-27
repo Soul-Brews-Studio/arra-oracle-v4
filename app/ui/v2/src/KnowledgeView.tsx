@@ -19,6 +19,7 @@ import { lifecycleGate } from "./state/lifecycleGate";
 import { useCiteTargets } from "./state/useCiteTargets";
 import { useKnowledge } from "./state/useKnowledge";
 import { useNodeLifecycle } from "./state/useNodeLifecycle";
+import { writableHead } from "./state/writableHead";
 
 /** The knowledge half: nodes, immutable revisions, type and tags.
  *
@@ -85,6 +86,7 @@ export function KnowledgeView({
   // a draft has no lifecycle. Cite picks are the revisions already loaded.
   const gate = lifecycleGate(useNodeLifecycle(bank, k.selected, k.head?.revision?.id ?? null));
   const citeTargets = useCiteTargets(`${bank.bank}:${bank.workspace}`, k.head?.revision ?? null, sortedHistory);
+  const writable = writableHead(k.selected, k.head?.revision ?? null, sortedHistory);
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -196,13 +198,13 @@ export function KnowledgeView({
             <NodeWritePanel
               gate={gate}
               nodeId={target}
-              head={k.head?.revision ?? null}
-              revisions={sortedHistory}
+              head={writable.head}
+              revisions={writable.revisions}
               citeTargets={citeTargets}
               publishing={k.publishing}
               taxonomyReady={k.taxonomy !== null}
               onPublish={(input) => {
-                void k.actions.publish(input, target).then((ok) => {
+                void k.actions.publish(input, target, writable.head?.id ?? null).then((ok) => {
                   if (!ok) return;
                   // A published draft stops being a draft: put it in the URL
                   // so a refresh lands on the node instead of a blank draft.
