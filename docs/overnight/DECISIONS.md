@@ -211,6 +211,26 @@ branch, so it reverts cleanly.
   already running on m5, so no host change was needed. The live leg ran through
   `app/just/honcho-live.sh` (a disposable pinned v3.2.0 on 127.0.0.1, torn down):
   `TestLiveRoundTrip` 1 OK, 0 problems. white.local was not used.
+- **Update 2026-09-27 (table level)**: "byte-compatible" is **FALSE as stated,
+  TRUE WITH CONVERSIONS**. Measured, not argued: `TestLiveTableRoundTrip` INSERTs
+  a target-19 bank into the same disposable Honcho's Postgres via `psql`, then
+  reads it back through REST and SQL. Result: 1 OK, 0 problems, per-field outcome
+  equal to `table_map.EXPECTED_OUTCOMES`.
+  - **Conversions required**:
+    - rename `h_metadata` to `metadata` (a verbatim INSERT fails: column does
+      not exist);
+    - JSON text to jsonb, with NULL becoming `{}`;
+    - naive `timestamp[us]` to `timestamptz` UTC;
+    - `token_count` narrowed from int64 to int32;
+    - `setval` on the messages identity.
+  - **Incompatible**:
+    - 11 v4-only columns are lost;
+    - `workspaces.id` loads only if it is already nanoid21;
+    - `messages.id` collides on `pk_messages` with a second bank or any
+      non-empty Honcho (measured).
+  - Evidence and the per-column diff: `docs/overnight/HONCHO-TABLE-DIFF.md`.
+  - `bash app/just/honcho-live.sh` now runs both legs (table first), then tears
+    everything down.
 
 ## R16 · #7 recall measurement: harness now, judgments from Nat
 
