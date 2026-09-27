@@ -100,10 +100,10 @@ export function RevisionDiff({ from, to }: { from: RevisionRow; to: RevisionRow 
                 <td className="w-1/5 border-r border-edge/60 px-2 py-0.5 align-top text-muted">
                   {FIELD_LABEL[c.field]}
                 </td>
-                <td className="w-2/5 whitespace-pre-wrap break-words border-r border-edge/60 px-2 py-0.5 align-top text-slate-200">
+                <td className="w-2/5 whitespace-pre-wrap [overflow-wrap:anywhere] border-r border-edge/60 px-2 py-0.5 align-top text-slate-200">
                   {cell(c.from)}
                 </td>
-                <td className="w-2/5 whitespace-pre-wrap break-words px-2 py-0.5 align-top text-slate-200">
+                <td className="w-2/5 whitespace-pre-wrap [overflow-wrap:anywhere] px-2 py-0.5 align-top text-slate-200">
                   {cell(c.to)}
                 </td>
               </tr>
@@ -125,10 +125,10 @@ export function RevisionDiff({ from, to }: { from: RevisionRow; to: RevisionRow 
             <tbody>
               {rows.map((row, i) => (
                 <tr key={i} className={ROW_CLASS[row.kind]}>
-                  <td className="w-1/2 whitespace-pre-wrap break-words border-r border-edge/60 px-2 py-0.5 align-top text-slate-200">
+                  <td className="w-1/2 whitespace-pre-wrap [overflow-wrap:anywhere] border-r border-edge/60 px-2 py-0.5 align-top text-slate-200">
                     {row.left === null ? <span className="text-muted/40">—</span> : row.left}
                   </td>
-                  <td className="w-1/2 whitespace-pre-wrap break-words px-2 py-0.5 align-top text-slate-200">
+                  <td className="w-1/2 whitespace-pre-wrap [overflow-wrap:anywhere] px-2 py-0.5 align-top text-slate-200">
                     {row.right === null ? <span className="text-muted/40">—</span> : row.right}
                   </td>
                 </tr>

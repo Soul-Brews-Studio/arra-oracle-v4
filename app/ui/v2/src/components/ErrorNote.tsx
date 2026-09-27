@@ -24,11 +24,11 @@ export function ErrorNote({ error }: { error: ErrorEnvelope }) {
   const hint = authErrorHint(error.code) ?? authErrorHintFromText(error.message);
   return (
     <div className="rounded border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs">
-      <div className="flex items-center gap-2">
-        <span className="font-semibold text-rose-300">{error.code ?? "error"}</span>
+      <div className="flex flex-wrap items-center gap-x-2">
+        <span className="min-w-0 font-semibold text-rose-300 [overflow-wrap:anywhere]">{error.code ?? "error"}</span>
         {error.pointer && <span className="font-mono text-rose-200/80 [overflow-wrap:anywhere]">{error.pointer}</span>}
       </div>
-      {error.message && <p className="mt-1 text-muted">{error.message}</p>}
+      {error.message && <p className="mt-1 text-muted [overflow-wrap:anywhere]">{error.message}</p>}
       {hint !== null && <p className="mt-1 text-muted">{hint}</p>}
     </div>
   );

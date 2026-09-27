@@ -175,7 +175,24 @@ describe("the same pattern elsewhere (nonblocking in wave 6)", () => {
 
 const SRC = join(import.meta.dir, "..");
 const FORM_CONTROL = new Set(["input", "select", "textarea", "option"]);
-const HAS_RULE = /(^|\s)(\[overflow-wrap:anywhere\]|break-words|break-all|truncate)(\s|$)/;
+// `break-words` alone does not lower min-content (see the header), so it
+// only counts beside `min-w-0`, which lets a flex/grid item shrink anyway.
+const HAS_RULE = /(^|\s)(\[overflow-wrap:anywhere\]|break-all|truncate)(\s|$)/;
+const hasRule = (cls: string) => HAS_RULE.test(cls) || (/(^|\s)break-words(\s|$)/.test(cls) && /(^|\s)min-w-0(\s|$)/.test(cls));
+
+/** The className VALUE starting at `at` (just past `className=`): a quoted
+ *  string, or a `{...}` expression -- template or conditional -- whose string
+ *  literals are joined, so `cond ? "a font-mono" : "b"` is seen too. */
+function classValue(text: string, at: number): string {
+  if (text[at] === '"') return text.slice(at + 1, text.indexOf('"', at + 1));
+  let depth = 0;
+  let end = at;
+  for (; end < text.length; end++) {
+    if (text[end] === "{") depth++;
+    if (text[end] === "}" && --depth === 0) break;
+  }
+  return [...text.slice(at, end).matchAll(/"([^"]*)"|'([^']*)'|`([^`]*)`/g)].map((s) => s[1] ?? s[2] ?? s[3]).join(" ");
+}
 
 function sources(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -191,12 +208,14 @@ function unwrapped(): string[] {
   const out: string[] = [];
   for (const file of sources(SRC)) {
     const text = readFileSync(file, "utf8");
-    const tags = [...text.matchAll(/<([a-z][a-z0-9]*)\b/g)];
-    for (const m of text.matchAll(/className=(?:"([^"]*)"|\{`([^`]*)`\})/g)) {
-      const cls = m[1] ?? m[2] ?? "";
+    // An element that carries a className always has whitespace after its
+    // tag name, so a TS generic like `<string>` is never taken for the tag.
+    const tags = [...text.matchAll(/<([a-z][a-z0-9]*)\s/g)];
+    for (const m of text.matchAll(/className=(?=["{])/g)) {
+      const cls = classValue(text, (m.index ?? 0) + m[0].length);
       const tag = tags.filter((t) => (t.index ?? 0) < (m.index ?? 0)).at(-1)?.[1] ?? "?";
       const verbatim = /(^|\s)(whitespace-pre[\w-]*|font-mono)(\s|$)/.test(cls) || tag === "pre" || tag === "code";
-      if (verbatim && !FORM_CONTROL.has(tag) && !HAS_RULE.test(cls)) {
+      if (verbatim && !FORM_CONTROL.has(tag) && !hasRule(cls)) {
         const line = text.slice(0, m.index).split("\n").length;
         out.push(`${relative(SRC, file)}:${line} <${tag}> ${cls}`);
       }

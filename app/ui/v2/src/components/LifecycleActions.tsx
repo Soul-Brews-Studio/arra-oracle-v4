@@ -155,7 +155,7 @@ export function LifecycleActions({
         </div>
       )}
 
-      {error !== null && <p className="text-[11px] text-rose-300">{error}</p>}
+      {error !== null && <p className="text-[11px] text-rose-300 [overflow-wrap:anywhere]">{error}</p>}
       {outcome !== null && outcome.outcome !== "conflict" && (
         <p className="text-[11px] text-accent">{outcome.outcome} — lifecycle history refreshed below</p>
       )}

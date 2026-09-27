@@ -49,7 +49,7 @@ export function SessionLinksPanel({
       ) : loading ? (
         <EmptyState title="loading…" detail={sessionName} />
       ) : error !== null ? (
-        <p className="text-[11px] text-rose-300">{error}</p>
+        <p className="text-[11px] text-rose-300 [overflow-wrap:anywhere]">{error}</p>
       ) : rows.length === 0 ? (
         <EmptyState
           title="no links"
@@ -64,8 +64,11 @@ export function SessionLinksPanel({
                 <span className="text-muted">--{link.relation}--&gt;</span>
                 <span className="truncate font-mono text-slate-200">{link.to_session_name}</span>
               </div>
-              <div className="flex items-center gap-2 text-muted">
-                <span>{link.created_by_peer_name ?? "unattributed"}</span>
+              {/* A peer name is up to 256 bytes with no break point: min-w-0 lets
+                  the flex item shrink below it, flex-wrap drops created_at to
+                  its own line rather than off-screen (#33 AC2 r6). */}
+              <div className="flex flex-wrap items-center gap-x-2 text-muted">
+                <span className="min-w-0 [overflow-wrap:anywhere]">{link.created_by_peer_name ?? "unattributed"}</span>
                 <span>{link.created_at}</span>
               </div>
               {link.evidence_ref !== null && (
