@@ -1,4 +1,4 @@
-import { newPublicId } from "./memory";
+import { newPublicId } from "./memory.newPublicId";
 import { type TaxonomyIds, TYPE_TERMS, HORIZON_TERMS, type TypeTerm, type HorizonTerm } from "./knowledge";
 
 export function mintTaxonomyIds(): TaxonomyIds {

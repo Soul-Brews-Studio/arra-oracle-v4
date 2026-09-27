@@ -1,4 +1,5 @@
-import { newPublicId, type Bank } from "./memory";
+import { newPublicId } from "./memory.newPublicId";
+import type { Bank } from "./memory";
 import {
   type TaxonomyIds,
   type PublishInput,
