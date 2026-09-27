@@ -148,7 +148,7 @@ lists the 4 active rows, not the departed one.
 | `seq_in_session` int64 NOT NULL | `seq_in_session` bigint NOT NULL, UNIQUE(ws, session, seq) | exact | Not a REST field, but REST list order equals seq order. | not-exposed | exact |
 | `h_metadata` string NULL | `metadata` jsonb NOT NULL | convertible | Rename, then text to jsonb. NULL becomes `{}` (9 rows). | converted | converted |
 | `internal_metadata` string NULL | `internal_metadata` jsonb NOT NULL | convertible | Text to jsonb. NULL becomes `{}`. | not-exposed | converted |
-| `created_at` timestamp[us] NOT NULL | `created_at` timestamptz NOT NULL | convertible | UTC attach. v4's historical time survives, whereas the REST leg re-stamps it. | converted | converted |
+| `created_at` timestamp[us] NOT NULL | `created_at` timestamptz NOT NULL | convertible | UTC attach. v4's historical time survives at µs. The REST leg also carries `messages.created_at`, but only to ms (`wire.to_wire_timestamp` refuses sub-ms); it re-stamps `created_at` only on workspaces, peers and sessions (their `LOSSY_FIELDS` entries). *(Driver correction 2026-09-27, verifier finding.)* | converted | converted |
 | `role` string NULL | none | incompatible | A +v4 addition. Dropped. | not-exposed | lost |
 | `in_reply_to` string NULL | none | incompatible | A +v4 addition. Dropped. | not-exposed | lost |
 | `read` bool NULL | none | incompatible | A +v4 addition. Dropped. | not-exposed | lost |
@@ -195,7 +195,7 @@ Honcho.
 
 The table leg keeps several things the REST interchange cannot carry:
 
-- historical `created_at` on all four entity tables;
+- historical `created_at` on three entity tables (workspaces, peers, sessions), and µs rather than ms precision on `messages.created_at`, which REST carries only to ms *(driver correction 2026-09-27: `messages.created_at` has no `LOSSY_FIELDS` entry, and TestLiveRoundTrip compares it strictly)*;
 - `messages.public_id` and `token_count`;
 - `session_peers.joined_at`, `left_at` and `configuration`;
 - every `internal_metadata`;
