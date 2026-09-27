@@ -241,16 +241,11 @@ const MULTI_EXPORT_ALLOWLIST: Record<string, { count: number; reason: string }> 
   "server/src/mcp/index.ts": { count: 4, reason: "MCP adapter composition root" },
   "server/src/mcp/protocol.ts": { count: 4, reason: "MCP JSON-RPC envelope helpers, one wire shape" },
   "server/src/publication/read-cursor.ts": { count: 4, reason: "frozen contract (app/docs/contracts/read-cursor-v1.md) parse/encode pipeline" },
-  "server/src/embed.ts": { count: 3, reason: "embedding provider adapter: embed/embedOne/health for one provider" },
   "server/src/mcp/connections.ts": { count: 3, reason: "mcp connection-fold audit helpers, one operational table" },
   "server/src/publication/session-link.ts": { count: 3, reason: "frozen contract (app/docs/contracts/session-link-v1.md) parse/encode pipeline" },
   "server/src/auth/policy.registry.ts": { count: 2, reason: "policy registry: register/lookup pair over one map" },
   "server/src/contracts/batch-v1.ts": { count: 2, reason: "frozen contract (app/docs/contracts/v1-codecs.md) dispatch/encode pair" },
   "server/src/contracts/replay-v1.ts": { count: 2, reason: "frozen contract replay-op pair, shared by source and revision replay" },
-  "server/src/index.ts": { count: 2, reason: "process entrypoint: buildApp/startup pair" },
-  "server/src/publication/errors.ts": { count: 2, reason: "publication error helpers, one error family" },
-  "server/src/publication/service.constants.ts": { count: 2, reason: "publication scope/cursor-key constants, paired helpers" },
-  "server/src/storage.ts": { count: 2, reason: "storage option/info pair for one dataset root" },
 };
 
 /** Files exporting exactly one function whose name does not follow "named after the file".

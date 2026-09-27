@@ -1,5 +1,9 @@
-import { quote } from "./storage";
-import { contextScope } from "./service.contextScope";
+// Split (Nat style, one exported function per file —
+// docs/overnight/DECISIONS.md, slice style-server-split, 2026-09-28):
+// scopeOf -> service.constants.scopeOf.ts, cursorKey ->
+// service.constants.cursorKey.ts. Re-exported below so importers do not churn.
+export { scopeOf } from "./service.constants.scopeOf";
+export { cursorKey } from "./service.constants.cursorKey";
 
 export const MAX_REQUEST_BYTES = 1048576;
 
@@ -15,8 +19,6 @@ export const MEMORY_HORIZON_VOCABULARY = "memory_horizon";
 export const VOCABULARIES = "vocabularies";
 
 export const TERMS = "terms";
-
-export const scopeOf = (workspace: string) => `workspace_name = ${quote(workspace)}`;
 
 export const WORKSPACES = "workspaces";
 
@@ -56,9 +58,6 @@ export const INT64_CEILING = 2n ** 63n - 1n;
 
 /** Bounded forward-walk cap for the replacement chain (#29). */
 export const MAX_CHAIN_WALK = 1024;
-
-export const cursorKey = (workspace: string, peer: string, session: string): string =>
-  `${contextScope(workspace)} AND peer_name = ${quote(peer)} AND session_name = ${quote(session)}`;
 
 export const TERMS_TABLE = "node_revision_terms";
 
