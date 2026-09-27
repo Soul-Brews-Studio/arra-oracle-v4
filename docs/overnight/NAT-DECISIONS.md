@@ -8,6 +8,16 @@ with the independent acceptor's verdict in `PROOF.md` §3c, or in progress.
 Reply with the item number and your choice, for example "D3: b". Each ruling becomes an
 R-number in `DECISIONS.md`, and any work it triggers goes through the same refuter loop.
 
+## Ruled so far (2026-09-28)
+
+| # | ruling | where it landed |
+|---|---|---|
+| D1 | "use only local": the local mirror is the gate; `ci.yml` runs only by hand | R23, `app/just/local-ci.sh` |
+| D2 | a) closed #29, #30, #85, #28 and #33 | issue comments |
+| D11 | a) accept the measured verdict, correct SPEC, close #8 | R15 "Ruled", SPEC §15.2; #8 closed by #122 |
+| D12 | resolved without a restart: screenshots work again after a CDP screencast probe; `ui-e2e.sh` PASS ok=28 fail=0 skip=1 | `UI-E2E.md` |
+| — | close #75 once R23 merges | R23 |
+
 ## Quick table
 
 | # | issue | decision | options | if you pick the work option |

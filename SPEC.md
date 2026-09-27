@@ -1,8 +1,8 @@
 # arra-oracle-v4 — Specification
 
-**Version**: `v26.9.20-alpha.1625`
+**Version**: `v26.9.28-alpha.232`
 **Status**: draft
-**Date**: 2026-09-20 16:25 GMT+7
+**Date**: 2026-09-28 02:32 GMT+7
 **Supersedes**: [`Soul-Brews-Studio/arra-oracle-v3`](https://github.com/Soul-Brews-Studio/arra-oracle-v3) (`26.7.26-alpha.227`)
 **Repository**: <https://github.com/Soul-Brews-Studio/arra-oracle-v4>
 **Author**: Neo (AI) with Nat — written by an Oracle, AI speaking as itself (Rule 6)
@@ -83,6 +83,12 @@ does not (typed memories, supersede-not-delete, a controlled taxonomy) is added 
 
 > **Decision (2026-09-18, Nat):** *"go same Honcho, that's cool — but I need bank."*
 > Honcho's schema, unchanged, with exactly one word renamed on the surface.
+
+> **Measured (2026-09-27, #8; verdict accepted by Nat 2026-09-28):** "byte-compatible" is
+> **false as stated**. A live INSERT of v4's tier-1 rows into stock Honcho v3.2.0 fails on the
+> first column name. What holds is **REST-level interchange** (proven live) and a **table-level
+> import with conversions, for one bank into an empty Honcho**. §15.2 carries the measured
+> terms; the paragraph above is the design intent it was measured against.
 
 ### 3.1 One alias — `bank`. Everything else keeps Honcho's word.
 
@@ -2261,6 +2267,37 @@ constraint on every future change to §3, and it is short on purpose.**
 5. **`h_metadata` is the extension point for tier 1.** Anything v4 wants on a peer or a
    room that Honcho has no column for goes in `h_metadata`, not in a new column — a new
    column is a new thing to reconcile; `h_metadata` is already JSON on both sides.
+   *(Correction, 2026-09-27: `h_metadata` is only the SQLAlchemy attribute name in
+   Honcho's `src/models.py`. Its SQL column is **`metadata`**, `jsonb NOT NULL DEFAULT
+   '{}'`. The rule still stands for the REST path, where the field is `metadata`; a table
+   dump must rename it.)*
+
+> **Measured (2026-09-27, #8; verdict accepted by Nat 2026-09-28, NAT-DECISIONS D11a):**
+> invariant 1 does **not** hold as a table dump. "Byte-compatible" in §3 and §15.1 is
+> **false as stated**, and it is **true with conversions only for one bank imported into an
+> empty stock Honcho**. Measured against a disposable Honcho v3.2.0 (`210b56cf`) on
+> 127.0.0.1 by `bash app/just/honcho-live.sh`; white.local was not used.
+>
+> - **Conversions a dump needs:** rename `h_metadata` to `metadata` (a verbatim INSERT
+>   fails: `column "h_metadata" of relation "workspaces" does not exist`); JSON text to
+>   `jsonb`, where NULL becomes `{}`; naive `timestamp[us]` to `timestamptz` UTC;
+>   `messages.token_count` narrowed from int64 to int32; `setval` on the messages
+>   identity after load.
+> - **Incompatible:** `messages.id` is one identity for Honcho's whole database but
+>   per-bank in v4, so a second bank, or any Honcho that already holds messages, collides
+>   on `pk_messages`. `workspaces.id` loads only if it is already nanoid21 (Honcho's
+>   `length(id) = 21` CHECK would reject v4's own 18-character dev seed `ws_default_devseed`).
+> - **Lost:** 10 v4 columns with no Honcho column: `workspaces.mission`,
+>   `messages.role/in_reply_to/read/read_at`, the four `source_*` columns, and
+>   `ingested_at`. The REST leg keeps `role`, `in_reply_to`, `read` and `read_at` through
+>   the invariant 5 fold into `metadata._v4`; the table leg does not.
+> - **What does hold:** the REST round trip (`TestLiveRoundTrip`, 1 OK) and, under the
+>   conditions above, the table round trip (`TestLiveTableRoundTrip`, 1 OK: every row
+>   reads back through REST and SQL with no value changed).
+>
+> True byte compatibility (global message ids, `metadata` as the stored name) was the
+> alternative, and it was not chosen: it is a schema change of size L. Per-column evidence:
+> `docs/overnight/HONCHO-TABLE-DIFF.md`; ruling: `docs/overnight/DECISIONS.md` R15.
 
 ### 15.3 Type mapping — PostgreSQL → libSQL
 
@@ -2289,3 +2326,8 @@ One test, run in CI: create a bank with two rooms, three entities and ten messag
 dump tier 1; load it into a stock Honcho (its `docker compose` on `white.local:8000`
 exists for this); call Honcho's `GET /v1/workspaces/{name}/sessions/{name}/messages` and
 compare. If the shapes ever drift, this is the test that says so before a user does.
+
+> **As built (2026-09-27, R15):** the test is `bash app/just/honcho-live.sh`. It stands up a
+> disposable Honcho v3.2.0 on 127.0.0.1, runs the table leg (`TestLiveTableRoundTrip`) and the
+> REST leg (`TestLiveRoundTrip`), and tears everything down. It does **not** use white.local,
+> which is shared. It is not a CI step: it needs Docker, and the gate is the local CI mirror.
