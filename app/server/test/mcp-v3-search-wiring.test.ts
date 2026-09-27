@@ -336,4 +336,104 @@ describe("#30 coverage (search-chunk-v1.md §21) reaches oracle_search/oracle_as
     expect(coverageWarning?.code).toBe("partial");
     expect(coverageWarning?.detail).toContain("4096");
   });
+
+  // Chain-coverage slice (issue #31, docs/overnight/DECISIONS.md R21/R22,
+  // search-chunk-v1.md §22/§24). §22 shipped the fields for oracle_search and
+  // oracle_ask and said plainly oracle_search_chain was "unchanged... outside
+  // the cited finding's scope" -- but its own reads carry the same three
+  // fields (oracle_search_chain.ts:75 read `searchKnowledgeSemantic`'s answer
+  // as only `{hits}` and dropped them on every hop). Written red first: before
+  // the fix, `hits` is cast as `{ hits: KernelHit[] }` only, so `coverage`
+  // never reached the tool at all and this whole block failed.
+  test("a 'full' kernel answer at every hop produces NO coverage warning (pins the always-partial mutant for the chain path, per finding item 2)", async () => {
+    expect((await runChain(["full", "full", "full"])).compat_warnings.some((w) => w.field === "hops.coverage")).toBe(false);
+  });
+
+  test("one hop's own candidate read saturating is disclosed even when a later hop's does not (aggregated OR across hops, the same shape retrieve() uses across fts terms)", async () => {
+    const result = await runChain(["partial", "full"]);
+    const warning = result.compat_warnings.find((w) => w.field === "hops.coverage");
+    expect(warning).toBeDefined();
+    expect(warning?.code).toBe("partial");
+    expect(warning?.detail).toContain("4096");
+    expect(warning?.detail).toContain("candidate_ceiling");
+  });
+
+  test("hop order does not matter: the LATER hop saturating is disclosed too", async () => {
+    const result = await runChain(["full", "partial"]);
+    expect(result.compat_warnings.some((w) => w.field === "hops.coverage")).toBe(true);
+  });
+
+  test("oracle_search's compat_warnings say nothing when the kernel's own read is full (negative pin, finding item 2)", async () => {
+    const { oracle_search } = await import("../src/mcp/legacy-v3/tools/oracle_search");
+    const fullKeyword = { match: "ngram", scan_reason: null, coverage: "full" as const, coverage_reason: null, candidate_ceiling: 4096, hits: [kernelHit("A")] };
+    const head = (id: string) => ({ revision: { title: id, body: `${id} body`, term_snapshot_json: "[]" }, lifecycle: null });
+    const kb = async (method: string, payload: Record<string, unknown>) => {
+      if (method === "searchKnowledgeKeyword") return fullKeyword;
+      if (method === "getAcceptedHead") return head(payload.node_id as string);
+      throw new Error(`unexpected ${method}`);
+    };
+    const context = { tool: "oracle_search", bank: "bank-a", kb, assertedPeer: null, authority: { operator: false, peers: null }, indexProfile: {} } as never;
+    const result = (await oracle_search({ query: "probe" }, context)) as { compat_warnings: { code: string; field: string; detail: string }[] };
+    expect(result.compat_warnings.some((w) => w.field === "metadata.coverage")).toBe(false);
+  });
+
+  test("oracle_ask's compat_warnings say nothing when the kernel's own read is full (negative pin, finding item 2)", async () => {
+    const { oracle_ask } = await import("../src/mcp/legacy-v3/tools/oracle_ask");
+    const fullKeyword = { match: "ngram", scan_reason: null, coverage: "full" as const, coverage_reason: null, candidate_ceiling: 4096, hits: [kernelHit("A")] };
+    const head = (id: string) => ({ revision: { title: id, body: `${id} body`, term_snapshot_json: "[]" }, lifecycle: null });
+    const kb = async (method: string, payload: Record<string, unknown>) => {
+      if (method === "searchKnowledgeKeyword") return fullKeyword;
+      if (method === "getAcceptedHead") return head(payload.node_id as string);
+      throw new Error(`unexpected ${method}`);
+    };
+    const context = { tool: "oracle_ask", bank: "bank-a", kb, assertedPeer: null, authority: { operator: false, peers: null }, indexProfile: {} } as never;
+    const result = (await oracle_ask({ question: "probe" }, context)) as { compat_warnings: { code: string; field: string; detail: string }[] };
+    expect(result.compat_warnings.some((w) => w.field === "search.coverage")).toBe(false);
+  });
+
+  test("retrieve() reports 'full' (fts) when nothing saturated -- pins the literal mutant the finding names (`const partial = true`)", async () => {
+    const { retrieve } = await import("../src/mcp/legacy-v3/search.retrieve");
+    const fullKeyword = { match: "ngram", scan_reason: null, coverage: "full" as const, coverage_reason: null, candidate_ceiling: 4096, hits: [kernelHit("A")] };
+    const kb = async (method: string) => {
+      if (method === "searchKnowledgeKeyword") return fullKeyword;
+      throw new Error(`unexpected ${method}`);
+    };
+    const retrieved = await retrieve(kb, "probe", "fts");
+    expect(retrieved).toMatchObject({ coverage: "full", coverageReason: null });
+  });
 });
+
+// Chain-coverage slice (issue #31): oracle_search_chain.ts:75 read
+// `searchKnowledgeSemantic`'s answer as only `{ hits }` and dropped `coverage`/
+// `coverage_reason`/`candidate_ceiling` on every hop. Fixed by carrying them
+// AGGREGATED across hops (OR: partial the moment any hop's own candidate read
+// saturated), the same shape `retrieve()` already uses to OR together several
+// fts terms (search-chunk-v1.md §22.1) -- chosen over a per-hop field because
+// `Hop` is a small, already-pinned public record (`mcp-v3-search.test.ts`
+// asserts its exact shape with `toMatchObject`), and `compat_warnings` is
+// already the adapter's one channel for "something the kernel measured
+// changed the answer's completeness" (the same reasoning search-chunk-v1.md
+// §22.1 gives for putting oracle_search's own signal there instead of a new
+// top-level key).
+function kernelHit(id: string, distance = 0.1) {
+  return { node_id: id, revision_id: `${id}-rev`, title: id, snippet: id, chunk_ids: [], distance };
+}
+async function runChain(hopsCoverage: ("full" | "partial")[], args: Record<string, unknown> = {}) {
+  const { oracle_search_chain } = await import("../src/mcp/legacy-v3/tools/oracle_search_chain");
+  const head = (id: string) => ({ node: { id }, revision: { id: `${id}-rev`, title: id, body: `${id} body`, term_snapshot_json: "[]" }, lifecycle: null });
+  let hop = 0;
+  const kb = async (method: string, payload: Record<string, unknown>) => {
+    if (method === "searchKnowledgeSemantic") {
+      const coverage = hopsCoverage[hop] ?? "full";
+      hop += 1;
+      return { hits: [kernelHit(`n${hop}`)], coverage, coverage_reason: coverage === "partial" ? "candidate_ceiling" : null, candidate_ceiling: 4096 };
+    }
+    if (method === "getAcceptedHead") return head(payload.node_id as string);
+    if (method === "createTrace") return { outcome: "created" };
+    throw new Error(`unexpected ${method}`);
+  };
+  const context = { tool: "oracle_search_chain", bank: "bank-a", kb, assertedPeer: null, authority: { operator: false, peers: null }, indexProfile: {} } as never;
+  return (await oracle_search_chain({ query: "seed", maxHops: hopsCoverage.length, breadth: 1, ...args }, context)) as {
+    compat_warnings: { code: string; field: string; detail: string }[];
+  };
+}

@@ -196,6 +196,11 @@ describe("oracle_search: keyword (fts, and hybrid answered honestly as keyword)"
     expect(value.metadata.score_kind).toBe("reciprocal_rank");
     expect(warned(value, "semantic_change", "score")).toBe(true);
     expect(warned(value, "field_unavailable", "source_file")).toBe(true);
+    // #30 coverage negative pin (chain-coverage slice, finding item 2): this
+    // small real dataset never reaches the real 4096 candidate ceiling, so a
+    // real kernel answer must say "full" and carry no metadata.coverage
+    // warning. Catches a mutant that always reports "partial".
+    expect(warned(value, "partial", "metadata.coverage")).toBe(false);
   });
   test("the best match comes first; a learning keeps its type and concepts", () => {
     const first = ok("s_first").results[0];
@@ -322,6 +327,9 @@ describe("oracle_ask (llm:false extractive; llm:true is not_yet_available and sa
     expect(value.citationIndexes[0]).toBe(1);
     expect(value.sources[0]).toMatchObject({ index: 1, id: captured.apfs, stale: false });
     expect(warned(value, "semantic_change", "llm")).toBe(false);
+    // #30 coverage negative pin (chain-coverage slice, finding item 2): real
+    // kernel, real dataset, well under the 4096 ceiling -- no search.coverage warning.
+    expect(warned(value, "partial", "search.coverage")).toBe(false);
   });
   test("the v3 default (llm true, question as q) is extractive with a not_yet_available warning", () => {
     const value = ok("ask_default");
@@ -352,6 +360,10 @@ describe("oracle_search_chain (content:write; one immutable trace per hop)", () 
     const rows = ok("chain_hits0").rows;
     expect(rows[0]).toMatchObject({ kind: "node_revision", ref: "hop 0 rank 1" });
     expect(JSON.parse(rows[0].target)).toMatchObject({ node_id: captured.apfs });
+    // #30 coverage negative pin (chain-coverage slice, finding item 2): real
+    // kernel, real dataset, well under the 4096 ceiling on every hop -- no
+    // hops.coverage warning. Catches a mutant that always reports "partial".
+    expect(warned(value, "partial", "hops.coverage")).toBe(false);
   });
   test("a read-only principal gets 403, like an unknown tool; a down embedder is a refusal that says why", () => {
     expect(out.chain_ro.status).toBe(403);
