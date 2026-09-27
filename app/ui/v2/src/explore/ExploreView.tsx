@@ -78,12 +78,23 @@ export function ExploreView({
   // same commit, each undoing the other's write forever. See
   // `useKnowledgeSearch`'s header comment for the fix.
   //
-  // This also fixes the round-3 non-blocking finding for free: the write
-  // only ever happens from `setQuery`/`setMode`, which only the search
-  // tab's own input and mode toggle call (`DetailTabs` doesn't render them
-  // outside `active === "search"`) -- so switching to e.g. "nodes" can no
-  // longer leak a `mode=keyword` into the URL the way the old effect did on
-  // every mount.
+  // What this does and does NOT keep out of other tabs' URLs (round-4
+  // verifier finding: this comment used to claim more). The write only
+  // ever happens from `setQuery`/`setMode`, which only the search tab's own
+  // input and mode toggle call (`DetailTabs` doesn't render them outside
+  // `active === "search"`) -- so a session that never touches search never
+  // gets a `mode=keyword` in e.g. the "nodes" tab's URL, the leak the old
+  // mount-time effect caused.
+  //
+  // Once search HAS been touched, `q`/`mode` stay in the route and switching
+  // to another tab carries them (`#/explore?tab=nodes&q=abc&mode=keyword`).
+  // Kept on purpose: this hook stays mounted on every tab and keeps holding
+  // the query, so the URL is telling the truth about the view's state, the
+  // same way `peer`/`session`/`node` ride along across tabs
+  // (`formatRoute`'s "restore the whole position" rule). Dropping them from
+  // non-search tabs would make Back onto that tab's history entry clear the
+  // box (the routed-sync effect sees `q: null`), and a reload there would
+  // lose the query -- the PR #110 follow-up #2 bug again, one tab over.
   const search = useKnowledgeSearch(bank, searchRouteState({ q: searchQuery, mode: searchMode }), onSearchChange);
 
   useEffect(() => {

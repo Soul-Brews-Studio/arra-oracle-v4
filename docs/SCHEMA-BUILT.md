@@ -345,6 +345,14 @@ surfaces, with screenshots in `docs/overnight/UI-PROOF.md`:
 - traces;
 - chat with citations.
 
+*Re-measured 2026-09-27 (ui-polish fix round, round 4).* `git ls-tree -r HEAD app/ui/v2/src` on
+the round-4 base (`392d82b`, after the ui-cite merge) gives 142 files / 114 non-test; this round
+adds three (`explore/ExploreView.writeBack.test.tsx`, and the test-only helpers
+`testing/installFakeDom.ts` and `testing/findFakeElement.ts` that a `.test.` name scan counts as
+non-test) and renames `state/routeViews.ts` to `state/isRouteView.ts` (net 0): **145 files / 116
+non-test**. None of the three calls a knowledge method, so the called/absent split below is
+unchanged by this round.
+
 *Re-measured 2026-09-27 (ui-polish fix round, round 3b).* The round-3 paragraph below still said
 "120 files / 101 non-test" and "the 7 files this round ... added"; an independent verifier
 re-ran the same scan on that same commit and got 121/101, and "+5 files" net (`git ls-files`/`fd`

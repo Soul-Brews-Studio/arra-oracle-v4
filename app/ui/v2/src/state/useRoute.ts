@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { formatRoute } from "./formatRoute";
 import { parseRoute } from "./parseRoute";
-import { isRouteView } from "./routeViews";
+import { isRouteView } from "./isRouteView";
 
 /** Where you are, kept in the URL hash so a reload and the back button both
  *  work.

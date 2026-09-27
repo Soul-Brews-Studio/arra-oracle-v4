@@ -1,5 +1,5 @@
 import type { Route } from "./useRoute";
-import { isRouteView } from "./routeViews";
+import { isRouteView } from "./isRouteView";
 
 /** Reads a `#/view?query` hash into a `Route` -- the READ half of the
  *  `useRoute` <-> URL mapping (see that file's header comment for why it is
