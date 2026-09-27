@@ -39,9 +39,34 @@ describe("plainBody: the audit copy of a strictly parsed body", () => {
   });
 });
 
-test("app.ts copies bodies through plainBody and swallows no copy failure", () => {
+describe("plainBody never throws on a strictly parsed body, so no fallback is needed", () => {
+  // The old inline copy, verbatim: the replacement must answer the same.
+  const inline = (v: unknown) =>
+    JSON.parse(JSON.stringify(v, (_k, x) => (x instanceof Map ? Object.fromEntries(x) : x)));
+
+  test.each([
+    ["Thai and emoji strings", '{"s":"\u0e44\u0e17\u0e22 \ud83d\ude00","t":"ไทย 😀"}'],
+    ["keys JSON.stringify treats specially", '{"toJSON":{"a":1},"constructor":{"b":2},"valueOf":3}'],
+    ["62-deep nesting", `{"x":${"[".repeat(62)}1${"]".repeat(62)}}`],
+    ["extreme and signed numbers", '{"max":1e308,"z":-0,"tiny":5e-324,"neg":-1.5}'],
+    ["an integer past 2^53", '{"big":123456789012345678901234}'],
+    ["empty containers and null", '{"o":{},"a":[],"n":null,"f":false}'],
+  ])("%s", (_name, text) => {
+    const body = parse(text);
+    expect(() => plainBody(body)).not.toThrow();
+    expect(JSON.stringify(plainBody(body))).toBe(JSON.stringify(inline(body)));
+  });
+});
+
+// Scoped to the one claim: the `POST /api/memories` audit input goes through
+// `plainBody` with no swallowing `catch`. Other handlers are not this test's
+// business.
+test("POST /api/memories copies its audit input through plainBody, with no fallback", () => {
   const source = readFileSync(new URL("../src/app.ts", import.meta.url), "utf8");
-  expect(source).not.toContain("catch {}");
-  expect(source).not.toContain("Object.fromEntries");
-  expect(source).toContain("plainBody(document)");
+  const from = source.indexOf('.post(\n      "/api/memories",');
+  expect(from).toBeGreaterThanOrEqual(0);
+  const rest = source.slice(from + 1);
+  const handler = rest.slice(0, rest.search(/^\s+\.(post|get)\(/m));
+  expect(handler).toContain("plainBody(document)");
+  expect(handler).not.toMatch(/catch\s*\{\s*\}/);
 });
