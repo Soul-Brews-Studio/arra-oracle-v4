@@ -10,11 +10,12 @@ conversions ``table_map.COLUMN_VERDICTS`` documents and nothing else:
   * the messages identity sequence is moved past the imported ids;
   * columns stock Honcho has no slot for are dropped.
 
-A value the Honcho table would reject (an id that is not nanoid21, U+0000 in
-text, content over 65535 chars, a name over 512 chars, a token count outside
-int32) raises ``IncompatibleValueError`` -- this module never rewrites a value
-to make it fit, because a silent rewrite is exactly what a byte-compatibility
-measurement must not contain.
+A value the Honcho table would reject or change (an id that is not nanoid21,
+U+0000 in text, content over 65535 chars, a name over 512 chars, a token
+count outside int32, JSON text that is not JSON or holds a number Python
+reads as non-finite) raises ``IncompatibleValueError`` -- this module never
+rewrites a value to make it fit, because a silent rewrite is exactly what a
+byte-compatibility measurement must not contain.
 
 The output is one transaction, meant for ``psql -v ON_ERROR_STOP=1`` inside
 the disposable database container. Every value is a single-quoted literal
@@ -25,6 +26,7 @@ interpolated unquoted.
 from __future__ import annotations
 
 import json
+import math
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -77,14 +79,32 @@ def _ts(v: ColumnVerdict, value: Any) -> str:
     return _lit(aware.astimezone(timezone.utc).isoformat(timespec="microseconds")) + "::timestamptz"
 
 
+def _finite(text: str) -> float:
+    number = float(text)
+    if not math.isfinite(number):
+        raise ValueError(f"{text} is not a finite number")
+    return number
+
+
+def _no_constant(name: str) -> Any:
+    raise ValueError(f"{name} is not JSON")
+
+
+def _check_json_text(v: ColumnVerdict, text: str) -> None:
+    # Python's json reads 1e400 as inf and accepts NaN/Infinity; jsonb keeps
+    # 1e400 as an exact numeric (it reads back as a different value) and
+    # rejects NaN/Infinity. Fix round, issue #8: refuse both, never rewrite.
+    try:
+        json.loads(text, parse_float=_finite, parse_constant=_no_constant)
+    except ValueError as exc:
+        raise IncompatibleValueError(f"{v.table}.{v.v4_column}: not JSON text ({exc})") from None
+
+
 def _json(v: ColumnVerdict, value: Any) -> str:
     if value is None:
         return "'{}'::jsonb"
     text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
-    try:
-        json.loads(text)
-    except ValueError as exc:
-        raise IncompatibleValueError(f"{v.table}.{v.v4_column}: not JSON text ({exc})") from None
+    _check_json_text(v, text)
     if "\x00" in text or "\\u0000" in text:
         raise IncompatibleValueError(f"{v.table}.{v.v4_column}: jsonb cannot store U+0000")
     return _lit(text) + "::jsonb"

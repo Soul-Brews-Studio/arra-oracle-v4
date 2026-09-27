@@ -111,9 +111,10 @@ _ID21 = (
     "(context-ingestion-v1 registerPeer/registerSession), so every contract-valid value passes unchanged."
 )
 _WS_ID = (
-    "Honcho CHECK length(id) = 21 AND id ~ '^[A-Za-z0-9_-]+$'; v4 does NOT constrain workspaces.id "
-    "(its own dev seed `ws_default_devseed`, 18 chars, is rejected). Passes unchanged only when the value is "
-    "already nanoid21; otherwise it needs an id map before the dump. table_sql refuses rather than rewrites."
+    "Exact if nanoid21, otherwise incompatible. Honcho CHECK length(id) = 21 AND id ~ '^[A-Za-z0-9_-]+$'; "
+    "v4 does NOT constrain workspaces.id (its own dev seed `ws_default_devseed`, 18 chars, is rejected). A "
+    "nanoid21 value passes unchanged (measured: the bank's does); any other value has no conversion that keeps "
+    "it -- an id map changes it -- so table_sql refuses rather than rewrites."
 )
 _NAME = "text NOT NULL. Honcho CHECK length(name) <= 512 chars; v4 names are <= 256 UTF-8 bytes. The REST-only pattern ^[a-zA-Z0-9_-]+$ is NOT a table constraint."
 _DROP = "no column in stock Honcho; a plain INSERT naming it fails ('column ... does not exist'). Dropped from the dump."
@@ -121,7 +122,7 @@ _DROP_P = "[P] source-identity addition (DESIGN.md §5). " + _DROP
 _V4_ONLY = "+v4 addition. " + _DROP
 
 COLUMN_VERDICTS: tuple[ColumnVerdict, ...] = (
-    ColumnVerdict("workspaces", "id", "id", "convertible", "id", _WS_ID),
+    ColumnVerdict("workspaces", "id", "id", "incompatible", "id", _WS_ID),
     ColumnVerdict("workspaces", "name", "name", "exact", "text", _NAME + " UNIQUE on both sides."),
     ColumnVerdict("workspaces", "created_at", "created_at", "convertible", "ts", _TS),
     ColumnVerdict("workspaces", "h_metadata", "metadata", "convertible", "json", _META),

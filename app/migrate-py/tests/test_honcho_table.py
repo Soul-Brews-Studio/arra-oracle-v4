@@ -21,11 +21,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from arra_migrate.honcho_roundtrip.dump import dump_tier1
@@ -35,6 +37,7 @@ from arra_migrate.honcho_roundtrip.table_map import (
     EXPECTED_OUTCOMES,
     HONCHO_V3_2_0_COLUMNS,
     TIER1_TABLES,
+    VERDICT_INDEX,
 )
 from arra_migrate.honcho_roundtrip.table_measure import measure_table_round_trip, read_rows_sql
 from arra_migrate.honcho_roundtrip.table_sql import IncompatibleValueError, bundle_to_honcho_sql
@@ -85,6 +88,64 @@ class ColumnMapCoversBothSchemasTests(unittest.TestCase):
         mapped = {(v.table, v.v4_column) for v in COLUMN_VERDICTS if v.v4_column is not None}
         self.assertEqual(set(EXPECTED_OUTCOMES), mapped)
 
+    def test_convertible_means_table_sql_applies_a_conversion(self) -> None:
+        # Fix round: workspaces.id was "convertible" while table_sql refuses
+        # it -- no id map exists. Each verdict must name what table_sql does.
+        converts = {"ts", "json", "int32", "identity"}
+        for v in COLUMN_VERDICTS:
+            label = f"{v.table}.{v.v4_column}"
+            if v.verdict == "convertible":
+                self.assertTrue(v.kind in converts or v.v4_column != v.honcho_column, label)
+            elif v.verdict == "exact":
+                self.assertEqual((v.v4_column, v.kind in converts), (v.honcho_column, False), label)
+        (ws_id,) = [v for v in COLUMN_VERDICTS if (v.table, v.v4_column) == ("workspaces", "id")]
+        self.assertEqual(ws_id.verdict, "incompatible")
+        self.assertTrue(ws_id.note.startswith("Exact if nanoid21, otherwise incompatible."))
+
+
+REPO = Path(__file__).resolve().parents[3]
+
+
+def _doc_rows(text: str) -> dict[tuple[str, str], tuple[str, str, str]]:
+    rows: dict[tuple[str, str], tuple[str, str, str]] = {}
+    table = ""
+    for line in text.splitlines():
+        if line.startswith("### "):
+            table = line[4:].strip()
+        elif table in TIER1_TABLES and line.startswith("| `"):
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            rows[(table, cells[0].split("`")[1])] = (cells[2], cells[4], cells[5])
+    return rows
+
+
+class DiffDocMatchesTheMapTests(unittest.TestCase):
+    """HONCHO-TABLE-DIFF.md and R15 are what other agents quote. Fix round:
+    they said 11 lost columns (10) and 13 timestamp columns (6)."""
+
+    def setUp(self) -> None:
+        self.doc = (REPO / "docs" / "overnight" / "HONCHO-TABLE-DIFF.md").read_text(encoding="utf-8")
+        self.decisions = (REPO / "docs" / "overnight" / "DECISIONS.md").read_text(encoding="utf-8")
+        self.count = {kind: sum(1 for v in COLUMN_VERDICTS if v.kind == kind and v.v4_column) for kind in ("drop", "ts", "json")}
+        self.count["ts"] -= sum(1 for v in COLUMN_VERDICTS if v.kind == "ts" and v.honcho_column is None)
+
+    def test_every_per_column_row_carries_the_map_verdict_and_measured_outcome(self) -> None:
+        rows = _doc_rows(self.doc)
+        self.assertEqual(set(rows), set(VERDICT_INDEX))
+        for key, (verdict, rest, table) in rows.items():
+            self.assertEqual(verdict, VERDICT_INDEX[key].verdict, key)
+            self.assertEqual({"rest": rest, "table": table}, EXPECTED_OUTCOMES[key], key)
+
+    def test_headline_counts_are_the_map_counts(self) -> None:
+        self.assertEqual(self.count, {"drop": 10, "ts": 6, "json": 13})
+        lost = re.findall(r"\b(\d+)\s+v4\s+columns\s+have\s+no\s+Honcho\s+column", self.doc)
+        self.assertGreaterEqual(len(lost), 2, "the conclusion and the by-field summary both state it")
+        self.assertEqual({int(n) for n in lost}, {self.count["drop"]})
+        self.assertEqual({int(n) for n in re.findall(r"\b(\d+)\s+timestamp\s+columns", self.doc)}, {self.count["ts"]})
+        self.assertEqual({int(n) for n in re.findall(r"\b(\d+)\s+JSON\s+columns", self.doc)}, {self.count["json"]})
+        r15 = self.decisions.split("## R15", 1)[1].split("\n## ", 1)[0]
+        self.assertEqual({int(n) for n in re.findall(r"\b(\d+)\s+v4-only\s+columns", r15)}, {self.count["drop"]})
+        self.assertNotRegex(self.doc + r15, r"\b11\s+(?:v4|incompatible)")
+
 
 class Target19BankTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -123,8 +184,18 @@ class BundleToHonchoSqlTests(unittest.TestCase):
         self.assertNotIn("NULL::jsonb", sql)
 
     def test_naive_v4_timestamp_is_written_as_an_explicit_utc_instant(self) -> None:
+        # dump_tier1 already returns UTC-aware values, so feed the naive
+        # timestamp[us] value v4 stores directly (fix round: the old test never did).
+        self.bundle.workspaces[0]["created_at"] = datetime(2026, 9, 26, 21, 0, 0, 250001)
+        self.assertIsNone(self.bundle.workspaces[0]["created_at"].tzinfo)
         sql = bundle_to_honcho_sql(self.bundle)
-        self.assertIn("'2026-09-26T21:00:00.250000+00:00'::timestamptz", sql)
+        self.assertIn("'2026-09-26T21:00:00.250001+00:00'::timestamptz", sql)
+
+    def test_an_aware_timestamp_in_another_zone_is_written_as_the_same_utc_instant(self) -> None:
+        bangkok = timezone(timedelta(hours=7))
+        self.bundle.workspaces[0]["created_at"] = datetime(2026, 9, 27, 4, 0, 0, 7, tzinfo=bangkok)
+        sql = bundle_to_honcho_sql(self.bundle)
+        self.assertIn("'2026-09-26T21:00:00.000007+00:00'::timestamptz", sql)
 
     def test_quotes_are_escaped_not_interpolated(self) -> None:
         self.bundle.messages[0]["content"] = "it's'); DROP TABLE messages; --"
@@ -149,6 +220,36 @@ class BundleToHonchoSqlTests(unittest.TestCase):
         with self.assertRaises(IncompatibleValueError) as cm:
             bundle_to_honcho_sql(self.bundle)
         self.assertIn("token_count", str(cm.exception))
+
+    def test_refuses_a_name_over_honcho_512_char_check(self) -> None:
+        self.bundle.sessions[0]["name"] = "s" * 512
+        for m in self.bundle.messages + self.bundle.session_peers:
+            if m["session_name"] == "session-one":
+                m["session_name"] = "s" * 512
+        bundle_to_honcho_sql(self.bundle)  # 512 is inside the CHECK
+        self.bundle.peers[0]["name"] = "p" * 513
+        with self.assertRaises(IncompatibleValueError) as cm:
+            bundle_to_honcho_sql(self.bundle)
+        self.assertIn("peers.name: 513 chars", str(cm.exception))
+
+    def test_refuses_json_text_that_is_not_json(self) -> None:
+        self.bundle.peers[0]["configuration"] = '{"observe_me": true'
+        with self.assertRaises(IncompatibleValueError) as cm:
+            bundle_to_honcho_sql(self.bundle)
+        self.assertIn("peers.configuration: not JSON text", str(cm.exception))
+
+    def test_refuses_a_json_number_python_reads_as_non_finite(self) -> None:
+        # Python's json reads 1e400 as inf and accepts NaN/Infinity; jsonb
+        # keeps 1e400 as an exact numeric (read back: a 401-digit integer --
+        # measured live by the verifier) and rejects NaN/Infinity. Neither is
+        # a value that survives, so the generator refuses them.
+        for text in ('{"g": 1e400}', '{"g": -1e400}', '{"g": NaN}', '{"g": Infinity}', "[-Infinity]"):
+            self.bundle.messages[0]["h_metadata"] = text
+            with self.assertRaises(IncompatibleValueError, msg=text) as cm:
+                bundle_to_honcho_sql(self.bundle)
+            self.assertIn("messages.h_metadata", str(cm.exception))
+        self.bundle.messages[0]["h_metadata"] = '{"g": 1e300, "n": 123456789012345678901234567890}'
+        self.assertIn("'{\"g\": 1e300, \"n\": 123456789012345678901234567890}'::jsonb", bundle_to_honcho_sql(self.bundle))
 
     def test_refuses_content_over_honcho_65535_char_check(self) -> None:
         self.bundle.messages[0]["content"] = "x" * 65536

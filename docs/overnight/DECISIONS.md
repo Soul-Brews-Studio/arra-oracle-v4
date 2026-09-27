@@ -224,13 +224,33 @@ branch, so it reverts cleanly.
     - `token_count` narrowed from int64 to int32;
     - `setval` on the messages identity.
   - **Incompatible**:
-    - 11 v4-only columns are lost;
+    - 10 v4-only columns are lost *(corrected in the fix round below; this
+      line first said 11)*;
     - `workspaces.id` loads only if it is already nanoid21;
     - `messages.id` collides on `pk_messages` with a second bank or any
       non-empty Honcho (measured).
   - Evidence and the per-column diff: `docs/overnight/HONCHO-TABLE-DIFF.md`.
   - `bash app/just/honcho-live.sh` now runs both legs (table first), then tears
     everything down.
+- **Update 2026-09-27 (table level, fix round)**: an independent verifier refuted
+  the update above. The verdict still stands, measured, but it is narrower than
+  its headline said. "Byte-compatible" is **FALSE as stated**. It is **TRUE WITH
+  CONVERSIONS only for one bank imported into an EMPTY stock Honcho, with a
+  nanoid21 workspace id, and with 10 v4-only columns lost**. Fixed:
+  - the comparator is now shown to fail: `tests/test_honcho_table_measure.py`
+    makes one corruption per comparison on each read path and asserts it is
+    reported. Removing any one of six comparisons fails a test;
+  - the counts: 10 lost columns (not 11), and 6 timestamp columns survive by
+    conversion (not 13). A test now ties the doc's headline counts and
+    per-column rows to `table_map`;
+  - `workspaces.id` is now incompatible, not convertible ("exact if nanoid21,
+    otherwise incompatible"), because the generator refuses rather than converts;
+  - the REST leg keeps `role`, `in_reply_to`, `read` and `read_at` through the
+    SPEC §15.2 invariant 5 `metadata._v4` fold, and the table leg loses them.
+    The doc now says so;
+  - the generator also refuses JSON numbers that Python reads as non-finite.
+  Live re-run: table leg 1 OK, REST leg 1 OK, and teardown left 0 containers
+  and no clone.
 
 ## R16 · #7 recall measurement: harness now, judgments from Nat
 
