@@ -7,7 +7,7 @@
 // Importing this module must not read real configuration, open the dataset,
 // contact a model or listen; only `import.meta.main` does startup work.
 
-import { createApp } from "./app";
+import { createApp } from "./app.createApp";
 import { configureKnowledgeAccess, createMcpAdapter } from "./mcp";
 import {
   checkChatConfig,
@@ -20,7 +20,7 @@ import {
   readConfig,
   runStartupIndexWork,
 } from "./composition";
-import { loadPolicy } from "./auth/loader";
+import { loadPolicy } from "./auth/loader.loadPolicy";
 
 /** Build a fully wired app from explicit configuration. */
 export async function buildApp(config: { policyPath: string; origin: string; assets?: string; v3Compat?: boolean }) {

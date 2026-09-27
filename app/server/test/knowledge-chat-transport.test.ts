@@ -16,11 +16,11 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createApp } from "../src/app";
+import { createApp } from "../src/app.createApp";
 import type { KnowledgeAccess } from "../src/knowledge/transport";
 import type { KnowledgeBundle } from "../src/knowledge/registry";
 import { parseAnswerChat, parseGetContext } from "../src/publication/chat";
-import type { OperationService } from "../src/auth/service";
+import type { OperationService } from "../src/auth/service.createOperationService";
 import type { createMcpAdapter } from "../src/mcp";
 
 const ORIGIN = "http://127.0.0.1:3939";
@@ -89,7 +89,7 @@ const fakeBundle: KnowledgeBundle = {
         excluded: [],
         excluded_omitted: 0,
         items_used: [CONTEXT_ITEM.public_id],
-      };
+      } as never;
     },
     async getChatSettings() {
       return { model: null };

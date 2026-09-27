@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import type { RelicAdapterConfig } from "./relic.types";
-import { failRelic } from "./relic.errors";
+import { failRelic } from "./relic.failRelic";
 
 /**
  * The ONLY subcommands this adapter will ever invoke. `relic index`,

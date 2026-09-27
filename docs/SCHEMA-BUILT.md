@@ -264,7 +264,7 @@ else as null, flagged in `h_metadata.invalid_fields`. See the R5 amendment in
 `app/docs/contracts/authorization-integration-v1.md`. Per R19, `connections.method`
 is the SPEC §7.2 *auth* method, `"bearer"` for every row today (not the
 transport), and `principal` is the credential id. `mcp_calls` rows come only from
-the MCP path (`auth/service.ts` → `logCall`). The HTTP knowledge route writes no
+the MCP path (`auth/service.createOperationService.ts` → `logCall`). The HTTP knowledge route writes no
 audit row.
 
 ---

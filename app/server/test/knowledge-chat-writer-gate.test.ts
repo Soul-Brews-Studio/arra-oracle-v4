@@ -23,12 +23,12 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createApp } from "../src/app";
+import { createApp } from "../src/app.createApp";
 import { createKnowledgeAccess, type KnowledgeAccess } from "../src/knowledge/transport";
 import { KNOWLEDGE_METHODS, type KnowledgeBundle } from "../src/knowledge/registry";
 import { parseAnswerChat } from "../src/publication/chat";
 import { parseJoinSession } from "../src/publication/context";
-import type { OperationService } from "../src/auth/service";
+import type { OperationService } from "../src/auth/service.createOperationService";
 import type { createMcpAdapter } from "../src/mcp";
 
 const ORIGIN = "http://127.0.0.1:3939";

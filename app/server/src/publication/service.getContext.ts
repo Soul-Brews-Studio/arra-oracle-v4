@@ -1,17 +1,29 @@
 import { type ChatContextItem, type ContextResult, type ExcludedContextItem, MAX_CONTEXT_WIRE_BYTES, MAX_LINKED_SESSIONS, contextItemWireBytes, parseGetContext, projectContextItem } from "./chat";
+import { estimateTokens } from "./chat.estimateTokens";
 import { MESSAGE_FIELDS as MESSAGE_FIELDS_LOCAL, encodeMessageRow } from "./context";
 import { PublicationError, failPublication } from "./errors";
 import { SESSION_LINK_FIELDS, encodeSessionLinkRow } from "./session-link";
 import { quote } from "./storage";
 import { MESSAGES, SESSIONS, SESSION_LINKS } from "./service.constants";
 import { contextOne } from "./service.contextOne";
+import { contextFreshness } from "./service.contextFreshness";
 import { contextScope } from "./service.contextScope";
+import { requirePerspectivePeer } from "./service.requirePerspectivePeer";
+import { selectConclusions } from "./service.selectConclusions";
 import { requireCurrentMembership } from "./service.requireCurrentMembership";
 import { requireWorkspace } from "./service.requireWorkspace";
 import { type DatasetAdapter } from "./service.types";
 
-export async function getContext(reader: DatasetAdapter, requestBytes: Uint8Array): Promise<ContextResult> {
+/**
+ * `requestTimeMs` is the conclusion validity-window `as_of` and the reported
+ * `assembled_at` (D3b, slice 10). The registry passes real request time on
+ * every live call; the `Date.now()` fallback below exists only for in-process
+ * harnesses that call with one argument, the same fallback and reason as
+ * `service.getRecallEligibility.ts`.
+ */
+export async function getContext(reader: DatasetAdapter, requestBytes: Uint8Array, requestTimeMs?: number): Promise<ContextResult> {
 const request = parseGetContext(requestBytes);
+      const asOf = requestTimeMs ?? Date.now();
       await requireWorkspace(reader, request.workspace_name);
       await reader.refresh(SESSIONS);
       const session = await contextOne(
@@ -30,6 +42,11 @@ const request = parseGetContext(requestBytes);
         request.peer_name,
         "/peer_name",
       );
+      // D3b: a named perspective must be a real peer of this workspace. It is
+      // checked AFTER the requester's own membership, so a refused requester
+      // learns nothing about which peer names exist.
+      await requirePerspectivePeer(reader, request.workspace_name, request.observer_peer_name, "/observer_peer_name");
+      await requirePerspectivePeer(reader, request.workspace_name, request.subject_peer_name, "/subject_peer_name");
 
       await reader.refresh(SESSION_LINKS);
       const linkRows = await reader.orderedProjection(
@@ -86,6 +103,44 @@ const request = parseGetContext(requestBytes);
         );
         unauthorizedCount += rows.length;
       }
+
+      // D3b: conclusions go FIRST into the shared wire budget -- they are the
+      // distilled view the perspective asked for. Their SCOPE is the message
+      // scope: the requested session plus its linked chain (and session-less,
+      // workspace-level conclusions). A conclusion from any other session is
+      // not part of this context and raises no flag -- it used to be selected
+      // from every session the requester belonged to while `effective_sessions`
+      // said "main", and a protected one anywhere made every context partial.
+      // Inside the scope the read boundary is the requester's CURRENT
+      // membership, exactly as for messages: an in-chain conclusion or a
+      // source it may not read is withheld with only a coarse flag.
+      // Observer/subject never reach either check.
+      const chain = new Set<string>([request.session_name, ...linkedSessions]);
+      const visibility = new Map<string, boolean>(authorizedSessions.map((name) => [name, true]));
+      for (const name of unauthorizedSessions) visibility.set(name, false);
+      const canSeeSession = async (sessionName: string): Promise<boolean> => {
+        const known = visibility.get(sessionName);
+        if (known !== undefined) return known;
+        let allowed = true;
+        try {
+          await requireCurrentMembership(reader, request.workspace_name, sessionName, request.peer_name, "/peer_name");
+        } catch (error) {
+          if (!(error instanceof PublicationError) || error.code !== "invalid_reference") throw error;
+          allowed = false;
+        }
+        visibility.set(sessionName, allowed);
+        return allowed;
+      };
+      const selection = await selectConclusions(reader, {
+        workspace: request.workspace_name,
+        observer: request.observer_peer_name,
+        subject: request.subject_peer_name,
+        asOf,
+        maxItems: request.max_items,
+        byteBudget: MAX_CONTEXT_WIRE_BYTES - 2,
+        inScope: async (sessionName) => chain.has(sessionName),
+        canSeeSession,
+      });
 
       type Candidate = { row: Record<string, unknown>; sessionName: string };
       const candidates: Candidate[] = [];
@@ -145,18 +200,21 @@ const request = parseGetContext(requestBytes);
       if (linksTruncated) recordExcluded({ reason: "budget_exceeded", session_name: null, public_id: null });
 
       const items: ChatContextItem[] = [];
-      let budget = 2; // brackets, matching the rest of this file's convention.
+      let budget = 2 + selection.usedBytes; // brackets, matching the rest of this file's convention.
+      let budgetStopped = linksTruncated;
       for (const candidate of candidates) {
         const encoded = encodeMessageRow(candidate.row);
         const publicId = encoded.public_id as string;
         if (items.length >= request.max_items) {
           recordExcluded({ reason: "budget_exceeded", session_name: candidate.sessionName, public_id: publicId });
+          budgetStopped = true;
           continue;
         }
         const item = projectContextItem(encoded);
         const wireBytes = contextItemWireBytes(item) + 1;
         if (budget + wireBytes > MAX_CONTEXT_WIRE_BYTES) {
           recordExcluded({ reason: "budget_exceeded", session_name: candidate.sessionName, public_id: publicId });
+          budgetStopped = true;
           continue;
         }
         budget += wireBytes;
@@ -165,6 +223,33 @@ const request = parseGetContext(requestBytes);
 
       // #85, overnight ruling R4 (docs/overnight/DECISIONS.md): "full" means
       // COMPLETE -- nothing excluded for any reason, authorization included.
-      const complete = excluded.length === 0 && excludedOmitted === 0;
-      return { items, coverage: complete ? "full" : "partial", excluded, excluded_omitted: excludedOmitted };
+      // D3b: a withheld or budgeted conclusion is an exclusion too.
+      const conclusionsComplete = !selection.incomplete && !selection.truncated;
+      const complete = excluded.length === 0 && excludedOmitted === 0 && conclusionsComplete;
+      return {
+        items,
+        coverage: complete ? "full" : "partial",
+        excluded,
+        excluded_omitted: excludedOmitted,
+        scope: {
+          session_name: request.session_name,
+          effective_sessions: authorizedSessions,
+          observer_peer_name: request.observer_peer_name,
+          subject_peer_name: request.subject_peer_name,
+        },
+        conclusions: selection.conclusions,
+        summary: selection.summary,
+        conclusions_coverage: { complete: conclusionsComplete },
+        budget: {
+          max_items: request.max_items,
+          max_wire_bytes: MAX_CONTEXT_WIRE_BYTES,
+          used_wire_bytes: budget,
+          tokenizer: null,
+          token_count_kind: "estimate",
+          estimate_heuristic: "ceil(utf8_bytes/4)",
+          estimated_tokens: estimateTokens(budget),
+          truncated: budgetStopped || excludedOmitted > 0 || selection.truncated,
+        },
+        freshness: await contextFreshness(reader, asOf),
+      };
 }

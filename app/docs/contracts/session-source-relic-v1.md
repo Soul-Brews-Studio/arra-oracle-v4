@@ -398,3 +398,13 @@ restricting `getContext` chain expansion to `continues`/`forked_from`. Both are 
 `docs/overnight/FOREIGN-VISITOR.md` §4 gives the quotes and the readings. The adapter's shape
 still follows `docs/overnight/DECISIONS.md` R7 (#28): a relic CLI subprocess behind an
 interface, a fake in tests, and the real index never touched.
+
+## Amendment 2026-09-26 (post-merge Nat style: one exported function per file, named after the file (ratchet: app/server/test/one-function-per-file.test.ts))
+
+The path cited above, `relic.errors.ts`, moved. The style-shrink slice
+(`docs/overnight/DECISIONS.md`; ratchet `app/server/test/one-function-per-file.test.ts`
+MISNAMED_ALLOWLIST) renamed it to `relic.failRelic.ts` by a pure `git mv` -- `RelicAdapterError`,
+`RELIC_ADAPTER_ERROR_CODES`, `failRelic` and their behavior are byte-identical; only the
+filename changed, to satisfy the ratchet's "one exported function per file, named after the
+file" rule. This section is not rewritten in place; read `relic.errors.ts` above as
+`relic.failRelic.ts`.

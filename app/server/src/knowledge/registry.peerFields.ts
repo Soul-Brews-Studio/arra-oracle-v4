@@ -36,6 +36,11 @@ export const PEER_FIELDS: Readonly<Record<string, readonly PeerFieldPath[]>> = O
   // requester of chat context
   getContext: [["peer_name"]],
   answerChat: [["peer_name"]],
+  // D3b: the representation is read AS its requester, on listMessages' terms.
+  // Its observer/subject (and getContext's/answerChat's) are perspective
+  // lookups, not acting peers -- the same reason `subject_peer_name` is not
+  // listed for publishRevision below.
+  getRepresentation: [["requester_peer_name"]],
   // the reader whose cursor it is
   getReadCursor: [["peer_name"]],
   advanceReadCursor: [["peer_name"]],

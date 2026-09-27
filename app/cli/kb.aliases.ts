@@ -43,6 +43,12 @@ const need = (options: CliOptions, name: string): string => {
   return value;
 };
 const orNull = (options: CliOptions, name: string): string | null => options[name] ?? null;
+/** D3b: `--observer` / `--about` become the optional perspective keys, sent
+ *  only when given, so a plain `context get` / `chat ask` body is unchanged. */
+const perspective = (options: CliOptions): Json => ({
+  ...(options.observer ? { observer_peer_name: options.observer } : {}),
+  ...(options.about ? { subject_peer_name: options.about } : {}),
+});
 
 export const KB_ALIASES: Readonly<Record<string, KbAlias>> = Object.freeze({
   "peer add": {
@@ -104,23 +110,39 @@ export const KB_ALIASES: Readonly<Record<string, KbAlias>> = Object.freeze({
   },
   "context get": {
     method: "getContext",
-    flags: ["peer", "session", "max-items"],
+    flags: ["peer", "session", "max-items", "observer", "about"],
     build: (options, bank) => ({
       workspace_name: bank,
       peer_name: need(options, "peer"),
       session_name: need(options, "session"),
       max_items: positiveInt(options["max-items"], "max-items", 10),
+      ...perspective(options),
     }),
   },
   "chat ask": {
     method: "answerChat",
-    flags: ["peer", "session", "question", "max-items"],
+    flags: ["peer", "session", "question", "max-items", "observer", "about"],
     build: (options, bank) => ({
       workspace_name: bank,
       peer_name: need(options, "peer"),
       session_name: need(options, "session"),
       question: need(options, "question"),
       max_items: positiveInt(options["max-items"], "max-items", 10),
+      ...perspective(options),
+    }),
+  },
+  // D3b (DESIGN.md §12: `oracle peer context --observer neo --about nat`).
+  // `--requester` is optional server-side (#87 / R3): omitted, the server
+  // answers only the audit:read operator view.
+  "peer context": {
+    method: "getRepresentation",
+    flags: ["observer", "about", "requester", "max-items"],
+    build: (options, bank) => ({
+      workspace_name: bank,
+      observer_peer_name: need(options, "observer"),
+      subject_peer_name: need(options, "about"),
+      max_items: positiveInt(options["max-items"], "max-items", 10),
+      ...(options.requester ? { requester_peer_name: options.requester } : {}),
     }),
   },
 });

@@ -48,6 +48,11 @@ export const MAX_LINKED_SESSIONS = 8;
 
 const GET_CONTEXT_KEYS = ["workspace_name", "peer_name", "session_name", "max_items"] as const;
 const ANSWER_CHAT_KEYS = ["workspace_name", "peer_name", "session_name", "question", "max_items"] as const;
+/** D3b (DESIGN.md §12): the perspective keys. Admitted only when present, so
+ *  every existing request is unchanged; omitted and null both mean "any". They
+ *  narrow which conclusions are SELECTED and never who may read: the requester
+ *  is still `peer_name`, under exactly the same membership rule. */
+const PERSPECTIVE_KEYS = ["observer_peer_name", "subject_peer_name"] as const;
 const GET_CHAT_SETTINGS_KEYS = ["workspace_name"] as const;
 
 export type GetContextRequest = {
@@ -55,6 +60,8 @@ export type GetContextRequest = {
   peer_name: string;
   session_name: string;
   max_items: number;
+  observer_peer_name: string | null;
+  subject_peer_name: string | null;
 };
 
 export type AnswerChatRequest = GetContextRequest & { question: string };
@@ -94,24 +101,37 @@ function question(value: JcsValue | undefined, tokens: Tokens): string {
   return requireBoundedText(requireNonemptyString(value ?? null, tokens), MAX_QUESTION_BYTES, tokens);
 }
 
+/** An optional perspective name: absent or null is "any", else the same
+ *  name grammar as every other peer name here. */
+function perspective(o: JcsObject, key: (typeof PERSPECTIVE_KEYS)[number]): string | null {
+  const value = o.get(key);
+  return value === undefined || value === null ? null : name(value, [key]);
+}
+
 export function parseGetContext(bytes: Uint8Array): GetContextRequest {
-  const o = requireClosedObject(parseRequest(bytes), GET_CONTEXT_KEYS, []);
+  const raw = parseRequest(bytes);
+  const o = requireClosedObject(raw, [...GET_CONTEXT_KEYS, ...PERSPECTIVE_KEYS.filter((key) => raw.has(key))], []);
   return {
     workspace_name: name(o.get("workspace_name"), ["workspace_name"]),
     peer_name: name(o.get("peer_name"), ["peer_name"]),
     session_name: name(o.get("session_name"), ["session_name"]),
     max_items: maxItems(o.get("max_items"), ["max_items"]),
+    observer_peer_name: perspective(o, "observer_peer_name"),
+    subject_peer_name: perspective(o, "subject_peer_name"),
   };
 }
 
 export function parseAnswerChat(bytes: Uint8Array): AnswerChatRequest {
-  const o = requireClosedObject(parseRequest(bytes), ANSWER_CHAT_KEYS, []);
+  const raw = parseRequest(bytes);
+  const o = requireClosedObject(raw, [...ANSWER_CHAT_KEYS, ...PERSPECTIVE_KEYS.filter((key) => raw.has(key))], []);
   return {
     workspace_name: name(o.get("workspace_name"), ["workspace_name"]),
     peer_name: name(o.get("peer_name"), ["peer_name"]),
     session_name: name(o.get("session_name"), ["session_name"]),
     question: question(o.get("question"), ["question"]),
     max_items: maxItems(o.get("max_items"), ["max_items"]),
+    observer_peer_name: perspective(o, "observer_peer_name"),
+    subject_peer_name: perspective(o, "subject_peer_name"),
   };
 }
 
@@ -184,8 +204,83 @@ export type UnauthorizedContextExclusion = { reason: "unauthorized"; count: numb
 
 export type ExcludedContextItem = BudgetExcludedContextItem | UnauthorizedContextExclusion;
 
+/**
+ * One source handle of a conclusion revision (D3b), read from the revision's
+ * own `link_snapshot_json` -- written WITH the revision, never behind a
+ * separate derivation. A handle into a session the requester may not read is
+ * dropped, and only a coarse flag says so: never its id, never a count.
+ */
+export type ConclusionSource = {
+  relation: string;
+  target_kind: string;
+  target: unknown;
+  capture_status: string;
+};
+
+/** One eligible CURRENT `conclusion` revision (R10: a type term, not a
+ *  table), with the ids a citation needs and the perspective it was recorded
+ *  from. `text` is the revision body. */
+export type ConclusionItem = {
+  node_id: string;
+  revision_id: string;
+  revision_no: string;
+  title: string;
+  text: string;
+  author_peer_name: string | null;
+  observer_peer_name: string | null;
+  subject_peer_name: string | null;
+  session_name: string | null;
+  created_at: string;
+  sources: ConclusionSource[];
+  sources_incomplete: boolean;
+};
+
+/**
+ * Slice 10 (DESIGN.md §12 "budget"). There is NO tokenizer in this server, so
+ * `tokenizer` is null and `token_count_kind` always says "estimate", naming
+ * the heuristic: never an exact token claim. The enforced limits are still
+ * the item count and the wire-byte budget.
+ */
+export type ContextBudget = {
+  max_items: number;
+  max_wire_bytes: number;
+  used_wire_bytes: number;
+  tokenizer: null;
+  token_count_kind: "estimate";
+  estimate_heuristic: "ceil(utf8_bytes/4)";
+  estimated_tokens: number;
+  /** Any count, byte or scan bound stopped an eligible candidate. */
+  truncated: boolean;
+};
+
+/**
+ * Slice 10 (DESIGN.md §12 "freshness"). Assembly time is not an atomic
+ * snapshot: the watermarks are the table versions this read observed.
+ * Context reads no search index, so its watermark is "unknown", not a zero.
+ */
+export type ContextFreshness = {
+  assembled_at: string;
+  source_watermarks: Record<string, number>;
+  index_watermark: "unknown";
+};
+
 export type ContextResult = {
   items: ChatContextItem[];
+  /** D3b: requested and effective scope, and the perspective selected by. */
+  scope: {
+    session_name: string;
+    effective_sessions: string[];
+    observer_peer_name: string | null;
+    subject_peer_name: string | null;
+  };
+  conclusions: ConclusionItem[];
+  /** A stored `summary` revision in scope, else null -- never made up per read. */
+  summary: ConclusionItem | null;
+  /** Coarse: false when any eligible conclusion or source was withheld
+   *  (protected, bounded or budgeted). Never a count, never an id. */
+  conclusions_coverage: { complete: boolean };
+  budget: ContextBudget;
+  freshness: ContextFreshness;
   /** `"full"` ONLY when nothing was excluded for any reason (#85, R4):
    *  `excluded` is empty and `excluded_omitted` is 0. Any unauthorized
    *  exclusion, any budget/count stop and the linked-session bound all make
@@ -213,14 +308,22 @@ export function contextItemWireBytes(item: ChatContextItem): number {
  * injected model call (service.ts), but building it is not itself a model
  * call, and this function never invokes one.
  */
-export function renderContextText(items: ChatContextItem[]): string {
-  return items.map((item) => `[${item.session_name}] ${item.peer_name}: ${item.content}`).join("\n");
+export function renderContextText(items: ChatContextItem[], conclusions: ConclusionItem[] = []): string {
+  const messages = items.map((item) => `[${item.session_name}] ${item.peer_name}: ${item.content}`);
+  // D3b: conclusions render with their revision id, so a model can cite it.
+  const views = conclusions.map(
+    (c) => `[conclusion ${c.revision_id}] ${c.observer_peer_name ?? "any"} -> ${c.subject_peer_name ?? "any"}: ${c.text}`,
+  );
+  return [...views, ...messages].join("\n");
 }
 
 export type ChatModelInput = {
   question: string;
   context_text: string;
   items: ChatContextItem[];
+  /** D3b. `answerChat` always sends it; optional so a model adapter that
+   *  predates conclusions still type-checks and simply ignores them. */
+  conclusions?: ConclusionItem[];
 };
 
 /** The chat model call, injected exactly like `Clock` is injected elsewhere
@@ -248,6 +351,11 @@ export type AnswerChatResult = {
   excluded: ExcludedContextItem[];
   excluded_omitted: number;
   items_used: string[];
+  /** D3b: node/revision citations, beside the message ids above. */
+  conclusions_used: { node_id: string; revision_id: string }[];
+  conclusions_coverage: ContextResult["conclusions_coverage"];
+  budget: ContextBudget;
+  freshness: ContextFreshness;
 };
 
 /**

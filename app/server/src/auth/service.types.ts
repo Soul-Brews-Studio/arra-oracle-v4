@@ -4,7 +4,7 @@
  */
 
 import type { RequestAuthority } from "../knowledge/registry";
-import type { AuthFailure } from "./service";
+import type { AuthFailure } from "./service.createOperationService";
 
 /**
  * A keyword search answer: the rows, and how they were found (R14). `ngram` is

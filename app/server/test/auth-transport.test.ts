@@ -87,8 +87,8 @@ beforeAll(async () => {
   probe.stop(true);
   const origin = `http://127.0.0.1:${port}`;
   process.env.ARRA_ORIGIN = origin;
-  const { createOperationService } = await import("../src/auth/service");
-  const { createApp } = await import("../src/app");
+  const { createOperationService } = await import("../src/auth/service.createOperationService");
+  const { createApp } = await import("../src/app.createApp");
   const { createMcpAdapter } = await import("../src/mcp");
   const service = createOperationService(
     { policyPath: scratch.policyPath },

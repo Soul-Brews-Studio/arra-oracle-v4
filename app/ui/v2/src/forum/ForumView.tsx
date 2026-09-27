@@ -4,7 +4,7 @@ import { EmptyState } from "../components/EmptyState";
 import { ErrorNote } from "../components/ErrorNote";
 import { ReplyComposer } from "../components/ReplyComposer";
 import { ThreadTree } from "../components/ThreadTree";
-import { buildThreads } from "./threads";
+import { buildThreads } from "./threads.buildThreads";
 
 /** Composes the forum pieces over one session's messages. Presentational
  *  plus one bit of local UI state -- which message is being replied to --
