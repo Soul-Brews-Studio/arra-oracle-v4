@@ -6,7 +6,7 @@
  * instead of spread across a dozen components, which is the only reason a POC
  * this small can stay readable.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type Bank,
   type ChatAnswer,
@@ -89,6 +89,19 @@ export function useMemory() {
   // write lands, not the session they were clicked in (ui-stale round 3).
   const messagesRead = useKeyedRead({ b, session }, messagesKey);
   const contextRead = useKeyedRead({ b, peer, session }, contextKey);
+  // `ask`'s answer is exactly as selection-scoped as `getContext` (peer +
+  // session): a separate ticket, so asking does not perturb `contextRead`'s
+  // own loading flag or land()-clears-pending bookkeeping.
+  const askRead = useKeyedRead({ b, peer, session }, contextKey);
+  // Freshness for ACTIONS below (send/join's error, verify's roster write):
+  // not a "read" in useKeyedRead's sense, but the same idea -- a result is
+  // applied only while the selection it was issued for is still current.
+  // `workspace` alone (not the fuller `b`/session keys) because verify is a
+  // roster-scoped action: the roster itself is swapped out wholesale on a
+  // workspace switch (the effect below), so that is the boundary a stale
+  // verdict must respect.
+  const workspaceRef = useRef(workspace);
+  workspaceRef.current = workspace;
 
   // The roster is per-workspace: names in one workspace mean nothing in
   // another, and carrying them across would show rows that cannot exist.
@@ -107,12 +120,18 @@ export function useMemory() {
    *  genuinely absent, which is exactly what the `missing` state records. */
   const verify = useCallback(
     async (kind: "peers" | "sessions", name: string) => {
+      const issuedInWorkspace = workspace;
       const result = kind === "peers" ? await getPeer(b, name) : await getSession(b, name);
+      // Policy: DROP. A verdict answers "does this name exist in THAT
+      // workspace's registry" -- applying it after a workspace switch would
+      // write a verdict from one registry onto a same-named bookmark in
+      // another, which is a name collision, not a real answer about it.
+      if (workspaceRef.current !== issuedInWorkspace) return;
       const code = asError(result.body)?.code;
       const verdict = result.ok ? "live" : code === "invalid_reference" ? "missing" : "unknown";
       setRoster((r) => ({ ...r, [kind]: setState(r[kind], name, verdict) }));
     },
-    [b],
+    [b, workspace],
   );
 
   const verifyAll = useCallback(async () => {
@@ -201,29 +220,45 @@ export function useMemory() {
     // whole right-hand column, not a convenience.
     join: async (sessionName: string) => {
       if (peer === null) return;
+      // `messageError` shows in the Transcript pane for whatever session is
+      // ON SCREEN -- read fresh at land time, not the `session` this closure
+      // was created for.
+      const issuedKey = messagesKey({ b, session });
       setBusy(true);
       const result = await joinSession(b, sessionName, peer);
       setBusy(false);
-      if (!result.ok) setMessageError(describe(result));
+      // Policy: DROP. A join failure for a session already left has nothing
+      // to attribute to on today's single-slot error line.
+      if (!result.ok && messagesRead.now.current.key === issuedKey) setMessageError(describe(result));
       await refreshContext();
     },
     send: async (peerName: string, role: string | null, content: string, inReplyTo: string | null = null) => {
       if (session === null) return;
+      const issuedKey = messagesKey({ b, session });
       setSending(true);
       const result = await appendMessage(b, session, peerName, content, role, inReplyTo);
       setSending(false);
       if (!result.ok) {
-        setMessageError(describe(result));
+        // Policy: DROP. Painting "your message failed" under a session the
+        // user has since switched away from would misattribute a write that
+        // happened -- or didn't -- to the wrong context (ui-actions #33).
+        if (messagesRead.now.current.key === issuedKey) setMessageError(describe(result));
         return;
       }
       await refreshMessages();
     },
+    // Policy: DROP. The dialectic pane has one answer slot, keyed on
+    // (peer, session) exactly like `getContext`; showing sA's answer under
+    // sB is the literal bug this slice exists to close.
     ask: async (question: string, maxItems: number) => {
       if (peer === null || session === null) return;
+      const t = askRead.begin();
       setAsking(true);
       setAskError(null);
       const result = await answerChat(b, peer, session, question, maxItems);
+      const stillCurrent = askRead.land(t);
       setAsking(false);
+      if (!stillCurrent) return; // peer/session moved on since the question was asked
       if (!result.ok) {
         setAnswer(null);
         setAskError(describe(result));
