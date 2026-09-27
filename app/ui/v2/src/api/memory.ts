@@ -159,6 +159,14 @@ export type ErrorEnvelope = { code?: string; pointer?: string; message?: string 
 export function asError(body: unknown): ErrorEnvelope | null {
   if (typeof body !== "object" || body === null) return null;
   const o = body as Record<string, unknown>;
+  // The Host/Origin/bearer gate every transport shares (`auth/http.ts`'s
+  // `ERROR_BODIES`, e.g. `{"error":"unauthenticated"}` / `{"error":"forbidden"}`)
+  // answers BEFORE a request ever reaches an `arra-error/v1` envelope, and its
+  // body is a bare STRING under `error`, not `{code,...}`. Without this branch
+  // that string fell into the object-shape check below, found no `.code`, and
+  // returned null -- so a live 401/403 from THIS gate read as the generic
+  // `HTTP ${status}` fallback in `describe()` instead of its real reason.
+  if (typeof o.error === "string") return { code: o.error };
   const err = (o.error ?? o) as Record<string, unknown>;
   if (typeof err !== "object" || err === null) return null;
   const code = typeof err.code === "string" ? err.code : undefined;
