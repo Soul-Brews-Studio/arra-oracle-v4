@@ -131,6 +131,12 @@ function toPage<T>(result: ApiResult, cursorKey: string): Page<T> {
       error: unsupported ? null : (result.error ?? asError(result.body)?.code ?? `HTTP ${result.status}`),
     };
   }
+  // A 2xx whose body is not an object (`null`, a bare value) is a malformed
+  // answer, not an empty listing: say so rather than throw (ui-reads2 -- the
+  // throw skipped the caller's land() and latched "loading") or show zero.
+  if (result.body === null || typeof result.body !== "object") {
+    return { rows: [], nextCursor: null, total: null, supported: true, error: "malformed listing response (no body)" };
+  }
   const body = result.body as Record<string, unknown>;
   const rows = Array.isArray(body.rows) ? (body.rows as T[]) : [];
   const nextCursor = typeof body[cursorKey] === "string" ? (body[cursorKey] as string) : null;

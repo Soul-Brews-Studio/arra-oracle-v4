@@ -341,3 +341,63 @@ describe("useMemory.verify: a stale verdict from an old TOKEN does not overwrite
     expect(alice?.state).toBe("live");
   });
 });
+
+// ui-reads2 (r3 verifier finding 5): `join`'s messageError guard had no test.
+describe("useMemory.join: a failure is painted only under the session it was issued in", () => {
+  const settle = (method: string) => (method === "getContext" ? { items: [] } : { rows: [] });
+
+  test("join fails for sA after switching to sB: messageError stays clear", async () => {
+    const pending = parkedFetch((b) => String(b.session_name ?? ""));
+    const m = render(() => useMemory(), null);
+    act(() => m.get().setPeer("p1"));
+    act(() => m.get().setSession("sA"));
+    await answerAll(pending, "sA", settle);
+    let joined: Promise<void> = Promise.resolve();
+    act(() => void (joined = m.get().actions.join("sA")));
+    act(() => m.get().setSession("sB"));
+    await answer(pending, "joinSession", "sA", { error: { code: "invalid_reference" } }, 404);
+    await answerAll(pending, "sB", settle);
+    await act(async () => void (await joined));
+    expect(m.get().session).toBe("sB");
+    expect(m.get().messageError).toBe(null);
+  });
+
+  test("control: join fails while sA is still on screen: messageError says why", async () => {
+    const pending = parkedFetch((b) => String(b.session_name ?? ""));
+    const m = render(() => useMemory(), null);
+    act(() => m.get().setPeer("p1"));
+    act(() => m.get().setSession("sA"));
+    await answerAll(pending, "sA", settle);
+    let joined: Promise<void> = Promise.resolve();
+    act(() => void (joined = m.get().actions.join("sA")));
+    await answer(pending, "joinSession", "sA", { error: { code: "invalid_reference" } }, 404);
+    await answerAll(pending, "sA", settle);
+    await act(async () => void (await joined));
+    expect(m.get().messageError).toBe("invalid_reference");
+  });
+});
+
+// ui-reads2 (r3 verifier finding 5): `ask` SENT with its closure's
+// b/peer/session but KEYED its ticket from `askRead.now`. A stale closure
+// (bound while sA was on screen, called once sB is) asked about sA and
+// landed sA's answer under sB. Chosen fix: send with the ticket's values --
+// the selection on screen -- exactly like every read in this hook.
+describe("useMemory.ask: the question is sent for the same selection its ticket is keyed on", () => {
+  test("an ask bound in sA, called after switching to sB, asks about sB and shows sB's answer", async () => {
+    const settle = (method: string) => (method === "getContext" ? { items: [] } : { rows: [] });
+    const pending = parkedFetch((b) => String(b.session_name ?? ""));
+    const m = render(() => useMemory(), null);
+    act(() => m.get().setPeer("p1"));
+    act(() => m.get().setSession("sA"));
+    await answerAll(pending, "sA", settle);
+    const staleAsk = m.get().actions.ask; // bound while sA was on screen
+    act(() => m.get().setSession("sB"));
+    await answerAll(pending, "sB", settle);
+    act(() => void staleAsk("what happened?", 10));
+    const asked = pending.filter((p) => p.method === "answerChat").map((p) => p.key);
+    expect(asked).toEqual(["sB"]);
+    for (const key of asked) await answer(pending, "answerChat", key, { answer: `${key}'s answer`, items_used: [] });
+    expect(m.get().answer?.answer).toBe("sB's answer");
+    expect(m.get().asking).toBe(false);
+  });
+});

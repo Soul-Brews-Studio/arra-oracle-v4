@@ -49,7 +49,7 @@ function useCursorList<T>(scope: string, fetchPage: (after: string | null, inclu
   // from here too, so `refreshAll`'s first-render closure still reads the
   // workspace on screen (ui-stale round 3: it re-read the first one).
   const read = useKeyedRead({ scope, fetchPage }, (v) => v.scope);
-  const { begin, land } = read;
+  const { begin, land, live } = read;
   const [state, setState] = useState<ListState<T>>({
     rows: [],
     total: null,
@@ -66,8 +66,19 @@ function useCursorList<T>(scope: string, fetchPage: (after: string | null, inclu
       const t = begin();
       setState((s) => ({ ...s, error: null }));
       const after = history.current[index] ?? null;
-      const page = await t.value.fetchPage(after, includeTotal);
-      if (!land(t)) return;
+      // land() on EVERY path (ui-reads2): a throw here (a 200 with a null
+      // body made `toPage` throw) skipped it and latched "loading" forever.
+      // A throw is shown as the failure it is, never as an empty page.
+      let page: Page<T>;
+      try {
+        page = await t.value.fetchPage(after, includeTotal);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        page = { rows: [], nextCursor: null, total: null, supported: true, error: `malformed response (${message})` };
+      } finally {
+        land(t);
+      }
+      if (!live(t)) return;
       cursor.current = { pageIndex: index, nextCursor: page.nextCursor };
       setState((s) => ({
         rows: page.rows,
@@ -84,7 +95,7 @@ function useCursorList<T>(scope: string, fetchPage: (after: string | null, inclu
         hasPrev: index > 0,
       }));
     },
-    [begin, land],
+    [begin, land, live],
   );
 
   const refresh = useCallback(() => {

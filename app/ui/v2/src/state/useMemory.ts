@@ -170,6 +170,7 @@ export function useMemory() {
     const t = messagesRead.begin();
     const { b, session } = t.value;
     if (session === null) {
+      messagesRead.land(t); // every begin() lands (ui-reads2)
       setMessages([]);
       return;
     }
@@ -178,8 +179,13 @@ export function useMemory() {
     // whole session whichever peer is selected, and needs audit:read (#87 /
     // R3). A token without it gets 403 here, surfaced by `describe` below;
     // the selected peer's own view is the getContext column.
-    const result = await listMessages(b, session, 50, null);
-    if (!messagesRead.land(t)) return; // a session already left, or a newer read
+    let result;
+    try {
+      result = await listMessages(b, session, 50, null);
+    } finally {
+      messagesRead.land(t);
+    }
+    if (!messagesRead.live(t)) return; // a session already left, or a newer read
     if (!result.ok) {
       setMessages([]);
       setMessageError(describe(result));
@@ -199,12 +205,18 @@ export function useMemory() {
     const t = contextRead.begin();
     const { b, peer, session } = t.value;
     if (peer === null || session === null) {
+      contextRead.land(t); // every begin() lands (ui-reads2)
       setContext(null);
       return;
     }
     setContextError(null);
-    const result = await getContext(b, peer, session, 20);
-    if (!contextRead.land(t)) return;
+    let result;
+    try {
+      result = await getContext(b, peer, session, 20);
+    } finally {
+      contextRead.land(t);
+    }
+    if (!contextRead.live(t)) return;
     if (!result.ok) {
       setContext(null);
       setContextError(describe(result));
@@ -272,13 +284,27 @@ export function useMemory() {
     // Policy: DROP. The dialectic pane has one answer slot, keyed on
     // (peer, session) exactly like `getContext`; showing sA's answer under
     // sB is the literal bug this slice exists to close.
+    //
+    // Sent with the TICKET's values, the selection on screen, never this
+    // closure's (ui-reads2): the ticket was keyed from `now` while the request
+    // used the closure, so an ask bound in sA and called in sB asked about sA
+    // and landed sA's answer under sB. Now what is asked and what the answer
+    // is keyed to are one value, exactly as in refreshContext above.
     ask: async (question: string, maxItems: number) => {
-      if (peer === null || session === null) return;
       const t = askRead.begin(); // also drives the keyed `asking` flag below
+      const { b, peer, session } = t.value;
+      if (peer === null || session === null) {
+        askRead.land(t);
+        return;
+      }
       setAskError(null);
-      const result = await answerChat(b, peer, session, question, maxItems);
-      const stillCurrent = askRead.land(t);
-      if (!stillCurrent) return; // peer/session moved on since the question was asked
+      let result;
+      try {
+        result = await answerChat(b, peer, session, question, maxItems);
+      } finally {
+        askRead.land(t);
+      }
+      if (!askRead.live(t)) return; // peer/session moved on since the question was asked
       if (!result.ok) {
         setAnswer(null);
         setAskError(describe(result));

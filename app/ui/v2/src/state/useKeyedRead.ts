@@ -33,7 +33,14 @@ export type ReadTicket<T> = { key: string | null; value: T; seq: number };
  *     clears it when it finishes, whether or not its result is used. Clearing
  *     only on a live landing latched the flag the other way (wave-8 verifier):
  *     ask in sA, switch to sB, sA's answer is dropped, back on sA -> `loading`
- *     read true forever with nothing in flight. */
+ *     read true forever with nothing in flight.
+ *   - every `begin()` must reach `land()` on EVERY path: an early return
+ *     through `live()` or a throw left the marker behind (ui-reads2: a trace
+ *     lookup dropped mid-flight, a 200 with a null listing body). Callers land
+ *     in a `finally`.
+ *   - "load more" is not a read of this hook: it extends one RESULT, not the
+ *     selection, so it is bound by `useMorePages` (`peek()` is gone -- it
+ *     handed a page the seq of whatever read was in flight, ui-reads2). */
 export function useKeyedRead<T>(value: T, keyOf: (v: T) => string | null) {
   const key = keyOf(value);
   const now = useRef({ key, value });
@@ -47,10 +54,6 @@ export function useKeyedRead<T>(value: T, keyOf: (v: T) => string | null) {
     setPending({ key: ticket.key, seq: ticket.seq });
     return ticket;
   }, []);
-
-  /** The current read's ticket WITHOUT starting a new one -- for a "load
-   *  more" that appends to the page on screen rather than replacing it. */
-  const peek = useCallback((): ReadTicket<T> => ({ ...now.current, seq: seq.current }), []);
 
   /** Is this still the read for what is on screen? */
   const live = useCallback(
@@ -68,5 +71,5 @@ export function useKeyedRead<T>(value: T, keyOf: (v: T) => string | null) {
     [live],
   );
 
-  return { key, now, begin, peek, live, land, loading: key !== null && pending !== null && pending.key === key };
+  return { key, now, begin, live, land, loading: key !== null && pending !== null && pending.key === key };
 }
