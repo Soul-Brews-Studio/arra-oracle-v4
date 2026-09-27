@@ -2,9 +2,9 @@
 
 Read [the current guide](../AGENTS.md) and [full target design](../DESIGN.md). The
 overnight rulings R1–R22 live in [`docs/overnight/DECISIONS.md`](../docs/overnight/DECISIONS.md),
-and their evidence will be in [`docs/overnight/PROOF.md`](../docs/overnight/PROOF.md), which the
-overnight driver writes at the end of the run; it is not yet written on `e00b50b`. Counts
-below were measured on `e00b50b` on 2026-09-27.
+and their evidence is in [`docs/overnight/PROOF.md`](../docs/overnight/PROOF.md) (added in `6aa4ee3`,
+updated after every merge since). Counts below were measured on `e00b50b` on 2026-09-27, except
+the test-file counts, which were re-measured on `ec5c2c5` (2026-09-27, proof sweep).
 
 This is a local prototype with bearer-token auth from a local policy file. It is **not**
 unauthenticated. The 19-table target is built and served, but the default migrator does not
@@ -47,8 +47,8 @@ Python LanceModel registries                 local LanceDB, two roots
 | `just/scripts/run_dev_server.py` | Execs the server as the sole target19 writer, holding the fd-42 gate; defaults `ARRA_CHAT_PROVIDER=ollama` (line 45) |
 | `server/src/` | Elysia HTTP/MCP, storage and application behavior. `src/knowledge/registry.ts` is the 57-method target19 method table. `src/mcp/tools.ts` is the MCP catalogue: 8 memory + 57 `kb_*` = 65 tools. `src/mcp/legacy-v3/` holds the 25 v3-compatible tools, served only with `ARRA_MCP_V3_COMPAT=1`. `src/chat-model*.ts` is the chat provider (R9) |
 | `cli.ts`, `cli/` | CLI: 13 legacy memory commands, `kb <method>` for every registry method, 6 daily-loop aliases (#31), and `search --mode keyword\|semantic` over the knowledge tier (#30) |
-| `cli.test.ts`, `server/test/` | Regression tests (133 files under `server/test/` plus `cli.test.ts`); isolated fixtures/stubs; run per-kernel with `bun run test:<kernel>` (see Verification below) |
-| `ui/v2/` | React UI, built into `server/public/v2` and served at `/v2/`; its own 9 unit-test files run with `bun test` there |
+| `cli.test.ts`, `server/test/` | Regression tests (156 `*.test.ts` files under `server/test/` on `ec5c2c5`, plus `cli.test.ts`; `git ls-tree -r --name-only HEAD -- app/server/test \| rg -c '\.test\.ts$'`); isolated fixtures/stubs; run per-kernel with `bun run test:<kernel>` (see Verification below) |
+| `ui/v2/` | React UI, built into `server/public/v2` and served at `/v2/`; its own 67 unit-test files (on `ec5c2c5`) run with `bun test` there |
 | ~~`migrate-rs/`, root `migrate-rust/`~~ | Rust experiments, removed — never schema owners. Recoverable from git history |
 | ~~root `index-ts/`, `query-ts/`~~ | Spikes over the removed Rust dataset, removed — no producer, no importer. Recoverable from git history |
 | `docs/history/` | Original dated POC reports, preserved verbatim |
@@ -139,8 +139,8 @@ call is needed for the regression suite, whose models are stubs.
 
 Every route needs `Authorization: Bearer <64 lowercase hex>` except `/health` and the
 static UI (`GET /`, `/knowledge.html`, `/v2/*`). Those are deliberately public and skip
-policy admission, but not the Host/Origin gate, which runs on every request (`app.ts:137-140`,
-`app.ts:429-458`; `authorization-integration-v1.md:34`). Measured 2026-09-27:
+policy admission, but not the Host/Origin gate, which runs on every request (`app.ts:152-155`,
+`app.ts:468-497`; `authorization-integration-v1.md:34`). Measured 2026-09-27:
 
 ```text
 GET /, /v2/index.html, /knowledge.html, /health   no token      200
@@ -149,9 +149,9 @@ GET /api/health                  (no ?bank)       no token      400
 GET /                                             foreign Host  400
 ```
 
-A missing, repeated or malformed `?bank` is refused with 400 before admission (`app.ts:79-85`,
-`:253-259`), so the 401 needs a bank (`test/auth-integration.test.ts:97-107`,
-`test/mcp-correctness.test.ts:435-437`).
+A missing, repeated or malformed `?bank` is refused with 400 before admission (`app.ts:93-99`,
+`:268-273`), so the 401 needs a bank (`test/auth-integration.test.ts:97-107`,
+`test/mcp-correctness.test.ts:436-439`).
 
 The bearer's policy grants (`content:read`/`write`, `audit:read`, `diagnostics:read`,
 `maintenance:backfill`/`reindex`) gate every protected method. The dev policy from
@@ -202,7 +202,7 @@ kb_scanDependents kb_reconcileRevisionAssociations
 
 **v3-compatible tools** (R18; design in `docs/overnight/V3-PARITY.md`). The family lives in
 `server/src/mcp/legacy-v3/` and is served only with `ARRA_MCP_V3_COMPAT=1` (exactly `1`,
-`composition.ts:199-201`). It lets an existing arra-oracle v3 client talk to v4 unchanged.
+`composition.ts:211-213`). It lets an existing arra-oracle v3 client talk to v4 unchanged.
 Measured live with the flag on: `tools/list` returns 90 (8 + 57 + 25).
 
 ```text
@@ -249,7 +249,8 @@ request time (#29).
     `coverage_reason` (`"candidate_ceiling"` or `null`) and `candidate_ceiling` (4096): whether
     the underlying candidate read hit its own bound, so more matches may exist unread
     (`search-chunk-v1.md` §21). The v3 adapter's `oracle_search`/`oracle_ask` fold a `"partial"`
-    answer into `compat_warnings` (§22).
+    answer into `compat_warnings` (§22), and so does `oracle_search_chain`, OR-ed across its hops
+    (§24, PR #127; `mcp/legacy-v3/tools/oracle_search_chain.ts:81`).
 - `kb_searchKnowledgeSemantic` embeds the query with the composed local Ollama model and ranks
   READY chunk vectors of the active profile (`ollama/all-minilm/384/none` by default) by
   `metric: "l2_squared"` `distance`. No embedder, or a failing one, answers `model_unavailable`

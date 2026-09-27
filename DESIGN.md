@@ -1243,6 +1243,8 @@ Three headline claims above are superseded by fresh source:
                                    UI v2 tier-2 views (docs/overnight/UI-PROOF.md)    #33
  §13 operations and audit          BUILT in ARRA_DATA_DIR (operations root), not in  R5, R19
                                    the target root; MCP + /api/knowledge calls
+                                   + legacy /api/memories, /api/search, /api/health
+                                   (not /api/backfill, /api/reindex: NEEDS-NAT)
  §14 one service, three transports BUILT: 57 methods on HTTP, MCP and CLI (kb +      R7, R8
                                    6 aliases); v3-compatible adapter behind a flag    R18
  §15 durability / concurrency      one writer via the fd-42 gate; R2 multi-writer    —

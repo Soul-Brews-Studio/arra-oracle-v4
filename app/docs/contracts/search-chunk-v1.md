@@ -1500,3 +1500,70 @@ outside `test_no_active_server_source_imports_the_publication_kernel`'s `TS_ROOT
 `oracle_search_chain.ts`/`search.retrieve.ts` (nothing else depends on them), and deleting
 `search-chunk-coverage-tie.test.ts`; the negative-pin assertions are additive lines inside
 existing tests and can be deleted individually without affecting anything else they assert.
+
+## 25. Amendment 2026-09-26 (post-merge PROOF.md rule: every number measured, the command beside it; doc-contradicts-code is a defect)
+
+Source: `docs/overnight/DECISIONS.md` (the PROOF.md rule), issue #22, and the proof sweep
+(`docs/overnight/PROOF-SWEEP.md`). Written 2026-09-27 on `594df54`.
+
+**Change.** §12's **Why** (`search-chunk-v1.md:278`, the paragraph that begins "**Why.** DESIGN.md:1119")
+quotes DESIGN.md: "stale vectors never present superseded content as current truth." That line
+is not `:1119`. It was `:1121` in the commit that wrote the citation (`c3ab9a8`), and on `594df54`
+it is `DESIGN.md:1125`, because lines were added above it later that day. The quoted text is
+right; only the line number is wrong. The original paragraph is left as written, because frozen
+contracts are not rewritten; this amendment is the correction.
+
+**Why.** A `file:line` that no longer holds what the contract says it holds is a
+doc-contradicts-code defect under the PROOF.md rule.
+
+**Command.** `rg -n 'stale vectors never present' DESIGN.md` prints `1125:`, and
+`git show c3ab9a8:DESIGN.md | rg -n 'stale vectors never present'` prints `1121:`.
+`python3 docs/overnight/proof-sweep-check.py` re-checks this row with the others.
+
+## 26. Amendment 2026-09-27 (ac1-hardening slice: two defects in §24 itself)
+
+Source: `docs/overnight/DECISIONS.md` R21/R22, issue `Soul-Brews-Studio/arra-oracle-v4#31`, and
+`.tmp/chain-coverage-w11-accept-nonblocking.txt` (untracked, a different worktree; cited the same
+way §23 discloses its own out-of-repo citations). §24's own code fix is unchanged and correct;
+per §18/§23's own precedent, frozen contract text is not rewritten in place, so this section
+corrects §24 rather than editing it.
+
+### 1 · §24's own heading was split across two markdown lines
+
+The heading `## 24. Amendment 2026-09-27 (chain-coverage slice: the three non-blocking findings
+the v3-coverage` broke onto a second line, `verifier left open)`, with no `#` prefix. GitHub and
+every standard renderer treat only the first line as the heading; the second line, including the
+closing paren, renders as an ordinary body paragraph directly under an unclosed-looking title.
+Per §18/§23's own append-only precedent, §24's actual heading text is left as shipped (still split
+in the file above); documented here only so a reader knows what it should have read as one
+line: `## 24. Amendment 2026-09-27 (chain-coverage slice: the three non-blocking findings the
+v3-coverage verifier left open)`.
+
+### 2 · §24's "Proof" section overclaimed the real-wire evidence for the positive case
+
+§24's "Proof" paragraph said `oracle_search_chain.ts`'s new aggregation is proven "against a stub
+`kb`... and against the real gate, real dataset, real embedder stub (`mcp-v3-search.test.ts`'s
+existing `chain` step...)," without distinguishing which case each proof covers. The real-wire
+`chain` step in `mcp-v3-search.test.ts` runs against the gated dataset's fixture data, which never
+reaches the real 4096-row candidate ceiling; that step therefore proves only the NEGATIVE case --
+a full-coverage chain carries no `partial` warning on `hops.coverage`. It does not drive any hop
+to saturation, so it is not evidence for the POSITIVE case (a saturating hop's `partial` warning
+surfacing, aggregated OR-across-hops). That positive case is proven only against the stub `kb` in
+`mcp-v3-search-wiring.test.ts` ("one hop's own candidate read saturating..." and "hop order does
+not matter..."). The gap this leaves -- no real-4096-row (unmocked ceiling) chain test exists --
+is disclosed as open_risk 3 in the chain-coverage slice's own implementer report, as recorded by
+the acceptance verifier's notes (`.tmp/chain-coverage-w11-accept-nonblocking.txt`, untracked, a
+different worktree, cited the same way §23 discloses its own out-of-repo citations): "No
+real-4096-row (unmocked ceiling) chain test exists. This is disclosed as open_risk 3..."; it is
+not disclosed anywhere in §21, §22, or §24 §3 themselves -- §21 never mentions "chain," §22
+mentions it once only to say `oracle_search_chain` is unchanged, and §24 §3 (the compile-time
+`KernelCoverage`/`CoverageSignal` tie) carries no open-risk note. The corrected claim:
+`search.retrieve.ts` and
+`search-chunk-coverage-tie.test.ts` need no store at all; `oracle_search_chain.ts`'s new
+aggregation, BOTH the positive and negative case, is proven against the stub `kb`
+(`mcp-v3-search-wiring.test.ts`); against the real gate, real dataset, real embedder stub
+(`mcp-v3-search.test.ts`'s `chain` step), only the negative case is proven.
+
+**Reverse by**: nothing to reverse -- this section changes no code and no test, only the heading
+markup and the provenance of one claim in §24's prose. §24 itself, and the fix it documents,
+stand as shipped.
