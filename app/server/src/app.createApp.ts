@@ -31,6 +31,7 @@ import { SERVER_NAME, SERVER_VERSION } from "./mcp/protocol";
 import { handshakeResponse, type createMcpAdapter } from "./mcp";
 import { handleKnowledgeRequest, type KnowledgeAccess } from "./knowledge/transport";
 import { memoryInsertErrorResponse } from "./app.memoryInsertErrorResponse";
+import { instanceAuditRoute } from "./app.instanceAuditRoute";
 import type { KnowledgeAuditSink } from "./knowledge/transport.auditKnowledgeCall";
 
 export type AppConfig = {
@@ -464,7 +465,8 @@ export function createApp(
         return handleKnowledgeRequest(request, params, options.knowledge);
       },
       { parse: "none" },
-    );
+    )
+    .use(instanceAuditRoute(service, transportGuard));
 
   return options.assets === undefined
     ? app

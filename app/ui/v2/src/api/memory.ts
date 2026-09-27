@@ -13,8 +13,6 @@
  * against the server before it is shown as real. See that file for why this
  * is honest rather than a workaround.
  */
-import { type ApiResult, callMethod } from "./client";
-
 export type Bank = { bank: string; token: string; workspace: string };
 
 /** Mirrors `context.encodeMessageRow` -- only the fields this UI renders. */
@@ -71,124 +69,23 @@ export const MAX_APPEND_ITEMS = 128;
 /** `MAX_PAGE_LIMIT` in `context.parseListMessages`. */
 export const MAX_PAGE_LIMIT = 100;
 
-/** 21-char nanoid, the alphabet `parseAppendMessages` accepts. Generated
- *  client-side because `public_id` is caller-supplied: the server refuses a
- *  duplicate rather than minting one for you. */
-export function newPublicId(): string {
-  const alphabet = "useandom-26T198340PX75pxJACKVERYMINDBUSHWOLFGQZbfghjklqvwyzrict";
-  const bytes = new Uint8Array(21);
-  crypto.getRandomValues(bytes);
-  let out = "";
-  for (const b of bytes) out += alphabet[b % alphabet.length];
-  return out;
-}
-
-const call = (b: Bank, method: string, body: Record<string, unknown>): Promise<ApiResult> =>
-  callMethod(b.bank, method, { workspace_name: b.workspace, ...body }, b.token);
-
-export const getPeer = (b: Bank, peer_name: string) => call(b, "getPeer", { peer_name });
-export const getSession = (b: Bank, session_name: string) => call(b, "getSession", { session_name });
-export const registerPeer = (b: Bank, peer_name: string) => call(b, "registerPeer", { peer_name });
-export const registerSession = (b: Bank, session_name: string) => call(b, "registerSession", { session_name });
-export const joinSession = (b: Bank, session_name: string, peer_name: string) =>
-  call(b, "joinSession", { session_name, peer_name });
-
-/** #87 / R3: membership is a read boundary on `listMessages`/`getMessage`.
- *  Name a `requester_peer_name` and the server answers only if that peer is a
- *  CURRENT member of the session. Omit it and the call is the operator view,
- *  which needs `audit:read` on the bank -- the dev-stack operator token has it;
- *  a `content:read`-only token gets 403 `forbidden`. */
-export const listMessages = (
-  b: Bank,
-  session_name: string,
-  limit = 50,
-  after_seq: string | null = null,
-  requester_peer_name: string | null = null,
-) =>
-  call(b, "listMessages", {
-    session_name,
-    limit,
-    after_seq,
-    ...(requester_peer_name === null ? {} : { requester_peer_name }),
-  });
-
-/** `message` and `source` are CLOSED objects server-side: an extra key is a
- *  refusal, not an ignored field. Keys here match `MESSAGE_KEYS` exactly. */
-export const appendMessage = (
-  b: Bank,
-  session_name: string,
-  peer_name: string,
-  content: string,
-  role: string | null,
-  /** `messages.in_reply_to` is a nullable FK to another message's `public_id`,
-   *  and it is the ONLY nesting this system has -- sessions are deliberately
-   *  flat, no parent_id, no channel/thread split. So a reply tree is the
-   *  whole of the structure, which is what the forum view renders. */
-  in_reply_to: string | null = null,
-) =>
-  call(b, "appendMessages", {
-    session_name,
-    items: [
-      {
-        public_id: newPublicId(),
-        message: { peer_name, role, content, in_reply_to },
-        source: null,
-      },
-    ],
-  });
-
-export const getContext = (b: Bank, peer_name: string, session_name: string, max_items = 20) =>
-  call(b, "getContext", { peer_name, session_name, max_items });
-
-export const answerChat = (
-  b: Bank,
-  peer_name: string,
-  session_name: string,
-  question: string,
-  max_items = 20,
-) => call(b, "answerChat", { peer_name, session_name, question, max_items });
-
-export const getReadCursor = (b: Bank, peer_name: string, session_name: string) =>
-  call(b, "getReadCursor", { peer_name, session_name });
-
 /** The server's error envelope, `arra-error/v1` and its two siblings. Shown
  *  verbatim rather than flattened to a string: the `code` is the part worth
  *  reading, and `pointer` says exactly which field was refused. */
 export type ErrorEnvelope = { code?: string; pointer?: string; message?: string };
 
-export function asError(body: unknown): ErrorEnvelope | null {
-  if (typeof body !== "object" || body === null) return null;
-  const o = body as Record<string, unknown>;
-  // The Host/Origin/bearer gate every transport shares (`auth/http.ts`'s
-  // `ERROR_BODIES`, e.g. `{"error":"unauthenticated"}` / `{"error":"forbidden"}`)
-  // answers BEFORE a request ever reaches an `arra-error/v1` envelope, and its
-  // body is a bare STRING under `error`, not `{code,...}`. Without this branch
-  // that string fell into the object-shape check below, found no `.code`, and
-  // returned null -- so a live 401/403 from THIS gate read as the generic
-  // `HTTP ${status}` fallback in `describe()` instead of its real reason.
-  //
-  // Fix-round finding: this used to decode EVERY `{error: string}` shape, not
-  // just the auth gate's two codes. `ERROR_BODIES` also answers 400 ("bad
-  // request"), 413 ("payload too large"), 415 ("unsupported media type") and
-  // 503 ("policy unavailable") this same flat way, and an unregistered route's
-  // bare 404 falls back to `{"error":"error"}`. Decoding those as governed
-  // codes fed `chatError.ts`'s GOVERNED regex a spaced string it cannot match
-  // ("bad request"), which made it misclassify a real 400 as a transport
-  // failure that "never reached the server" -- false, since the server
-  // answered. Restricting this branch to the two identifiers `authErrorHint`
-  // actually knows how to explain lets every other flat body fall through to
-  // the object-shape check below (finds no `.code`, returns null), so
-  // `describe()` reports `HTTP 400`/`413`/`415`/`503`/`404` instead -- a
-  // bare status string `chatError`'s `reachedServer` already recognizes
-  // correctly, and the same fallback this codebase used before #33.
-  if (o.error === "unauthenticated" || o.error === "forbidden") return { code: o.error };
-  const err = (o.error ?? o) as Record<string, unknown>;
-  if (typeof err !== "object" || err === null) return null;
-  const code = typeof err.code === "string" ? err.code : undefined;
-  if (code === undefined) return null;
-  return {
-    code,
-    pointer: typeof err.pointer === "string" ? err.pointer : undefined,
-    message: typeof err.message === "string" ? err.message : undefined,
-  };
-}
+// Functions split out (style-ui-split2, docs/overnight/DECISIONS.md): each
+// lives in its own file named after itself. Re-exported here so importers
+// do not churn.
+export { newPublicId } from "./memory.newPublicId";
+export { getPeer } from "./memory.getPeer";
+export { getSession } from "./memory.getSession";
+export { registerPeer } from "./memory.registerPeer";
+export { registerSession } from "./memory.registerSession";
+export { joinSession } from "./memory.joinSession";
+export { listMessages } from "./memory.listMessages";
+export { appendMessage } from "./memory.appendMessage";
+export { getContext } from "./memory.getContext";
+export { answerChat } from "./memory.answerChat";
+export { getReadCursor } from "./memory.getReadCursor";
+export { asError } from "./memory.asError";

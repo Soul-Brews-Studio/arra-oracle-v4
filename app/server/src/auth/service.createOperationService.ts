@@ -29,13 +29,13 @@ import { auditedHttpCall } from "./service.auditedHttpCall";
 import { searchAnswer } from "./service.searchAnswer";
 import { AuthDenied, type AuthFailure } from "./service.AuthDenied";
 import { withInstanceAudit } from "./service.withInstanceAudit";
+import { makeReadInstanceAudit } from "./service.makeReadInstanceAudit";
 import type { HttpAudit, McpEnvelope, McpResult, StoreDependencies, TextSearchResult, ToolOperations } from "./service.types";
 
 export type { HttpAudit, McpEnvelope, McpResult, StoreDependencies, TextSearchResult, ToolOperations } from "./service.types";
 
 // The denial class lives in its own file (line cap); re-exported unchanged.
 export { AuthDenied, type AuthFailure } from "./service.AuthDenied";
-
 // A function DECLARATION, not an arrow: TypeScript only uses a `never` return
 // for control-flow narrowing when the callee is declared this way.
 function deny(code: AuthFailure): never {
@@ -160,9 +160,8 @@ export function createOperationService(
     return contextFrom(admitOrDeny(policy, authorization, now, { kind: "workspace", workspace, action }));
   }
 
-  function admitGlobal(authorization: string | null, action: GlobalAction): RequestContext {
-    const policy = snapshot();
-    const now = clock();
+  /** `policy`/`now` are passed in only to test several actions against ONE snapshot and sample (R25 reader, §2). */
+  function admitGlobal(authorization: string | null, action: GlobalAction, policy = snapshot(), now = clock()): RequestContext {
     return contextFrom(admitOrDeny(policy, authorization, now, { kind: "global", action }));
   }
 
@@ -322,6 +321,7 @@ export function createOperationService(
       return withInstanceAudit(logInstanceAudit, "/api/reindex", "maintenance:reindex", {}, admit, mutate);
     },
 
+    readInstanceAudit: makeReadInstanceAudit(admitGlobal, principalOf, logInstanceAudit, snapshot, clock), // #31 R25 (Nat D4b)
     /**
      * MCP: project the four actions FIRST, then let the caller read the body
      * lazily, then dispatch. The adapter never receives a context — it hands in
