@@ -341,3 +341,36 @@ clamping for both `find`'s overfetch and `read`'s `-n` (measured against the rea
 field mapping), capture-digest determinism/distinctness (section 3), and both target builders
 producing a codec-valid, already-canonical `relic_event`/`relic_session` object that
 `targetOp` accepts unchanged.
+
+## Amendment 2026-09-26 (post-merge #28 TODO (cwd-only foreign visitor) + discussions #21/#36)
+
+**Change.** This amendment adds one invariant and its tests. No adapter code changes.
+**A shared working directory is never an input.** relic's `repo` is
+`<bank>/<cwd-derived repo_key>`. The adapter keeps only `<bank>` as `sourceBank`, and
+`SessionRef` carries no repo, cwd or worktree field. So nothing downstream can merge, scope,
+chain or import sessions because they ran in the same directory. `find` groups on
+`session_uuid` only. Two sessions that share a directory stay two sessions, with two distinct
+`relic_session` identities. The v4 grammars that could record lineage or ownership
+(`createSessionLink`, and `registerSession` including `h_metadata`) are closed objects, and
+they refuse a `cwd` key at `/cwd` and at `/h_metadata/cwd`.
+
+**Reason.** The #28 TODO says to "exclude cwd-only foreign visitors". The defining text is a
+prohibition. Discussion #20 §10 says: "A visitor session sharing cwd does not become part of
+the worktree's original lineage." Discussion #36 (DESIGN.md:392, :415) says: "A cwd move does
+not transfer session ownership. External references must not silently import a foreign session
+or bridge workspaces." It also says: "shared cwd does not justify importing Ansible." And #28's
+Boundaries rule out "automatic session ownership inference". So the visitor is excluded by never
+letting the directory decide anything. It is not excluded by a classifier, because relic's rows
+carry no ownership signal except cwd-derived ones.
+
+**Pinned by** `app/server/test/relic-foreign-visitor.test.ts` and the `__shared_cwd__`
+scenario in `test/fixtures/relic-v1/fake-relic.ts`. The tests passed on first run because the
+invariant already held, so their teeth are shown by mutants instead. M1: `findSessions`
+deduplicating on `repo` fails 2 tests. M2: `bankFromRepo` keeping the whole `repo` fails 1.
+M3: `cwd` added to `CREATE_KEYS` fails 2.
+
+**Not decided here.** Two things are left open: an active visitor label at this boundary, and
+restricting `getContext` chain expansion to `continues`/`forked_from`. Both are NEEDS-NAT;
+`docs/overnight/FOREIGN-VISITOR.md` §4 gives the quotes and the readings. The adapter's shape
+still follows `docs/overnight/DECISIONS.md` R7 (#28): a relic CLI subprocess behind an
+interface, a fake in tests, and the real index never touched.
