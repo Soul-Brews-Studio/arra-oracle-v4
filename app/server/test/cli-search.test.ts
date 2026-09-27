@@ -67,7 +67,8 @@ describe("CLI search: legacy by default, knowledge tier by --mode (#30 R7, R8)",
   });
 
   test("--mode keyword posts searchKnowledgeKeyword to the registry route", async () => {
-    response = { match: "ngram", scan_reason: null, hits: [] };
+    // #30 coverage (search-chunk-v1.md section 21) passes through verbatim.
+    response = { match: "ngram", scan_reason: null, coverage: "partial", coverage_reason: "candidate_ceiling", candidate_ceiling: 4096, hits: [] };
     const r = await run("search", "--bank", "test-bank", "--query", "ลืม", "--mode", "keyword", "--limit", "3");
     expect(r.code).toBe(0);
     expect(JSON.parse(r.out)).toEqual(response);

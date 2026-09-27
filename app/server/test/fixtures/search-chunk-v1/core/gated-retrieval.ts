@@ -51,6 +51,7 @@ const { openEvidenceReader, openEvidenceWriter } = await import(src("publication
 const { makeAdapter } = await import(src("publication/service.makeAdapter.ts"));
 const { openPrivateConnection } = await import(src("publication/service.openPrivateConnection.ts"));
 const { searchKnowledgeKeyword } = await import(src("publication/service.searchKnowledgeKeyword.ts"));
+const { searchKnowledgeSemantic } = await import(src("publication/service.searchKnowledgeSemantic.ts"));
 const { connect, Index } = await import("@lancedb/lancedb");
 const { chmodSync, mkdirSync } = await import("node:fs");
 const { join } = await import("node:path");
@@ -195,6 +196,16 @@ const harness: Record<string, (request: any) => Promise<unknown>> = {
     };
     const value = await searchKnowledgeKeyword(spy, new TextEncoder().encode(JSON.stringify(request)));
     return { value, candidates: [...new Set(candidates)].sort(), reads, judged };
+  },
+  /** #30 coverage: either search with the candidate ceiling INJECTED
+   *  (`{ceiling, method, request}`), the test-only argument production never
+   *  passes, so a handful of chunks can reach the bound 4096 stands for. */
+  async searchAtCeiling(input: { ceiling: number; method: "keyword" | "semantic"; request: unknown }) {
+    const adapter = makeAdapter(await openPrivateConnection(datasetRoot!), () => {});
+    const bytes = new TextEncoder().encode(JSON.stringify(input.request));
+    return input.method === "keyword"
+      ? await searchKnowledgeKeyword(adapter, bytes, undefined, input.ceiling)
+      : await searchKnowledgeSemantic(adapter, embedder, bytes, undefined, input.ceiling);
   },
 };
 

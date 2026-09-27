@@ -15,6 +15,7 @@ const EMPTY: SearchOutcome = {
   semanticHits: [],
   scanReason: null,
   embeddingProfile: null,
+  coveragePartial: false,
 };
 
 const keywordHit = {

@@ -25,6 +25,7 @@ const outcomeAfterKeyword: SearchOutcome = {
   semanticHits: [],
   scanReason: "short_query",
   embeddingProfile: null,
+  coveragePartial: false,
 };
 
 describe("searchOutcomeView", () => {
@@ -53,6 +54,7 @@ describe("searchOutcomeView", () => {
       semanticHits: [],
       scanReason: null,
       embeddingProfile: "e5",
+      coveragePartial: false,
     };
     const view = searchOutcomeView(outcomeAfterSemantic, "semantic");
     expect(view.scanReason).toBeNull();
@@ -70,6 +72,7 @@ describe("searchOutcomeView", () => {
     semanticHits: [],
     scanReason: null,
     embeddingProfile: null,
+    coveragePartial: false,
   };
 
   test("a failed semantic outcome viewed while still in semantic mode shows its own error", () => {

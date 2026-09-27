@@ -5,6 +5,8 @@ import { searchState } from "../state/searchState";
 /** Renders whatever `searchState` decides -- empty query, loading, no
  *  results (with the index_unavailable/short_query note if the scan
  *  fallback ran), model_unavailable, a bare error, or the hit list itself.
+ *  `coveragePartial` (#30, the answer's `coverage: "partial"`) adds a
+ *  "results may be incomplete" note to a results or no-results answer.
  *  All the branching logic is pure and tested in `state/searchState.ts` /
  *  `state/searchHitView.ts`; this component only lays the result out. */
 export function KnowledgeSearchResults({
@@ -15,6 +17,7 @@ export function KnowledgeSearchResults({
   hits,
   scanReason,
   embeddingProfile,
+  coveragePartial,
   onOpenNode,
 }: {
   query: string;
@@ -24,6 +27,7 @@ export function KnowledgeSearchResults({
   hits: (KeywordHitWire | SemanticHitWire)[];
   scanReason: "short_query" | "index_unavailable" | null;
   embeddingProfile: string | null;
+  coveragePartial: boolean;
   onOpenNode: (nodeId: string) => void;
 }) {
   const state = searchState({ query, loading, errorCode, hitCount: hits.length, scanReason });
@@ -55,6 +59,12 @@ export function KnowledgeSearchResults({
     <div className="flex flex-1 flex-col overflow-y-auto">
       {state.scanNote !== null && (
         <p className="border-b border-edge px-3 py-1.5 text-[11px] text-[#f0a35e]">{state.scanNote}</p>
+      )}
+      {coveragePartial && (
+        <p role="note" className="border-b border-edge px-3 py-1.5 text-[11px] text-[#f0a35e]">
+          Results may be incomplete: this search reached the server's candidate limit, so some matches may not
+          have been considered.
+        </p>
       )}
       {mode === "semantic" && embeddingProfile !== null && (
         <p className="border-b border-edge px-3 py-1.5 text-[11px] text-muted">embedding_profile: {embeddingProfile}</p>
