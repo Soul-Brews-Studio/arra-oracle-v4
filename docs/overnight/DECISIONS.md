@@ -251,6 +251,12 @@ branch, so it reverts cleanly.
   - the generator also refuses JSON numbers that Python reads as non-finite.
   Live re-run: table leg 1 OK, REST leg 1 OK, and teardown left 0 containers
   and no clone.
+- **Ruled (Nat, 2026-09-28, NAT-DECISIONS D11a):** the measured verdict is
+  accepted as the contract. True byte compatibility (global message ids, `metadata`
+  as the stored column name) is not pursued. SPEC §15.2 now states the conversions,
+  the incompatibilities and the lost columns under invariant 5 and in a "Measured"
+  callout; §3 and §15.5 point to it; AGENTS.md and DESIGN.md no longer list the live
+  round trip as unbuilt. #8 was closed by #122.
 
 ## R16 · #7 recall measurement: harness now, judgments from Nat
 
@@ -397,3 +403,21 @@ v3". Measured usage on this machine: 709 real v3 tool calls; `oracle_search` 46%
   (the issue forbids agent-authored corpora). The harness can be built. The
   judgments cannot honestly be produced tonight.
 - **Chat providers other than local Ollama, and anything that costs money.**
+
+## R23 · The merge and release gate is the local CI mirror, not GitHub Actions
+
+- **Ruling (Nat, 2026-09-28): "use only local."** GitHub Actions stopped on 2026-09-27 at about
+  17:05 (+07). Main's run 36310873591 was refused with "recent account payments have failed or your
+  spending limit needs to be increased"; the job never started. From #123 on, every merge was
+  already gated by a local mirror of `ci.yml`.
+- **What changes:**
+  - `app/just/local-ci.sh` runs every `ci.yml` step locally, in order: ruff, typecheck, build, the
+    sharded suite, demo, the ui-e2e harness rules, Python and fixtures, benchmarks, UI tsc, UI
+    tests, UI build, and the committed-bundle check. It prints `LOCAL_CI_RESULT PASS|FAIL`.
+  - That result is the merge gate and the release evidence.
+  - `ci.yml` is kept as the canonical step list, but it triggers only on `workflow_dispatch`, so
+    pushes no longer create refused runs.
+- **Consequence:** the strict release-proof gap the acceptor named for #75 ("accept the local CI
+  mirror or restore Actions") is closed by this ruling.
+- **Reverse by:** restore `push:` / `pull_request:` in `ci.yml`, once billing is restored.
+
