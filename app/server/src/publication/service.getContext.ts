@@ -105,10 +105,17 @@ const request = parseGetContext(requestBytes);
       }
 
       // D3b: conclusions go FIRST into the shared wire budget -- they are the
-      // distilled view the perspective asked for. The read boundary is the
-      // requester's CURRENT membership, exactly as for messages: a conclusion
-      // or source recorded in a session it may not read is withheld with only
-      // a coarse flag. Observer/subject never reach this check.
+      // distilled view the perspective asked for. Their SCOPE is the message
+      // scope: the requested session plus its linked chain (and session-less,
+      // workspace-level conclusions). A conclusion from any other session is
+      // not part of this context and raises no flag -- it used to be selected
+      // from every session the requester belonged to while `effective_sessions`
+      // said "main", and a protected one anywhere made every context partial.
+      // Inside the scope the read boundary is the requester's CURRENT
+      // membership, exactly as for messages: an in-chain conclusion or a
+      // source it may not read is withheld with only a coarse flag.
+      // Observer/subject never reach either check.
+      const chain = new Set<string>([request.session_name, ...linkedSessions]);
       const visibility = new Map<string, boolean>(authorizedSessions.map((name) => [name, true]));
       for (const name of unauthorizedSessions) visibility.set(name, false);
       const canSeeSession = async (sessionName: string): Promise<boolean> => {
@@ -131,6 +138,7 @@ const request = parseGetContext(requestBytes);
         asOf,
         maxItems: request.max_items,
         byteBudget: MAX_CONTEXT_WIRE_BYTES - 2,
+        inScope: async (sessionName) => chain.has(sessionName),
         canSeeSession,
       });
 

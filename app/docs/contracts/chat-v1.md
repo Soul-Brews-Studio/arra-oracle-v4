@@ -471,11 +471,18 @@ ordinary node revision. No table was added.
   `freshness`. The selection rule, the conclusion shape and the budget and freshness blocks
   are defined in `representation-v1.md` §4-§5. `getContext` shares them with the new
   `getRepresentation`.
-- **Read boundary.** A conclusion recorded in a session the requester is not a current
-  member of is withheld. So is a source handle into such a session. Only coarse flags report
-  it: `conclusions_coverage.complete: false`, `sources_incomplete: true`, `coverage:
-  "partial"`. No counts and no ids. `coverage` is `"full"` only when neither messages nor
-  conclusions were excluded. This extends R4.
+- **Scope.** Conclusions have the SAME scope as messages: the requested session, the linked
+  chain reported in `scope.effective_sessions`, and session-less (workspace-level)
+  conclusions. A conclusion recorded in any other session is not part of the context, even
+  when the requester is a member there, and raises no flag. (Fix round, 2026-09-28: the first
+  cut selected from every session the requester belonged to while `effective_sessions` said
+  only the requested one, and a protected conclusion anywhere in the workspace made every
+  context `"partial"`. See `representation-v1.md` §4 item 6.)
+- **Read boundary.** Inside that scope, a conclusion recorded in a linked session the
+  requester is not a current member of is withheld. So is a source handle into a session it
+  may not read. Only coarse flags report it: `conclusions_coverage.complete: false`,
+  `sources_incomplete: true`, `coverage: "partial"`. No counts and no ids. `coverage` is
+  `"full"` only when neither messages nor in-scope conclusions were excluded. This extends R4.
 - **Budget.** Conclusions come first in the existing `MAX_CONTEXT_WIRE_BYTES` budget, and
   messages share what is left. Conclusions are also bounded by `max_items`. `budget` names an
   ESTIMATE (`tokenizer: null`, `token_count_kind: "estimate"`, `ceil(utf8_bytes/4)`). This
@@ -495,5 +502,5 @@ ordinary node revision. No table was added.
 owed before #32 and #31 can close. This amendment is AC-MATRIX slice 11 (then slice 10), as
 DESIGN.md §12 specifies.
 
-**Evidence.** `app/server/test/context-peer-representation.test.ts` (14 tests) runs against a
-real gated dataset through the production registry, HTTP and MCP.
+**Evidence.** `app/server/test/context-peer-representation.test.ts` (18 tests after the fix
+round) runs against a real gated dataset through the production registry, HTTP and MCP.

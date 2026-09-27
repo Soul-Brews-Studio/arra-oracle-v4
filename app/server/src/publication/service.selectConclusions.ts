@@ -42,10 +42,20 @@ export type ConclusionSelection = {
  * snapshot of `conclusion`. A `summary` head, when a workspace has such a
  * type term, is the stored summary; there is none otherwise (null).
  *
- * `canSeeSession` is the caller's read boundary: a revision recorded in a
- * session the caller may not read is withheld with only the coarse
- * `incomplete` flag. Observer/subject filter what is SELECTED and are applied
- * as SQL predicates on the head revisions; they never reach `canSeeSession`.
+ * `inScope` is the caller's SCOPE and is asked first: a revision recorded in
+ * a session outside it is simply not part of this read -- skipped, with no
+ * flag, because flagging protected material the caller never asked for (and
+ * narrowed by perspective) would be an existence oracle. A session-less
+ * revision is workspace-level and always in scope.
+ *
+ * `canSeeSession` is the caller's read boundary INSIDE that scope: an in-scope
+ * revision recorded in a session the caller may not read is withheld with
+ * only the coarse `incomplete` flag. Observer/subject filter what is SELECTED
+ * and are applied as SQL predicates on the head revisions; they never reach
+ * either callback.
+ *
+ * The summary, when there is one, spends the same byte budget as the
+ * conclusions (it is outside `maxItems` only, being at most one item).
  *
  * Read-only and model-free: `refresh`, `orderedProjection` and `query` only.
  */
@@ -58,6 +68,7 @@ export async function selectConclusions(
     asOf: number;
     maxItems: number;
     byteBudget: number;
+    inScope: (session: string) => Promise<boolean>;
     canSeeSession: (session: string) => Promise<boolean>;
   },
 ): Promise<ConclusionSelection> {
@@ -109,6 +120,7 @@ export async function selectConclusions(
     const kind = deriveNodeType(revision);
     if (kind !== "conclusion" && !(kind === "summary" && summary === null)) continue;
     const session = revision.session_name as string | null;
+    if (session !== null && !(await options.inScope(session))) continue;
     if (session !== null && !(await options.canSeeSession(session))) {
       incomplete = true;
       continue;
@@ -129,11 +141,16 @@ export async function selectConclusions(
       sources,
       sources_incomplete: hiddenSource,
     };
+    const bytes = new TextEncoder().encode(JSON.stringify(item)).length + 1;
     if (kind === "summary") {
+      if (usedBytes + bytes > options.byteBudget) {
+        truncated = true;
+        continue;
+      }
+      usedBytes += bytes;
       summary = item;
       continue;
     }
-    const bytes = new TextEncoder().encode(JSON.stringify(item)).length + 1;
     if (conclusions.length >= options.maxItems || usedBytes + bytes > options.byteBudget) {
       truncated = true;
       continue;

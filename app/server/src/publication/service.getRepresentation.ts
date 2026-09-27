@@ -34,6 +34,13 @@ export type RepresentationResult = {
  * or source only while it is a CURRENT member of that session. Observer and
  * subject are lookup targets: they must exist, and they grant nothing.
  *
+ * The scope is the WORKSPACE as the requester may read it: session-less
+ * conclusions plus those of sessions it currently belongs to. A conclusion
+ * in any other session is outside that scope and raises no flag -- flagging
+ * it per observer/subject pair would tell the caller that a hidden view of
+ * that pair exists. A protected SOURCE of a returned conclusion is still the
+ * coarse `sources_incomplete` flag (DESIGN.md §12).
+ *
  * `requestTimeMs` is the eligibility `as_of`, supplied by the registry; the
  * fallback is for in-process harnesses only (see `service.getContext.ts`).
  */
@@ -76,6 +83,7 @@ export async function getRepresentation(
     asOf,
     maxItems: request.max_items,
     byteBudget: MAX_CONTEXT_WIRE_BYTES - 2,
+    inScope: canSeeSession,
     canSeeSession,
   });
   const used = 2 + selection.usedBytes;

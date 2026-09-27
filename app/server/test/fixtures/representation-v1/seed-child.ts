@@ -6,6 +6,15 @@
 // Marker text the parent searches for:
 //   SECRET     anything only a member of `private` may see;
 //   BETA-ONLY  another workspace's conclusion.
+//   SIDE-SESSION-ONLY  a conclusion in a session neo belongs to but did not
+//              request and that is not linked to `main` (verifier finding 1).
+//   CHAINED-VIEW  a conclusion in a session linked from `main` (in scope).
+//   LOCKED-VIEW   a conclusion in a session linked from `main` that neo may
+//              not read (in scope, withheld: the coarse flag).
+//   BETA-HIDDEN   beta's out-of-scope protected conclusion (must not flip
+//              beta's coverage to partial -- verifier finding 2).
+//   EXPIRED-VIEW / FUTURE-VIEW / INACTIVE-VIEW  outside the validity window
+//              or inactive.
 //
 // No model is involved here; this child only writes.
 const [, , datasetRoot] = Bun.argv;
@@ -83,7 +92,8 @@ const messageLink = (session: string, publicId: string) =>
   ]);
 
 async function publish(label: string, ws: string, kind: "conclusion" | "note", fields: Record<string, unknown>) {
-  const nodeId = pad(`prnode${label}`);
+  // The trailing `x` keeps C1 and C10 apart after padding.
+  const nodeId = pad(`prnode${label}x`);
   const result = await call("publication", "publishRevision", {
     operation_id: `pr-op-${label}`,
     content: revision(ws, nodeId, kind, fields),
@@ -210,6 +220,77 @@ try {
     body: "BETA-ONLY neo thinks nat is in beta",
     observer_peer_name: "neo",
     subject_peer_name: "nat",
+  });
+
+  // Verifier finding 1: `side` -- neo is a member, but it is neither the
+  // requested session nor linked from `main`.
+  await call("context", "registerSession", { workspace_name: WS, session_id: pad("prside"), name: "side" });
+  await call("context", "joinSession", { workspace_name: WS, session_name: "side", peer_name: "neo" });
+  await publish("C9", WS, "conclusion", {
+    body: "SIDE-SESSION-ONLY neo noted nat in a side session",
+    observer_peer_name: "neo",
+    subject_peer_name: "nat",
+    session_name: "side",
+  });
+  // In the chain: `chained` (neo is a member) and `locked` (claude only).
+  let linkNo = 0;
+  for (const [name, member] of [["chained", "neo"], ["locked", "claude"]] as const) {
+    await call("context", "registerSession", { workspace_name: WS, session_id: pad(`pr${name}`), name });
+    await call("context", "joinSession", { workspace_name: WS, session_name: name, peer_name: member });
+    await call("context", "createSessionLink", {
+      id: pad(`prlink${++linkNo}`),
+      workspace_name: WS,
+      from_session_name: "main",
+      to_session_name: name,
+      relation: "related_to",
+      evidence_ref: null,
+      created_by_peer_name: null,
+    });
+  }
+  await publish("C10", WS, "conclusion", {
+    body: "CHAINED-VIEW nat mentioned coffee in the chained session",
+    observer_peer_name: "neo",
+    subject_peer_name: "nat",
+    session_name: "chained",
+  });
+  await publish("C11", WS, "conclusion", {
+    body: "LOCKED-VIEW drawn where neo may not read",
+    observer_peer_name: "neo",
+    subject_peer_name: "nat",
+    session_name: "locked",
+  });
+  // Validity window and the inactive flag (nonblocking finding 4).
+  await publish("C12", WS, "conclusion", {
+    body: "EXPIRED-VIEW nat lived in Chiang Mai",
+    observer_peer_name: "neo",
+    subject_peer_name: "nat",
+    valid_from: "2019-01-01T00:00:00.000Z",
+    valid_to: "2026-01-01T00:00:00.000Z",
+  });
+  await publish("C13", WS, "conclusion", {
+    body: "FUTURE-VIEW nat will retire",
+    observer_peer_name: "neo",
+    subject_peer_name: "nat",
+    valid_from: "2099-01-01T00:00:00.000Z",
+  });
+  await publish("C14", WS, "conclusion", {
+    body: "INACTIVE-VIEW nat was switched off",
+    observer_peer_name: "neo",
+    subject_peer_name: "nat",
+    is_active: false,
+  });
+
+  // Beta: a protected, out-of-scope conclusion (finding 2). No stored
+  // summary: the reserved `type` vocabulary is sealed to five terms, so a
+  // `summary` term cannot be seeded through the gated writer.
+  const B = "beta-workspace";
+  await call("context", "registerSession", { workspace_name: B, session_id: pad("prprivateb"), name: "private" });
+  await call("context", "joinSession", { workspace_name: B, session_name: "private", peer_name: "claude" });
+  await publish("B2", B, "conclusion", {
+    body: "BETA-HIDDEN drawn in beta's private session",
+    observer_peer_name: "neo",
+    subject_peer_name: "nat",
+    session_name: "private",
   });
   out.ok = true;
 } catch (error) {

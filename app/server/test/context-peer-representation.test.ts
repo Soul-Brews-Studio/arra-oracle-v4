@@ -175,16 +175,70 @@ async function snapshot(): Promise<Record<string, [number, number]>> {
 describe("getContext selects eligible current conclusions (#32 TODO 2, rev.2 get_context)", () => {
   test("current conclusions only: superseded, retired, notes, protected and other workspaces never appear", async () => {
     const result = ok(await call("getContext", context()));
-    expect(revisionsOf(result)).toEqual(rev("C1", "C2", "C5", "C8"));
+    expect(revisionsOf(result)).toEqual(rev("C1", "C2", "C5", "C8", "C10"));
     const text = JSON.stringify(result);
-    for (const marker of ["OLD-VIEW", "RETIRED-VIEW", "NOTE-ONLY", "SECRET", "BETA-ONLY", "prmsgsecret"]) {
+    for (const marker of [
+      "OLD-VIEW",
+      "RETIRED-VIEW",
+      "NOTE-ONLY",
+      "SECRET",
+      "BETA-ONLY",
+      "prmsgsecret",
+      "LOCKED-VIEW",
+      "EXPIRED-VIEW",
+      "FUTURE-VIEW",
+      "INACTIVE-VIEW",
+    ]) {
       expect(text.includes(marker)).toBe(false);
     }
-    // The protected conclusion and the protected source are a coarse flag,
-    // never a count or an id.
+    // The withheld in-chain conclusion (C11, `locked`) and the protected
+    // source (C8) are a coarse flag, never a count or an id.
     expect(result.coverage).toBe("partial");
     expect(result.conclusions_coverage).toEqual({ complete: false });
     expect(result.summary).toBeNull();
+  });
+
+  test("conclusions honour the session/chain scope: an unlinked session never contributes (verifier finding 1)", async () => {
+    // neo IS a member of `side`, but `side` is neither requested nor linked.
+    const result = ok(await call("getContext", context()));
+    expect(JSON.stringify(result).includes("SIDE-SESSION-ONLY")).toBe(false);
+    expect(result.scope.effective_sessions).toEqual(["main", "chained"]);
+    for (const c of result.conclusions as any[]) {
+      expect(c.session_name === null || result.scope.effective_sessions.includes(c.session_name)).toBe(true);
+    }
+    // Requesting `side` itself brings it in -- and nothing from `main`'s chain.
+    const side = ok(await call("getContext", context({ session_name: "side" })));
+    // C1 is session-less (only its SOURCE is in `main`), so it stays in scope.
+    expect(revisionsOf(side)).toEqual(rev("C1", "C2", "C5", "C8", "C9"));
+    expect(JSON.stringify(side).includes("CHAINED-VIEW")).toBe(false);
+    expect(side.scope.effective_sessions).toEqual(["side"]);
+  });
+
+  test("a protected conclusion OUTSIDE the requested scope never flips coverage (verifier finding 2)", async () => {
+    // beta: `main` has no links; B2 sits in beta's `private` (claude only).
+    const beta = ok(await call("getContext", context({ workspace_name: BETA })));
+    expect(beta.coverage).toBe("full");
+    expect(beta.conclusions_coverage).toEqual({ complete: true });
+    expect(JSON.stringify(beta).includes("BETA-HIDDEN")).toBe(false);
+    // No per-perspective existence oracle: both perspectives report the same.
+    for (const observer of ["neo", "claude"]) {
+      const narrowed = ok(await call("getContext", context({ workspace_name: BETA, observer_peer_name: observer })));
+      expect(narrowed.conclusions_coverage).toEqual({ complete: true });
+    }
+    // Alpha: C3 (`private`, out of scope) is silent; only the in-chain
+    // withheld C11 (`locked`) makes neo -> nat incomplete, and claude -> nat
+    // has nothing in scope withheld.
+    const neoNat = ok(await call("getContext", context({ observer_peer_name: "neo", subject_peer_name: "nat" })));
+    expect(neoNat.conclusions_coverage).toEqual({ complete: false });
+    const alphaSide = ok(await call("getContext", context({ session_name: "side", observer_peer_name: "neo", subject_peer_name: "nat" })));
+    expect(alphaSide.conclusions_coverage).toEqual({ complete: true });
+  });
+
+  test("validity window and is_active: expired, not-yet-valid and inactive heads are excluded", async () => {
+    const result = ok(await call("getRepresentation", representation({ requester_peer_name: null }), OPERATOR));
+    const text = JSON.stringify(result);
+    for (const marker of ["EXPIRED-VIEW", "FUTURE-VIEW", "INACTIVE-VIEW"]) expect(text.includes(marker)).toBe(false);
+    for (const label of ["C12", "C13", "C14"]) expect(revisionsOf(result)).not.toContain(seeded.revisions[label]);
   });
 
   test("each conclusion carries node/revision ids, text, perspective and source handles; Thai round-trips", async () => {
@@ -215,7 +269,7 @@ describe("getContext selects eligible current conclusions (#32 TODO 2, rev.2 get
 
   test("observer/subject narrow the selection", async () => {
     expect(revisionsOf(ok(await call("getContext", context({ observer_peer_name: "neo", subject_peer_name: "nat" }))))).toEqual(
-      rev("C1", "C5"),
+      rev("C1", "C5", "C10"),
     );
     expect(revisionsOf(ok(await call("getContext", context({ observer_peer_name: "claude" }))))).toEqual(rev("C2"));
     expect(revisionsOf(ok(await call("getContext", context({ subject_peer_name: "claude" }))))).toEqual(rev("C8"));
@@ -272,10 +326,17 @@ describe("getRepresentation: observer -> subject, scoped (#32 2026-09-20 comment
     const result = ok(await call("getRepresentation", representation()));
     expect(result.observer_peer_name).toBe("neo");
     expect(result.subject_peer_name).toBe("nat");
-    expect(revisionsOf(result)).toEqual(rev("C1", "C5"));
+    // The workspace view: session-less conclusions plus those in sessions
+    // neo CURRENTLY belongs to (main, side, chained).
+    expect(revisionsOf(result)).toEqual(rev("C1", "C5", "C9", "C10"));
     expect(result.summary).toBeNull();
-    expect(result.coverage).toBe("partial"); // C3 is protected: coarse flag only
-    expect(JSON.stringify(result).includes("SECRET")).toBe(false);
+    // C3 (`private`) and C11 (`locked`) lie outside neo's view: silent, not a
+    // per-perspective existence flag (verifier finding 2).
+    expect(result.coverage).toBe("full");
+    const text = JSON.stringify(result);
+    for (const marker of ["SECRET", "LOCKED-VIEW"]) expect(text.includes(marker)).toBe(false);
+    const claude = ok(await call("getRepresentation", representation({ observer_peer_name: "claude" })));
+    expect(claude.coverage).toBe(result.coverage);
   });
 
   test("never merges observers or workspaces", async () => {
@@ -287,7 +348,7 @@ describe("getRepresentation: observer -> subject, scoped (#32 2026-09-20 comment
 
   test("the operator view sees protected conclusions; no requester without it is forbidden", async () => {
     const operator = ok(await call("getRepresentation", representation({ requester_peer_name: null }), OPERATOR));
-    expect(revisionsOf(operator)).toEqual(rev("C1", "C3", "C5"));
+    expect(revisionsOf(operator)).toEqual(rev("C1", "C3", "C5", "C9", "C10", "C11"));
     expect(operator.coverage).toBe("full");
     expect(await call("getRepresentation", representation({ requester_peer_name: null }))).toEqual({
       ok: false,
@@ -344,9 +405,12 @@ describe("answerChat: observer/about, node/revision citations (#32 TODO 1-2)", (
     expect(prompt).not.toContain("SECRET");
     expect(prompt).not.toContain("OLD-VIEW");
     expect(prompt).not.toContain("claude thinks");
+    expect(prompt).not.toContain("SIDE-SESSION-ONLY");
+    expect(prompt).not.toContain("LOCKED-VIEW");
     expect(result.items_used.length).toBeGreaterThan(0);
-    // Most recently updated first: C5 was published after C1.
+    // Most recently updated first: C10, then C5, then C1.
     expect(result.conclusions_used).toEqual([
+      { node_id: seeded.nodes.C10, revision_id: seeded.revisions.C10 },
       { node_id: seeded.nodes.C5, revision_id: seeded.revisions.C5 },
       { node_id: seeded.nodes.C1, revision_id: seeded.revisions.C1 },
     ]);
@@ -368,8 +432,18 @@ describe("transports: getRepresentation is a registry method on HTTP and MCP (#3
     );
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(revisionsOf(body)).toEqual(rev("C1", "C5"));
+    expect(revisionsOf(body)).toEqual(rev("C1", "C5", "C9", "C10"));
     expect(JSON.stringify(body)).toContain("นัทชอบกาแฟดำทุกเช้า"); // Thai survives the wire
+  });
+
+  test("HTTP workspace isolation: another bank's route is forbidden; a mismatched body is refused", async () => {
+    const post = (bank: string, body: unknown) =>
+      app.handle(new Request(`${ORIGIN}/api/knowledge/${bank}/getRepresentation`, { method: "POST", headers, body: JSON.stringify(body) }));
+    // The credential holds ALPHA only.
+    expect((await post(BETA, representation({ workspace_name: BETA }))).status).toBe(403);
+    const mismatched = await post(ALPHA, representation({ workspace_name: BETA }));
+    expect(mismatched.status).toBe(400);
+    expect(JSON.stringify(await mismatched.json()).includes("BETA-ONLY")).toBe(false);
   });
 
   test("MCP kb_getRepresentation is listed and answers the same", async () => {
@@ -384,6 +458,6 @@ describe("transports: getRepresentation is a registry method on HTTP and MCP (#3
     expect((listed.result.tools as { name: string }[]).some((tool) => tool.name === "kb_getRepresentation")).toBe(true);
     const called = await rpc("tools/call", { name: "kb_getRepresentation", arguments: { payload: representation() } });
     expect(called.result.isError).not.toBe(true);
-    expect(revisionsOf(JSON.parse(called.result.content[0].text))).toEqual(rev("C1", "C5"));
+    expect(revisionsOf(JSON.parse(called.result.content[0].text))).toEqual(rev("C1", "C5", "C9", "C10"));
   });
 });
