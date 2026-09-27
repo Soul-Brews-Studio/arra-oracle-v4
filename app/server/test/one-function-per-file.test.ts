@@ -35,7 +35,9 @@
 //      This step can't be fooled by reformatting because it's a real
 //      parse, not a regex over lines.
 //   2. For each exported name, isFunctionDeclared/isDefaultFunction search
-//      the file's full text for a LOCAL declaration of that name shaped
+//      the file's TYPE-STRIPPED text (Bun.Transpiler.transformSync) with the
+//      contents of strings, templates, regexes and comments blanked
+//      (blankLiterals) for a LOCAL declaration of that name shaped
 //      like a function: `function NAME(...)` (incl. `async`, `*`, and a
 //      generic `<T>` before the parens), or `const|let|var NAME = ...`
 //      bound to a `function` expression or an arrow (incl. `async`,
@@ -113,39 +115,125 @@ function scan(): string[] {
   return SCAN_ROOTS.flatMap(trackedFiles);
 }
 
-// A bare `export { x }` or `export { x } from "./mod"` names no NEW
-// function in THIS file when x is a re-export of an import -- step 2 below
-// already excludes those (no local declaration to find), but this explicit
-// list is kept as defense-in-depth documentation of intent, not load-bearing
-// for correctness.
-const RE_EXPORT_FROM = /export\s*\{([^}]*)\}\s*from\s*["'][^"']*["']/g;
+// Everything step 2 classifies has first been through blankLiterals: the
+// CONTENTS of strings, templates, regex literals and comments become spaces
+// (delimiters and newlines kept). Text such as `sep = ";"`, `/;/g`, a doc
+// comment quoting `export { a, b } from "./x"`, or a string holding
+// `function NAME(` can then neither hide a real function nor invent one
+// (round-3 verifier, forms 3 and 4). A re-export `export { x } from "./mod"`
+// needs no special case: x has no LOCAL declaration here, so step 2 never
+// counts it.
+const REGEX_CAN_FOLLOW = new Set("(,=:[!&|?{};+-*%<>~^".split(""));
+const REGEX_AFTER_WORD = /(?:^|[^\w$])(?:return|typeof|case|do|else|in|of|new|delete|void|throw|yield|await)$/;
 
-function reExportedFromElsewhere(text: string): Set<string> {
-  const names = new Set<string>();
-  let m: RegExpExecArray | null;
-  RE_EXPORT_FROM.lastIndex = 0;
-  while ((m = RE_EXPORT_FROM.exec(text))) {
-    for (const raw of m[1]!.split(",")) {
-      const part = raw.trim();
-      if (!part) continue;
-      const local = part.replace(/^type\s+/, "").split(/\s+as\s+/).pop()!.trim();
-      if (local) names.add(local);
+function blankLiterals(js: string): string {
+  const out = js.split("");
+  const blank = (from: number, to: number) => {
+    for (let k = from; k < to; k++) if (out[k] !== "\n") out[k] = " ";
+  };
+  let i = 0;
+  let lastSignificant = "";
+  let lastWord = "";
+  while (i < js.length) {
+    const c = js[i]!;
+    const next = js[i + 1];
+    if (c === "/" && next === "/") {
+      const end = js.indexOf("\n", i);
+      const stop = end === -1 ? js.length : end;
+      blank(i, stop);
+      i = stop;
+      continue;
     }
+    if (c === "/" && next === "*") {
+      const end = js.indexOf("*/", i + 2);
+      const stop = end === -1 ? js.length : end + 2;
+      blank(i, stop);
+      i = stop;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      let j = i + 1;
+      while (j < js.length && js[j] !== c && js[j] !== "\n") j += js[j] === "\\" ? 2 : 1;
+      blank(i + 1, j);
+      i = j + 1;
+      lastSignificant = c;
+      continue;
+    }
+    if (c === "`") {
+      let j = i + 1;
+      let depth = 0;
+      while (j < js.length) {
+        if (js[j] === "\\") { j += 2; continue; }
+        if (depth === 0 && js[j] === "`") break;
+        if (js[j] === "$" && js[j + 1] === "{") { depth++; j += 2; continue; }
+        if (depth > 0 && js[j] === "}") depth--;
+        j++;
+      }
+      blank(i + 1, j);
+      i = j + 1;
+      lastSignificant = "`";
+      continue;
+    }
+    if (c === "/" && (lastSignificant === "" || REGEX_CAN_FOLLOW.has(lastSignificant) || REGEX_AFTER_WORD.test(lastWord))) {
+      let j = i + 1;
+      let inClass = false;
+      while (j < js.length && js[j] !== "\n") {
+        if (js[j] === "\\") { j += 2; continue; }
+        if (js[j] === "[") inClass = true;
+        else if (js[j] === "]") inClass = false;
+        else if (js[j] === "/" && !inClass) break;
+        j++;
+      }
+      blank(i + 1, j);
+      i = j + 1;
+      while (i < js.length && /[a-z]/i.test(js[i]!)) i++;
+      lastSignificant = "/";
+      continue;
+    }
+    if (!/\s/.test(c)) {
+      lastSignificant = c;
+      lastWord = /[\w$]/.test(c) ? lastWord + c : "";
+    } else if (lastWord) {
+      lastWord = lastWord.slice(-12);
+    }
+    i++;
   }
-  return names;
+  return out.join("");
 }
 
 function escapeForRegex(name: string): string {
   return name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// An arrow function's head, starting right after the `=`: optional `async`,
-// optional generics (`<T,>`), then either a parenthesized param list or a
-// single bare identifier, then an optional return-type annotation, then
-// `=>`. Bounded (not `[\s\S]*`) so a failed match on a non-function value
-// can't skip forward across a `;` into an unrelated later declaration.
-const ARROW_HEAD =
-  "(?:async\\s*)?(?:<[^;]{0,150}?>\\s*)?(?:\\([^;]{0,1200}?\\)|[A-Za-z_$][\\w$]*)(?:\\s*:\\s*[^;]{0,300}?)?\\s*=>";
+/** Is there a function value starting at `js[at]` (right after an `=` or
+ *  `export default`)? `function`/`async function`, or an arrow: optional
+ *  `async`, then a BALANCED `( ... )` parameter list or one bare identifier,
+ *  then `=>`. Types are already stripped and literal/comment contents already
+ *  blanked, so a balanced paren walk is exact: a default parameter holding a
+ *  function body (`(cb = function () { return 1; }) => cb()`) or a `;` in a
+ *  default no longer stops it (round-3 verifier, form 3). */
+function isFunctionValueAt(js: string, at: number): boolean {
+  let i = at;
+  const skipSpace = () => { while (i < js.length && /\s/.test(js[i]!)) i++; };
+  skipSpace();
+  if (/^(?:async\s+)?function\b/.test(js.slice(i, i + 20))) return true;
+  const asyncMatch = /^async(?![\p{L}\p{N}_$])\s*/u.exec(js.slice(i, i + 12));
+  if (asyncMatch) i += asyncMatch[0].length;
+  if (js[i] === "(") {
+    let depth = 0;
+    for (; i < js.length; i++) {
+      if (js[i] === "(") depth++;
+      else if (js[i] === ")" && --depth === 0) { i++; break; }
+    }
+    if (depth !== 0) return false;
+  } else {
+    const ident = /^[\p{L}_$][\p{L}\p{N}_$]*/u.exec(js.slice(i, i + 200));
+    if (!ident) return false;
+    i += ident[0].length;
+  }
+  skipSpace();
+  return js.startsWith("=>", i);
+}
 
 // Identifier boundaries that also work for non-ASCII names (`ทดสอบ`, `debug$`):
 // `\\b` only knows ASCII word characters.
@@ -163,9 +251,11 @@ function isFunctionDeclared(js: string, name: string): boolean {
   if (declaration.test(js)) return true;
   // A binding either right after const/let/var, or a later declarator in the
   // same statement (`export const a = () => 1, b = () => 2`).
-  const value = `\\s*=(?!>)\\s*(?:async\\s+)?(?:function\\b|${ARROW_HEAD})`;
-  const binding = new RegExp(`(?:\\b(?:const|let|var)\\s+|,\\s*)${esc}${ID_AFTER}${value}`, "u");
-  return binding.test(js);
+  const binding = new RegExp(`(?:\\b(?:const|let|var)\\s+|,\\s*)${esc}${ID_AFTER}\\s*=(?!>)`, "gu");
+  for (const m of js.matchAll(binding)) {
+    if (isFunctionValueAt(js, m.index! + m[0].length)) return true;
+  }
+  return false;
 }
 
 // `export { local as alias, other }` with NO `from`: map each exported name
@@ -188,9 +278,11 @@ function localNameFor(js: string): Map<string, string> {
 }
 
 /** Is `export default ...` in `text` a function, function expression, or arrow? */
-function isDefaultFunction(text: string): boolean {
-  if (/export\s+default\s+(?:async\s+)?function\b/.test(text)) return true;
-  return new RegExp(`export\\s+default\\s+${ARROW_HEAD}`).test(text);
+function isDefaultFunction(js: string): boolean {
+  for (const m of js.matchAll(/export\s+default\s+/g)) {
+    if (isFunctionValueAt(js, m.index! + m[0].length)) return true;
+  }
+  return false;
 }
 
 function loaderFor(relPath: string): "ts" | "tsx" {
@@ -200,17 +292,29 @@ function loaderFor(relPath: string): "ts" | "tsx" {
 /** Exported function-like names in one file's text, overloads deduped. */
 function exportedFunctionNames(text: string, relPath: string): string[] {
   const transpiler = new Bun.Transpiler({ loader: loaderFor(relPath) });
-  // Fail loudly: a file the scanner cannot parse must not silently count as
-  // exporting nothing (wave-13 verifier, non-blocking).
-  const scanned = transpiler.scan(text);
-  const js = transpiler.transformSync(text);
-  const excluded = reExportedFromElsewhere(text);
+  // Fail loudly, and name the file: a file the scanner cannot parse must not
+  // silently count as exporting nothing.
+  let scanned: { exports: string[] };
+  let js: string;
+  try {
+    scanned = transpiler.scan(text);
+    js = blankLiterals(transpiler.transformSync(text));
+  } catch (error) {
+    throw new Error(`one-function-per-file: cannot parse ${relPath}: ${String(error)}`);
+  }
   const locals = localNameFor(js);
   const names: string[] = [];
   for (const name of scanned.exports) {
-    if (excluded.has(name)) continue;
     if (name === "default") {
-      if (isDefaultFunction(js)) names.push("default");
+      if (isDefaultFunction(js)) {
+        names.push("default");
+        continue;
+      }
+      // `export default helper;` or `export { helper as default }` names a
+      // LOCAL: count it under that local's name, so both the count and the
+      // naming check see it (round-3 verifier, forms 1 and 2).
+      const target = locals.get("default") ?? js.match(/export\s+default\s+([\p{L}_$][\p{L}\p{N}_$]*)\s*;/u)?.[1];
+      if (target && isFunctionDeclared(js, target)) names.push(target);
       continue;
     }
     if (isFunctionDeclared(js, locals.get(name) ?? name)) names.push(name);
