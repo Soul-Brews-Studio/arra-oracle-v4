@@ -28,6 +28,7 @@ import { LifecycleActions } from "../components/LifecycleActions";
 import { AssociationPanel } from "../components/AssociationPanel";
 import { DependentsPanel } from "../components/DependentsPanel";
 import { ListPanel } from "./ListPanel";
+import { TabStrip } from "../components/TabStrip";
 
 export type ExploreTab = "nodes" | "search" | "chat" | "messages" | "evidence" | "config";
 export const EXPLORE_TABS: ExploreTab[] = ["nodes", "search", "chat", "messages", "evidence", "config"];
@@ -178,24 +179,27 @@ export function DetailTabs(props: {
     // screen. The 24rem floor still wins where the scroller is shorter (a
     // landscape phone, 812x375: 384px in a 211px scrollport) -- measured,
     // capping the floor too left the transcript 24px tall there.
+    // ui-keys slice: that landscape case is now handled by the `short`
+    // screen (tailwind.config.js: max-height 500px, below lg). There the app
+    // shell stops pinning itself to the viewport and the document scrolls
+    // (App.tsx), so this pane is exactly one viewport tall with no 24rem
+    // floor: scrolled to, tab bar + transcript + composer share one screen.
+    // `h-svh`, not `h-screen`: 100vh is the LARGE viewport on a mobile
+    // browser, so the composer could sit under its toolbar (fix round).
     <section
       aria-label="Explore detail"
-      className="flex h-[80vh] max-h-full min-h-[24rem] min-w-0 shrink-0 flex-col lg:h-auto lg:min-h-0 lg:flex-1 lg:shrink"
+      className="flex h-[80vh] max-h-full min-h-[24rem] min-w-0 shrink-0 flex-col short:h-svh short:max-h-none short:min-h-0 lg:h-auto lg:min-h-0 lg:flex-1 lg:shrink"
     >
-      <div className="flex flex-wrap gap-1 border-b border-edge px-2 py-1.5">
-        {EXPLORE_TABS.map((t) => (
-          <button
-            key={t}
-            onClick={() => onChange(t)}
-            className={`rounded px-2.5 py-1 text-xs capitalize ${
-              active === t ? "bg-accent/15 text-accent" : "text-muted hover:text-slate-200"
-            }`}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
-
+      {/* #33 AC2 (ui-keys): a WAI-ARIA tab strip -- roving tabindex, arrows
+          move focus, Enter/Space activate; see `TabStrip`. The one tabpanel
+          below is what every tab controls. */}
+      <TabStrip label="Explore detail tabs" idBase="explore-detail" tabs={EXPLORE_TABS} active={active} onActivate={onChange} />
+      <div
+        role="tabpanel"
+        id="explore-detail-panel"
+        aria-labelledby={`explore-detail-tab-${active}`}
+        className="flex min-h-0 flex-1 flex-col"
+      >
       {active === "nodes" && (
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex items-center gap-2 px-3 py-2">
@@ -384,6 +388,7 @@ export function DetailTabs(props: {
           />
         </div>
       )}
+      </div>
     </section>
   );
 }

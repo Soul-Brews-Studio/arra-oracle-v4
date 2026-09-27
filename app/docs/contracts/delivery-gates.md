@@ -123,3 +123,37 @@ keep 90% busy, so more shards cannot help and more machines would cost more minu
 - Locally, before and after each fix: the failing-first tests were red for the measured reason (a
   316221-byte argv string reached a child; `publishResult.elapsedMs` 322-727 ms under CPU
   contention; `stop()` hung past 10 s; the three `.pile` files in the child's HOME) and green after.
+
+## Amendment 2026-09-26 (post-merge #33 AC2 (keyboard navigation, narrow layouts) + R12)
+
+**Change.** The #33 browser-level acceptance row now includes a keyboard-only proof. The UI's
+tab strips (the app view tabs and Explore's detail tabs) follow the WAI-ARIA tabs pattern:
+`role=tablist/tab/tabpanel`, `aria-selected`, `aria-controls`/`aria-labelledby`, a roving
+tabindex, ArrowLeft/ArrowRight/Home/End move focus, and Enter/Space activate (manual activation,
+the same everywhere). The peer, session and node list rows are native buttons in the Tab order.
+They carry `aria-current` when selected, and ArrowUp/ArrowDown/Home/End also move between rows.
+Opening a node from outside `<main>` moves focus to its heading. A `short` screen (max-height
+500px, below `lg`) unpins the app shell, so at 812x375 the Explore detail pane and the messages
+pane each get one full viewport.
+
+**Proof.** `app/just/ui-e2e-keys.sh` (`UI_E2E_SEGMENT=keys` of `ui-e2e.sh`) drives the
+peer -> session -> message -> Knowledge -> publish -> revise -> cite -> correct -> supersede ->
+history chain with ego-browser's `page.keyboard` only, and asserts `document.activeElement` at
+each step. `app/just/ui-e2e.test.ts` checks statically that the segment never clicks, focuses,
+sets values or navigates by hash. A failed screenshot remains a STEP_FAIL; this segment takes no
+screenshots and is judged on its own steps.
+
+**Reason.** The Codex acceptor judged #33 AC2 PARTIAL on `d949290`. The earlier harness drove forms
+with value setters and DOM `.click`, DetailTabs had no tab semantics, and the 812x375 floor was
+only disclosed. Ruling: `docs/overnight/DECISIONS.md` (the #33 AC2 slice; R12 for the model split).
+Transcript and measurements: `docs/overnight/UI-PROOF-ui-keys.md`.
+
+**Fix round (same slice, after the Opus verifier's REFUTED verdict).** A route `tab` that names no
+tab (a stale or hand-typed `&tab=Nodes`) now keeps the strip reachable: `TabStrip` makes the first
+tab the tab stop when no tab is selected (WAI-ARIA APG), and `App` coerces an unknown Explore tab to
+`nodes` (`exploreTabOf`). Activating a view tab leaves focus on that tab even when the view opens a
+node. The `short` layout sizes to `100svh`, not `100vh`. Rail rows (peers, sessions, node bookmarks)
+carry `aria-current`. The focus moves are now pinned in CI by `keyboardFocus.test.tsx` (real
+components on the fake DOM), not only by the ego-browser segment, which adds a `keys-stale-tab`
+step (`ui-e2e/keysStaleTab.mjs`) and measures the Messages view at 812x375. Reason and ruling as
+above (`docs/overnight/DECISIONS.md`, #33 AC2).

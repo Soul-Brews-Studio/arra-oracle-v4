@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { type RevisionRow, parseTerms, typeOf, horizonOf } from "../api/knowledge";
 import type { ErrorEnvelope } from "../api/memory";
 import { TypeBadge } from "./TypeBadge";
@@ -19,6 +20,31 @@ export function NodeHead({
   loading: boolean;
   error: ErrorEnvelope | null;
 }) {
+  // #33 AC2 (ui-keys): opening a node moves focus to its title, once per
+  // node, so a keyboard user lands on what they opened instead of on <body>
+  // (the NodeRail entry, search hit or correction form that had focus is
+  // often gone by then). Only when focus is OUTSIDE <main> or lost: a user
+  // already working in this node's forms is never pulled away. A new head
+  // revision of the SAME node also takes focus, but only if it was lost --
+  // measured by the keyboard e2e: the publish form clears on submit, its
+  // button turns disabled under the focus, and focus fell to <body>.
+  // Never off a role=tab (fix round): Enter on the "knowledge" view tab with
+  // a node in the route mounts this with focus on that tab, and the WAI-ARIA
+  // tabs pattern keeps focus on the tab you just activated.
+  const h2Ref = useRef<HTMLHeadingElement>(null);
+  const focusedFor = useRef<string | null>(null);
+  const ready = !loading && error === null && revision !== null;
+  const revisionId = revision?.id ?? null;
+  useEffect(() => {
+    if (!ready || h2Ref.current === null) return;
+    const newNode = focusedFor.current !== node.node_id;
+    focusedFor.current = node.node_id;
+    const at = document.activeElement;
+    const lost = at === null || at === document.body;
+    const onTab = at?.getAttribute("role") === "tab";
+    if (lost || (newNode && !onTab && at.closest("main") === null)) h2Ref.current.focus();
+  }, [ready, node.node_id, revisionId]);
+
   if (loading) {
     return <EmptyState title="loading…" detail={node.node_id} />;
   }
@@ -53,7 +79,7 @@ export function NodeHead({
             item here, and a flex item's default min-width is its content
             width -- without both, a long enough title pushes this row (and
             the page) wider than the viewport instead of wrapping. */}
-        <h2 className="min-w-0 break-words text-sm font-semibold text-slate-100">{revision.title}</h2>
+        <h2 ref={h2Ref} tabIndex={-1} className="min-w-0 break-words text-sm font-semibold text-slate-100">{revision.title}</h2>
         <div className="flex shrink-0 gap-1.5">
           {type && <TypeBadge type={type} />}
           {horizon && <HorizonBadge horizon={horizon} />}
