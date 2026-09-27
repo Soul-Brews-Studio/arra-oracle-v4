@@ -160,7 +160,7 @@ export function makeHarness({ page, outDir }) {
   // stacks trace and session-link panels above the evidence, so an
   // unscrolled capture shows the same top half for every node.
   async function shot(name, focus = null) {
-    const { stat } = await import("node:fs/promises");
+    const { stat, writeFile } = await import("node:fs/promises");
     const path = `${outDir}/e2e-${name}.png`;
     try {
       await retry(`screenshot ${name}`, async () => {
@@ -174,7 +174,13 @@ export function makeHarness({ page, outDir }) {
           if (!found) throw new Error(`nothing titled "${focus}" to scroll to`);
           await sleep(200);
         }
-        await page.screenshot({ path });
+        // Raw CDP capture, not `page.screenshot()`: under ego's per-origin
+        // zoom (150% on 127.0.0.1) the SDK call returned only the top-left
+        // 1/1.5 of the viewport (measured 711x445 of a 1067x667 CSS
+        // viewport), which cut off every right-hand panel. The CDP call
+        // returns the whole 1600x1000 frame.
+        const shotData = await page.cdp("Page.captureScreenshot", { format: "png" }, { timeout: 15000 });
+        await writeFile(path, Buffer.from(shotData.data, "base64"));
         const { size } = await stat(path);
         if (size < 12000) throw new Error(`near-blank screenshot (${size} bytes)`);
       });

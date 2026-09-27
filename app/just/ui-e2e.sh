@@ -59,14 +59,33 @@ command -v ego-browser >/dev/null 2>&1 || { echo "STEP_FAIL preflight: ego-brows
 resolve_ollama
 
 CFG=""
+# Browser teardown, retried: the same `ego-browser nodejs` start-up stall the
+# driver watchdog covers also hit this call (runs 6-7 left their space open
+# and printed nothing). Output goes to a file, not a pipe, so an attempt that
+# dies still shows what it said. Three silent attempts is a loud
+# STEP_FAIL, and the run exits 1: a leaked token in localStorage is a
+# failure, not a footnote.
+BROWSER_DOWN_FAILED=0
 browser_down() {
   [ -n "$CFG" ] && [ -f "$CFG" ] || return 0
-  timeout 90 ego-browser nodejs -e "const m = await import('$E2E_DIR/teardown.mjs'); await m.teardown('$CFG');" 2>&1 \
-    | rg '^(TEARDOWN|Error)' || echo "TEARDOWN browser teardown printed nothing (see above)"
+  [ -f "$ROOT/ego-space-id" ] || { echo "TEARDOWN no browser space was opened"; return 0; }
+  local attempt log="$OUT/teardown.txt"
+  for attempt in 1 2 3; do
+    timeout 60 ego-browser nodejs -e "const m = await import('$E2E_DIR/teardown.mjs'); await m.teardown('$CFG');" \
+      >"$log" 2>&1 </dev/null
+    if rg -q '^TEARDOWN space ' "$log"; then
+      rg '^TEARDOWN' "$log"
+      return 0
+    fi
+    echo "RETRY browser-teardown attempt $attempt/3: $(tail -c 300 "$log" | tr '\n' ' ')"
+  done
+  echo "STEP_FAIL browser-teardown: space $(cat "$ROOT/ego-space-id") not closed and origin storage not proven clear"
+  BROWSER_DOWN_FAILED=1
 }
 cleanup() {
   local rc=$?
   browser_down
+  [ "$BROWSER_DOWN_FAILED" -eq 1 ] && rc=1
   demo_stack_down
   echo
   echo "UI_E2E_OUT $OUT"
@@ -145,9 +164,46 @@ json.dump({"origin": origin, "port": port, "token": token, "outDir": out, "space
            "canary": canary, "visibleMessageIds": ids}, open(cfg, "w"))
 PY
 
+# Measured flake: `ego-browser nodejs` can hang inside `taskSpace()` before
+# it touches the page (one run sat 8+ minutes with no output). Until the
+# driver prints `E2E_SPACE`, nothing has been asserted and no browser state
+# exists, so a start that does not print it within 90s is killed and
+# retried, at most 3 times. Once `E2E_SPACE` is out, the run is never
+# retried: its verdicts stand, whatever they are.
+run_driver() {
+  local attempt pid tailpid waited
+  for attempt in 1 2 3; do
+    : >"$OUT/transcript.txt"
+    timeout 900 ego-browser nodejs -e "const m = await import('$E2E_DIR/drive.mjs'); await m.drive('$CFG');" \
+      >"$OUT/transcript.txt" 2>&1 </dev/null &
+    pid=$!
+    waited=0
+    while kill -0 "$pid" 2>/dev/null && ! rg -q '^E2E_SPACE ' "$OUT/transcript.txt"; do
+      sleep 1
+      waited=$((waited + 1))
+      [ "$waited" -ge 90 ] && break
+    done
+    if rg -q '^E2E_SPACE ' "$OUT/transcript.txt"; then
+      tail -n +1 -f "$OUT/transcript.txt" &
+      tailpid=$!
+      wait "$pid"
+      DRIVER_RC=$?
+      sleep 0.5
+      kill "$tailpid" 2>/dev/null
+      wait "$tailpid" 2>/dev/null
+      return 0
+    fi
+    kill "$pid" 2>/dev/null
+    wait "$pid" 2>/dev/null
+    echo "RETRY driver-start attempt $attempt/3: no E2E_SPACE after ${waited}s; output: $(head -c 300 "$OUT/transcript.txt" | tr '\n' ' ')"
+  done
+  DRIVER_RC=1
+  echo "STEP_FAIL driver-start: ego-browser did not open a task space in 3 attempts" | tee -a "$OUT/transcript.txt"
+}
+
 step "drive the built UI with ego-browser (ui-e2e/drive.mjs)"
-timeout 900 ego-browser nodejs -e "const m = await import('$E2E_DIR/drive.mjs'); await m.drive('$CFG');" 2>&1 | tee "$OUT/transcript.txt"
-DRIVER_RC=${PIPESTATUS[0]}
+DRIVER_RC=1
+run_driver
 
 N_OK=$(rg -c '^STEP_OK ' "$OUT/transcript.txt" || true)
 N_FAIL=$(rg -c '^STEP_FAIL ' "$OUT/transcript.txt" || true)

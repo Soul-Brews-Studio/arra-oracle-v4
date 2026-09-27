@@ -85,44 +85,87 @@ Files:
 | `historical citing revision` | no | `scanDependents` current mode always returns `is_snapshot_head: true` (see its own comment) |
 | `checking…`, `… not checked`, `… status unknown`, `target lifecycle unknown` | no | These need a lookup to fail or to be in flight. The test waits until no `checking…` badge remains before it judges |
 
-## Transcript (run 3 of the final code, 2026-09-27)
+## Transcript (run 6, 2026-09-27)
 
 ```text
 == 5. drive the built UI with ego-browser (ui-e2e/drive.mjs) ==
-E2E_SPACE 223
-STEP_OK ui-open http://127.0.0.1:55273/v2/ (token moved to localStorage, stripped from the URL)
+E2E_SPACE 239
+STEP_OK ui-open http://127.0.0.1:50160/v2/ (token moved to localStorage, stripped from the URL)
 STEP_OK ui-seed-vocab type + memory_horizon seeded from the UI
-STEP_OK create node A=nv9OMxxlBawDGoki1B9Mf rev #1
-STEP_OK revise A #2=Hn-ovMt4… history #2,#1; rev1 DOM snapshot pinned
-STEP_OK cite B=LVaho8EUH7uxDepWRtaYr cites A#2 (current head), A#1 (stale: not head), url (locator only); A shows REVERSE rows for B and D
-STEP_OK correct C=rCAqwC2Yfj6gaoOCiQ5G3 (type correction) corrects A#2; C rev vQ2nQ614…
+STEP_OK create node A=BlIiPX8fkgZAZMhpmSxkR rev #1
+STEP_OK revise A #2=xUjdS4qw… history #2,#1; rev1 DOM snapshot pinned
+STEP_OK cite B=0tn4B-t67t0aALsjlZTjX cites A#2 (current head), A#1 (stale: not head), url (locator only); A shows REVERSE rows for B and D
+STEP_OK correct C=V9OyCE405C5bEiEfj9-gb (type correction) corrects A#2; C rev bahoiO_N…
 STEP_OK retire-citing-node D retired (accepted — lifecycle history refreshed )
 STEP_OK supersede {"banner":"supersededopen successor: Test server port is 47779This node","fieldsetDisabled":true,"publishDisabled":true,"correctDisabled":true}
 STEP_OK evidence-after-supersede B->A#2: target superseded/retired; B->A#1: stale: not head + target superseded/retired; A<-D: citing node superseded/retired; A<-B,C: citing node current
 NOTE publishRevision with a dangling node_revision target -> 400 {"version":"arra-publication-error/v1","code":"invalid_reference","path":"/content/link_snapshot_json","message":"invalid scoped reference"}
-STEP_OK evidence-unresolved E=p1dQaz5fqXwKIeax4jLzo: url cited as unresolved -> badge "unresolved"
+STEP_OK evidence-unresolved E=zf2DdbEXloND3YHePhWIb: url cited as unresolved -> badge "unresolved"
 STEP_SKIP evidence-target-unavailable (unreachable through a real write: publishRevision -> 400 invalid_reference)
 STEP_OK history-byte-identical rev 1 title/body/terms identical in the DOM and in listAcceptedHistory (title, body, term_snapshot_json, link_snapshot_json, content_digest) after revise, cite, correct, retire and supersede
-STEP_OK chat-peer-context answer "คุณต้องทำการ snapshot ดิสก์ก่อนซ้อมย้ายข้อมูลทุกครั้ง [rOncVWshJhWOTf15hwucG]."…; partial coverage; citations 2 (all in daily-loop); secret canary absent from the DOM
+STEP_OK chat-peer-context answer "ต้องทำการ snapshot ดิสก์ก่อนซ้อมย้ายข้อมูลทุกครั้ง [PtaFib8JzYpw4BXMDAkmD]."…; partial coverage; citations 2 (all in daily-loop); secret canary absent from the DOM
 STEP_OK search-thai-keyword ลืม -> "#1Port conventions: อย่าหลงลืมngramPort conventions: อย่าหลงลืม\n\nอย่าหลงลืมจองพอร์ตก่อนรันเทสต์ -- never forget to reser"
 E2E_SUMMARY failures=0 screenshots=12
 E2E_DRIVER_DONE
-
 UI_E2E_RESULT PASS ok=13 fail=0 skip=1
-TEARDOWN origin http://127.0.0.1:55273 storage keys before=4 after=0
-TEARDOWN space 223 finished {"spaceId":223,"closedSpace":true,"keptManagedLabels":[],"closedManagedLabels":["p1"],"preservedUnmanagedCount":0}
-STEP_OK stack-down
 ```
 
 The `SHOT …` lines between verdicts are left out above. Before the driver, the run printed
-`STEP_OK` for `ui-build`, `dataset-create`, `dev-policy`, `server-start` and `seed`.
+`STEP_OK` for `ui-build`, `dataset-create`, `dev-policy`, `server-start` and `seed`. After
+it came `STEP_OK stack-down`. Run 6's browser teardown failed silently; see "Teardown
+finding" below.
 
-## Repeats and the mutation check
+## Repeat runs
 
-See "Repeat runs" and "Mutation check" at the end of this file. They are appended with the
-measured summaries.
+| Run | Driver code | Result |
+|---|---|---|
+| 3 | final driver; old screenshot call, old trap | `UI_E2E_RESULT PASS ok=13 fail=0 skip=1`; `TEARDOWN … storage keys before=4 after=0` |
+| 4 | same as run 3 | `UI_E2E_RESULT PASS ok=13 fail=0 skip=1`; `TEARDOWN … before=4 after=0` |
+| 5 | same as run 3 | `UI_E2E_RESULT PASS ok=13 fail=0 skip=1`; `TEARDOWN … before=4 after=0` |
+| 6 | final driver, CDP screenshots, driver-start watchdog | `UI_E2E_RESULT PASS ok=13 fail=0 skip=1`; browser teardown printed nothing |
+| 7 | same as run 6 | `UI_E2E_RESULT PASS ok=13 fail=0 skip=1`; browser teardown printed nothing |
+| 8 | same as run 6 | `UI_E2E_RESULT PASS ok=13 fail=0 skip=1`; browser teardown printed nothing |
+| 9 | final script (retried teardown, stdin detached) | `UI_E2E_RESULT PASS ok=13 fail=0 skip=1`; `TEARDOWN origin … storage keys before=4 after=0`; `TEARDOWN space 243 finished … closedSpace:true` on the first attempt, with no `RETRY` |
 
-## Screenshots (run 3)
+Every run's only `STEP_SKIP` is `evidence-target-unavailable`. It is the same in all of
+them, and the reason is explained in the matrix above.
+
+**Teardown finding.** From run 6 on, the trap's `ego-browser nodejs … | rg` teardown
+printed nothing, and runs 6-8 (and mutation run 2) left their ego space open with the
+dev token in that origin's localStorage. The verdicts were not affected: the stack
+teardown still ran, and the server and mktemp root were removed. I closed those four
+spaces by hand (234, 239, 240, 241), each with `Storage.clearDataForOrigin` on its origin
+and then `finish({ keep: [] })`. The same teardown code, run directly, answered in 0.24s
+with `before=4 after=0`, so the root cause inside the trap was not identified in the time
+box. The script now runs the teardown up to 3 times, writes its output to
+`OUT/teardown.txt` rather than a pipe, and detaches stdin. If no attempt prints
+`TEARDOWN space … finished`, it prints `STEP_FAIL browser-teardown` and exits 1.
+
+## Mutation check
+
+In `app/ui/v2/src/api/knowledge.ts`, `link_snapshot_json: JSON.stringify(input.links)` was
+changed back to `link_snapshot_json: "[]"` (the pre-#113 bug). The script was then run
+unchanged; it rebuilds the bundle from source and prints
+`NOTE the rebuilt bundle differs from the committed one`. Result (mutation run 2):
+
+```text
+STEP_OK create node A=VTzjCZJIBzyExRBv1m6gk rev #1
+STEP_OK revise A #2=ldH01gWr… history #2,#1; rev1 DOM snapshot pinned
+STEP_FAIL cite: B direct evidence settled: not reached within 20000ms; last=false
+STEP_FAIL correct: C corrects link: not reached within 20000ms; last=false
+STEP_FAIL supersede: missing C1 (an earlier step failed)
+STEP_FAIL evidence-after-supersede: B evidence rows: not reached within 20000ms; last=false
+E2E_SUMMARY failures=4 screenshots=6 failed=[cite,correct,supersede,evidence-after-supersede]
+UI_E2E_RESULT FAIL ok=9 fail=4 skip=1 driver_rc=0
+```
+
+The exit code was 1. Afterwards the source and `app/server/public/v2` were restored with
+`git checkout` and `git clean`, and `git status` showed neither. The first mutation
+attempt died differently: `ego-browser nodejs` never opened a space in 8+ minutes. It
+was killed, and it exited 1 with `ok=0 fail=0`. That is why the driver-start watchdog
+exists.
+
+## Screenshots (run 6)
 
 | File | Shows |
 |---|---|
@@ -171,11 +214,17 @@ measured summaries.
   search needs as a separate operator step (#30). Both use the page's own bearer to call
   the real HTTP API. The CLI seeds everything that has no UI, such as sessions,
   memberships and the session link.
-- **Screenshots are viewport captures.** ego keeps a per-origin zoom, measured at 150% on
-  `127.0.0.1`. The harness pins a 1600×1000 metric, which gives an `innerWidth` of about
-  1067, and scrolls the relevant heading to the top before each capture. Wide panels can
-  still be cut at the right edge. The DOM assertions, not the pictures, are the verdict.
-- **Browser plumbing retries are bounded and printed.** Up to 3 attempts, each shown as a
-  `RETRY …` line: screenshot timeouts, near-blank PNGs, and the 184px viewport glitch
-  (8 resets). Assertions are never retried until they pass. `waitDom` polls one condition
-  to a deadline and fails there.
+- **Screenshots are viewport captures, taken over raw CDP.** ego keeps a per-origin zoom,
+  measured at 150% on `127.0.0.1`. Under that zoom, the SDK's `page.screenshot()` returned
+  only the top-left 1/1.5 of the viewport: 711×445 of a 1067×667 CSS viewport, which cut
+  off every right-hand panel, including the chat answer. The harness pins a 1600×1000
+  metric, captures with `Page.captureScreenshot` and writes the PNG itself. Before each
+  capture it scrolls the relevant heading to the top. The DOM assertions, not the pictures,
+  are the verdict.
+- **Browser plumbing retries are bounded and printed.** Each retry shows as a `RETRY …`
+  line. Screenshot timeouts and near-blank PNGs get up to 3 attempts; the 184px viewport
+  glitch gets 8 resets. A driver that has not printed `E2E_SPACE` within 90s is killed and
+  started again, up to 3 attempts. This covers a measured hang inside `taskSpace()` (one
+  start sat for 8+ minutes with no output). Before `E2E_SPACE` nothing has been asserted and
+  no browser state exists; after it the run is never restarted. Assertions are never
+  retried until they pass. `waitDom` polls one condition to a deadline and fails there.
