@@ -4,6 +4,12 @@ import type { KeywordHitWire, SemanticHitWire } from "./searchHitView";
 import type { SearchMode } from "./useKnowledgeSearch";
 
 export type SearchOutcome = {
+  /** Which mode's response this outcome IS -- not the search box's current
+   *  toggle value. `searchOutcomeView` compares this against the active
+   *  mode to decide whether `scanReason` still describes what is on screen
+   *  (fix-round finding, PR #110 follow-up #1: the 300ms debounce means a
+   *  mode switch and the outcome that answers it never land atomically). */
+  mode: SearchMode;
   errorCode: string | null;
   keywordHits: KeywordHitWire[];
   semanticHits: SemanticHitWire[];
@@ -19,16 +25,19 @@ export type SearchOutcome = {
  * should not blank out the other mode's last answer mid-debounce), but
  * `scanReason` is NOT mode-scoped state: it describes how the CURRENT
  * response was produced, and only `searchKnowledgeKeyword` ever sets it.
- * A semantic response must always clear it.
+ * A semantic response must always clear it. `mode` records which response
+ * this is, so `searchOutcomeView` can tell "the last reply we got" from
+ * "the mode the user has selected right now" -- see that file's comment.
  */
 export function applySearchOutcome(mode: SearchMode, result: ApiResult, previous: SearchOutcome): SearchOutcome {
   if (!result.ok) {
-    return { ...previous, errorCode: describeResult(result), keywordHits: [], semanticHits: [], scanReason: null };
+    return { ...previous, mode, errorCode: describeResult(result), keywordHits: [], semanticHits: [], scanReason: null };
   }
   if (mode === "keyword") {
     const body = result.body as { hits?: KeywordHitWire[]; scan_reason?: "short_query" | "index_unavailable" | null };
     return {
       ...previous,
+      mode,
       errorCode: null,
       keywordHits: Array.isArray(body.hits) ? body.hits : [],
       scanReason: body.scan_reason ?? null,
@@ -37,6 +46,7 @@ export function applySearchOutcome(mode: SearchMode, result: ApiResult, previous
   const body = result.body as { hits?: SemanticHitWire[]; embedding_profile?: string };
   return {
     ...previous,
+    mode,
     errorCode: null,
     semanticHits: Array.isArray(body.hits) ? body.hits : [],
     // Fix (blocking, fix round 2026-09-26): semantic responses never carry
