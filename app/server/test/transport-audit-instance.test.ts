@@ -93,6 +93,103 @@ runIt(
   TEST_TIMEOUT_MS,
 );
 
+runIt(
+  "fix-round 2: a REFUSED call first on a fresh instance still writes its row " +
+    "(schema must not be inferred from a null-`principal_id` sample)",
+  async () => {
+    const fixture = await createFixture([ALPHA, BETA]);
+    cleanups.push(fixture.cleanup);
+    const workDir = await mkdtemp(join(tmpdir(), "arra-v4-audit-instance-refusal-first-"));
+    cleanups.push(() => rm(workDir, { recursive: true, force: true }));
+
+    const legacy = (label: string, token: string, path: string, body?: unknown) =>
+      ({ label, transport: "legacy", token, bank: "alpha", method: "", httpMethod: "POST", path, body });
+    // Refusals FIRST, on an instance that has never written an instance_audit
+    // row: the exact ordering the live probe uses, and the ordering the
+    // verifier reproduced the schema-inference crash with.
+    const steps = [
+      legacy("none_reindex_first", "none", "/api/reindex", {}),
+      legacy("write_backfill_first", "write", "/api/backfill", {}),
+      legacy("maint_backfill", "maint", "/api/backfill", {}),
+      { label: "tables", transport: "tables", token: "audit", bank: "alpha", method: "" },
+    ];
+    const result = await runGated(fixture.datasetRoot, CHILD, [
+      fixture.datasetRoot,
+      workDir,
+      JSON.stringify({ banks: { alpha: ALPHA, beta: BETA }, steps }),
+    ]);
+    if (result.code !== 0) throw new Error(`child exited ${result.code}: ${result.stderr.slice(-2000)}`);
+    const out: Record<string, any> = JSON.parse(result.stdout.trim().split("\n").at(-1)!);
+    const show = (label: string) => `${label}: ${JSON.stringify(out[label])}`;
+
+    expect(out.none_reindex_first.status, show("none_reindex_first")).toBe(401);
+    expect(out.write_backfill_first.status, show("write_backfill_first")).toBe(403);
+    expect(out.maint_backfill.status, show("maint_backfill")).toBe(200);
+
+    const rows = out.tables.instance_audit as Array<Record<string, unknown>>;
+    // Both refusals AND the later admitted call must all land -- the bug
+    // this pins dropped every refusal until an admitted call created the
+    // table, so a naive fix that only "worked" because the first call
+    // happened to be admitted would still fail this ordering.
+    expect(rows.length, show("tables")).toBe(3);
+    const refused = rows.filter((r) => r.outcome === "refused");
+    expect(refused.length, show("tables")).toBe(2);
+    for (const r of refused) expect(r.principal_id, show("tables")).toBeNull();
+  },
+  TEST_TIMEOUT_MS,
+);
+
+describe("instance audit write failure (isolated subprocess: defines the D4b behaviour)", () => {
+  // #31 fix-round 2: the amendment claimed a forced-write-failure test
+  // existed; it did not (`rg instanceAuditFailureCount` found only the
+  // getter's own definition). This is that test. It runs in a SEPARATE
+  // process, deliberately: `storage.ts`'s `DATA_DIR` is read once at
+  // module-import time (see the redaction test's own comment above), so the
+  // only way to force `openInstanceAuditTable`'s `connect()` to throw is to
+  // point `ARRA_DATA_DIR` at a path that cannot be a Lance dataset root
+  // (a plain FILE, not a directory) BEFORE that module is ever imported.
+  test("a forced instance_audit write failure does not throw into the caller, and increments the observable counter", async () => {
+    const workDir = await mkdtemp(join(tmpdir(), "arra-v4-audit-instance-failure-"));
+    const notADir = join(workDir, "not-a-directory");
+    await Bun.write(notADir, "not a lance dataset root");
+    try {
+      const script = `
+        const { appendInstanceAuditRow } = await import("${join(import.meta.dir, "..", "src", "audit", "instanceAudit.appendInstanceAuditRow.ts")}");
+        const { instanceAuditFailureCount } = await import("${join(import.meta.dir, "..", "src", "audit", "instanceAudit.instanceAuditFailureCount.ts")}");
+        const before = instanceAuditFailureCount();
+        let threw = false;
+        try {
+          await appendInstanceAuditRow({
+            principal_id: null, route: "/api/reindex", action: "maintenance:reindex",
+            outcome: "refused", status: "error", input: {}, started_at: 1, finished_at: 2, request_id: "req_x",
+          });
+        } catch { threw = true; }
+        console.log(JSON.stringify({ threw, before, after: instanceAuditFailureCount() }));
+      `;
+      const proc = Bun.spawn(["bun", "-e", script], {
+        env: { ...process.env, ARRA_DATA_DIR: notADir },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      if (code !== 0) throw new Error(`subprocess exited ${code}: ${stderr.slice(-2000)}`);
+      const result = JSON.parse(stdout.trim().split("\n").at(-1)!);
+      // The defined behaviour (D4b, "a failed write does not silently
+      // succeed"): the route is never taken down by an audit outage (no
+      // throw), but the failure is OBSERVABLE (the counter moves), never
+      // dropped without a trace.
+      expect(result.threw, stdout).toBe(false);
+      expect(result.after, stdout).toBe(result.before + 1);
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }, TEST_TIMEOUT_MS);
+});
+
 describe("instance audit redaction (pure, no storage touched)", () => {
   // Deliberately does NOT call `appendInstanceAuditRow` in-process:
   // `storage.ts`'s `DATA_DIR` is read once at module import, so an in-process

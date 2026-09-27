@@ -9,12 +9,17 @@
 //
 // A write failure must not silently succeed (D4b): it never throws back into
 // the route (an audit outage must not take down maintenance), but it is
-// never swallowed invisibly either — `instanceAuditFailureCount()` is a
-// counter a caller/test can observe, exactly the pattern `mcp/calls.ts`
-// already uses for the tenant log's own write failures.
+// never swallowed invisibly either — `instanceAuditFailureCount()`
+// (`instanceAudit.instanceAuditFailureCount.ts`) is a counter a caller/test
+// can observe, exactly the pattern `mcp/calls.ts` already uses for the
+// tenant log's own write failures. Fix-round 2 forces this path in
+// `transport-audit-instance.test.ts` ("a forced write failure increments the
+// counter and still lets the route return") rather than only asserting the
+// getter exists.
 
 import { truncate } from "../mcp/calls";
-import { ensureInstanceAuditTable } from "./instanceAudit.openInstanceAuditTable";
+import { openInstanceAuditTable } from "./instanceAudit.openInstanceAuditTable";
+import { INSTANCE_AUDIT_FAILURE_STATE } from "./instanceAudit.instanceAuditFailureCount";
 
 export type InstanceAuditOutcome = "admitted" | "refused";
 
@@ -28,15 +33,6 @@ export interface InstanceAuditRecord {
   readonly started_at: number;
   readonly finished_at: number;
   readonly request_id: string;
-}
-
-let failureCount = 0;
-
-/** Observable, not exception-based (see file header): the write path a test
- *  can assert a failure against without racing a thrown error across an
- *  already-completed maintenance action. */
-export function instanceAuditFailureCount(): number {
-  return failureCount;
 }
 
 export async function appendInstanceAuditRow(record: InstanceAuditRecord): Promise<void> {
@@ -54,12 +50,12 @@ export async function appendInstanceAuditRow(record: InstanceAuditRecord): Promi
     request_id: record.request_id,
   };
   try {
-    const { table, wroteSample } = await ensureInstanceAuditTable(row);
-    if (!wroteSample) await table.add([row]);
+    const table = await openInstanceAuditTable();
+    await table.add([row]);
   } catch {
     // Fixed sanitized counter, never exception text (mirrors
     // `mcp/calls.ts auditFailures`): the failure is observable, but the
     // maintenance action this audits is not aborted by an audit outage.
-    failureCount += 1;
+    INSTANCE_AUDIT_FAILURE_STATE.count += 1;
   }
 }

@@ -589,3 +589,68 @@ input; and a forced `instance_audit` write failure leaves
 caller. `app/server/test/transport-audit-maintenance-open.test.ts` was updated
 in the same commit: the round-4 note it pinned is now superseded by this
 section, not by a silent edit to that note's own text.
+
+## Amendment 2026-09-28 fix-round 2 (verifier-confirmed corrections to the D4b amendment above; docs/overnight/DECISIONS.md D4b unchanged)
+
+An independent Opus verifier refuted three claims in the amendment above.
+This section corrects the record rather than editing that text in place.
+
+- **The schema-inference crash (blocking).** `ensureInstanceAuditTable`
+  created `instance_audit` with `createTable(TABLE, [sample])`, which infers
+  the Arrow schema from the FIRST row it ever sees. A REFUSED call's row has
+  `principal_id: null`; if a refusal is the first call an instance ever sees
+  (an anonymous prober, or the live probe's own call order), Lance cannot
+  infer a type for an all-null column and throws — and that throw only ever
+  surfaced as `instanceAuditFailureCount()` ticking up, so the row a security
+  review most needs was silently dropped, on every fresh instance, until an
+  admitted call happened to land first. Reproduced standalone by the
+  verifier; pinned here by a new refusal-first test in
+  `transport-audit-instance.test.ts`. **Fix:** `openInstanceAuditTable.ts`
+  (renamed from `instanceAudit.openInstanceAuditTable.ts`'s old
+  `ensureInstanceAuditTable`) now creates the table with an EXPLICIT schema
+  (`createEmptyTable`), never inferred from data.
+- **The architecture claim (blocking).** The original amendment said the new
+  table mirrors `mcp_calls`'s idiom, but `mcp_calls` is created by the Python
+  migration (`app/migrate-py`) and the TS side only ever OPENS it
+  (`calls.openCallLogTable.ts`) — `instance_audit` broke that by having TS
+  both declare and create the schema, contradicting AGENTS.md ("Python
+  declares the schema, TS never does") and `db.ts`'s own header comment.
+  **Fix:** `migrate-py/src/arra_migrate/models/instance_audit.py` is now the
+  schema authority; `openInstanceAuditTable.ts`'s explicit Arrow schema
+  mirrors it field-for-field by hand (documented in both files) rather than
+  inferring anything from data. It is deliberately NOT added to
+  `models/__init__.py`'s `TABLES` registry: `instance_audit` is
+  instance-level, not per-workspace, so `python -m arra_migrate` (which
+  creates the tenant 15/19-table set inside one workspace-scoped candidate)
+  is not the right place to create it either. This is a declared-and-mirrored
+  schema, not a Python-created table — a narrower claim than "Python declares
+  the schema and creates it," disclosed rather than closed.
+- **The "Tests." paragraph (blocking) overstated coverage.** It claimed a
+  forced-write-failure test existed (`rg instanceAuditFailureCount` found only
+  the counter's own definition) and that "redaction is applied to the
+  recorded input" when the only recorded inputs on either route are `{batch}`
+  or `{}` — no secret ever reaches an `instance_audit` row today, so no test
+  proved end-to-end secret redaction on a real request. **Fix:** added an
+  isolated-subprocess test that forces the Lance write itself to fail (a bad
+  `ARRA_DATA_DIR`) and asserts the DEFINED behaviour — no throw into the
+  caller, `instanceAuditFailureCount()` moves. The existing redaction test is
+  relabelled honestly below as `truncate()`-level only: it proves
+  `appendInstanceAuditRow` reuses `mcp/calls.ts`'s exact `redact`/`truncate`
+  (R5, not re-derived) on a synthetic secret-shaped value, not that a real
+  maintenance request today ever carries one.
+
+**Still open, disclosed, not fixed in this round (nonblocking per the fix-round
+brief):**
+- **R25's read side.** No read route, MCP tool, or operator scope exists for
+  `instance_audit`; it is filesystem/Lance-only, same as `mcp_calls` always
+  was. `docs/overnight/AC-MATRIX.md` row #31 is updated to say so plainly
+  rather than "PARTIAL ... wait on Nat."
+- **A 403 from an authenticated-but-under-scoped principal still records
+  `principal_id: null`**: `admitGlobal` throws (in `service.withInstanceAudit
+  .ts`'s `admit()`) before `principalOf` ever runs on a scope refusal, so an
+  identified caller who fails a scope check is indistinguishable in the row
+  from a fully anonymous one. Needs `admitGlobal` to expose the parsed
+  principal ahead of the scope check; not done this round.
+- **No rate limit or compaction** on `instance_audit`; every POST does a
+  synchronous append before responding, admitted or refused. Abuse-resistance
+  of the sink was out of scope for "where does the row live" (D4b).
