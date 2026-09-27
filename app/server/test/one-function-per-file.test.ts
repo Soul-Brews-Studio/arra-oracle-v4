@@ -124,7 +124,11 @@ function scan(): string[] {
 // needs no special case: x has no LOCAL declaration here, so step 2 never
 // counts it.
 const REGEX_CAN_FOLLOW = new Set("(,=:[!&|?{};+-*%<>~^".split(""));
-const REGEX_AFTER_WORD = /(?:^|[^\w$])(?:return|typeof|case|do|else|in|of|new|delete|void|throw|yield|await)$/;
+const REGEX_AFTER_WORD = /(?:^|[^\w$])(?:return|typeof|case|do|else|in|of|new|delete|void|throw|yield|await|default)$/;
+// A `(` opened right after one of these closes a CONDITION, so a `/` after
+// its `)` starts a regex (`if (y) /re/.test(y)`), unlike `f(x) / 2` (round-5
+// verifier, B1).
+const CONDITION_WORDS = new Set(["if", "while", "for", "with"]);
 
 /** A small recursive JS lexer over the type-stripped text. It blanks (spaces,
  *  newlines kept) the contents of strings, regex literals and comments, and
@@ -173,7 +177,13 @@ function blankLiterals(js: string): string {
   function skipCode(i: number, inTemplate: boolean): number {
     let depth = 0;
     let lastSignificant = "";
+    let beforeLast = "";
     let lastWord = "";
+    const parens: boolean[] = [];
+    let afterCondition = false;
+    // Whitespace ENDS a word: without this, `export default` accumulated into
+    // one token and REGEX_AFTER_WORD never saw `default` (or `else return`).
+    let wordEnded = false;
     while (i < js.length) {
       const c = js[i]!;
       const next = js[i + 1];
@@ -207,7 +217,14 @@ function blankLiterals(js: string): string {
         lastWord = "";
         continue;
       }
-      if (c === "/" && (lastSignificant === "" || REGEX_CAN_FOLLOW.has(lastSignificant) || REGEX_AFTER_WORD.test(lastWord))) {
+      // `i++ / 2` is a division: a postfix ++/-- ends an operand (round-5 N2).
+      const afterPostfix = (lastSignificant === "+" && beforeLast === "+") || (lastSignificant === "-" && beforeLast === "-");
+      const regexHere =
+        lastSignificant === "" ||
+        (REGEX_CAN_FOLLOW.has(lastSignificant) && !afterPostfix) ||
+        REGEX_AFTER_WORD.test(lastWord) ||
+        (lastSignificant === ")" && afterCondition);
+      if (c === "/" && regexHere) {
         const j = skipRegex(i);
         blank(i + 1, j);
         i = j;
@@ -219,10 +236,19 @@ function blankLiterals(js: string): string {
       else if (c === "}") {
         if (depth === 0 && inTemplate) return i;
         depth--;
+      } else if (c === "(") {
+        parens.push(CONDITION_WORDS.has(lastWord));
+      } else if (c === ")") {
+        afterCondition = parens.pop() ?? false;
       }
       if (!/\s/.test(c)) {
+        if (c !== ")") afterCondition = false;
+        beforeLast = lastSignificant;
         lastSignificant = c;
-        lastWord = /[\w$]/.test(c) ? (lastWord + c).slice(-12) : "";
+        lastWord = /[\w$]/.test(c) ? ((wordEnded ? "" : lastWord) + c).slice(-12) : "";
+        wordEnded = false;
+      } else {
+        wordEnded = true;
       }
       i++;
     }
@@ -572,4 +598,43 @@ describe("one exported function per file (ratchet)", () => {
       .map(([path]) => `${path}: listed in MISNAMED_ALLOWLIST but not found by the scan`);
     expect([...badMulti, ...badMisnamed]).toEqual([]);
   });
+});
+
+// Every attack form the independent verifiers found in rounds 2-5, with the
+// names TypeScript's own parser reports for it (computed with the TypeScript
+// compiler API as ground truth, then frozen here). The detector must agree on
+// each: a regression here means a real violation could pass the ratchet green
+// or a compliant file could go red. Paths are synthetic (only the extension
+// matters to the detector).
+const DETECTOR_CASES: { title: string; path: string; src: string; expected: string[] }[] = [
+  { title: "r2 async function expression", path: "server/src/x/p.admit.ts", src: "export const debugA = async function () { return 1; };\nexport function admit() { return 0; }\n", expected: ["admit", "debugA"] },
+  { title: "r2 aliased local", path: "server/src/x/p.debugAlias.ts", src: "function debugHelper() { return 2; }\nexport { debugHelper as debugAlias };\n", expected: ["debugAlias"] },
+  { title: "r2 nested generics", path: "server/src/x/p.debugG.ts", src: "export function debugG<T extends Array<string>>(x: T) { return x.length; }\n", expected: ["debugG"] },
+  { title: "r2 object-type param with ;", path: "server/src/x/p.debugO.ts", src: "export const debugO = (opts: { a: number; b: string }) => opts.a;\n", expected: ["debugO"] },
+  { title: "r2 return-type literal with ;", path: "server/src/x/p.debugR.ts", src: "export const debugR = (x: number): { a: number; b: number } => ({ a: x, b: x });\n", expected: ["debugR"] },
+  { title: "r2 unicode and $ names", path: "server/src/x/p.u.ts", src: "export const ทดสอบ = () => 1;\nexport const debug$ = () => 1;\n", expected: ["debug$", "ทดสอบ"] },
+  { title: "r2 multiple declarators", path: "server/src/x/p.m.ts", src: "export const debugM1 = () => 1, debugM2 = () => 2;\n", expected: ["debugM1", "debugM2"] },
+  { title: "r3 default names a local", path: "server/src/x/p.sneakyA.ts", src: "export function sneakyA() { return 1; }\nfunction helper() { return 2; }\nexport default helper;\n", expected: ["helper", "sneakyA"] },
+  { title: "r3 local aliased as default", path: "server/src/x/p.sneakyB.ts", src: "function sneakyB() { return 1; }\nfunction helper() { return 2; }\nexport { helper as default, sneakyB };\n", expected: ["helper", "sneakyB"] },
+  { title: "r3 ; in string, regex and function-body defaults", path: "server/src/x/p.splitRow.ts", src: "export const splitRow = (row: string, sep = \";\") => row.split(sep);\nexport const joinRow = (cells: string[], sep = /;/g.source) => cells.join(sep);\nexport const other = (cb = function () { return 1; }) => cb();\n", expected: ["joinRow", "other", "splitRow"] },
+  { title: "r3 export-from text in a comment", path: "server/src/x/p.sneakyD.ts", src: "/** Moved here from: export { sneakyD, helperD } from \"./policy.sneakyD\"; */\nexport function sneakyD() { return 1; }\nexport function helperD() { return 2; }\n", expected: ["helperD", "sneakyD"] },
+  { title: "r4 template holding } in a code generator", path: "server/src/x/p.zzCodegen.ts", src: "export const zzCodegen = (keys: string[]) => `{${keys.map((k, i) => `\"${k}\": 1${i === keys.length - 1 ? `}` : `,`}`).join(\"\")}`;\nexport function secondGen(): string { return \"x\"; }\n", expected: ["secondGen", "zzCodegen"] },
+  { title: "r4 template brace", path: "server/src/x/p.zzTemplateBrace.ts", src: "export const zzTemplateBrace = (last: boolean) => `${last ? `}` : `},`}`;\nexport const zzSecond = () => 2;\n", expected: ["zzSecond", "zzTemplateBrace"] },
+  { title: "r4 block arrow in template exposing /*", path: "server/src/x/p.zzTemplateObj.ts", src: "export const zzTemplateObj = (xs: string[]) => `${xs.map((x) => { return x; }).join(`/*`)}`;\nexport const zzThird = () => 3;\n", expected: ["zzTemplateObj", "zzThird"] },
+  { title: "r4 function IIFEs are results", path: "server/src/x/p.zzIife.ts", src: "export const x = function () { return 1; }();\nexport const y = (function () { return 1; })();\nexport function zzIife() { return 3; }\n", expected: ["zzIife"] },
+  { title: "r4 parameter default shadowing an export", path: "server/src/x/p.zzParamDefault.ts", src: "export const now = 0;\nexport function zzParamDefault(x: number, now = () => Date.now()) { return x + now(); }\n", expected: ["zzParamDefault"] },
+  { title: "r5 regex after if-condition holding (", path: "server/src/x/p.atk04b.ts", src: "export function atk04b(y: string): number {\n  if (y) /\\(/.test(y);\n  return 1;\n}\nexport function extra04b(): number { return 4; }\n", expected: ["atk04b", "extra04b"] },
+  { title: "r5 regex after if-condition holding a backtick", path: "server/src/x/p.atk04c.ts", src: "export function atk04c(y: string): number {\n  if (y) /`/.test(y);\n  return 1;\n}\nexport function extra04c(): number { return 4; }\n", expected: ["atk04c", "extra04c"] },
+  { title: "r5 regex after while-condition holding {", path: "server/src/x/p.atk04d.ts", src: "export function atk04d(y: string): number {\n  while (y) /[{]/.test(y);\n  return 1;\n}\nexport function extra04d(): number { return 4; }\n", expected: ["atk04d", "extra04d"] },
+  { title: "r5 export default regex", path: "server/src/x/p.atk13.ts", src: "export default /\\(/;\nexport function f13a() { return 1; }\nexport function f13b() { return 2; }\n", expected: ["f13a", "f13b"] },
+  { title: "r5 postfix ++ then division then template", path: "server/src/x/p.atk10.ts", src: "export function atk10(xs: string[]) { let i = 0; i++ / 2; return xs.join(`a/b`); }\nexport function b10() { return 1; }\nexport function c10() { return 2; }\n", expected: ["atk10", "b10", "c10"] },
+  { title: "negative: class, object const, re-export", path: "server/src/x/p.neg.ts", src: "export class Thing { run() { return 1; } }\nexport const config = { a: 1, run: () => 2 };\nexport { helper } from \"./other\";\n", expected: [] },
+];
+
+describe("detector agrees with TypeScript on every verifier attack form", () => {
+  for (const c of DETECTOR_CASES) {
+    test(c.title, () => {
+      expect([...exportedFunctionNames(c.src, c.path)].sort()).toEqual(c.expected);
+    });
+  }
 });
