@@ -30,8 +30,6 @@
  * for a client that mints its own ids and remembers them, which is the same
  * bookmark pattern `state/roster.ts` already uses for peers and sessions.
  */
-import { type ApiResult, callMethod } from "./client";
-import { type Bank, newPublicId } from "./memory";
 
 /** `taxonomy.constants.ts` TYPE_TERMS -- sealed, so this list is complete and
  *  cannot drift without a server change. Note `conclusion` is already here:
@@ -94,40 +92,6 @@ export type TaxonomyIds = {
   memory_horizon: { vocabulary_id: string; terms: Record<HorizonTerm, string> };
 };
 
-export function mintTaxonomyIds(): TaxonomyIds {
-  return {
-    type: {
-      vocabulary_id: newPublicId(),
-      terms: Object.fromEntries(TYPE_TERMS.map((t) => [t, newPublicId()])) as Record<TypeTerm, string>,
-    },
-    memory_horizon: {
-      vocabulary_id: newPublicId(),
-      terms: Object.fromEntries(HORIZON_TERMS.map((t) => [t, newPublicId()])) as Record<HorizonTerm, string>,
-    },
-  };
-}
-
-const call = (b: Bank, method: string, body: Record<string, unknown>): Promise<ApiResult> =>
-  callMethod(b.bank, method, body, b.token);
-
-export const seedReservedVocabularies = (b: Bank, ids: TaxonomyIds) =>
-  call(b, "seedReservedVocabularies", { workspace_name: b.workspace, ...ids });
-
-export const getVocabulary = (b: Bank, vocabulary_id: string) =>
-  call(b, "getVocabulary", { workspace_name: b.workspace, vocabulary_id });
-
-export const getTerm = (b: Bank, term_id: string) =>
-  call(b, "getTerm", { workspace_name: b.workspace, term_id });
-
-export const getAcceptedHead = (b: Bank, node_id: string) =>
-  call(b, "getAcceptedHead", { workspace_name: b.workspace, node_id });
-
-export const listAcceptedHistory = (b: Bank, node_id: string) =>
-  call(b, "listAcceptedHistory", { workspace_name: b.workspace, node_id });
-
-export const getRevisionAssociations = (b: Bank, node_id: string, revision_id: string | null = null) =>
-  call(b, "getRevisionAssociations", { workspace_name: b.workspace, node_id, revision_id });
-
 export type PublishInput = {
   node_id: string;
   /** `null` for a first revision; the previous revision id for an edit. The
@@ -146,61 +110,6 @@ export type PublishInput = {
    *  (`state/buildLinkSnapshot`). `[]` is a revision that cites nothing. */
   links: LinkSnapshotEntry[];
 };
-
-/** Build the term snapshots for a revision: exactly one `type`, plus at most
- *  one `memory_horizon`. Positions are assigned here so the caller never has
- *  to remember that they are decimal strings. */
-function termSnapshots(ids: TaxonomyIds, input: PublishInput): TermSnapshot[] {
-  const terms: TermSnapshot[] = [
-    {
-      term_id: ids.type.terms[input.type_term],
-      vocabulary_id: ids.type.vocabulary_id,
-      vocabulary_name_snapshot: "type",
-      term_name_snapshot: input.type_term,
-      label_snapshot: null,
-      position: "0",
-    },
-  ];
-  if (input.horizon !== null) {
-    terms.push({
-      term_id: ids.memory_horizon.terms[input.horizon],
-      vocabulary_id: ids.memory_horizon.vocabulary_id,
-      vocabulary_name_snapshot: "memory_horizon",
-      term_name_snapshot: input.horizon,
-      label_snapshot: null,
-      position: "1",
-    });
-  }
-  return terms;
-}
-
-export const publishRevision = (b: Bank, ids: TaxonomyIds, input: PublishInput) =>
-  call(b, "publishRevision", {
-    operation_id: newPublicId(),
-    content: {
-      workspace_name: b.workspace,
-      node_id: input.node_id,
-      base_revision_id: input.base_revision_id,
-      title: input.title,
-      body: input.body,
-      body_format: input.body_format,
-      fields: "{}",
-      author_peer_name: input.author_peer_name,
-      observer_peer_name: null,
-      subject_peer_name: null,
-      session_name: input.session_name,
-      is_active: true,
-      valid_from: null,
-      valid_to: null,
-      change_reason: input.change_reason,
-      schema_version: SCHEMA_VERSION,
-      canonical_version: CANONICAL_VERSION,
-      term_snapshot_json: JSON.stringify(termSnapshots(ids, input)),
-      link_snapshot_json: JSON.stringify(input.links),
-      h_metadata: null,
-      internal_metadata: null,
-    },
-  });
 
 export type PublishOutcome = {
   outcome: string;
@@ -243,23 +152,17 @@ export type RevisionRow = {
   link_snapshot_json?: string;
 };
 
-/** Terms are stored as JSON TEXT, so reading them back means parsing a column
- *  rather than walking an object. Returns [] on anything unexpected: a
- *  malformed snapshot should show as "no tags", never crash the panel. */
-export function parseTerms(revision: RevisionRow | null): TermSnapshot[] {
-  if (revision?.term_snapshot_json === undefined) return [];
-  try {
-    const parsed: unknown = JSON.parse(revision.term_snapshot_json);
-    return Array.isArray(parsed) ? (parsed as TermSnapshot[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-export function typeOf(terms: TermSnapshot[]): string | null {
-  return terms.find((t) => t.vocabulary_name_snapshot === "type")?.term_name_snapshot ?? null;
-}
-
-export function horizonOf(terms: TermSnapshot[]): string | null {
-  return terms.find((t) => t.vocabulary_name_snapshot === "memory_horizon")?.term_name_snapshot ?? null;
-}
+// Functions split out (style-ui-split2, docs/overnight/DECISIONS.md): each
+// lives in its own file named after itself. Re-exported here so importers
+// (`publishRevision.test.ts`, `state/*`) do not churn.
+export { mintTaxonomyIds } from "./knowledge.mintTaxonomyIds";
+export { seedReservedVocabularies } from "./knowledge.seedReservedVocabularies";
+export { getVocabulary } from "./knowledge.getVocabulary";
+export { getTerm } from "./knowledge.getTerm";
+export { getAcceptedHead } from "./knowledge.getAcceptedHead";
+export { listAcceptedHistory } from "./knowledge.listAcceptedHistory";
+export { getRevisionAssociations } from "./knowledge.getRevisionAssociations";
+export { publishRevision } from "./knowledge.publishRevision";
+export { parseTerms } from "./knowledge.parseTerms";
+export { typeOf } from "./knowledge.typeOf";
+export { horizonOf } from "./knowledge.horizonOf";

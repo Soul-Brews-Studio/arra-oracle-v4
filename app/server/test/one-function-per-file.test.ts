@@ -222,9 +222,6 @@ function measure(): FileReport[] {
 /** Files exporting MORE than one function, with today's exact count. */
 const MULTI_EXPORT_ALLOWLIST: Record<string, { count: number; reason: string }> = {
   "server/src/contracts/common.ts": { count: 19, reason: "frozen contract validators (app/docs/contracts), shared by every kernel" },
-  "ui/v2/src/api/evidenceReview.ts": { count: 18, reason: "UI api/*.ts domain-wrapper convention: one HTTP client module per domain" },
-  "ui/v2/src/api/memory.ts": { count: 12, reason: "UI api/*.ts domain-wrapper convention: one HTTP client module per domain" },
-  "ui/v2/src/api/knowledge.ts": { count: 11, reason: "UI api/*.ts domain-wrapper convention: one HTTP client module per domain" },
   "server/src/composition.ts": { count: 10, reason: "startup composition root; wires config/service/access checks, not independently reusable (#31 maint-audit added composeInstanceAuditSink)" },
   "server/src/contracts/evidence-v1.ts": { count: 9, reason: "frozen contract validators (app/docs/contracts/revision-evidence-v1.md), shared by every kernel" },
   "server/src/contracts/v1.ts": { count: 9, reason: "frozen contract validators (app/docs/contracts/v1-codecs.md), shared by every kernel" },
