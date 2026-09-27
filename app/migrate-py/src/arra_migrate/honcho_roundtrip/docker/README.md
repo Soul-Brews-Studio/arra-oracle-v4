@@ -1,5 +1,16 @@
 # Bringing up the pinned Honcho target (manual, not run by this harness)
 
+> **Executed 2026-09-27 on m5, with Docker Desktop already running (no VM was started).**
+> `bash app/just/honcho-live.sh` runs the steps below exactly as written and
+> always tears down. The pinned HEAD matched `210b56cf…`, the api was healthy
+> after about 12 s, and `TestLiveRoundTrip` ran 1 test OK:
+> `diff_against_input(...).problems == []` for the §15.5 bank, round-tripped through
+> the real Honcho REST API. Teardown left 0 containers, and the built api image was
+> removed. What this proves: a REST-level round trip against the pinned version,
+> with the documented `LOSSY_FIELDS`. What it does not prove: the historical
+> "byte-compatible tables" claim, because the interchange is at REST, not
+> table-dump, level (R15).
+
 Issue #8. Nothing in `arra_migrate.honcho_roundtrip` starts a container. This
 file is the manual recipe a human or an agent WITH a working container
 runtime follows to run `TestLiveRoundTrip` for real. It was **not executed**

@@ -24,7 +24,7 @@ Where something is partial or blocked, it says so.
   knowledge methods (registry)       44                        57
     reachable HTTP / MCP / CLI       31 / 31 / 0               57 / 57 / 57
   isolation probes (acceptor)        189 pass / 4 FAIL         191 pass / 0 FAIL
-  acceptor issue checks              10 PASS / 69 FAIL / 4 GAP 146 PASS / 0 FAIL / 1 GAP
+  acceptor issue checks              10 PASS / 69 FAIL / 4 GAP 146 PASS / 0 FAIL / 1 GAP (freeze); 147/0/0 adjudicated after #121
   v3 client session, 37 real steps   —                         37 PASS / 0 FAIL / 0 GAP
   GitHub Actions CI                  no workflow               green on the freeze: run 36277285008 (2005/0, 143 files, Linux)
   "LET PLAY" demo, real Ollama       —                         25 STEP_OK / 0 FAIL (5 runs)
@@ -98,7 +98,7 @@ Refutations did most of the work. Each row is a real defect caught before merge:
 | 34 | migration rehearsal | **partial** | R11, R17 | the rehearsal runs on a copy, the source is untouched, conservation holds; its release gates depend on #7 and #8 and are named, not faked |
 | 10 | v3 defects | **partial** | R14 | Thai inside-word search and supersede_log peer checks are fixed; the active-15 tenant columns remain |
 | 7 | Thai/Eng recall measurement | **blocked on you** | R16 | the harness is done; the judgments must come from a human, as the issue itself requires |
-| 8 | Honcho round-trip | **partial / blocked** | R15 | phase 1 is done against a fixture; the live run needs a container runtime |
+| 8 | Honcho round-trip | **live leg PASS** (REST level) | R15 | phase 1 is done against a fixture; **2026-09-27: the live leg ran against a disposable pinned Honcho v3.2.0** (`app/just/honcho-live.sh`): `TestLiveRoundTrip` OK, 0 problems, torn down. Not proven: byte-level table compatibility |
 | 22 | epic | open | — | tracks the above |
 
 ## 3b · The independent acceptor's final verdict (Codex, verbatim in substance)
@@ -157,6 +157,22 @@ isolation **191/0**, methods 57 × HTTP/MCP/CLI, payload gaps 0. Its independent
 It also noted that #118 guards reads tied to a selection, not every async action: the `ask` result
 is not keyed yet. Wave 8 (keyboard, provenance/freshness, keyed actions) targets exactly these.
 
+**Codex TASK 9** (`2d5ef44`, after #120 and #121): **#33 PASS against every requested AC.** The raw probe
+is unchanged at 146 PASS / 0 FAIL / 1 GAP, because the backend probe deliberately runs no browser. With
+the separate browser evidence, the adjudicated roll-up is **147 PASS / 0 FAIL / 0 GAP**. Isolation is 191/0,
+methods 57 × HTTP/MCP/CLI, and there were no regressions.
+
+| #33 AC | Codex TASK 9 |
+|---|---|
+| AC1 chain + chat | **PASS**: it repeated the chain by keyboard (`ui-e2e-keys.sh` 15/15); TASK 8 covered real-Ollama chat |
+| AC2 Thai/English, long paths, keyboard, narrow layouts | **PASS**: keyboard input only (it read `keys.mjs`/`keyNav.mjs`); 812×375 measured independently |
+| AC3 historic immutability, stale/unavailable labels | **PASS**: the dangling-target write stays honestly not exercised |
+| AC4 screenshots and evidence | **PASS** for the delivery evidence; fresh capture remains an environment gap |
+| revision-2: freshness, provenance, author/observer/subject, missing summary | **PASS**: reproduced on its own stack, including a pending → indexed transition |
+
+The `ask` residual is closed. In Codex's words, this is "not a full WCAG audit, model-quality
+certification, or blanket whole-roadmap completion."
+
 ## 4 · Live proofs on m5 (real services, fresh datasets)
 
 - **Chat via the real local Ollama gemma3:4b** (`DEMO.md` step 15). The Thai question got
@@ -182,7 +198,7 @@ is not keyed yet. Wave 8 (keyboard, provenance/freshness, keyed actions) targets
   (disclosed per PR).
 - **Needs you.**
   - #7 relevance judgments.
-  - #8 needs a container runtime.
+  - #8: the live leg now passes at REST level (2026-09-27). Whether that is enough to close the issue, given the historical "byte-compatible" wording, is your call.
   - Chat providers other than local Ollama.
   - Everything in `DECISIONS.md` you want to overturn.
 - **Screenshots.** `Page.captureScreenshot` times out in ego lite on m5, even on a `data:` page,
