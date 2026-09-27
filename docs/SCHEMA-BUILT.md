@@ -345,18 +345,42 @@ surfaces, with screenshots in `docs/overnight/UI-PROOF.md`:
 - traces;
 - chat with citations.
 
-A name scan of the UI's non-test source (`git ls-files app/ui/v2/src`, 87 files, comments
-stripped, each of the 57 `KNOWLEDGE_METHOD_NAMES` matched as a whole word) finds 30 called.
-The other 27 are absent from the UI. Five of those are named only in comments, never called:
-`getMessage`, `getChatSettings`, `createTrace`, `createSessionLink`, `listTraces`. The other 22:
+*Re-measured 2026-09-27 (ui-polish fix round, round 4).* `git ls-tree -r HEAD app/ui/v2/src` on
+the round-4 base (`392d82b`, after the ui-cite merge) gives 142 files / 114 non-test; this round
+adds three (`explore/ExploreView.writeBack.test.tsx`, and the test-only helpers
+`testing/installFakeDom.ts` and `testing/findFakeElement.ts` that a `.test.` name scan counts as
+non-test) and renames `state/routeViews.ts` to `state/isRouteView.ts` (net 0): **145 files / 116
+non-test**. None of the three calls a knowledge method, so the called/absent split below is
+unchanged by this round.
 
-- search: `searchKnowledgeKeyword`, `searchKnowledgeSemantic`;
+*Re-measured 2026-09-27 (ui-polish fix round, round 3b).* The round-3 paragraph below still said
+"120 files / 101 non-test" and "the 7 files this round ... added"; an independent verifier
+re-ran the same scan on that same commit and got 121/101, and "+5 files" net (`git ls-files`/`fd`
+agree): `parseRoute.ts`, `parseRoute.test.ts`, `formatRoute.ts`, `formatRoute.test.ts`,
+`routeViews.ts` and `ExploreView.wiring.test.tsx` added (6), `useRoute.test.ts` removed (1). This
+round adds one more test file (`ExploreView.liveWiring.test.tsx`, the `react-dom/client`
+effect-running wiring test the verifier's blocking finding asked for), bringing the current,
+directly re-measured total to **122 files / 101 non-test**.
+
+*Re-measured 2026-09-27 (ui-polish fix round, round 3).* Re-running the same name scan (`find
+app/ui/v2/src -type f`, now 120 files / 101 non-test -- the round-2 count of 109/95 was already
+stale by the time it was written, predating the 7 files this round's `useKnowledgeSearch`/
+`useRoute` fixes added (`parseRoute.ts`, `formatRoute.ts`, `routeViews.ts` and their three test
+files, net of the one `useRoute.test.ts` they replaced), comments stripped, each of the 57
+`KNOWLEDGE_METHOD_NAMES` matched as a whole word) finds **33** called, not the 30 this section
+originally reported. Two of the three newly-matched names are real: the ui-search slice (PR
+#110) added `searchKnowledgeKeyword`/`searchKnowledgeSemantic`. The third, `indexRevisionChunks`,
+is a false positive of this scan's own method, not a new call: `state/searchState.ts`'s
+`index_unavailable` note text tells the user to "run indexRevisionChunks first", and a whole-word
+text scan cannot distinguish that string from an actual call. The other 24 are absent from the
+UI. Five of those are named only in comments, never called: `getMessage`, `getChatSettings`,
+`createTrace`, `createSessionLink`, `listTraces`. The other 19:
+
 - taxonomy, everything but seeding (`seedReservedVocabularies`), `getVocabulary` and
   `getTerm`: `createVocabulary`, `createTerm`, `renameTerm`, `retireTerm`,
   `reparentTerm`, `lookupVocabularyByName`, `lookupTermByName`, `listTerms`,
   `listTermUsage`;
-- derived search index: `indexRevisionChunks`, `embedPendingChunks`,
-  `writeChunkEmbedding`, `reconcileSearchChunks`, `listSearchChunks`,
-  `getSearchFreshness`;
+- derived search index: `embedPendingChunks`, `writeChunkEmbedding`,
+  `reconcileSearchChunks`, `listSearchChunks`, `getSearchFreshness`;
 - sessions: `listSessionMembers`, `closeSession`, `advanceReadCursor`;
 - `knowledgeStats`, `reconcileRevisionAssociations`.
