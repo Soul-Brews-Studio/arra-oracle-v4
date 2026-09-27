@@ -7,6 +7,16 @@ on:
   push:
   pull_request:
 
+# Without this, every push queued a full ~25-minute run behind the last one:
+# on 09-27 six runs stacked up for identical docs-only commits and four were
+# cancelled by hand. A newer push to the same branch (or PR) now cancels the
+# older run of the same event. main never cancels, so every merge keeps its
+# own verdict. Push and pull_request stay in separate groups: branches without
+# a PR still get CI, and a PR still tests its merge ref.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   ci:
     runs-on: ubuntu-latest
