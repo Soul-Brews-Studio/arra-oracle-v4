@@ -7,26 +7,10 @@
 // `ctx` carries ids and snapshots forward; a later step that needs something
 // an earlier failed step never produced throws a plain "missing" error, so a
 // failure cascades as visible STEP_FAILs instead of being skipped over.
-import { pageProbes as P } from "./probes.mjs";
-
-export const TEXT = {
-  a1: { title: "Dev server port — พอร์ตเซิร์ฟเวอร์", body: "The dev server listens on 47777.\nเซิร์ฟเวอร์ dev ฟังที่พอร์ต 47777" },
-  a2: { title: "Dev server port — พอร์ตเซิร์ฟเวอร์ (rev 2)", body: "The dev server listens on 47777; the test server on 47778.\nเซิร์ฟเวอร์ทดสอบฟังที่พอร์ต 47778", reason: "add the test server port" },
-  d: { title: "Port list draft (retired later)", body: "Scratch list of ports, cites A #2; retired before the supersede." },
-  b: { title: "Port conventions: อย่าหลงลืม", body: "อย่าหลงลืมจองพอร์ตก่อนรันเทสต์ -- never forget to reserve the port before a test run." },
-  c: { title: "Test server port is 47779", body: "Correction: the test server moved to 47779; revision #2 said 47778.", reason: "port moved" },
-  url: "https://example.invalid/runbooks/ports",
-};
-
-export const DIFF_1_VS_2 = [
-  { root: "diff", select: "select:nth-of-type(1)", optionText: "#1 — " },
-  { root: "diff", select: "select:nth-of-type(2)", optionText: "#2 — " },
-];
-
-const need = (ctx, key) => {
-  if (ctx[key] === undefined || ctx[key] === null) throw new Error(`missing ${key} (an earlier step failed)`);
-  return ctx[key];
-};
+import { diffPair } from "./diffPair.mjs";
+import { need } from "./need.mjs";
+import { probes as P } from "./probes.mjs";
+import { text as TEXT } from "./text.mjs";
 
 async function publishNew(h, { title, body, links = [] }) {
   await h.act([{ click: "new" }]);
@@ -56,7 +40,7 @@ async function publishNew(h, { title, body, links = [] }) {
 
 const history = (h, node) => h.page.evaluate(P.api, { method: "listAcceptedHistory", body: { workspace_name: "default", node_id: node } });
 
-export async function runChain(h, ctx) {
+export async function chain(h, ctx) {
   await h.step("ui-seed-vocab", async () => {
     await h.go("#/knowledge");
     await h.waitDom("knowledge view", () => document.body.textContent.includes("seed reserved vocabularies") || document.body.textContent.includes("memory_horizon"));
@@ -102,7 +86,7 @@ export async function runChain(h, ctx) {
     // Pick the pair explicitly, as a reader would: after an in-place
     // revise the picker keeps its old (#1 vs #1) choice -- see UI-E2E.md,
     // "Defects found".
-    await h.act(DIFF_1_VS_2);
+    await h.act(diffPair("#1", "#2"));
     ctx.rev1Dom = await h.waitDom("diff from rev 1", P.diffFrom);
     if (ctx.rev1Dom.title !== TEXT.a1.title) throw new Error(`diff 'from' title ${JSON.stringify(ctx.rev1Dom.title)}`);
     await h.shot("02-revised-diff", "diff");

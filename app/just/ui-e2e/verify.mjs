@@ -1,18 +1,13 @@
 // The read half of the #33 run: the evidence labels a supersede and a
 // retire produce (AC3), an unresolvable citation, the byte-identical history
 // of revision 1 (AC3), peer-context chat with citations and partial coverage
-// (AC1), and Thai keyword search. Runs after `runChain` on the same `ctx`.
-import { DIFF_1_VS_2, TEXT } from "./chain.mjs";
-import { pageProbes as P } from "./probes.mjs";
+// (AC1), and Thai keyword search. Runs after `chain` on the same `ctx`.
+import { diffPair } from "./diffPair.mjs";
+import { need } from "./need.mjs";
+import { nid } from "./nid.mjs";
+import { probes as P } from "./probes.mjs";
+import { text as TEXT } from "./text.mjs";
 
-const nid = () => {
-  const a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
-  return Array.from({ length: 21 }, () => a[Math.floor(Math.random() * a.length)]).join("");
-};
-const need = (ctx, key) => {
-  if (ctx[key] === undefined || ctx[key] === null) throw new Error(`missing ${key} (an earlier step failed)`);
-  return ctx[key];
-};
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 async function evidenceOf(h, node, label, ready) {
@@ -37,7 +32,7 @@ function link(position, target_kind, target, capture_status, note) {
   return { position: String(position), relation: "related_to", target_kind, target, excerpt: null, content_hash: null, captured_at: null, capture_status, note };
 }
 
-export async function runVerify(h, ctx, cfg) {
+export async function verify(h, ctx, cfg) {
   await h.step("evidence-after-supersede", async () => {
     const A1 = need(ctx, "A1"), A2 = need(ctx, "A2"), B = need(ctx, "B");
     const ev = await evidenceOf(h, B, "B evidence", () => document.body.textContent.includes("target superseded/retired"));
@@ -85,7 +80,7 @@ export async function runVerify(h, ctx, cfg) {
     if (res.status !== 200) {
       // Record exactly what the server said, then fall back to the one
       // unresolved citation it does accept.
-      console.log(`NOTE publishRevision with a dangling node_revision target -> ${res.status} ${JSON.stringify(res.json ?? res.text).slice(0, 200)}`);
+      h.say(`NOTE publishRevision with a dangling node_revision target -> ${res.status} ${JSON.stringify(res.json ?? res.text).slice(0, 200)}`);
       unavailableReachable = false;
       content.link_snapshot_json = JSON.stringify([link(0, "url", { url: "https://example.invalid/gone" }, "unresolved", "dead link")]);
       res = await h.page.evaluate(P.api, { method: "publishRevision", body: { operation_id: nid(), content } });
@@ -118,7 +113,7 @@ export async function runVerify(h, ctx, cfg) {
     const A = need(ctx, "A"), rev1Dom = need(ctx, "rev1Dom"), rev1Row = need(ctx, "rev1Row");
     await h.go(`#/knowledge?node=${A}`);
     await h.waitDom("A history", (t) => document.querySelector("main h2")?.textContent === t && document.body.textContent.includes("diff"), TEXT.a2.title);
-    await h.act(DIFF_1_VS_2);
+    await h.act(diffPair("#1", "#2"));
     await h.waitDom("diff from rev 1", P.diffFrom);
     const dom = await h.page.evaluate(P.diffFrom);
     if (!same(dom, rev1Dom)) throw new Error(`rev 1 as rendered changed:\n before ${JSON.stringify(rev1Dom)}\n after  ${JSON.stringify(dom)}`);
@@ -131,7 +126,10 @@ export async function runVerify(h, ctx, cfg) {
       if (now[k] !== rev1Row[k]) throw new Error(`rev 1 ${k} changed: ${JSON.stringify(rev1Row[k])} -> ${JSON.stringify(now[k])}`);
     }
     await h.shot("10-history-rev1-unchanged", "diff");
-    return `rev 1 title/body/terms identical in the DOM and in listAcceptedHistory (${Object.keys(rev1Row).join(", ")}) after revise, cite, correct, retire and supersede`;
+    // A's rev 1 carries only the sealed `type:note`, which cannot be renamed,
+    // so its term bytes staying put proves nothing about labels: that half of
+    // AC3 is `history-labels-after-rename` (historicLabels.mjs).
+    return `rev 1 title/body identical in the DOM, and ${Object.keys(rev1Row).join(", ")} byte-identical in listAcceptedHistory, after revise, cite, correct, retire and supersede`;
   });
 
   await h.step("chat-peer-context", async () => {
@@ -180,9 +178,13 @@ export async function runVerify(h, ctx, cfg) {
     await h.go(`#/explore?tab=search&q=${encodeURIComponent("ลืม")}&mode=keyword`);
     const s = await h.waitDom("Thai keyword hit", (t) => {
       const hit = [...document.querySelectorAll("li button")].find((b) => b.textContent.includes(t));
-      return hit ? { hit: hit.textContent.slice(0, 120) } : null;
+      return hit ? { hit: hit.textContent.slice(0, 120), mode: new URLSearchParams(location.hash.split("?")[1] ?? "").get("mode") } : null;
     }, TEXT.b.title);
+    // Keyword mode, not semantic: a keyword hit is labelled with its rank
+    // ("#1") and its match ("ngram"); a semantic hit shows "distance …".
+    if (s.mode !== "keyword") throw new Error(`route mode ${JSON.stringify(s.mode)}, expected keyword`);
+    if (!/^#\d+/.test(s.hit) || !s.hit.includes("ngram") || s.hit.includes("distance")) throw new Error(`not a keyword ngram hit: ${JSON.stringify(s.hit)}`);
     await h.shot("12-search-thai-keyword");
-    return `ลืม -> ${JSON.stringify(s.hit)}`;
+    return `ลืม -> ${JSON.stringify(s.hit)} (mode=keyword, match ngram)`;
   });
 }

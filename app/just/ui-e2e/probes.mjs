@@ -1,13 +1,13 @@
 // Page-side probes for app/just/ui-e2e.sh: every function here runs INSIDE
 // the page via `page.evaluate`, so each one is self-contained (no closures
-// over this module) and returns plain JSON. `pageProbes` is the one export:
+// over this module) and returns plain JSON. `probes` is the one export:
 // the harness steps pick probes off it by name.
 //
 // They read what a person would read -- headings, badges, button states --
 // not React internals, so a UI that stops rendering a label fails the step
 // even if the data underneath is still right.
 
-export const pageProbes = {
+export const probes = {
   // The node the Knowledge view has open: route id, head title, history list.
   knowledge: () => {
     const node = new URLSearchParams(location.hash.split("?")[1] ?? "").get("node");
