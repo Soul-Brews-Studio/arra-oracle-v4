@@ -1515,8 +1515,10 @@ The heading `## 24. Amendment 2026-09-27 (chain-coverage slice: the three non-bl
 the v3-coverage` broke onto a second line, `verifier left open)`, with no `#` prefix. GitHub and
 every standard renderer treat only the first line as the heading; the second line, including the
 closing paren, renders as an ordinary body paragraph directly under an unclosed-looking title.
-Corrected to one line: `## 24. Amendment 2026-09-27 (chain-coverage slice: the three
-non-blocking findings the v3-coverage verifier left open)`.
+Per §18/§23's own append-only precedent, §24's actual heading text is left as shipped (still split
+in the file above); documented here only so a reader knows what it should have read as one
+line: `## 24. Amendment 2026-09-27 (chain-coverage slice: the three non-blocking findings the
+v3-coverage verifier left open)`.
 
 ### 2 · §24's "Proof" section overclaimed the real-wire evidence for the positive case
 
@@ -1529,8 +1531,15 @@ a full-coverage chain carries no `partial` warning on `hops.coverage`. It does n
 to saturation, so it is not evidence for the POSITIVE case (a saturating hop's `partial` warning
 surfacing, aggregated OR-across-hops). That positive case is proven only against the stub `kb` in
 `mcp-v3-search-wiring.test.ts` ("one hop's own candidate read saturating..." and "hop order does
-not matter..."), matching how §21/§22 already disclose that no real-4096-row chain test exists
-(§24 §3's own open-risk note repeats this). The corrected claim: `search.retrieve.ts` and
+not matter..."). The gap this leaves -- no real-4096-row (unmocked ceiling) chain test exists --
+is disclosed as open_risk 3 in the chain-coverage slice's own implementer report, as recorded by
+the acceptance verifier's notes (`.tmp/chain-coverage-w11-accept-nonblocking.txt`, untracked, a
+different worktree, cited the same way §23 discloses its own out-of-repo citations): "No
+real-4096-row (unmocked ceiling) chain test exists. This is disclosed as open_risk 3..."; it is
+not disclosed anywhere in §21, §22, or §24 §3 themselves -- §21 never mentions "chain," §22
+mentions it once only to say `oracle_search_chain` is unchanged, and §24 §3 (the compile-time
+`KernelCoverage`/`CoverageSignal` tie) carries no open-risk note. The corrected claim:
+`search.retrieve.ts` and
 `search-chunk-coverage-tie.test.ts` need no store at all; `oracle_search_chain.ts`'s new
 aggregation, BOTH the positive and negative case, is proven against the stub `kb`
 (`mcp-v3-search-wiring.test.ts`); against the real gate, real dataset, real embedder stub
