@@ -256,6 +256,39 @@ class BundleToHonchoSqlTests(unittest.TestCase):
         with self.assertRaises(IncompatibleValueError):
             bundle_to_honcho_sql(self.bundle)
 
+    def test_refuses_json_text_with_an_escaped_u0000(self) -> None:
+        # Accept round, S7: nothing offline exercised table_sql.py:108 (the
+        # jsonb U+0000 refusal), so removing it left every test green. A raw
+        # NUL never reaches here (json.loads itself rejects a literal control
+        # character in a string), but a JSON text SPELLING \u0000 is valid
+        # JSON and decodes to one -- jsonb cannot hold it either.
+        self.bundle.messages[0]["h_metadata"] = '{"g": "before\\u0000after"}'
+        with self.assertRaises(IncompatibleValueError) as cm:
+            bundle_to_honcho_sql(self.bundle)
+        self.assertIn("jsonb cannot store U+0000", str(cm.exception))
+
+    def test_bool_renders_as_the_sql_word_not_1_or_0(self) -> None:
+        # Accept round, S12: Postgres boolean columns accept 1/0 by implicit
+        # cast, so only a literal check on the rendered text (not a live
+        # read-back) catches a generator that writes 1/0 instead of TRUE/FALSE.
+        self.bundle.sessions[0]["is_active"] = True
+        self.bundle.sessions[1]["is_active"] = False
+        sql = bundle_to_honcho_sql(self.bundle)
+        inserts = [line for line in sql.splitlines() if line.startswith('INSERT INTO "sessions"')]
+        self.assertEqual(len(inserts), 2)
+        cols = inserts[0].split("(", 1)[1].split(")", 1)[0]
+        is_active_index = [c.strip() for c in cols.split(",")].index('"is_active"')
+
+        def _nth_value(line: str, index: int) -> str:
+            values = line.split("VALUES (", 1)[1].rsplit(");", 1)[0]
+            # No value up to and including is_active contains a comma (ids,
+            # names and the bool literal are all comma-free), so a plain
+            # split is exact for this prefix.
+            return values.split(", ")[index]
+
+        rendered = {_nth_value(line, is_active_index) for line in inserts}
+        self.assertEqual(rendered, {"TRUE", "FALSE"})
+
 
 def _compose_psql(compose_dir: str, project: str, sql: str) -> str:
     proc = subprocess.run(
@@ -325,6 +358,13 @@ class TestLiveTableRoundTrip(unittest.TestCase):
         print("\n" + report.render(), flush=True)
         self.assertEqual(report.problems, [], report.problems)
         self.assertEqual(report.outcomes, EXPECTED_OUTCOMES)
+        # Accept round, finding 4: fact 10 (a departed session_peers member,
+        # left_at set, is not listed by GET .../sessions/{id}/peers) was only
+        # printed as a note, never asserted, against the real server.
+        self.assertTrue(
+            any("are NOT listed" in n for n in report.notes),
+            f"fact 10 (departed member not listed over REST) was not observed live: {report.notes}",
+        )
 
         # 5. Honcho keeps working on top of the imported rows: a REST write
         #    after the import gets the next identity id and seq, no collision.
