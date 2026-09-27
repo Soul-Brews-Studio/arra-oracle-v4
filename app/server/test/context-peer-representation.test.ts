@@ -34,6 +34,11 @@ import { KNOWLEDGE_METHODS } from "../src/knowledge/registry";
 import { createKnowledgeAccess, type KnowledgeAccess } from "../src/knowledge/transport";
 import { configureKnowledgeAccess, createMcpAdapter } from "../src/mcp";
 import type { ChatModelInput } from "../src/publication/chat";
+import { answerChat } from "../src/publication/service.answerChat";
+import { SEARCH_CHUNKS } from "../src/publication/service.constants";
+import { getContext } from "../src/publication/service.getContext";
+import { makeAdapter } from "../src/publication/service.makeAdapter";
+import { type DatasetAdapter } from "../src/publication/service.types";
 import { TARGET_TABLES } from "../src/publication/storage";
 import { createContextFixture } from "./helpers/context-fixture";
 import { runGated } from "./helpers/publication-fixture";
@@ -416,6 +421,129 @@ describe("answerChat: observer/about, node/revision citations (#32 TODO 1-2)", (
     ]);
     expect(result.budget.token_count_kind).toBe("estimate");
     expect(typeof result.freshness.assembled_at).toBe("string");
+  });
+});
+
+describe("R24 (Nat D3b, #32): author_peer_name narrows getContext/answerChat selection", () => {
+  test("author narrows selection: only C1 (author neo) survives among the eligible set", async () => {
+    const all = ok(await call("getContext", context()));
+    expect(revisionsOf(all)).toEqual(rev("C1", "C2", "C5", "C8", "C10"));
+    const byNeo = ok(await call("getContext", context({ author_peer_name: "neo" })));
+    expect(revisionsOf(byNeo)).toEqual(rev("C1"));
+    const byClaude = ok(await call("getContext", context({ author_peer_name: "claude" })));
+    expect(revisionsOf(byClaude)).toEqual(rev("C2"));
+  });
+
+  test("author does not grant access: C3 (author claude, session `private`) never surfaces for neo", async () => {
+    const result = ok(await call("getContext", context({ author_peer_name: "claude" })));
+    expect(JSON.stringify(result).includes("SECRET conclusion")).toBe(false);
+    expect(revisionsOf(result)).toEqual(rev("C2"));
+  });
+
+  test("unknown author fails closed with the same code/shape as unknown observer", async () => {
+    expect(await call("getContext", context({ author_peer_name: "ghost" }))).toEqual({
+      ok: false,
+      code: "invalid_reference",
+      path: "/author_peer_name",
+    });
+    const observerAttempt = await call("getContext", context({ observer_peer_name: "ghost" }));
+    expect(observerAttempt.ok).toBe(false);
+    if (!observerAttempt.ok) {
+      const authorAttempt = await call("getContext", context({ author_peer_name: "ghost" }));
+      if (!authorAttempt.ok) expect(authorAttempt.code).toBe(observerAttempt.code);
+    }
+  });
+
+  test("a non-member author behaves exactly like a non-member observer: it is EXISTENCE only, never a membership check", async () => {
+    // `outsider` IS a registered peer of ALPHA (used elsewhere as a
+    // non-member of `main`) -- naming it as author narrows selection to
+    // nothing, but is never refused, exactly like naming it as observer.
+    const byAuthor = ok(await call("getContext", context({ author_peer_name: "outsider" })));
+    expect(revisionsOf(byAuthor)).toEqual([]);
+    const byObserver = ok(await call("getContext", context({ observer_peer_name: "outsider" })));
+    expect(revisionsOf(byObserver)).toEqual([]);
+  });
+
+  test("author is echoed on scope, never widens permissions, and answerChat accepts --author too", async () => {
+    const result = ok(await call("getContext", context({ author_peer_name: "neo" })));
+    expect(result.scope.author_peer_name).toBe("neo");
+    const outsider = await call("getContext", context({ peer_name: "outsider", author_peer_name: "neo" }));
+    expect(outsider).toEqual({ ok: false, code: "invalid_reference", path: "/peer_name" });
+
+    modelInputs = [];
+    const chatResult = ok(
+      await call("answerChat", {
+        ...context({ author_peer_name: "neo" }),
+        question: "What does nat drink?",
+      }),
+    );
+    expect(chatResult.conclusions_used).toEqual([{ node_id: seeded.nodes.C1, revision_id: seeded.revisions.C1 }]);
+  });
+
+  test("combining author+observer+subject intersects all three", async () => {
+    const combined = ok(
+      await call("getContext", context({ observer_peer_name: "neo", subject_peer_name: "nat", author_peer_name: "neo" })),
+    );
+    expect(revisionsOf(combined)).toEqual(rev("C1"));
+    // C5/C10 are neo -> nat but author null, so they drop out once author narrows.
+    const withoutAuthor = ok(await call("getContext", context({ observer_peer_name: "neo", subject_peer_name: "nat" })));
+    expect(revisionsOf(withoutAuthor)).toEqual(rev("C1", "C5", "C10"));
+  });
+});
+
+describe("R24 (Nat D3b, #32): stale search cannot occur because chat never reads search_chunks_v1", () => {
+  /**
+   * Proof, not prose: wraps the SAME adapter `getContext`/`answerChat` use in
+   * production with a guard that throws the moment ANY method opens
+   * `search_chunks_v1` -- `query`, `orderedProjection`, `count`, `refresh`,
+   * `version` or `append` -- with that table name. If either read path ever
+   * grew a dependency on search chunks, this test fails loudly instead of
+   * needing a human to notice `search_chunks_v1` staleness could matter.
+   */
+  function guardAgainstSearchChunks(adapter: DatasetAdapter): DatasetAdapter {
+    const guard = (table: string): void => {
+      if (table === SEARCH_CHUNKS) throw new Error(`unexpected read of ${SEARCH_CHUNKS}: chat must not depend on search chunks`);
+    };
+    return new Proxy(adapter, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver);
+        if (typeof value !== "function") return value;
+        const name = String(prop);
+        if (!["query", "orderedProjection", "count", "refresh", "version", "append", "updateWhere"].includes(name)) {
+          return value.bind(target);
+        }
+        return (...args: unknown[]) => {
+          if (typeof args[0] === "string") guard(args[0]);
+          return (value as (...a: unknown[]) => unknown).apply(target, args);
+        };
+      },
+    });
+  }
+
+  test("getContext and answerChat never open search_chunks_v1", async () => {
+    const connection = await connect(root);
+    const adapter = guardAgainstSearchChunks(makeAdapter(connection, () => {}));
+    const body = new TextEncoder().encode(
+      JSON.stringify({ workspace_name: ALPHA, peer_name: "neo", session_name: "main", max_items: 10 }),
+    );
+    const result = await getContext(adapter, body);
+    expect(result.coverage).toBeDefined();
+
+    const chatAdapter = guardAgainstSearchChunks(makeAdapter(await connect(root), () => {}));
+    const chatReader = { getContext: (bytes: Uint8Array, t?: number) => getContext(chatAdapter, bytes, t) };
+    const chatBody = new TextEncoder().encode(
+      JSON.stringify({ workspace_name: ALPHA, peer_name: "neo", session_name: "main", question: "what does nat drink?", max_items: 10 }),
+    );
+    modelInputs = [];
+    const chatResult = await answerChat(
+      chatReader,
+      async (input) => {
+        modelInputs.push(input);
+        return "stub answer";
+      },
+      chatBody,
+    );
+    expect(chatResult.answer).toBe("stub answer");
   });
 });
 

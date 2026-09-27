@@ -30,6 +30,7 @@ export function answerChat(
         // D3b: the perspective narrows what context selects, nothing else.
         observer_peer_name: request.observer_peer_name,
         subject_peer_name: request.subject_peer_name,
+        author_peer_name: request.author_peer_name,
       }),
     );
     const contextResult = await reader.getContext(contextBytes, requestTimeMs);
