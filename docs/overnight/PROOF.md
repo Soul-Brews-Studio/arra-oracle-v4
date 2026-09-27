@@ -98,7 +98,7 @@ Refutations did most of the work. Each row is a real defect caught before merge:
 | 34 | migration rehearsal | **partial** | R11, R17 | the rehearsal runs on a copy, the source is untouched, conservation holds; its release gates depend on #7 and #8 and are named, not faked |
 | 10 | v3 defects | **partial** | R14 | Thai inside-word search and supersede_log peer checks are fixed; the active-15 tenant columns remain |
 | 7 | Thai/Eng recall measurement | **blocked on you** | R16 | the harness is done; the judgments must come from a human, as the issue itself requires |
-| 8 | Honcho round-trip | **partial / blocked** | R15 | phase 1 is done against a fixture; the live run needs a container runtime |
+| 8 | Honcho round-trip | **live leg PASS** (REST level) | R15 | phase 1 is done against a fixture; **2026-09-27: the live leg ran against a disposable pinned Honcho v3.2.0** (`app/just/honcho-live.sh`): `TestLiveRoundTrip` OK, 0 problems, torn down. Not proven: byte-level table compatibility |
 | 22 | epic | open | — | tracks the above |
 
 ## 3b · The independent acceptor's final verdict (Codex, verbatim in substance)
@@ -182,7 +182,7 @@ is not keyed yet. Wave 8 (keyboard, provenance/freshness, keyed actions) targets
   (disclosed per PR).
 - **Needs you.**
   - #7 relevance judgments.
-  - #8 needs a container runtime.
+  - #8: the live leg now passes at REST level (2026-09-27). Whether that is enough to close the issue, given the historical "byte-compatible" wording, is your call.
   - Chat providers other than local Ollama.
   - Everything in `DECISIONS.md` you want to overturn.
 - **Screenshots.** `Page.captureScreenshot` times out in ego lite on m5, even on a `data:` page,

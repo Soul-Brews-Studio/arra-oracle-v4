@@ -207,6 +207,10 @@ branch, so it reverts cleanly.
 - The live run against a container stays blocked. Starting colima is a host
   change, and the shared white.local instance must never be used. Everything up to
   the live call is built and tested against a fixture.
+- **Update 2026-09-27**: the blocker was starting colima. Docker Desktop was
+  already running on m5, so no host change was needed. The live leg ran through
+  `app/just/honcho-live.sh` (a disposable pinned v3.2.0 on 127.0.0.1, torn down):
+  `TestLiveRoundTrip` 1 OK, 0 problems. white.local was not used.
 
 ## R16 · #7 recall measurement: harness now, judgments from Nat
 
