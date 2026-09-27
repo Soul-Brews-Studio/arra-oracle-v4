@@ -62,7 +62,7 @@ import { KNOWLEDGE_METHODS, type KnowledgeAction, type KnowledgeBundle, type Kno
 import { KnowledgeAuthDenied, admitKnowledgeAction, type KnowledgeAuthFailure } from "./transport.admitKnowledgeAction";
 import { requireBoundPeers } from "./transport.requireBoundPeers";
 import { auditKnowledgeCall, type KnowledgeAuditCall, type KnowledgeAuditSink } from "./transport.auditKnowledgeCall";
-import { bodyScopeRefusal } from "./transport.bodyScopeRefusal";
+import { payloadRefusal } from "./transport.payloadRefusal";
 import { indexProfile, type IndexProfile } from "./transport.indexProfile";
 
 /** Matches the governed kernel's own request cap exactly (publication/service.ts). */
@@ -445,7 +445,12 @@ export async function handleKnowledgeRequest(
   const audit = (outcome: Parameters<typeof auditKnowledgeCall>[2]) =>
     audited === null ? Promise.resolve() : auditKnowledgeCall(ctx.audit, audited, outcome);
   if (scopeMismatch) {
-    await audit({ status: "error", error: bodyScopeRefusal() });
+    // The same text MCP audits: a body that is no object is its own refusal.
+    let body: unknown = null;
+    try {
+      body = JSON.parse(new TextDecoder().decode(raw.bytes));
+    } catch {}
+    await audit({ status: "error", error: payloadRefusal(body) });
     return errorResponse(400);
   }
   try {

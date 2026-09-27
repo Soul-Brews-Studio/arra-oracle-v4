@@ -22,12 +22,14 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { readArgPayload } from "../../../helpers/argv.readArgPayload";
 
-type TokenName = "write" | "bound" | "read" | "other" | "audit";
+/** `diag` and `maint` (#31 legacy-audit slice) are additive: nothing else sends them. */
+type TokenName = "write" | "bound" | "read" | "other" | "audit" | "diag" | "maint";
 /** Never admitted: `none` sends no Authorization header, `bogus` a token no credential hashes to. */
 type Unadmitted = "none" | "bogus";
 type Step = {
   label: string;
-  transport: "http" | "mcp" | "cli" | "settle";
+  /** legacy: a legacy HTTP memory route (`path`, `httpMethod`, raw `body`), #31 legacy-audit slice. */
+  transport: "http" | "mcp" | "cli" | "settle" | "legacy";
   token: TokenName | Unadmitted;
   bank: "alpha" | "beta";
   /** http: registry method. mcp: the TOOL name (`kb_x` or a legacy tool). */
@@ -40,6 +42,10 @@ type Step = {
   ms?: number;
   /** settle: how many folded requests the `connections` table must count. */
   folds?: number;
+  /** legacy: the route path with its query, `{alpha}`/`{beta}` replaced by the bank. */
+  path?: string;
+  /** legacy: GET or POST. */
+  httpMethod?: "GET" | "POST";
 };
 
 const [, , root, workDir, payloadJson] = process.argv;
@@ -55,6 +61,8 @@ const TOKENS: Record<TokenName, string> = {
   read: "6".repeat(64),
   other: "7".repeat(64),
   audit: "8".repeat(64),
+  diag: "3".repeat(64),
+  maint: "2".repeat(64),
 };
 const UNADMITTED: Record<Unadmitted, string | null> = { none: null, bogus: "9".repeat(64) };
 const USER_AGENT = "arra-live-parity-test";
@@ -68,7 +76,11 @@ const PRINCIPALS: Record<TokenName, { id: string; workspaces: unknown[] }> = {
   read: { id: "alpha-read", workspaces: [grant(payload.banks.alpha, ["content:read"])] },
   other: { id: "beta-write", workspaces: [grant(payload.banks.beta, ["content:read", "content:write"])] },
   audit: { id: "alpha-audit", workspaces: [grant(payload.banks.alpha, ["content:read", "audit:read"])] },
+  diag: { id: "alpha-diag", workspaces: [grant(payload.banks.alpha, ["diagnostics:read"])] },
+  maint: { id: "ops-maint", workspaces: [] },
 };
+/** Global grants: only `maint` holds any (the legacy maintenance routes). */
+const GLOBAL_ACTIONS: Partial<Record<TokenName, string[]>> = { maint: ["maintenance:backfill", "maintenance:reindex"] };
 
 const opsDir = join(workDir!, "ops");
 mkdirSync(opsDir, { recursive: true });
@@ -77,7 +89,11 @@ writeFileSync(
   policyPath,
   JSON.stringify({
     version: "arra-auth/v1",
-    principals: Object.values(PRINCIPALS).map((p) => ({ ...p, disabled: false, global_actions: [] })),
+    principals: (Object.keys(PRINCIPALS) as TokenName[]).map((name) => ({
+      ...PRINCIPALS[name],
+      disabled: false,
+      global_actions: GLOBAL_ACTIONS[name] ?? [],
+    })),
     credentials: (Object.keys(TOKENS) as TokenName[]).map((name) => ({
       id: `cred-${name}`,
       principal_id: PRINCIPALS[name].id,
@@ -133,6 +149,25 @@ async function runHttp(bank: string, token: string | null, method: string, body:
     method: "POST",
     headers: { ...bearer(token), "content-type": "application/json", "user-agent": USER_AGENT },
     body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  let parsed: unknown = text;
+  try {
+    parsed = JSON.parse(text);
+  } catch {}
+  return { status: res.status, body: parsed };
+}
+
+/** A legacy HTTP memory route, raw: the body is sent exactly as given (a string stays a string). */
+async function runLegacy(token: string | null, httpMethod: "GET" | "POST", path: string, body: unknown) {
+  const res = await fetch(`${origin}${path}`, {
+    method: httpMethod,
+    headers: {
+      ...bearer(token),
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+      "user-agent": USER_AGENT,
+    },
+    ...(body === undefined ? {} : { body: typeof body === "string" ? body : JSON.stringify(body) }),
   });
   const text = await res.text();
   let parsed: unknown = text;
@@ -206,6 +241,11 @@ try {
     try {
       if (step.transport === "settle") {
         outcomes[step.label] = await settleFolds(step.folds ?? 0, step.ms ?? 250);
+        continue;
+      }
+      if (step.transport === "legacy") {
+        const path = (step.path ?? "").replaceAll("{alpha}", payload.banks.alpha).replaceAll("{beta}", payload.banks.beta);
+        outcomes[step.label] = await runLegacy(token, step.httpMethod ?? "GET", path, step.body);
         continue;
       }
       outcomes[step.label] =
