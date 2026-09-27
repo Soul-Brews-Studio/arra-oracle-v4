@@ -23,26 +23,16 @@ import { bindToolOperations } from "./service.bindToolOperations";
 import { resolveToolName } from "./service.resolveToolName";
 import { toolAction } from "./service.toolAction";
 import { toolAlsoNeeds } from "./service.toolAlsoNeeds";
-import type { McpEnvelope, McpResult, StoreDependencies, TextSearchResult, ToolOperations } from "./service.types";
+import { auditErrorText } from "./service.auditErrorText";
+import { auditedHttpCall } from "./service.auditedHttpCall";
+import { searchAnswer } from "./service.searchAnswer";
+import { AuthDenied, type AuthFailure } from "./service.AuthDenied";
+import type { HttpAudit, McpEnvelope, McpResult, StoreDependencies, TextSearchResult, ToolOperations } from "./service.types";
 
-export type { McpEnvelope, McpResult, StoreDependencies, TextSearchResult, ToolOperations } from "./service.types";
+export type { HttpAudit, McpEnvelope, McpResult, StoreDependencies, TextSearchResult, ToolOperations } from "./service.types";
 
-export type AuthFailure = "unauthenticated" | "forbidden" | "policy_unavailable" | "invalid_request";
-
-export class AuthDenied extends Error {
-  readonly code!: AuthFailure;
-
-  constructor(code: AuthFailure) {
-    super(code);
-    this.name = "AuthDenied";
-    Object.defineProperty(this, "code", {
-      value: code,
-      writable: false,
-      enumerable: true,
-      configurable: false,
-    });
-  }
-}
+// The denial class lives in its own file (line cap); re-exported unchanged.
+export { AuthDenied, type AuthFailure } from "./service.AuthDenied";
 
 // A function DECLARATION, not an arrow: TypeScript only uses a `never` return
 // for control-flow narrowing when the callee is declared this way.
@@ -215,6 +205,13 @@ export function createOperationService(
     });
   }
 
+  /** #31 legacy-audit: an admitted legacy HTTP call writes the row its MCP twin
+   *  (`tool`) writes, success or failure, through the same `appendAudit`. The
+   *  global maintenance routes are not audited: no twin, no workspace for a row. */
+  const auditHttp = <T>(context: RequestContext, tool: string, http: HttpAudit, input: () => unknown) =>
+    (run: () => Promise<T>, present?: (value: T) => unknown) =>
+      auditedHttpCall((entry) => appendAudit(context, entry), clock, { tool, http, input }, run, present);
+
   return Object.freeze({
     // ── HTTP entrypoints: credentials in, results out ───────────────────────
     /**
@@ -227,11 +224,14 @@ export function createOperationService(
       workspace: string,
       limit: number,
       afterAdmit: () => Error | null = () => null,
+      http: HttpAudit = {},
     ) {
       const context = admitWorkspace(authorization, workspace, "content:read");
-      const invalid = afterAdmit();
-      if (invalid !== null) throw invalid;
-      return deps.list(scopeOf(context, "content:read"), limit, {});
+      return auditHttp<unknown[]>(context, "list_memories", http, () => ({ limit }))(async () => {
+        const invalid = afterAdmit();
+        if (invalid !== null) throw invalid;
+        return deps.list(scopeOf(context, "content:read"), limit, {});
+      });
     },
 
     async searchMemories(
@@ -241,21 +241,27 @@ export function createOperationService(
       mode: "text" | "vector",
       limit: number,
       afterAdmit: () => Error | null = () => null,
+      http: HttpAudit = {},
     ): Promise<{ match?: TextSearchResult["match"]; rows: unknown[] }> {
       const context = admitWorkspace(authorization, workspace, "content:read");
-      const invalid = afterAdmit();
-      if (invalid !== null) throw invalid;
-      const bank = scopeOf(context, "content:read");
-      // Vector mode has no lexical match mode to report; text mode always does.
-      return mode === "vector" ? { rows: await deps.searchVector(q, bank, limit) } : deps.searchText(q, bank, limit);
+      type Found = { match?: TextSearchResult["match"]; rows: unknown[] };
+      return auditHttp<Found>(context, "recall", http, () => ({ query: q, mode, limit }))(async () => {
+        const invalid = afterAdmit();
+        if (invalid !== null) throw invalid;
+        const bank = scopeOf(context, "content:read");
+        // Vector mode has no lexical match mode to report; text mode always does.
+        return mode === "vector" ? { rows: await deps.searchVector(q, bank, limit) } : deps.searchText(q, bank, limit);
+      }, (found) => searchAnswer(mode, found));
     },
 
-    async diagnostics(authorization: string | null, workspace: string) {
+    async diagnostics(authorization: string | null, workspace: string, http: HttpAudit = {}) {
       const context = admitWorkspace(authorization, workspace, "diagnostics:read");
-      const bank = scopeOf(context, "diagnostics:read");
-      const health = await deps.embedHealth();
-      // Readiness only: never the model address or raw failure detail.
-      return { db: await deps.stats(bank), embedder: { ok: health.ok, dims: health.dims } };
+      return auditHttp<unknown>(context, "bank_info", http, () => ({}))(async () => {
+        const bank = scopeOf(context, "diagnostics:read");
+        const health = await deps.embedHealth();
+        // Readiness only: never the model address or raw failure detail.
+        return { db: await deps.stats(bank), embedder: { ok: health.ok, dims: health.dims } };
+      });
     },
 
     /**
@@ -277,17 +283,20 @@ export function createOperationService(
         peer_name?: string;
         subject_peer_name?: string;
       } | null,
+      http: HttpAudit = {},
     ) {
       const policy = snapshot();
       const admission = admitOrDeny(policy, authorization, clock(), { kind: "workspace", workspace, action: "content:write" });
       const context = contextFrom(admission);
-      const row = buildRow();
-      if (row === null) deny("invalid_request");
-      // #87 / R3: the row's author is caller-asserted, so the grant's `peers`
-      // binding, read from the SAME snapshot, bounds it.
-      if (!isBoundAuthor(row, bindingOf(policy, admission))) deny("forbidden");
-      // Scope comes from the ADMITTED context, never from the caller's payload.
-      return deps.insert({ ...row, workspace_name: scopeOf(context, "content:write") });
+      return auditHttp<{ id: string; embedded: boolean }>(context, "remember", http, () => ({}))(async () => {
+        const row = buildRow();
+        if (row === null) deny("invalid_request");
+        // #87 / R3: the row's author is caller-asserted, so the grant's `peers`
+        // binding, read from the SAME snapshot, bounds it.
+        if (!isBoundAuthor(row, bindingOf(policy, admission))) deny("forbidden");
+        // Scope comes from the ADMITTED context, never from the caller's payload.
+        return deps.insert({ ...row, workspace_name: scopeOf(context, "content:write") });
+      });
     },
 
     /**
@@ -469,15 +478,7 @@ export function createOperationService(
         // funnels through, so the exact JSON is carried in `message` here
         // rather than collapsed to `.message` text; `text()` on the MCP side
         // passes a string value through untouched.
-        const envelope =
-          typeof error === "object" &&
-          error !== null &&
-          typeof (error as { code?: unknown }).code === "string" &&
-          typeof (error as { path?: unknown }).path === "string" &&
-          typeof (error as { toJSON?: unknown }).toJSON === "function"
-            ? JSON.stringify((error as { toJSON(): unknown }).toJSON())
-            : null;
-        const message = envelope ?? (error instanceof Error ? error.message : String(error));
+        const message = auditErrorText(error);
         await appendAudit(context, {
           tool: name,
           input: args,
