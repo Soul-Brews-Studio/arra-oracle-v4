@@ -56,7 +56,10 @@ export function lifecycleGate(read: LifecycleRead): LifecycleGate {
       label: "superseded",
       explanation:
         `This node was superseded by “${name}” (reason: ${event.reason}). Its history stays readable, ` +
-        "but publishing or correcting here is disabled: continue on the successor.",
+        "but publishing or correcting here is disabled: continue on the successor. This is a UI-side " +
+        "choice, not a server rule -- the server still accepts a correction filed directly against this " +
+        "node's old accepted revision; this client blocks it here anyway to keep both write paths behind " +
+        "one gate.",
       successor: { node_id: event.new_id!, revision_id: event.new_revision_id, title: event.new_title },
     };
   }
