@@ -19,20 +19,33 @@
  * unavailable) is NOT retried with the second action — retrying would just
  * throw the same error twice and could mask which credential state caused
  * the refusal.
+ *
+ * Both tries use the ONE policy snapshot and ONE clock sample the caller took
+ * (contract §2: each protected request opens the policy once and samples time
+ * once). An earlier version called `admitGlobal` twice, each loading its own
+ * snapshot and clock, so a credential expiring between the two samples, or a
+ * policy swapped between the two opens, could decide one request two ways.
  */
 
 import { AuthDenied } from "./service.AuthDenied";
 
-export function admitOperator<TContext>(
-  admitGlobal: (authorization: string | null, action: "maintenance:backfill" | "maintenance:reindex") => TContext,
+export function admitOperator<TContext, TPolicy>(
+  admitGlobal: (
+    authorization: string | null,
+    action: "maintenance:backfill" | "maintenance:reindex",
+    policy: TPolicy,
+    now: number,
+  ) => TContext,
   principalOf: (context: TContext) => { principalId: string | null },
   authorization: string | null,
+  policy: TPolicy,
+  now: number,
 ): { principalId: string | null } {
   try {
-    return principalOf(admitGlobal(authorization, "maintenance:backfill"));
+    return principalOf(admitGlobal(authorization, "maintenance:backfill", policy, now));
   } catch (error) {
     if (error instanceof AuthDenied && error.code === "forbidden") {
-      return principalOf(admitGlobal(authorization, "maintenance:reindex"));
+      return principalOf(admitGlobal(authorization, "maintenance:reindex", policy, now));
     }
     throw error;
   }

@@ -833,3 +833,18 @@ this contract. The route now follows the same order as `/api/backfill`:
 `instance-audit-reader.test.ts` ("HTTP order ...") covers this through the route handler.
 It sends 9 requests and expects 7 self-audit rows: 3 refused, 3 admitted with an error,
 and 1 admitted and ok.
+
+### Correction (R25 reader, fix round 4, 2026-09-28)
+
+- **One snapshot and one clock sample per request (§2).** Operator admission used to call
+  `admitGlobal` twice, once for `maintenance:backfill` and then, on `forbidden`, once for
+  `maintenance:reindex`. Each call opened the policy and sampled the clock again.
+  `admitOperator` now takes one `snapshot()` and one `clock()` and tries both actions against
+  them. The test "operator admission samples the clock ONCE ..." puts the credential's expiry
+  between a first and a second sample:
+  - with this fix, a reindex-only operator is admitted after 1 sample;
+  - with the old double sample, the same operator got `unauthenticated` after 2 samples.
+- **`instance-audit-list --route`** now also accepts `/api/instance-audit`, which the server
+  already allowed, so the CLI can filter to the reader's own rows.
+- **Cursor.** The round-1 "Shape" paragraph above describes a cursor made only of
+  `started_at`. The round-2 correction (a `started_at` plus `id` cursor) supersedes it.

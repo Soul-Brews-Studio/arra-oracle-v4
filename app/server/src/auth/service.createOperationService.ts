@@ -160,9 +160,8 @@ export function createOperationService(
     return contextFrom(admitOrDeny(policy, authorization, now, { kind: "workspace", workspace, action }));
   }
 
-  function admitGlobal(authorization: string | null, action: GlobalAction): RequestContext {
-    const policy = snapshot();
-    const now = clock();
+  /** `policy`/`now` are passed in only to test several actions against ONE snapshot and sample (R25 reader, §2). */
+  function admitGlobal(authorization: string | null, action: GlobalAction, policy = snapshot(), now = clock()): RequestContext {
     return contextFrom(admitOrDeny(policy, authorization, now, { kind: "global", action }));
   }
 
@@ -322,7 +321,7 @@ export function createOperationService(
       return withInstanceAudit(logInstanceAudit, "/api/reindex", "maintenance:reindex", {}, admit, mutate);
     },
 
-    readInstanceAudit: makeReadInstanceAudit(admitGlobal, principalOf, logInstanceAudit), // #31 R25 (Nat D4b)
+    readInstanceAudit: makeReadInstanceAudit(admitGlobal, principalOf, logInstanceAudit, snapshot, clock), // #31 R25 (Nat D4b)
     /**
      * MCP: project the four actions FIRST, then let the caller read the body
      * lazily, then dispatch. The adapter never receives a context — it hands in

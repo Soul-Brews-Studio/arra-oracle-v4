@@ -292,4 +292,33 @@ describe("instance audit reader (#31 R25)", () => {
       await s.cleanup();
     }
   }, TEST_TIMEOUT_MS);
+
+  test("operator admission samples the clock ONCE and opens the policy ONCE per request (contract §2)", async () => {
+    const s = await scratch();
+    try {
+      const out = await runScript(
+        s.dataDir,
+        s.policyPath,
+        `
+        // Expiry sits between the first and any second sample: a request that
+        // sampled twice would see the reindex-only credential as expired on
+        // the second (reindex) try and answer unauthenticated.
+        const expiry = Date.parse("${EXPIRES_AT}");
+        let samples = 0;
+        const clock = () => (samples++ === 0 ? expiry - 1 : expiry + 1);
+        const counted = createOperationService({ policyPath: ${JSON.stringify(s.policyPath)} }, deps, clock);
+        let reindexOnly = "ok";
+        try { await counted.readInstanceAudit("Bearer ${TOKENS.reindexOnly.secret}", {}); } catch (e) { reindexOnly = e.code; }
+        const reindexSamples = samples;
+        samples = 0;
+        let workspace = "ok";
+        try { await counted.readInstanceAudit("Bearer ${TOKENS.workspace.secret}", {}); } catch (e) { workspace = e.code; }
+        console.log(JSON.stringify({ reindexOnly, reindexSamples, workspace, workspaceSamples: samples }));
+        `,
+      );
+      expect(out).toEqual({ reindexOnly: "ok", reindexSamples: 1, workspace: "forbidden", workspaceSamples: 1 });
+    } finally {
+      await s.cleanup();
+    }
+  }, TEST_TIMEOUT_MS);
 });

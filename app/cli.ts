@@ -255,7 +255,7 @@ try {
           const params = new URLSearchParams();
           if (options.limit !== undefined) params.set("limit", String(integer("limit", 50)));
           if (options.cursor !== undefined) params.set("cursor", String(options.cursor));
-          if (options.route !== undefined) params.set("route", choice("route", ["/api/backfill", "/api/reindex"]) ?? "");
+          if (options.route !== undefined) params.set("route", choice("route", ["/api/backfill", "/api/reindex", "/api/instance-audit"]) ?? "");
           if (options.outcome !== undefined) params.set("outcome", choice("outcome", ["admitted", "refused"]) ?? "");
           result = await request(`/api/instance-audit${params.size > 0 ? `?${params}` : ""}`);
           break;
