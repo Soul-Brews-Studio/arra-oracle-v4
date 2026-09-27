@@ -104,6 +104,13 @@ def _rest_rows(bundle: Tier1Bundle, target: HonchoTarget, workspace: str) -> dic
     }
     for s in sessions:
         for p in target.get_session_peers(workspace, s):
+            # Accept round, finding 5: GET .../sessions/{id}/peers returns Peer
+            # objects (membership only, per table_map's REST_FIELDS comment) --
+            # there is no session_id field in the response to read back. `s` is
+            # the v4 session_name we are iterating over, not a value Honcho
+            # returned, so rest=exact for session_peers.session_name (below)
+            # holds BY CONSTRUCTION: it can never disagree with the input.
+            # HONCHO-TABLE-DIFF.md's session_peers.session_name row says so.
             rest["session_peers"][(s, p["id"])] = {"workspace_id": p["workspace_id"], "session_id": s, "id": p["id"]}
         for m in target.list_messages(workspace, s):
             rest["messages"][(m["id"],)] = m
