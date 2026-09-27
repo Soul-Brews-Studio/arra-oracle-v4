@@ -236,7 +236,6 @@ const MULTI_EXPORT_ALLOWLIST: Record<string, { count: number; reason: string }> 
   "server/src/knowledge/transport.ts": { count: 6, reason: "knowledge HTTP transport helpers for one surface" },
   "server/src/publication/lifecycle.ts": { count: 6, reason: "frozen contract (app/docs/contracts/lifecycle-v1.md) parse/encode pipeline" },
   "server/src/contracts/revision-v1.ts": { count: 5, reason: "frozen contract validators (app/docs/contracts/revision-publication-v1.md)" },
-  "ui/v2/src/state/roster.ts": { count: 5, reason: "UI state/*.ts convention: paired load/save/mutate helpers for one client-side store" },
   "server/src/contracts/errors.ts": { count: 4, reason: "frozen contract error helpers, one error family shared by every kernel" },
   "server/src/mcp/calls.ts": { count: 4, reason: "mcp call-log audit helpers, one operational table" },
   "server/src/mcp/index.ts": { count: 4, reason: "MCP adapter composition root" },
@@ -245,10 +244,6 @@ const MULTI_EXPORT_ALLOWLIST: Record<string, { count: number; reason: string }> 
   "server/src/embed.ts": { count: 3, reason: "embedding provider adapter: embed/embedOne/health for one provider" },
   "server/src/mcp/connections.ts": { count: 3, reason: "mcp connection-fold audit helpers, one operational table" },
   "server/src/publication/session-link.ts": { count: 3, reason: "frozen contract (app/docs/contracts/session-link-v1.md) parse/encode pipeline" },
-  "ui/v2/src/api/audit.ts": { count: 3, reason: "UI api/*.ts domain-wrapper convention: one HTTP client module per domain" },
-  "ui/v2/src/api/listing.ts": { count: 3, reason: "UI api/*.ts domain-wrapper convention: one HTTP client module per domain" },
-  "ui/v2/src/api/overview.ts": { count: 3, reason: "UI api/*.ts domain-wrapper convention: one HTTP client module per domain" },
-  "ui/v2/src/state/overviewDerive.ts": { count: 3, reason: "UI state/*.ts convention: paired pure derive helpers for one view" },
   "server/src/auth/policy.registry.ts": { count: 2, reason: "policy registry: register/lookup pair over one map" },
   "server/src/contracts/batch-v1.ts": { count: 2, reason: "frozen contract (app/docs/contracts/v1-codecs.md) dispatch/encode pair" },
   "server/src/contracts/replay-v1.ts": { count: 2, reason: "frozen contract replay-op pair, shared by source and revision replay" },
@@ -256,10 +251,6 @@ const MULTI_EXPORT_ALLOWLIST: Record<string, { count: number; reason: string }> 
   "server/src/publication/errors.ts": { count: 2, reason: "publication error helpers, one error family" },
   "server/src/publication/service.constants.ts": { count: 2, reason: "publication scope/cursor-key constants, paired helpers" },
   "server/src/storage.ts": { count: 2, reason: "storage option/info pair for one dataset root" },
-  "ui/v2/src/api/client.ts": { count: 2, reason: "UI api/*.ts domain-wrapper convention: callMethod/health transport pair" },
-  "ui/v2/src/api/search.ts": { count: 2, reason: "UI api/*.ts domain-wrapper convention: keyword/semantic search pair" },
-  "ui/v2/src/api/typeCount.ts": { count: 2, reason: "UI api/*.ts domain-wrapper convention: paired count/resolve helpers" },
-  "ui/v2/src/overview/StatCard.tsx": { count: 2, reason: "React component + its co-located pure formatter" },
 };
 
 /** Files exporting exactly one function whose name does not follow "named after the file".
