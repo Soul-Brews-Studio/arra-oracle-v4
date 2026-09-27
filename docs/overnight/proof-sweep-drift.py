@@ -39,6 +39,25 @@ for path in tracked:
     by_base[os.path.basename(path)].append(path)
 cache: dict = {}
 
+# Pure `git mv` renames (style-shrink, #22): a citation written under the old name, on a
+# line last touched before the rename landed, would otherwise resolve to nothing in the
+# REV tree and get silently dropped from `checked` -- coverage loss with no DRIFT warning.
+# Map old path -> new path (both directions) so `resolve()` still finds the new file, and
+# the historical ("then") read below falls back to the old path at a pre-rename sha.
+RENAMED = {
+    "app/server/src/app.ts": "app/server/src/app.createApp.ts",
+    "app/server/src/auth/loader.ts": "app/server/src/auth/loader.loadPolicy.ts",
+    "app/server/src/auth/service.ts": "app/server/src/auth/service.createOperationService.ts",
+    "app/server/src/mcp/legacy-v3/chain.stopped.ts": "app/server/src/mcp/legacy-v3/chain.chainStopped.ts",
+    "app/server/src/source/relic.errors.ts": "app/server/src/source/relic.failRelic.ts",
+    "app/cli/kb.help.ts": "app/cli/kb.kbHelpText.ts",
+    "app/cli/kb.readRequestBody.ts": "app/cli/kb.readKbRequestBody.ts",
+    "app/ui/v2/src/forum/threads.ts": "app/ui/v2/src/forum/threads.buildThreads.ts",
+}
+RENAMED_FROM = {new: old for old, new in RENAMED.items()}
+for old, new in RENAMED.items():
+    by_base.setdefault(os.path.basename(old), []).append(new)
+
 
 def source(rev: str, path: str):
     if (rev, path) not in cache:
@@ -48,7 +67,15 @@ def source(rev: str, path: str):
 
 
 def resolve(name: str):
-    found = [t for t in tracked if t == name or t.endswith("/" + name)] if "/" in name else by_base.get(name, [])
+    if "/" in name:
+        found = [t for t in tracked if t == name or t.endswith("/" + name)]
+        if len(found) == 1:
+            return found[0]
+        for old, new in RENAMED.items():
+            if old == name or old.endswith("/" + name):
+                return new
+        return None
+    found = by_base.get(name, [])
     return found[0] if len(found) == 1 else None
 
 
@@ -94,7 +121,10 @@ for doc in docs:
                 continue
             if current is None:
                 continue
-            then, now = source(row["sha"], current), source(REV, current)
+            then = source(row["sha"], current)
+            if then is None and current in RENAMED_FROM:
+                then = source(row["sha"], RENAMED_FROM[current])  # pre-rename sha, pre-rename path
+            now = source(REV, current)
             if then is None or now is None:
                 continue
             nums = [int(x) for x in re.findall(r"\d+", spec)]
