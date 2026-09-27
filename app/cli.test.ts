@@ -347,6 +347,22 @@ describe("CLI kb friendly aliases (#31 R8)", () => {
     expect(Object.keys(requests[0]?.body).sort()).toEqual(["max_items", "peer_name", "session_name", "workspace_name"]);
   });
 
+  test("R24: context get / chat ask forward --author as author_peer_name, and omit it otherwise", async () => {
+    let r = await run("context", "get", "--bank", "test-bank", "--peer", "nat", "--session", "standup", "--author", "claude");
+    expect(r.code).toBe(0);
+    expect(requests[0]?.body).toEqual({
+      workspace_name: "test-bank", peer_name: "nat", session_name: "standup", max_items: 10,
+      author_peer_name: "claude",
+    });
+    requests.length = 0;
+    r = await run("chat", "ask", "--bank", "test-bank", "--peer", "nat", "--session", "standup", "--question", "q?", "--author", "claude");
+    expect(r.code).toBe(0);
+    expect(requests[0]?.body).toMatchObject({ author_peer_name: "claude" });
+    requests.length = 0;
+    r = await run("chat", "ask", "--bank", "test-bank", "--peer", "nat", "--session", "standup", "--question", "q?");
+    expect(requests[0]?.body).not.toHaveProperty("author_peer_name");
+  });
+
   test("D3b: peer context maps onto getRepresentation (observer -> about)", async () => {
     const r = await run("peer", "context", "--bank", "test-bank", "--observer", "neo", "--about", "nat", "--requester", "nat");
     expect(r.code).toBe(0);
