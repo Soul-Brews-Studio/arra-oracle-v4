@@ -584,3 +584,97 @@ probe re-run on this worktree: **57/57/57 methods, isolation 191 pass / 0 fail, 
 identical to the pre-fix-round run the verifier captured (`out/verify-ui-search-1.md`), including
 the same 26 payload-fixture gaps (`searchKnowledgeKeyword`/`searchKnowledgeSemantic` among them);
 confirms that scoreboard is unaffected by this UI-only fix, not a regression it introduced.
+
+## Search polish (2026-09-27, ui-polish slice): five nonblocking follow-ups
+
+A second independent verifier re-checked all five nonblocking follow-ups this section's Fix
+round left open and REFUTED the slice that was supposed to close them (no commit existed at
+all). This round fixes all five, UI-only (`app/ui/v2`, its rebuilt `app/server/public/v2`
+bundle, and docs; no `app/server/src` file touched):
+
+1. **Stale scan note.** `SearchOutcome` (`state/applySearchOutcome.ts`) now records `mode`,
+   the mode that PRODUCED the outcome. A new pure function, `state/searchOutcomeView.ts`, gates
+   `scanReason` on `outcome.mode === activeMode`: switching Keyword → Semantic hides the keyword
+   note immediately rather than leaving it up for `useKnowledgeSearch`'s 300ms debounce window.
+   Failing-first: `searchOutcomeView.test.ts`'s "switching to semantic … hides the stale keyword
+   note immediately" was verified red against the naive `scanReason: outcome.scanReason` (temp
+   reverted, ran, `Received: "short_query"`, expected `null`), green after the mode gate.
+2. **Back losing the query.** `useRoute`'s `Route` gained `q`/`mode` fields
+   (`#/explore?tab=search&q=...&mode=keyword|semantic`); `parse`/`format` (previously private)
+   are now exported and unit-tested directly (`useRoute.test.ts`) since neither touches
+   `window`. Two new pure functions restore/persist the search box: `searchRouteState` (route →
+   initial hook state, unrecognised `mode` falls back to `keyword`) and `searchRoutePatch` (hook
+   state → route patch, empty query clears `q`). `ExploreView` reads the initial state from the
+   route and writes every `query`/`mode` change back via `App.tsx`'s `route.replace` — never
+   `push`, so typing never spawns a history entry per keystroke, and the CURRENT explore entry
+   (the one Back returns to) always carries the latest query. Verified live against the real
+   running server: typing `ลืม` into the search box changed the address bar hash to
+   `#/explore?tab=search&q=%E0%B8%A5%E0%B8%B7%E0%B8%A1&mode=keyword` in place (no new history
+   entry), confirming the wiring round-trips end to end, not just in the unit tests.
+3. **Narrow-viewport clipping.** `flex-wrap` added to the Keyword/Semantic toggle row
+   (`KnowledgeSearchBox.tsx`), the Explore tab bar (`DetailTabs.tsx`, where `Config` lives), and
+   the per-hit match-badge row (`KnowledgeSearchResults.tsx`) — the same `flex flex-wrap` idiom
+   already used by `KnowledgeView`/`WorkspaceBar`/`EvidenceBadges`. Confirmed via
+   `getComputedStyle` against the real served bundle that `flexWrap: "wrap"` reaches the DOM on
+   both rows. **Not independently confirmed with a browser screenshot**: `/ego-browser`'s CDP
+   screenshot capture was unreliable in this session (repeated `CdpRequestTimeoutError`s, and
+   one captured frame came back a garbled 123×127px instead of the 830×858 viewport, with the
+   viewport itself twice collapsing to single digits after an interaction) — a tool/environment
+   instability in this run, not a rendering issue reproduced through the DOM. No
+   `docs/overnight/ui/34-search-polish-*.png` was produced as a result; this is an honest gap
+   against the brief's "Verify with /ego-browser screenshots at 830px and 1280px", not a silent
+   skip.
+4. **Untested wiring.** The decision logic `useKnowledgeSearch` used to compute inline —
+   which hits/scan-note to show, and (new) how to seed/persist query+mode — now lives in
+   `searchOutcomeView`, `searchRouteState` and `searchRoutePatch`: pure, DOM-free, unit-tested.
+   Reverting any of the three turns its own test red without needing jsdom (this repo has none
+   and adding one was out of scope — no new dependencies). `App.tsx`'s hit-click routing
+   (`push(searchHitRoute(id))`) was already fully delegated to the tested `searchHitRoute`
+   function from the prior Fix round; nothing further to extract there.
+5. **Docs.** Corrected the stale "same `onSelectNode` + tab switch" sentence above (superseded
+   by this file's own Fix round section) to say what the click does now. Re-measured
+   `docs/SCHEMA-BUILT.md`'s knowledge-method name scan with the exact method it describes: **33
+   of 57** called today, not 30 — `searchKnowledgeKeyword`/`searchKnowledgeSemantic` are real new
+   calls, and a third match, `indexRevisionChunks`, is a false positive of the scan's own
+   whole-word method (it only appears inside a UI message string, not a call); both are counted
+   and the false positive is explained in place rather than silently rounded off.
+
+### Live proof
+
+Real server, fresh `mktemp -d` root (`app/just/demo/stack.sh`'s `demo_stack_up`, never
+`app/.tmp`/`app/data`), real local Ollama (`all-minilm`, confirmed installed): registered a peer
+and session, seeded the reserved vocabularies, published one Thai-body node (`หลงลืม`, the R14
+inside-word case), indexed its chunk, and embedded it for real —
+`{"attempted":1,"embedded":1,"reused":0,"failed":0,"remaining":0,"skipped":0,"blocked":null}`.
+The built UI (`bun run build`, output verified under `app/server/public/v2/`) was then opened
+with `/ego-browser` against the running server with the dev token. Confirmed live, by DOM/URL
+evidence rather than a screenshot (see finding 3 above for why): the Search tab's tab bar shows
+`Config` and every other tab in the DOM at an 830px viewport (`configVisible: true`), the
+Keyword/Semantic toggle and match-badge rows both compute `flexWrap: "wrap"` from the shipped
+CSS, and typing `ลืม` immediately rewrites the address bar to
+`#/explore?tab=search&q=%E0%B8%A5%E0%B8%B7%E0%B8%A1&mode=keyword` via `replace` (single history
+entry, not one per keystroke). Server stopped (`kill -TERM` on the owned PID) and its `mktemp -d`
+root removed immediately after; the browser origin's `localStorage` was cleared and the
+`/ego-browser` task space closed. No `app/.tmp`/`app/data` was touched and nothing was left
+running.
+
+### Tests and typecheck
+
+- `bun test src` (`app/ui/v2`): **138 pass, 0 fail** (125 before this round; +13 new: 3
+  `applySearchOutcome`, 3 `searchOutcomeView`, 3 `searchRouteState`, 2 `searchRoutePatch`, 4
+  `useRoute` — one `applySearchOutcome` case reused).
+- `./node_modules/.bin/tsc -p tsconfig.json` (`app/ui/v2`): clean.
+- `bun run build` (`app/ui/v2`): succeeded, new bundle hash under `app/server/public/v2/`.
+- `bun run test:ui-scope` (`app/server`): 13 pass, 0 fail — unchanged, the other legacy
+  plain-script UI, untouched by this slice.
+- Python architecture guard (`app/migrate-py`, `unittest discover`): 268 pass, OK (skipped=1) —
+  unchanged; no new TS file imports the publication kernel.
+- Acceptor live probe (`.tmp/acceptor/live-probe/run.sh … ui-polish`, run from the overnight
+  worktree against this one): **57/57/57 methods, isolation 0 fail, 0 fatal, gaps=26, RC=2** —
+  the same known payload-fixture-gap exit code the prior review already logged as unrelated to
+  the UI; this slice touches no `app/server/src` file, so the scoreboard could not have moved.
+
+## Amendments
+
+None. No file under `app/docs/contracts/` documents UI routing/rendering behaviour, so none
+needed a new section for this UI-only round; no new dependency was added.
