@@ -181,10 +181,17 @@ export function useKnowledge(b: Bank) {
       }
       setTaxonomy(ids);
     },
-    publish: async (input: Omit<PublishInput, "node_id" | "base_revision_id">, nodeId: string) => {
+    // `base` overrides the head-as-base default: a correction is a NEW node,
+    // so it passes `null` even while another node's head is on screen.
+    // Resolves `true` only when the server accepted the revision.
+    publish: async (
+      input: Omit<PublishInput, "node_id" | "base_revision_id">,
+      nodeId: string,
+      base?: string | null,
+    ): Promise<boolean> => {
       if (taxonomy === null) {
         setError("seed the reserved vocabularies first -- a revision needs exactly one type term");
-        return;
+        return false;
       }
       setPublishing(true);
       setError(null);
@@ -194,16 +201,17 @@ export function useKnowledge(b: Bank) {
         // An edit must name the CURRENT head as its base. Passing the wrong
         // one is refused rather than silently overwriting, which is how a
         // lost update surfaces as an error instead of as missing history.
-        base_revision_id: head?.revision?.id ?? null,
+        base_revision_id: base !== undefined ? base : (head?.revision?.id ?? null),
       });
       setPublishing(false);
       if (!result.ok) {
         setError(describe(result));
-        return;
+        return false;
       }
       setNodes((n) => addName(n, nodeId));
       setSelected(nodeId);
       await refresh();
+      return true;
     },
     refresh,
   };
