@@ -255,3 +255,28 @@ Coverage check: #27 1 row (slice 1); #28 1 (slice 8); #29 2 (slice 1); #30 1 (sl
 | C12 | #85 verdict | "23 passing unit-test assertions" is really 23 **tests** (17 + 6). Per the #32 auditor, `chat-coverage` alone has 678 assertions. Only the wording is off. |
 | C13 | Auditors vs acceptor | For #27, #28, #29, #30, #31, #75 and #85 the auditors say "closable in substance" while the acceptor (PROOF.md §3b) says "partial at whole-issue level". Both can hold, because they measure different things: re-run test coverage versus a bounded live probe. Not reconciled here, since it is Nat's call (§4 item 8). |
 | C14 | #31 vs #32 granularity | For the same missing representation feature, #31 scores PARTIAL (its sibling sub-items are built) and #32 scores GAP twice. The finding is consistent. Each issue counts it once per row. |
+
+## 6. Resolution: C1 / slice 9 (2026-09-28, remember-taxonomy slice, branch v4/on-remember-taxonomy)
+
+Nat ruled D5a (`docs/overnight/DECISIONS.md`, NAT-DECISIONS 2026-09-28): the legacy
+free-text MCP `remember` tool goes through taxonomy validation now, resolving C1's open
+question in favor of "route it through the #27 taxonomy kernel", not "record it as a
+compatibility-only path that stays unvalidated until cutover".
+
+Implemented: `app/server/src/mcp/remember.validateType.ts`, wired into `remember`'s
+dispatch case in `app/server/src/mcp/index.ts`. `type` now resolves against the same
+sealed `type` vocabulary `kb_publishRevision`'s `validateTermReferences.ts` enforces
+(unknown/retired terms refused with the identical `arra-taxonomy-error/v1
+invalid_reference` envelope); `mcp/tools.ts`'s `remember` schema description no longer
+says "planned, not implemented". Full amendment: `app/docs/contracts/taxonomy-write-v1.md`
+"Amendment 2026-09-26 (post-merge Nat 2026-09-28 NAT-DECISIONS D5a ...)".
+
+This does NOT give `remember` a `node_revisions` row or a `node_revision_terms`
+projection -- it validates the `type` VALUE only. The #27 row 47 caveat ("the legacy
+free-text remember tool ... writes the spike memories table with no taxonomy
+validation") and row 108's "See C1" note are stale as of this slice; row 47's caveat
+should read "the type field is validated against the taxonomy kernel (D5a); the row
+itself still lives in the spike `memories` table, not `node_revisions`" on the next
+sweep of this file. Slice 9's row (`docs/overnight/AC-MATRIX.md:212`) is DONE for the
+`type` field; a `remember`-onto-`node_revisions` adapter (the other half of C1's
+question) is out of this slice's scope and not attempted here.

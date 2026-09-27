@@ -271,3 +271,46 @@ when the conclusion drawn from it survives.
 
 **Command.** `rg -n 'reconcile: true|input.reconcile' app/server/src/mcp/legacy-v3` prints
 exactly `publish.ts:110` and `tools/oracle_trace_distill.ts:88`.
+
+## Amendment 2026-09-26 (post-merge Nat 2026-09-28 NAT-DECISIONS D5a: the legacy free-text MCP remember tool goes through taxonomy validation now)
+
+Source: `docs/overnight/DECISIONS.md` NAT-DECISIONS D5a, and AC-MATRIX conflict C1
+(slice 9: the legacy MCP `remember` tool wrote the spike `memories` table with no
+taxonomy validation and described itself as "planned, not implemented").
+
+**Change.** The legacy MCP `remember` tool (`app/server/src/mcp/index.ts`'s `remember`
+case; schema in `app/server/src/mcp/tools.ts`) now routes its `type` field through the
+same sealed `type` vocabulary `kb_publishRevision`'s `validateTermReferences.ts`
+enforces, via the new `app/server/src/mcp/remember.validateType.ts`. Omitted `type`
+defaults to `note`, exactly like the reserved seed. An unknown or retired term, or a
+missing `type` vocabulary, is refused with the SAME closed `arra-taxonomy-error/v1`
+envelope (`invalid_reference`, path `/type`) `kb_publishRevision` already gives for the
+equivalent cause -- not a bespoke error shape. A valid, active term is accepted and the
+write proceeds byte-for-byte as before (`sync_state`/`embedded` unchanged).
+
+This is validation of the `type` VALUE only: it does not give `remember` a
+`node_revisions`/`term_snapshot_json` row, does not write to `node_revision_terms`, and
+does not let `remember` create, rename, retire or reparent a term -- all taxonomy
+MUTATION stays exactly where this contract already put it (§ above). A `remember` call
+against a deployment with no `KnowledgeAccess` configured at all now fails closed
+(`invalid_request`, path `/type`) rather than silently accepting free text -- D5a is
+"validate it now", not "validate it when convenient".
+
+Precedence: the existing `#87`/R3 peer-binding refusal (`forbidden`, an asserted
+`peer_name` outside the admitting grant's binding) still fires BEFORE the taxonomy
+check -- `mcp/index.ts`'s `remember` case checks `isBoundAuthor` first, mirroring the
+order `ops.insert` already enforced, so this change does not reorder an existing
+refusal.
+
+**Why.** The old free-text `type` let a caller invent or resurrect any string as a
+memory's type outside the sealed vocabulary the rest of the system trusts, and the
+tool's own description claimed the opposite of what AC-MATRIX's C1 required.
+
+**Tests.** `app/server/test/mcp-remember-taxonomy.test.ts` (unit, fake `KnowledgeAccess`):
+unknown type refused, retired term refused, missing `type` vocabulary refused, valid
+term accepted unchanged, omitted type defaults to `note`, a Thai term name accepted when
+it resolves as active, and no `KnowledgeAccess` configured fails closed. Peer-binding
+precedence and byte-for-byte valid-write behavior are covered by the existing
+`app/server/test/auth-legacy-peer-binding.test.ts` and `app/server/test/mcp-correctness.test.ts`
+(both updated to wire a fake taxonomy-resolving `KnowledgeAccess`, since their datasets
+predate this change and carry no `vocabularies`/`terms` tables of their own).

@@ -2,8 +2,10 @@
 // itself against "could the caller compose this from two others?".
 //
 // This slice ships the CONTENT and OBSERVABILITY tools, which the `memories`
-// table already supports. Taxonomy (§6.2 tag/untag/term_*/vocabulary_*) waits
-// on the terms/vocabularies write path.
+// table already supports. Taxonomy MUTATION (§6.2 tag/untag/term_*/vocabulary_*)
+// still waits on its own write path; but `remember`'s `type` field IS validated
+// now (D5a, docs/overnight/DECISIONS.md) against the same sealed `type`
+// vocabulary the knowledge transports read -- see `remember.validateType.ts`.
 //
 // NEVER an MCP tool, in any policy (§6.2.2): create/rename/delete a bank or
 // workspace, vocabulary_delete, changing a vocabulary's kind or term_policy,
@@ -26,7 +28,7 @@ export const MEMORY_TOOLS = [
         type: {
           type: "string",
           description:
-            "Free-text type in the current spike; default note. Controlled taxonomy validation is planned, not implemented.",
+            "A term in this workspace's sealed 'type' vocabulary; default note. Validated against the same taxonomy kernel kb_publishRevision uses -- an unknown or retired term is refused (arra-taxonomy-error/v1 invalid_reference), it is not stored free-text.",
         },
         session_name: { type: "string", description: "File it in a session. Organisation, not scope." },
         peer_name: {
