@@ -21,9 +21,6 @@
  * only) is what this file exists to relax -- EXPLORE is the first screen in
  * this app that can show "everything", not just bookmarks you typed in.
  */
-import { type ApiResult, callMethod } from "./client";
-import { type Bank, asError } from "./memory";
-
 /* Row shapes, VERIFIED against the running server rather than assumed.
  *
  * An earlier version of this file guessed `peer_name` / `session_name` /
@@ -90,119 +87,10 @@ export type Page<T> = {
   error: string | null;
 };
 
-const call = (b: Bank, method: string, body: Record<string, unknown>): Promise<ApiResult> =>
-  callMethod(b.bank, method, { workspace_name: b.workspace, ...body }, b.token);
-
-/** True when the endpoint ITSELF is absent, as opposed to the request being
- *  bad. Two shapes, and the second was found by measurement rather than by
- *  reading the contract:
- *
- *    - a `method_not_found` envelope, which is what the documented refusal
- *      looks like
- *    - a bare HTTP 404. An unregistered knowledge method is rejected by the
- *      transport BEFORE any kernel runs, so it never reaches the code that
- *      builds an `arra-error/v1` envelope. Measured against a server without
- *      these methods: `POST /api/knowledge/default/listPeers` answers
- *      `404` with the body `{"error":"error"}` -- no code, nothing to match.
- *
- *  Treating only the first shape as unsupported is exactly the false-empty
- *  this function exists to prevent: the UI would render "no peers" over a
- *  server that has no way to tell you whether there are any.
- *
- *  404 is safe to read this way here because every method in this module is
- *  a LISTING call, and a listing has no row-level identity that could be
- *  legitimately not-found. A 404 from these three can only mean the route. */
-function isUnsupported(result: ApiResult): boolean {
-  if (asError(result.body)?.code === "method_not_found") return true;
-  return result.status === 404;
-}
-
-function toPage<T>(result: ApiResult, cursorKey: string): Page<T> {
-  if (!result.ok) {
-    const unsupported = isUnsupported(result);
-    return {
-      rows: [],
-      nextCursor: null,
-      total: null,
-      supported: !unsupported,
-      // `result.error` is a thrown-fetch (transport) message; prefer it,
-      // then the governed envelope code, then the bare status -- the same
-      // fallback order `describe()` uses in `useMemory.ts`/`useKnowledge.ts`.
-      error: unsupported ? null : (result.error ?? asError(result.body)?.code ?? `HTTP ${result.status}`),
-    };
-  }
-  // A 2xx whose body is not an object (`null`, a bare value) is a malformed
-  // answer, not an empty listing: say so rather than throw (ui-reads2 -- the
-  // throw skipped the caller's land() and latched "loading") or show zero.
-  if (result.body === null || typeof result.body !== "object") {
-    return { rows: [], nextCursor: null, total: null, supported: true, error: "malformed listing response (no body)" };
-  }
-  const body = result.body as Record<string, unknown>;
-  const rows = Array.isArray(body.rows) ? (body.rows as T[]) : [];
-  const nextCursor = typeof body[cursorKey] === "string" ? (body[cursorKey] as string) : null;
-  const total = typeof body.total === "string" ? body.total : null;
-  return { rows, nextCursor, total, supported: true, error: null };
-}
-
-/** `include_total` is ALWAYS sent, never omitted.
- *
- * The first version spread it in only when true, which is the ergonomic
- * default in most APIs and wrong in this one: this kernel's request grammar
- * is closed and has no optional-key concept, so every field is
- * required-but-nullable and a missing key is `missing_field`, not a default.
- * Omitting it produced `missing_field at /include_total` on every call --
- * the same mismatch the isolation proof hit for the same reason.
- */
-export async function listPeers(
-  b: Bank,
-  afterName: string | null,
-  limit: number,
-  includeTotal: boolean,
-): Promise<Page<PeerRow>> {
-  const result = await call(b, "listPeers", {
-    after_name: afterName,
-    limit,
-    include_total: includeTotal,
-  });
-  return toPage<PeerRow>(result, "next_after_name");
-}
-
-export async function listSessions(
-  b: Bank,
-  afterName: string | null,
-  limit: number,
-  includeTotal: boolean,
-): Promise<Page<SessionRow>> {
-  const result = await call(b, "listSessions", {
-    after_name: afterName,
-    limit,
-    include_total: includeTotal,
-  });
-  return toPage<SessionRow>(result, "next_after_name");
-}
-
-export async function listNodes(
-  b: Bank,
-  afterId: string | null,
-  limit: number,
-  includeTotal: boolean,
-  typeTerm: string | null,
-  includeInactive: boolean,
-): Promise<Page<NodeRow>> {
-  const result = await call(b, "listNodes", {
-    after_id: afterId,
-    limit,
-    include_total: includeTotal,
-    // Sent ALWAYS, `null` when unfiltered — same closed-grammar rule as
-    // `include_total`. Spreading it in only when non-null produced
-    // `missing_field at /type_term`, which the UI rendered as an ordinary
-    // empty list: "no nodes" over a server holding five. The count strip
-    // said "— NODES" at the same time, which was the only visible hint.
-    type_term: typeTerm,
-    // #29 slice B (lifecycle-v1.md amendment 2026-09-26): closed, required,
-    // same rule. `false` is the ordinary view (retired/superseded excluded);
-    // `true` is history mode, wired to the EXPLORE "show history" toggle.
-    include_inactive: includeInactive,
-  });
-  return toPage<NodeRow>(result, "next_after_id");
-}
+// The private `call`/`toPage`/`isUnsupported` helpers, and the three public
+// list functions, moved out (style-ui-split, docs/overnight/DECISIONS.md):
+// each lives in its own file named after itself. Re-exported here so
+// importers (`state/useOverview.ts`, `state/useListing.ts`) do not churn.
+export { listPeers } from "./listing.listPeers";
+export { listSessions } from "./listing.listSessions";
+export { listNodes } from "./listing.listNodes";
