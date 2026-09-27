@@ -86,7 +86,7 @@ does not (typed memories, supersede-not-delete, a controlled taxonomy) is added 
 
 > **Measured (2026-09-27, #8; verdict accepted by Nat 2026-09-28):** "byte-compatible" is
 > **false as stated**. A live INSERT of v4's tier-1 rows into stock Honcho v3.2.0 fails on the
-> first column name. What holds is **REST-level interchange** (proven live) and a **table-level
+> first column v4 names differently (`h_metadata`). What holds is **REST-level interchange** (proven live) and a **table-level
 > import with conversions, for one bank into an empty Honcho**. §15.2 carries the measured
 > terms; the paragraph above is the design intent it was measured against.
 
@@ -2331,3 +2331,4 @@ compare. If the shapes ever drift, this is the test that says so before a user d
 > disposable Honcho v3.2.0 on 127.0.0.1, runs the table leg (`TestLiveTableRoundTrip`) and the
 > REST leg (`TestLiveRoundTrip`), and tears everything down. It does **not** use white.local,
 > which is shared. It is not a CI step: it needs Docker, and the gate is the local CI mirror.
+> What it measured is the verdict in §15.2.
