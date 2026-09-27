@@ -677,7 +677,23 @@ class IsolationTests(unittest.TestCase):
             text = path.read_text(encoding="utf-8")
             for pattern in self.RAW_DEPENDENCY_PATTERNS:
                 with self.subTest(file=path.name, pattern=pattern):
-                    self.assertNotIn(f'from "{pattern}"', text)
+                    self.assertIsNone(self.raw_import(pattern, text))
+
+    @staticmethod
+    def raw_import(pattern: str, text: str):
+        """The module itself or any one-export split of it (`./embed.embedOne`,
+        `./storage.storageInfo`; #22 style-server-split): the split files are the
+        same raw modules under a dotted name, so they must be refused as well."""
+        return re.search(rf'from "{re.escape(pattern)}(\.[A-Za-z0-9_]+)*"', text)
+
+    def test_raw_import_matches_split_modules_but_not_lookalikes(self):
+        for pattern, text in (("./embed", 'from "./embed"'), ("./embed", 'from "./embed.embedOne"'),
+                              ("../storage", 'from "../storage.storageInfo"')):
+            with self.subTest(pattern=pattern, text=text):
+                self.assertIsNotNone(self.raw_import(pattern, text))
+        for pattern, text in (("./embed", 'from "./embedding"'), ("./db", 'from "./dbx"'), ("./storage", 'from "./storage-v2"')):
+            with self.subTest(pattern=pattern, text=text):
+                self.assertIsNone(self.raw_import(pattern, text))
 
     def test_adapter_files_covers_the_entrypoint_split(self):
         """§3 regression guard: index.ts's real logic now lives in
