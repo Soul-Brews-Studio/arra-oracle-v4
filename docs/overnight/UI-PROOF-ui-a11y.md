@@ -366,3 +366,75 @@ pixel size is 1.5× the CSS size:
 and the device-metrics override was cleared. The TaskSpaces were finished. The server got
 `kill -TERM` and is gone. `rm -rf` removed the mktemp root (`ls`: "No such file or directory"). No
 listener was left on the port.
+
+## Round 5 (after the wave-6 verifier refuted round 4: unbroken tokens with no wrap rule)
+
+**What round 4 got wrong.** It wrapped message text in `MessageRow` and `ThreadNode` and measured
+on a dataset with no links, no path in a node body, and the context panel collapsed. The verifier
+found the same overflow in three places: `RevisionDiff`'s term/link `<li>`s (a link is
+`JSON.stringify(entry)`, one token of ~230 chars; Knowledge scroller 310/984 at 320), `NodeHead`'s
+body (`<pre>` and markdown `<p>`, `whitespace-pre-wrap` with no overflow-wrap), and
+`ContextPanel`'s items (App `<aside>` 365/670 at 375).
+
+**Fix: a sweep, not three patches.** Every element in `app/ui/v2/src` that renders text verbatim
+now wraps: every className with `whitespace-pre*` or `font-mono` (ids, paths, digests, JSON), and
+every `<pre>`/`<code>`, carries `[overflow-wrap:anywhere]` (or already had `truncate`/`break-*`);
+form controls are exempt. 32 elements in 20 files, including `DialecticPanel`'s answer and
+`TracePanel`'s excerpt (the two nonblocking sources). `RevisionDiff`'s term/link lists get
+`anywhere` and the two grid halves `min-w-0`. `ContextPanel`'s item is split into
+`components/ContextItemRow.tsx` so a test can render it without the "Show N items" click; its
+header row now wraps (`flex-wrap min-w-0`) for a long peer name.
+
+**Tests (failing first).** `components/reflowText.test.ts`: 6 `renderToStaticMarkup` tests pin
+`[overflow-wrap:anywhere]` on the element holding each worst case (a 419-char link JSON in the
+diff, a repo path and an absolute path in both body formats, a context item and its 64-char peer
+name, the chat answer, a trace excerpt), plus a **source guard** that fails on any new
+whitespace-pre*/font-mono/`<pre>`/`<code>` element without a wrap rule. This answers the verifier's
+point that class-pinning tests cannot find an unfixed element. Red before the fix: 0 pass / 7 fail,
+with the guard listing 34 offenders (`.tmp/red-r5.txt`). Mutant: dropping the rule from the link
+`<li>` alone turns the link test red (`Received: [ "text-accent" ]`). Green: 7/7; UI suite
+246 pass / 0 fail; UI and server `tsc` clean.
+
+**Measurement: the verifier's own method.** `.tmp/measure-r5.mjs`, real Chrome via `/ego-browser`,
+bundle `index-B2sPmb0C.js`. For every element in `body`, it reports `scrollWidth > clientWidth + 1`
+and splits scrollers (`overflow-x` auto/scroll) from clipped boxes. It also reports every box past
+the viewport and `document.scrollWidth` vs `innerWidth`.
+
+The dataset was a fresh `mktemp -d` gated stack (`.tmp/r5stack.sh`, `demo_stack_up`, model URL on a
+dead port). It held 12 peers and 12 sessions, and 16 messages in `session-01`, the last holding a
+92-char absolute path. It had one node with two revisions. The head body holds
+`app/server/src/knowledge/service.publishRevision.ts:120`, the absolute path, and a 153-char
+GitHub URL. The head cites 3 links: `code`, `url` and `node_revision` → revision 1, so the diff
+shows `links (3)`, with link JSON of 253, 337 and 392 chars. The context panel was **expanded**
+(16 items).
+
+| CSS px | Knowledge (body + diff) | Messages + context expanded | Explore > Messages | Forum | Overview | link `<li>` client / scroll | context `<p>` worst overflow |
+|---|---|---|---|---|---|---|---|
+| 320x640 | 0 / 0, doc 320 | 0 / 0, doc 320 | 0 / 0 | 0 / 0 | 0 / 0 | 124 / 124 | 0 px |
+| 375x812 | 0 / 0, doc 375 | 0 / 0, doc 375 | 0 / 0 | 0 / 0 | 0 / 0 | 152 / 152 | 0 px |
+| 830x859 | 0 / 0, doc 830 | 0 / 0, doc 830 | 0 / 0 | 0 / 0 | 0 / 0 | 379 / 379 | 0 px |
+| 1440x900 | 0 / 0, doc 1440 | 0 / 0, doc 1440 | 0 / 0 | 0 / 0 | 0 / 0 | 364 / 364 | 0 px |
+
+Cells read "overflowing scrollers / boxes past the viewport". `document.scrollWidth` equalled
+`innerWidth` in all 20 cells. The only non-scroller boxes wider than their content are deliberate
+clips: the token `<input>` (its own value), the `truncate`d revision-title `<span>`s in history,
+and one `truncate`d probe method name at 320. The link `<li>`s now end at x=285 (320), 341 (375),
+795 (830) and 1021 (1440). Before, the verifier measured x=1464–1480 in a column ending at 1046.
+
+**Not measured live:** the chat answer (no chat model) and trace excerpts (no traces in the
+dataset). Both are pinned by render tests and the guard only. 812x375 was not re-scanned this
+round. The DetailTabs 24rem floor there is unchanged from round 4 (disclosed partial).
+
+**Screenshots** (PNG is 1.5x the CSS size): `ui/39-a11y-r5-<width>-knowledge-body.png` (the paths
+in the body break mid-token), `ui/39-a11y-r5-<width>-knowledge-diff-links.png` (the link JSON
+wraps inside its half), and `ui/39-a11y-r5-<width>-messages-context.png` (the expanded context
+items). Each exists for widths 320, 375, 830 and 1440.
+
+**Teardown.** The origin's `localStorage` and `sessionStorage` were cleared (read back: 0 / 0) and
+the device-metrics override was cleared. The TaskSpace was finished. The server got `kill -TERM`,
+and nothing is left listening on its port. `rm -rf` removed the mktemp root (`ls`: "No such file or
+directory").
+
+**Live probe** (`run.sh … ui-a11y`): `methods=57 HTTP=57 MCP=57 CLI=57 isolation_failures=0
+seed_errors=0 gaps=26 fatal=None`. Isolation is 191 pass / 0 fail, the same as round 4, and rc=2
+from the 26 payload gaps, as in round 4. This slice touches no server code.
