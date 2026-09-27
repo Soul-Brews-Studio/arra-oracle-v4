@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { rovingKey } from "../components/rovingKey";
 import { EmptyState } from "../components/EmptyState";
 import { Pager } from "./Pager";
 
@@ -50,6 +51,7 @@ export function ListPanel<T>({
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const [filter, setFilter] = useState("");
+  const rowRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const visible = filter === "" ? rows : rows.filter((r) => renderRow(r).toLowerCase().includes(filter.toLowerCase()));
 
   return (
@@ -98,7 +100,11 @@ export function ListPanel<T>({
               one assertive alert is the transcript's (#33 AC2 round 4). */}
           {supported && error && <p role="status" className="px-2 pb-2 text-[11px] text-rose-300">{error}</p>}
 
-          <div className="flex max-h-56 flex-col gap-0.5 overflow-y-auto px-1">
+          {/* #33 AC2 (ui-keys): every row stays a plain <button> in the Tab
+              order (Enter/Space activate natively); ArrowUp/ArrowDown/Home/
+              End ALSO move between rows, a shortcut rather than a roving
+              tabindex, so a Tab-only user still reaches each row. */}
+          <div role="group" aria-label={`${label} rows`} className="flex max-h-56 flex-col gap-0.5 overflow-y-auto px-1">
             {/* #33 fix-round: a 401/403 (or any other real failure) now
                 carries a non-null `error` even though `supported` stays
                 true -- the route exists, it just refused this request. An
@@ -109,12 +115,19 @@ export function ListPanel<T>({
             {supported && !error && visible.length === 0 && !loading && (
               <EmptyState title={`no ${label}`} detail="nothing on this page matches." />
             )}
-            {visible.map((row) => {
+            {visible.map((row, i) => {
               const key = rowKey(row);
               return (
                 <button
                   key={key}
+                  ref={(el) => {
+                    rowRefs.current[i] = el;
+                  }}
+                  type="button"
+                  data-row={key}
+                  aria-current={selectedKey === key ? true : undefined}
                   onClick={() => onSelect(row)}
+                  onKeyDown={(e) => rovingKey(e, i, rowRefs.current.slice(0, visible.length), "vertical")}
                   className={`truncate rounded px-2 py-1.5 text-left text-xs ${
                     selectedKey === key ? "bg-accent/15 text-slate-100" : "text-slate-200 hover:bg-panel"
                   }`}

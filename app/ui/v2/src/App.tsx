@@ -7,6 +7,7 @@ import { ErrorNote } from "./components/ErrorNote";
 import { PeerRail } from "./components/PeerRail";
 import { SidebarShell } from "./components/SidebarShell";
 import { SessionRail } from "./components/SessionRail";
+import { TabStrip } from "./components/TabStrip";
 import { Transcript } from "./components/Transcript";
 import { WorkspaceBar } from "./components/WorkspaceBar";
 import { type ExploreTab } from "./explore/DetailTabs";
@@ -35,6 +36,8 @@ import { type Route, useRoute } from "./state/useRoute";
  *  here: five branches deep, the tooltip for the last tab was whatever fell
  *  out of the final `else`, which is how a tab ends up describing its
  *  neighbour. */
+const APP_VIEWS = ["overview", "explore", "messages", "forum", "knowledge"] as const satisfies readonly Route["view"][];
+
 const TAB_TITLES: Record<Route["view"], string> = {
   overview: "Every count this server can produce, each beside the call that produced it — the landing page",
   explore: "Browse peers, sessions and nodes — needs the listing endpoints (#88) on the server",
@@ -106,7 +109,11 @@ export function App() {
           : null;
 
   return (
-    <div className="flex h-screen flex-col bg-ink text-slate-200">
+    // ui-keys slice: on a short landscape screen (`short`, 812x375) the
+    // shell is NOT pinned to the viewport: header and tabs scroll away and
+    // the document scrolls, so the explore/messages panes can each take one
+    // whole viewport instead of the ~211px left under the chrome.
+    <div className="flex h-screen flex-col bg-ink text-slate-200 short:h-auto short:min-h-screen">
       <WorkspaceBar
         bank={m.bank}
         workspace={m.workspace}
@@ -118,23 +125,28 @@ export function App() {
         healthStatus={health}
       />
 
-      <nav className="flex flex-wrap gap-1 border-b border-edge px-4 py-1.5">
-        {(["overview", "explore", "messages", "forum", "knowledge"] as const).map((v) => (
-          <button
-            key={v}
-            onClick={() => setView(v)}
-            title={TAB_TITLES[v]}
-            className={`rounded px-2.5 py-1 text-xs ${
-              view === v
-                ? "bg-accent/15 text-accent"
-                : "text-muted hover:text-slate-200"
-            }`}
-          >
-            {v}
-          </button>
-        ))}
+      {/* #33 AC2 (ui-keys): the view switcher is a WAI-ARIA tab strip (roving
+          tabindex, arrows move focus, Enter/Space activate) and the view
+          below is its tabpanel. */}
+      <nav aria-label="Views">
+        <TabStrip
+          label="Views"
+          idBase="app-view"
+          tabs={APP_VIEWS}
+          active={view}
+          onActivate={setView}
+          titles={TAB_TITLES}
+          className="flex flex-wrap gap-1 border-b border-edge px-4 py-1.5"
+          tabClassName="rounded px-2.5 py-1 text-xs"
+        />
       </nav>
 
+      <div
+        role="tabpanel"
+        id="app-view-panel"
+        aria-labelledby={`app-view-tab-${view}`}
+        className="flex min-h-0 flex-1 flex-col"
+      >
       {view === "overview" ? (
         // The one view that needs no selection to say something true, so it is
         // what an empty hash opens on. Its quick actions route through the
@@ -176,7 +188,7 @@ export function App() {
           onSelectNode={(id) => push({ node: id })}
         />
       ) : (
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-visible">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto short:overflow-visible lg:flex-row lg:overflow-visible">
         <SidebarShell
           collapsed={railCollapsed}
           onToggle={() => setRailCollapsed((v) => !v)}
@@ -204,7 +216,7 @@ export function App() {
           />
         </SidebarShell>
 
-        <main className="flex min-w-0 flex-1 flex-col">
+        <main className="flex min-w-0 flex-1 flex-col short:h-screen short:flex-none">
           {m.session === null ? (
             <EmptyState
               title="No session selected"
@@ -253,6 +265,7 @@ export function App() {
         </aside>
       </div>
       )}
+      </div>
     </div>
   );
 }
