@@ -1572,7 +1572,10 @@ stand as shipped.
 
 The path cited above, `auth/service.ts`, moved. The style-shrink slice
 (`docs/overnight/DECISIONS.md`; ratchet `app/server/test/one-function-per-file.test.ts`
-MISNAMED_ALLOWLIST) renamed it to `auth/service.createOperationService.ts` by a pure `git mv`
--- `runMcp` and every other export are byte-identical; only the filename changed, to satisfy
-the ratchet's "one exported function per file, named after the file" rule. This section is
+MISNAMED_ALLOWLIST) renamed it to `auth/service.createOperationService.ts` by `git mv`
+(similarity 99%: one import line changed, `./loader` -> `./loader.loadPolicy`, for the
+sibling rename in the same slice) -- `runMcp` (a method on the object the sole export
+`createOperationService` returns, not itself an export) and every export are
+byte-identical; only the filename and that one import path changed, to satisfy the
+ratchet's "one exported function per file, named after the file" rule. This section is
 not rewritten in place; read `auth/service.ts` above as `auth/service.createOperationService.ts`.

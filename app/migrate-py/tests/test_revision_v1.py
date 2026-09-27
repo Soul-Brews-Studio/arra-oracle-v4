@@ -454,9 +454,11 @@ class IsolationTests(unittest.TestCase):
     #: siblings from this tuple -- add new modules HERE, deliberately.
     HELPER_REUSE_BARRELS = (
         TS_ROOT / "auth" / "policy.ts",
-        # style-shrink (2026-09-28, docs/overnight/DECISIONS.md) renamed these two
-        # pure-move `git mv`s to satisfy the one-function-per-file ratchet's naming
-        # rule; same reviewed file, same content, new name only.
+        # style-shrink (2026-09-28, docs/overnight/DECISIONS.md) renamed these two by
+        # `git mv` to satisfy the one-function-per-file ratchet's naming rule; same
+        # reviewed file, new name, and no content change except that app.createApp.ts's
+        # one import line follows the sibling `auth/service.ts` rename below (similarity
+        # 99%; loader.loadPolicy.ts is a true 0-change move).
         TS_ROOT / "auth" / "loader.loadPolicy.ts",
         TS_ROOT / "app.createApp.ts",
         # The #26 publication kernel reuses the governed codecs by contract:
@@ -609,7 +611,8 @@ class IsolationTests(unittest.TestCase):
     # Adapters must not reach raw data/model/audit modules directly; they go
     # through the admitted operation service.
     ADAPTER_FILES = (
-        # style-shrink (2026-09-28) renamed app.ts -> app.createApp.ts, pure `git mv`.
+        # style-shrink (2026-09-28) renamed app.ts -> app.createApp.ts by `git mv`
+        # (similarity 99%; its one import line follows the sibling auth/service.ts rename).
         TS_ROOT / "app.createApp.ts",
         TS_ROOT / "mcp" / "index.ts",
         # The HTTP entrypoint too: it imported ./db directly, contrary to the

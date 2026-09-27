@@ -251,7 +251,9 @@ in a fix round after verification showed a bound principal could still store
 The path cited above, `app/server/src/auth/service.ts`, moved. The style-shrink slice
 (`docs/overnight/DECISIONS.md`; ratchet `app/server/test/one-function-per-file.test.ts`
 MISNAMED_ALLOWLIST) renamed it to `app/server/src/auth/service.createOperationService.ts`
-by a pure `git mv` -- the exported `createOperationService` and every other export, and all
-behavior, are byte-identical; only the filename changed, to satisfy the ratchet's "one
-exported function per file, named after the file" rule. This section is not rewritten in
-place; read `auth/service.ts` above as `auth/service.createOperationService.ts`.
+by `git mv` (similarity 99%: one import line changed, `./loader` -> `./loader.loadPolicy`,
+for the sibling rename in the same slice) -- the exported `createOperationService` and every
+other export, and all behavior, are byte-identical; only the filename and that one import
+path changed, to satisfy the ratchet's "one exported function per file, named after the
+file" rule. This section is not rewritten in place; read `auth/service.ts` above as
+`auth/service.createOperationService.ts`.
