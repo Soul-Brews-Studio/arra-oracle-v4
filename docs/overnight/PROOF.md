@@ -173,6 +173,24 @@ methods 57 × HTTP/MCP/CLI, and there were no regressions.
 The `ask` residual is closed. In Codex's words, this is "not a full WCAG audit, model-quality
 certification, or blanket whole-roadmap completion."
 
+**Codex TASK 10** (`5e890fe`, after #122–#127). The raw probe is unchanged at 146/0/1: the GAP is the
+browser bucket, which is not run by design. Isolation is 191/0, and all 57 methods are on HTTP/MCP/CLI.
+The acceptor checked the new claims in scenarios it wrote itself:
+- HTTP audit rows and body-scope refusal parity: **PASS**.
+- Saturated search reports `coverage: "partial"`, and `oracle_search` warns: **PASS**.
+- Legacy `/api/memories` rows have the same audit shape as MCP `remember`: **PASS**.
+
+It re-ran five sampled AC-MATRIX PASS rows, and none was falsified. The evidence total is 269 targeted
+tests with 0 fail. Its per-issue verdict:
+
+| verdict | issues |
+|---|---|
+| **DONE** against the reviewed ACs | #29; #30 (not an unbounded-recall or quality guarantee); #85; #28 (prohibition reading) |
+| target ACs done, closing blocked on a Nat ruling | #27 (legacy `remember` taxonomy) |
+| partial, or waiting on Nat | #31 (scoped representations; `/api/backfill` and `/api/reindex` audit is draft #126); #32 (message-only chat); #10; #34 (cutover, R2, local-mirror evidence) |
+| partial only at the strict release-proof level | #75: 83 frozen tests pass and the live replay passes; it needs the local CI mirror accepted, or Actions restored |
+| carried forward | #33 (the TASK 9 PASS); #7 (relevance judgments); #22 (the epic) |
+
 ## 4 · Live proofs on m5 (real services, fresh datasets)
 
 - **Chat via the real local Ollama gemma3:4b** (`DEMO.md` step 15). The Thai question got
@@ -198,10 +216,10 @@ certification, or blanket whole-roadmap completion."
   (disclosed per PR).
 - **Needs you.**
   - #7 relevance judgments.
-  - #8: the live leg now passes at REST level (2026-09-27). Whether that is enough to close the issue, given the historical "byte-compatible" wording, is your call.
+  - #8: the live leg passes at REST level, and the TABLE-level measurement (#129, `HONCHO-TABLE-DIFF.md`) found "byte-compatible" FALSE as stated and TRUE WITH CONVERSIONS for one bank (10 v4-only columns lost; `h_metadata` must be renamed to `metadata`; message ids collide across banks). Accepting that verdict, or funding true byte compatibility, is D11 in `NAT-DECISIONS.md`.
   - Chat providers other than local Ollama.
   - Everything in `DECISIONS.md` you want to overturn.
-- **Screenshots.** `Page.captureScreenshot` times out in ego lite on m5, even on a `data:` page,
-  and neither `bringToFront` nor focus emulation helps. The browser e2e therefore reports those
-  steps as FAIL, never as PASS. Restarting ego lite is Nat's call, because it would close his own space.
+- **Screenshots (resolved 2026-09-27).** `Page.captureScreenshot` timed out in ego lite on m5 for most of the day.
+  It works again without a restart, and the full `app/just/ui-e2e.sh` is now green: `PASS ok=28 fail=0 skip=1`,
+  with 13 fresh screenshots (`UI-E2E.md`, "Full green run"). The e2e still runs locally only; ego lite is not in CI.
 - **Merged.** #109 went into `main` on Nat's "merge all pr", and #110–#118 followed, each once accepted.

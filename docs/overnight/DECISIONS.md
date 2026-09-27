@@ -211,6 +211,52 @@ branch, so it reverts cleanly.
   already running on m5, so no host change was needed. The live leg ran through
   `app/just/honcho-live.sh` (a disposable pinned v3.2.0 on 127.0.0.1, torn down):
   `TestLiveRoundTrip` 1 OK, 0 problems. white.local was not used.
+- **Update 2026-09-27 (table level)**: "byte-compatible" is **FALSE as stated,
+  TRUE WITH CONVERSIONS**. Measured, not argued: `TestLiveTableRoundTrip` INSERTs
+  a target-19 bank into the same disposable Honcho's Postgres via `psql`, then
+  reads it back through REST and SQL. Result: 1 OK, 0 problems, per-field outcome
+  equal to `table_map.EXPECTED_OUTCOMES`.
+  - **Conversions required**:
+    - rename `h_metadata` to `metadata` (a verbatim INSERT fails: column does
+      not exist);
+    - JSON text to jsonb, with NULL becoming `{}`;
+    - naive `timestamp[us]` to `timestamptz` UTC;
+    - `token_count` narrowed from int64 to int32;
+    - `setval` on the messages identity.
+  - **Incompatible**:
+    - 10 v4-only columns are lost *(corrected in the fix round below; this
+      line first said 11)*;
+    - `workspaces.id` loads only if it is already nanoid21;
+    - `messages.id` collides on `pk_messages` with a second bank or any
+      non-empty Honcho (measured).
+  - Evidence and the per-column diff: `docs/overnight/HONCHO-TABLE-DIFF.md`.
+  - `bash app/just/honcho-live.sh` now runs both legs (table first), then tears
+    everything down.
+- **Update 2026-09-27 (table level, fix round)**: an independent verifier refuted
+  the update above. The verdict still stands, measured, but it is narrower than
+  its headline said. "Byte-compatible" is **FALSE as stated**. It is **TRUE WITH
+  CONVERSIONS only for one bank imported into an EMPTY stock Honcho, with a
+  nanoid21 workspace id, and with 10 v4-only columns lost**. Fixed:
+  - the comparator is now shown to fail: `tests/test_honcho_table_measure.py`
+    makes one corruption per comparison on each read path and asserts it is
+    reported. Removing any one of six comparisons fails a test;
+  - the counts: 10 lost columns (not 11), and 6 timestamp columns survive by
+    conversion (not 13). A test now ties the doc's headline counts and
+    per-column rows to `table_map`;
+  - `workspaces.id` is now incompatible, not convertible ("exact if nanoid21,
+    otherwise incompatible"), because the generator refuses rather than converts;
+  - the REST leg keeps `role`, `in_reply_to`, `read` and `read_at` through the
+    SPEC §15.2 invariant 5 `metadata._v4` fold, and the table leg loses them.
+    The doc now says so;
+  - the generator also refuses JSON numbers that Python reads as non-finite.
+  Live re-run: table leg 1 OK, REST leg 1 OK, and teardown left 0 containers
+  and no clone.
+- **Ruled (Nat, 2026-09-28, NAT-DECISIONS D11a):** the measured verdict is
+  accepted as the contract. True byte compatibility (global message ids, `metadata`
+  as the stored column name) is not pursued. SPEC §15.2 now states the conversions,
+  the incompatibilities and the lost columns under invariant 5 and in a "Measured"
+  callout; §3 and §15.5 point to it; AGENTS.md and DESIGN.md no longer list the live
+  round trip as unbuilt. #8 was closed by #122.
 
 ## R16 · #7 recall measurement: harness now, judgments from Nat
 
@@ -357,3 +403,21 @@ v3". Measured usage on this machine: 709 real v3 tool calls; `oracle_search` 46%
   (the issue forbids agent-authored corpora). The harness can be built. The
   judgments cannot honestly be produced tonight.
 - **Chat providers other than local Ollama, and anything that costs money.**
+
+## R23 · The merge and release gate is the local CI mirror, not GitHub Actions
+
+- **Ruling (Nat, 2026-09-28): "use only local."** GitHub Actions stopped on 2026-09-27 at about
+  17:05 (+07). Main's run 36310873591 was refused with "recent account payments have failed or your
+  spending limit needs to be increased"; the job never started. From #123 on, every merge was
+  already gated by a local mirror of `ci.yml`.
+- **What changes:**
+  - `app/just/local-ci.sh` runs every `ci.yml` step locally, in order: ruff, typecheck, build, the
+    sharded suite, demo, the ui-e2e harness rules, Python and fixtures, benchmarks, UI tsc, UI
+    tests, UI build, and the committed-bundle check. It prints `LOCAL_CI_RESULT PASS|FAIL`.
+  - That result is the merge gate and the release evidence.
+  - `ci.yml` is kept as the canonical step list, but it triggers only on `workflow_dispatch`, so
+    pushes no longer create refused runs.
+- **Consequence:** the strict release-proof gap the acceptor named for #75 ("accept the local CI
+  mirror or restore Actions") is closed by this ruling.
+- **Reverse by:** restore `push:` / `pull_request:` in `ci.yml`, once billing is restored.
+

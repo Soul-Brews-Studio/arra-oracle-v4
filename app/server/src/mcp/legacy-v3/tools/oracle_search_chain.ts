@@ -11,7 +11,7 @@ import { isEmbedderDown } from "../search.isEmbedderDown";
 import type { CompatWarning } from "../search.parseFilters";
 import { readCount } from "../search.readCount";
 import type { RecallRow } from "../search.recall";
-import { SEARCH_WINDOW, type KernelHit } from "../search.retrieve";
+import { SEARCH_WINDOW, type KernelCoverage, type KernelHit } from "../search.retrieve";
 import { v3Result } from "../search.v3Result";
 
 type Hop = { hop: number; query: string; sourceId: string | null; traceId: string; resultIds: string[]; bestId: string; bestScore: number; stoppedReason?: string };
@@ -42,6 +42,16 @@ const SCORE_DECAY = 0.5;
  * With no query embedder the chain cannot start: a `kernel_error` saying so,
  * with the v4 envelope, and no trace written. If the embedder stops answering
  * mid-chain, the hops already written stand and `partial` says where it stopped.
+ *
+ * #30 coverage (search-chunk-v1.md §21/§22, DECISIONS.md R21/R22): each hop's
+ * own `searchKnowledgeSemantic` call answers the same `coverage` /
+ * `coverage_reason` / `candidate_ceiling` fields `oracle_search`/`oracle_ask`
+ * already carry through `retrieve()`. Carried AGGREGATED across hops here --
+ * `"partial"` the moment ANY hop's own candidate read saturated -- the same
+ * OR shape `retrieve()` uses across several fts terms, chosen over a per-hop
+ * field because `Hop` is a small already-pinned public record and
+ * `compat_warnings` is already this adapter's one channel for "the kernel
+ * measured something that changed the answer's completeness".
  */
 export async function oracle_search_chain(args: Record<string, unknown>, context: V3ToolContext): Promise<unknown> {
   const { tool, kb } = context;
@@ -68,11 +78,17 @@ export async function oracle_search_chain(args: Record<string, unknown>, context
   let hopQuery = seed;
   let sourceId: string | null = null;
   let previousBest = Number.POSITIVE_INFINITY;
+  // #30 coverage, aggregated OR across hops (see the function comment above).
+  let coveragePartial = false;
+  let coverageCeiling = 0;
 
   for (let hop = 0; hop < maxHops; hop++) {
     let hits: KernelHit[];
     try {
-      hits = ((await kb("searchKnowledgeSemantic", { query: text, limit: Math.min(SEARCH_WINDOW, breadth + visited.size) })) as { hits: KernelHit[] }).hits;
+      const answer = (await kb("searchKnowledgeSemantic", { query: text, limit: Math.min(SEARCH_WINDOW, breadth + visited.size) })) as { hits: KernelHit[] } & KernelCoverage;
+      hits = answer.hits;
+      if (answer.coverage === "partial") coveragePartial = true;
+      coverageCeiling = answer.candidate_ceiling;
     } catch (error) {
       if (!isEmbedderDown(error)) throw error;
       if (hop === 0) {
@@ -123,6 +139,16 @@ export async function oracle_search_chain(args: Record<string, unknown>, context
   }
   if (hops.length > 0 && hops.at(-1)!.stoppedReason === undefined) hops.at(-1)!.stoppedReason = "no_results";
 
+  if (coveragePartial) {
+    // #30 coverage (search-chunk-v1.md §22/§24): carried through even when
+    // every hop's own merged hit count looks small -- a hop's candidate read
+    // can saturate its bound independent of `breadth` or `maxHops`.
+    warnings.push({
+      code: "partial",
+      field: "hops.coverage",
+      detail: `at least one hop's own candidate read reached its bound (candidate_ceiling=${coverageCeiling}, reason=candidate_ceiling); more neighbours may exist unread at that hop`,
+    });
+  }
   if (results.length > 0) warnings.push({ code: "field_unavailable", field: "source_file", detail: "v4 writes no file; each result is a node (see id)" });
   warnings.push({ code: "field_unavailable", field: "model", detail: "the server's embedding profile answered; it is not one of v3's model keys" });
   warnings.push({ code: "semantic_change", field: "hops", detail: "later hops search by the best entry's text, re-embedded, not by its stored vector; each hop's trace is linked by prev_id at creation, not by a later edge" });

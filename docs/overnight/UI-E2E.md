@@ -398,3 +398,41 @@ The driver now works like this:
   and aborts, closing its own space. The verdict is counted from `OUT/verdict.txt`, a copy
   of the transcript taken at that moment, so a straggler cannot add a line or a verdict
   after the run has been judged.
+
+## Full green run, 22:09 on main `9435719` (2026-09-27)
+
+The first fully green run of `app/just/ui-e2e.sh` (both segments, fresh screenshots): **`UI_E2E_RESULT PASS ok=28 fail=0 skip=1`**. It used a fresh gated stack, the built bundle from main, real local Ollama for chat, and `UI_E2E_NO_BUILD=1`. Ego lite's `Page.captureScreenshot` works again: it had been timing out all day, and after a CDP `Page.startScreencast` probe plain captures worked in a fresh space, so no restart of the user's ego lite was needed. The 13 PNGs in `ui/e2e-*.png` are **from this run**; they replace the earlier-round set, and `e2e-13` is new. The one SKIP is `evidence-target-unavailable`, which cannot be reached through a real write (`publishRevision` answers `400 invalid_reference`), so it is not credited.
+
+```text
+STEP_OK ui-open http://127.0.0.1:56826/v2/ (token set in localStorage, never in a URL)
+STEP_OK ui-seed-vocab type + memory_horizon seeded from the UI
+STEP_OK create node A=x-DNYI71TnzwZTIJTUsrg rev #1
+STEP_OK revise A #2=QM1nmIxl… history #2,#1; rev1 DOM snapshot pinned
+STEP_OK cite B=PtFzE-RrCeZxTgNsB2aTd cites A#2 (current head), A#1 (stale: not head), url (locator only); A shows REVERSE rows for B and D
+STEP_OK correct C=JmA9JpAOzu3eyr9lRRHMp (type correction) corrects A#2; C rev 4nYpVO5S…
+STEP_OK retire-citing-node D retired (accepted — lifecycle history refreshed )
+STEP_OK supersede {"banner":"supersededopen successor: Test server port is 47779This node","fieldsetDisabled":true,"publishDisabled":true,"correctDisabled":true
+STEP_OK evidence-after-supersede B->A#2: target superseded/retired; B->A#1: stale: not head + target superseded/retired; A<-D: citing node superseded/retired; A
+STEP_OK evidence-unresolved E=biviOA-5Brj7eZyUL3sYh: url cited as unresolved -> badge "unresolved"
+STEP_SKIP evidence-target-unavailable (unreachable through a real write: publishRevision -> 400 invalid_reference)
+STEP_OK history-byte-identical rev 1 title/body identical in the DOM, and title, body, term_snapshot_json, link_snapshot_json, content_digest byte-identical in 
+STEP_OK chat-peer-context answer "[0cKsELDLtuOgWQ6rTOv3X] บ็อบบอกว่าต้องทำการ snapshot ดิสก์ก่อนซ้อมย้ายข้อมูลทุกค"…; partial coverage; citations 2 (all in dail
+STEP_OK search-thai-keyword ลืม -> "#1Port conventions: อย่าหลงลืมngramPort conventions: อย่าหลงลืม\n\nอย่าหลงลืมจองพอร์ตก่อนรันเทสต์ -- never forget to reser" 
+STEP_OK history-labels-after-rename L=TomB4xYunWT8W_0qPDcZM: after renameTerm storage->persistence and 2 later edits (API #2, UI #3), rev 1 renders topic:storag
+STEP_OK keys-start #/overview reloaded, focus on <body>
+STEP_OK keys-view-tabs Tab x5 to the view tablist; ArrowRight/End/Home/ArrowLeft move focus only; Enter opened explore
+STEP_OK keys-open-peer Tab x6 to row alice; ArrowDown -> bob, ArrowUp back; Enter opened it (aria-current=true)
+STEP_OK keys-open-session Tab x6 to row daily-loop; Space opened it
+STEP_OK keys-detail-tabs Tab x2 to the detail tablist; End/Home/ArrowRight x3 then Enter -> messages tabpanel
+STEP_OK keys-send-message Tab x3 to the composer; typed + Control+Enter; "keyboard hello HZ-n2V" is in the transcript
+STEP_OK keys-open-knowledge Shift+Tab x17 back to the view tablist; End + Enter -> knowledge; vocab already seeded
+STEP_OK keys-publish-and-revise A=w2Juu9rkn1Ljub4kTY66T created then revised to #2; focus after create: H2:Keyboard node HZ-n2V, after revise: H2:Keyboard node 
+STEP_OK keys-cite B=dceVu25fFmibZfWI3RkAD cites A#2 (VORQbgsz…), picked by type-ahead "#2 — Keyboard node HZ-n2V v2 ("
+STEP_OK keys-correct Shift+Tab x4 to A in the node rail, Enter -> focus on A's <h2>; C=aItz4ZHhr54IunIW9irdZ corrects A#2; focus now H2:Keyboard correction HZ-n
+STEP_OK keys-supersede A superseded by C (_Cq5xqaK…) from Explore > evidence, ids typed
+STEP_OK keys-read-history knowledge opened, focus stayed on the knowledge tab; Tab x22 to history #1, Enter -> diff from rev 1 "Keyboard node HZ-n2V"
+STEP_OK keys-narrow-812x375 {"explore":{"vw":812,"vh":375,"docScroll":709,"overflowX":false,"pane":{"top":0,"bottom":376,"h":375},"tablist":{"top":0,"bottom":37
+STEP_OK keys-stale-tab #/explore?peer=alice&session=daily-loop&tab=Nodes: one tab stop (explore-detail-tab-nodes), reached by Tab x19 with nodes selected; Arrow
+```
+
+Teardown: the server was stopped, the mktemp root removed, the origin's localStorage cleared and the ego space finished (`.tmp/e2e-full/teardown.txt`).

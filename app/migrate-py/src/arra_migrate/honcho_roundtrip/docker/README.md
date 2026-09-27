@@ -10,6 +10,12 @@
 > with the documented `LOSSY_FIELDS`. What it does not prove: the historical
 > "byte-compatible tables" claim, because the interchange is at REST, not
 > table-dump, level (R15).
+>
+> **Table level, 2026-09-27.** The same script now runs `TestLiveTableRoundTrip`
+> first. It INSERTs a target-19 bank straight into this database with
+> `docker compose exec -T database psql`, then reads it back through REST and
+> SQL. The verdict is TRUE WITH CONVERSIONS, not byte-compatible. See
+> `docs/overnight/HONCHO-TABLE-DIFF.md`.
 
 Issue #8. Nothing in `arra_migrate.honcho_roundtrip` starts a container. This
 file is the manual recipe a human or an agent WITH a working container

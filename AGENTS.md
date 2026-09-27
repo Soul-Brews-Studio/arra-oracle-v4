@@ -1,12 +1,12 @@
 # arra-oracle-v4 — current agent guide
 
-**Version**: `v26.9.27-alpha.432`
+**Version**: `v26.9.27-alpha.2048`
 
-**Date**: 2026-09-27 04:32 GMT+7
+**Date**: 2026-09-27 20:48 GMT+7
 
-Updated by Claude Opus 5.5 (AI) 2026-09-27 from measured source, on `v4/overnight-26sep` `e00b50b`. Claude Sonnet 5 wrote the previous version (2026-09-26); Codex wrote the one before.
+Updated by Claude Opus 5.5 (AI) 2026-09-27 from measured source, on `v4/overnight-26sep` `e00b50b`. The proof sweep (#22, 2026-09-27 20:48) re-checked every `file:line` below on `594df54` and corrected the stale ones in place; it also re-measured the diagram's `mcp_calls` line, the UI counts and the v3 acceptance tally (37/0/0) there. Other counts were not re-measured (`docs/overnight/PROOF-SWEEP.md`). Claude Sonnet 5 wrote the previous version (2026-09-26); Codex wrote the one before.
 
-Read this guide, [DESIGN.md](DESIGN.md), and the relevant historical [SPEC.md](SPEC.md) section before changing behavior. The old SPEC remains evidence, not current authority for storage/schema/runtime. Latest direction is recorded in [discussion #36](https://github.com/Soul-Brews-Studio/arra-oracle-v4/discussions/36), building on #21 and #35. The overnight rulings R1–R22 (2026-09-26/27) live in [`docs/overnight/DECISIONS.md`](docs/overnight/DECISIONS.md); the evidence for them will be in [`docs/overnight/PROOF.md`](docs/overnight/PROOF.md), which the overnight driver writes at the end of the run; it is not yet written on `e00b50b`, so the link is dead until then. Read DECISIONS.md before reopening anything it already settled.
+Read this guide, [DESIGN.md](DESIGN.md), and the relevant historical [SPEC.md](SPEC.md) section before changing behavior. The old SPEC remains evidence, not current authority for storage/schema/runtime. Latest direction is recorded in [discussion #36](https://github.com/Soul-Brews-Studio/arra-oracle-v4/discussions/36), building on #21 and #35. The overnight rulings R1–R22 (2026-09-26/27) live in [`docs/overnight/DECISIONS.md`](docs/overnight/DECISIONS.md); the evidence for them is in [`docs/overnight/PROOF.md`](docs/overnight/PROOF.md) (added in `6aa4ee3`, updated after every merge since; `docs/overnight/AC-MATRIX.md` maps each open issue's criteria to evidence). Read DECISIONS.md before reopening anything it already settled.
 
 ## Current implementation versus target
 
@@ -18,8 +18,8 @@ Every number here was measured on `e00b50b` on 2026-09-27: counts come from the 
  models/     active15   15 t / 152 f  ----->  ARRA_DATA_DIR  "legacy + operations root"
    python -m arra_migrate                        memories      8 legacy MCP tools, /api/memories,
                                                                /api/search, 13 legacy CLI cmds
-                                                 mcp_calls  }  written on every admitted MCP call and HTTP kb call
-                                                 connections}  AND read here (R5)
+                                                 mcp_calls  }  written on every admitted MCP call, HTTP kb call
+                                                 connections}  and legacy HTTP memory routes, AND read here (R5)
 
  target_v1/  target19   19 t / 228 f  ----->  ARRA_KNOWLEDGE_DATASET_ROOT  "knowledge root"
    dev: create_target19_dataset.py              one fd-42 writer gate; TS refuses a drifted dataset
@@ -37,12 +37,12 @@ Every number here was measured on `e00b50b` on 2026-09-27: counts come from the 
 - **Runtime.** `app/server/` holds TypeScript/Bun/Elysia; `app/cli.ts` plus `app/cli/` is the source-run CLI. Startup refuses unless Bun is exactly `1.3.14` and Elysia exactly `1.4.30` (`composition.ts:33-34,66-80`). Rust migrations and Hono-era diagrams are historical.
 - **Storage.** **LanceDB is canonical**, local by default, with optional R2 configuration for `ARRA_DATA_DIR` only. There is no libSQL database. `ARRA_DATA_DIR` holds the legacy `memories` tier and the operations tables. Per R5, `mcp_calls` and `connections` are written there on every admitted MCP tool call and every admitted `POST /api/knowledge/:bank/:method` call, which the CLI `kb` path uses, successes and failures alike, including a body-scope or bound-peer refusal (one writer, `composition.ts` `composeAuditSink`, reached from `auth/service.ts`'s MCP path and `knowledge/transport.auditKnowledgeCall.ts`; #31). The legacy HTTP memory routes are audited too, as their MCP twins (`/api/memories` as `list_memories`/`remember`, `/api/search` as `recall`, `/api/health` as `bank_info`; `auth/service.auditedHttpCall.ts`). Requests refused before admission (no or bad token, no grant, unreadable policy) and the global maintenance routes (`/api/backfill`, `/api/reindex`: no MCP twin, no workspace for a row) write no row. They are read there by `listMcpCalls`/`listConnections` (`knowledge/registry.ts:261-272`); their target19 copies stay declared and empty. Per R19, `connections.method` is `"bearer"`, `principal` is the credential id, and `remote_ip` stays null. `ARRA_KNOWLEDGE_DATASET_ROOT` holds target19. Nothing moves data between the two roots except `arra-migrate-copy`.
 - **Knowledge methods: 57** in `app/server/src/knowledge/registry.ts` (33 `content:read`, 22 `content:write`, 2 `audit:read`). That one table drives all three transports:
-  - HTTP `POST /api/knowledge/:bank/:method`, capped at 1 MiB (`knowledge/transport.ts:67`);
+  - HTTP `POST /api/knowledge/:bank/:method`, capped at 1 MiB (`knowledge/transport.ts:69`);
   - MCP `kb_<method>` with a `{payload}` wrapper, capped at 256 KiB (`auth/http.ts:15`);
   - CLI `kb <method>` (`app/cli.ts:99-103`).
   A method added to the registry reaches all three with no transport edit. Live probe on this base: 57 reachable on HTTP, 57 on MCP, 57 on CLI.
-- **MCP tools: 65** = 8 legacy memory tools (`remember`, `recall`, `get_memory`, `list_memories`, `bank_info`, `call_log`, `call_stats`, `status`, all on `ARRA_DATA_DIR`) plus 57 `kb_*` (`mcp/tools.ts:16,171,191`). `tools/list` shows only the tools the caller's grants allow. `kb_*` tools are hidden when no knowledge dataset is configured (`mcp/tools.isAdvertised.ts:14-18`). Measured live with the dev policy: 65.
-- **v3-compatible MCP adapter** (R18), in `app/server/src/mcp/legacy-v3/`. It is off unless `ARRA_MCP_V3_COMPAT=1`, and only the exact value `1` turns it on (`composition.ts:199-201`, D10). It carries **25** tools (`legacy-v3/catalogue.ts`):
+- **MCP tools: 65** = 8 legacy memory tools (`remember`, `recall`, `get_memory`, `list_memories`, `bank_info`, `call_log`, `call_stats`, `status`, all on `ARRA_DATA_DIR`) plus 57 `kb_*` (`mcp/tools.ts:16,179,199`). `tools/list` shows only the tools the caller's grants allow. `kb_*` tools are hidden when no knowledge dataset is configured (`mcp/tools.isAdvertised.ts:14-18`). Measured live with the dev policy: 65.
+- **v3-compatible MCP adapter** (R18), in `app/server/src/mcp/legacy-v3/`. It is off unless `ARRA_MCP_V3_COMPAT=1`, and only the exact value `1` turns it on (`composition.ts:211-213`, D10). It carries **25** tools (`legacy-v3/catalogue.ts`):
   - the `____IMPORTANT` guide;
   - `oracle_learn` `research_note` `handoff` `supersede` `search` `ask` `read` `list` `stats` `concepts` `reflect` `recap` `inbox` `verify` `thread` `threads` `thread_read` `thread_update` `trace` `trace_get` `trace_list` `trace_chain` `trace_distill` `search_chain`.
 
@@ -50,7 +50,7 @@ Every number here was measured on `e00b50b` on 2026-09-27: counts come from the 
 
   Other adapter rules:
   - An inbound `arra_*` alias resolves to its `oracle_*` tool and is never listed (D6, `auth/service.resolveToolName.ts`).
-  - The `X-Arra-Peer` speaker header is read only while the flag is on (`app.ts:157`, D8) and is bound by R3 `peers`.
+  - The `X-Arra-Peer` speaker header is read only while the flag is on (`app.ts:172`, D8) and is bound by R3 `peers`.
   - The recall tools exclude superseded, retired, inactive and out-of-window nodes; the browse tools include them, flagged (D3).
   - No v3 corpus is imported (D9).
 
@@ -82,9 +82,9 @@ Every number here was measured on `e00b50b` on 2026-09-27: counts come from the 
 - **Lifecycle (#29).** There is one eligibility rule, `publication/service.eligibilityReasonsOf.ts`. It returns `retired`, `superseded`, `inactive`, `not_yet_valid` or `expired`, and the validity window is half-open, `[valid_from, valid_to)`. The transport supplies `as_of` at request time, because readers take no clock. The rule serves `getRecallEligibility`, both searches, and `listNodes {eligible_only:true}` (the recall view). By default `listNodes` hides retired and superseded nodes; `include_inactive:true` is the history mode. `retireNode` and `supersedeNode` are exposed. Superseding into a node that is already retired or superseded is refused.
 - **Auth is implemented, not absent.**
   - `ARRA_AUTH_POLICY` must be an absolute path to an owner-only (0600) `arra-auth/v1` policy file, checked at startup (`composition.ts:84-87`).
-  - The `Host`/`Origin` gate runs on **every** request, including the public ones (`app.ts:137-140`), and the server binds only `127.0.0.1` (`index.ts:92-96`).
+  - The `Host`/`Origin` gate runs on **every** request, including the public ones (`app.ts:152-155`), and the server binds only `127.0.0.1` (`index.ts:95-99`).
   - Protected routes need exactly one `Authorization: Bearer <64-hex>` (`auth/http.ts:23-33`).
-  - `/health` and the static UI (`GET /`, `/knowledge.html`, `/v2/*`) skip policy admission but not the Host/Origin gate (`app.ts:243`, `app.ts:429-458`, `authorization-integration-v1.md:34`).
+  - `/health` and the static UI (`GET /`, `/knowledge.html`, `/v2/*`) skip policy admission but not the Host/Origin gate (`app.ts:258`, `app.ts:468-497`, `authorization-integration-v1.md:34`).
 
   Measured live on this base:
 
@@ -95,7 +95,7 @@ Every number here was measured on `e00b50b` on 2026-09-27: counts come from the 
   GET /                                             foreign Host  400
   ```
 
-  A missing, repeated or malformed `?bank` is refused with 400 before admission (`app.ts:79-85`, `:253-259`), so the 401 needs a bank. Both are pinned: `auth-integration.test.ts:97-107` (401) and `mcp-correctness.test.ts:435-437` (400).
+  A missing, repeated or malformed `?bank` is refused with 400 before admission (`app.ts:93-99`, `:268-273`), so the 401 needs a bank. Both are pinned: `auth-integration.test.ts:97-107` (401) and `mcp-correctness.test.ts:436-439` (400).
 - **Membership boundary (R3).**
   - `listMessages`, `getMessage` and `listSessionMembers` take an optional `requester_peer_name` (`publication/context.requireMessageReadAuthority.ts`, `service.requireCurrentMembership.ts`):
     - A named requester must be a current member of the session. The two list methods and `getMessage` answer a non-member differently, on purpose:
@@ -105,8 +105,8 @@ Every number here was measured on `e00b50b` on 2026-09-27: counts come from the 
   - An `arra-auth/v1` grant may list `peers: [...]`. When it does, every caller-asserted peer field in `knowledge/registry.peerFields.ts` must be one of them, or the request gets 403 at that field (`knowledge/transport.requireBoundPeers.ts`). The field table is exhaustive over the registry.
   - Live probe: isolation 191 PASS / 0 FAIL across HTTP, MCP and CLI. Its #87 rows show both answers on all three transports: `getMessage` for an operator-named non-member or a departed member is 200 with `null`, and `listMessages` for the same requesters is `invalid_reference`.
 - **Taxonomy (R6, R10).** A sealed vocabulary refuses create, rename, retire and reparent on every transport. `conclusion` is a reserved type term (`publication/taxonomy.constants.ts:44`), not a table (#89).
-- **UI.** The built `app/ui/v2` bundle is served at `/v2/`. A comment-stripped name scan of its non-test source finds 30 of the 57 methods called, covering nodes, revision history and diff, lifecycle, evidence review, traces and chat; neither knowledge search method is called. `cd app/ui/v2 && bun test` gives 106 pass / 0 fail across 9 files. Screenshots are in `docs/overnight/UI-PROOF.md`.
-- **Built, but not wired into requests.** The Relic session-source adapter (`app/server/src/source/relic.*`, `session-source-relic-v1.md`) is read-only and has no route. The Honcho round-trip bundle (`arra_migrate/honcho_roundtrip`, #8 phase 1) is tested against a fixture. The live run against stock Honcho was not done.
+- **UI.** The built `app/ui/v2` bundle is served at `/v2/`. A comment-stripped name scan of its non-test source finds 30 of the 57 methods called, covering nodes, revision history and diff, lifecycle, evidence review, traces and chat; neither knowledge search method is called. `cd app/ui/v2 && bun test` gives 106 pass / 0 fail across 9 files. *(Proof sweep, re-measured on `594df54`: those figures were true on `e00b50b` only. The same scan now matches 36 of 57 names, 34 of them real calls (`indexRevisionChunks` and `embedPendingChunks` match only note text), and both `searchKnowledgeKeyword` and `searchKnowledgeSemantic` are called; `cd app/ui/v2 && bun test` gives 408 pass / 0 fail across 67 files. Scan and command: `docs/overnight/PROOF-SWEEP.md` §1a.)* Screenshots are in `docs/overnight/UI-PROOF.md`.
+- **Built, but not wired into requests.** The Relic session-source adapter (`app/server/src/source/relic.*`, `session-source-relic-v1.md`) is read-only and has no route. The Honcho round-trip bundle (`arra_migrate/honcho_roundtrip`, #8 phase 1) is tested against a fixture. The live run against stock Honcho was not done. *(Update: measured on 2026-09-27 against a disposable Honcho v3.2.0 by `bash app/just/honcho-live.sh`: the REST round trip passes, and a table-level import works only with conversions, for one bank into an empty Honcho, with 10 v4 columns lost. "Byte-compatible" is false as stated; SPEC §15.2 has the terms, `docs/overnight/HONCHO-TABLE-DIFF.md` the per-column evidence.)*
 
 ## Chosen direction: do not reintroduce superseded assumptions
 
@@ -178,7 +178,7 @@ The earlier libSQL, SQL-FK, Rust-owner, 1024-d default, no-code and open-forgett
   - Python `unittest discover`: 268 OK, 1 skipped.
 
   The last full sharded suite is gate 9 on `87f9f06`; from there to `e00b50b` only `docs/overnight/PLAN.md` changed: 1972 pass / 0 fail across 134/134 files in 183 s (`docs/overnight/PLAN.md`).
-- CI: `.github/workflows/ci.yml` runs on every push and pull request (R13). It runs typecheck, build, the sharded `app/server` suite (`test:parallel`, `TEST_SHARDS=4`, `TEST_TIMEOUT_MS=60000`, `TEST_TIME_SCALE=5`; green on the integration branch, run 36275352354), and the `app/migrate-py` `unittest discover` suite (268 tests, 1 skipped). It also runs the two `tests/fixtures/*-v1/` suites that discovery does not reach (17 + 22), `app/benchmarks` (123), and the `app/ui/v2` build. The UI's own 106 unit tests are not in CI. **CI is green on the integration branch**: run 36275352354 on `0a98289` passed with 1985 tests / 0 failures across 139 files on Linux, plus the Python, benchmark, demo and UI-build steps. The earlier red runs were mostly **Linux E2BIG**: a single argv string over 131071 bytes fails on Linux but not on macOS, and three harnesses passed 146–312 KB JSON to gated children. The rest were runner timing. The ci-green slice fixed both. Its amendments are `search-chunk-v1.md` §19 and `delivery-gates.md`. Test-writing rules for the runner are in `app/README.md`.
-- Still target, not built: a per-workspace FTS index or statistics, which would close the R22 residual fully; a live #8 round-trip against stock Honcho; #7 recall judgments that no agent wrote; a workspace-creation API; a reviewed release cutover (#34 stops at a candidate on a copy); an R2 multi-writer or distributed lease; non-Ollama chat providers.
+- CI: `.github/workflows/ci.yml` runs on every push and pull request (R13). *(Superseded 2026-09-28 by R23, Nat: "use only local". GitHub Actions is refused by billing, so `ci.yml` now runs only on `workflow_dispatch`, and the merge and release gate is `bash app/just/local-ci.sh`, which runs the same steps and prints `LOCAL_CI_RESULT PASS|FAIL`.)* It runs typecheck, build, the sharded `app/server` suite (`test:parallel`, `TEST_SHARDS=4`, `TEST_TIMEOUT_MS=60000`, `TEST_TIME_SCALE=5`; green on the integration branch, run 36275352354), and the `app/migrate-py` `unittest discover` suite (268 tests, 1 skipped). It also runs the two `tests/fixtures/*-v1/` suites that discovery does not reach (17 + 22), `app/benchmarks` (123), and the `app/ui/v2` build. The UI's own 106 unit tests are not in CI. **CI is green on the integration branch**: run 36275352354 on `0a98289` passed with 1985 tests / 0 failures across 139 files on Linux, plus the Python, benchmark, demo and UI-build steps. The earlier red runs were mostly **Linux E2BIG**: a single argv string over 131071 bytes fails on Linux but not on macOS, and three harnesses passed 146–312 KB JSON to gated children. The rest were runner timing. The ci-green slice fixed both. Its amendments are `search-chunk-v1.md` §19 and `delivery-gates.md`. Test-writing rules for the runner are in `app/README.md`.
+- Still target, not built: a per-workspace FTS index or statistics, which would close the R22 residual fully; #7 recall judgments that no agent wrote; a workspace-creation API; a reviewed release cutover (#34 stops at a candidate on a copy); an R2 multi-writer or distributed lease; non-Ollama chat providers.
 
 Written by Codex (AI), speaking as itself, 2026-09-20. The current-implementation and work-map sections were updated by Claude Sonnet 5 (AI) on 2026-09-26, then rewritten by Claude Opus 5.5 (AI) on 2026-09-27 from measured source (see the "Updated by" line above).
