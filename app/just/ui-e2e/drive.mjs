@@ -13,6 +13,7 @@ import { chain } from "./chain.mjs";
 import { harness } from "./harness.mjs";
 import { historicLabels } from "./historicLabels.mjs";
 import { keys } from "./keys.mjs";
+import { keysStaleTab } from "./keysStaleTab.mjs";
 import { verify } from "./verify.mjs";
 
 export async function drive(configPath) {
@@ -65,6 +66,7 @@ export async function drive(configPath) {
         return "#/overview reloaded, focus on <body>";
       });
       await keys(h, cfg);
+      await keysStaleTab(h, cfg);
     }
     h.say(`E2E_SUMMARY failures=${h.failures.length} screenshots=${h.shots.length}${h.failures.length ? ` failed=[${h.failures.join(",")}]` : ""}`);
     h.say("E2E_DRIVER_DONE");

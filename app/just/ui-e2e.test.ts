@@ -99,6 +99,13 @@ describe("ui-e2e keyboard segment: keyboard input only", () => {
       for (const re of banned) expect({ file: f, rule: String(re), hit: re.test(src) }).toEqual({ file: f, rule: String(re), hit: false });
     });
   }
+  // Fix round: keysStaleTab.mjs's one navigation (`h.go`, the hand-typed
+  // stale link) is its premise; everything else there is keyboard too.
+  test("keysStaleTab.mjs: no DOM click/focus/value setter; h.go only for the stale link", () => {
+    const src = code("keysStaleTab.mjs");
+    for (const re of banned.filter((r) => String(r) !== String(/\bh\.go\(/))) expect({ rule: String(re), hit: re.test(src) }).toEqual({ rule: String(re), hit: false });
+    expect(src.match(/\bh\.go\(/g)).toHaveLength(1);
+  });
   test("keyNav drives input only through page.keyboard.press/type", () => {
     const src = code("keyNav.mjs");
     expect(src).toContain("h.page.keyboard");

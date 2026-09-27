@@ -250,13 +250,19 @@ export async function keys(h, cfg) {
     await k.press("Enter");
     await at({ path: "/knowledge", node: A });
     await h.waitDom("superseded banner", () => /superseded/i.test(document.querySelector('[role="status"]')?.textContent ?? ""));
-    const f = await h.waitDom("focus on A's heading", (t) => document.activeElement?.tagName === "H2" && document.activeElement.textContent === t ? true : null, `${T.a} v2`);
+    await h2Is(`${T.a} v2`);
+    // Fix round: activating a view tab leaves focus ON the tab (WAI-ARIA
+    // tabs), even though the view opened a node -- NodeHead no longer takes
+    // focus off a role=tab. Waited past the node load, so a late grab shows.
+    await h.sleep(400);
+    await k.expectFocus({ id: "app-view-tab-knowledge", selected: "true", tabindex: "0" }, "focus stays on the activated tab");
+    const f = "focus stayed on the knowledge tab";
     const r = await k.tabTo({ tag: "BUTTON", textStarts: "#1" });
     await k.press("Enter");
     const from = await h.waitDom("diff from #1", P.diffFrom);
     if (from.title !== T.a) throw new Error(`diff 'from' title ${JSON.stringify(from.title)} != ${T.a}`);
     await k.expectFocus({ tag: "BUTTON", textStarts: "#1" }, "focus stays on the history entry");
-    return `knowledge opened with focus on A's <h2> (${f}); Tab x${r.presses} to history #1, Enter -> diff from rev 1 "${from.title}"`;
+    return `knowledge opened, ${f}; Tab x${r.presses} to history #1, Enter -> diff from rev 1 "${from.title}"`;
   });
 
   await h.step("keys-narrow-812x375", async () => {
@@ -298,8 +304,31 @@ export async function keys(h, cfg) {
     if (m.tablist.top < 0) bad.push("tab bar above the viewport");
     if (m.send.bottom > m.vh) bad.push(`send button below the fold (${m.send.bottom} > ${m.vh})`);
     if (m.transcript.h < 120) bad.push(`transcript only ${m.transcript.h}px`);
+    // Fix round: the Messages view (#/messages) at the same 812x375, reached
+    // and used by keyboard -- the round-1 report left it unmeasured.
+    await k.tabTo({ role: "tab", selected: "true", idStarts: "app-view-tab-" }, { back: true, max: 80 });
+    await k.press("Home");
+    await k.press("ArrowRight");
+    await k.press("ArrowRight");
+    await k.press("Enter");
+    await at({ path: "/messages" });
+    await k.tabTo({ label: "Message content", inMain: true }, { max: 80 });
+    await k.type(`${T.narrow} (messages view)`);
+    await k.press("Control+Enter");
+    await h.waitDom("messages-view message sent", (t) => document.querySelector("main")?.textContent.includes(t), `${T.narrow} (messages view)`);
+    const mv = await h.page.evaluate(() => {
+      const main = document.querySelector("main");
+      main.scrollIntoView({ block: "start" });
+      const r = (el) => { const b = el.getBoundingClientRect(); return { top: Math.round(b.top), bottom: Math.round(b.bottom), h: Math.round(b.height) }; };
+      const ta = main.querySelector("textarea[aria-label='Message content']");
+      const send = [...main.querySelectorAll("button")].find((b) => /^(send|sending…)$/.test(b.textContent.trim()));
+      return { main: r(main), overflowX: document.scrollingElement.scrollWidth > innerWidth, textarea: r(ta), send: r(send), transcript: { h: Math.round(ta.closest("div").getBoundingClientRect().top - main.getBoundingClientRect().top) } };
+    });
+    if (mv.overflowX) bad.push("messages view: horizontal overflow");
+    if (mv.send.bottom > m.vh) bad.push(`messages view: send below the fold (${mv.send.bottom} > ${m.vh})`);
+    if (mv.transcript.h < 120) bad.push(`messages view: transcript only ${mv.transcript.h}px`);
     await h.ensureViewport();
-    if (bad.length) throw new Error(`${bad.join("; ")} :: ${JSON.stringify(m)}`);
-    return m;
+    if (bad.length) throw new Error(`${bad.join("; ")} :: ${JSON.stringify({ explore: m, messages: mv })}`);
+    return { explore: m, messages: mv };
   });
 }
