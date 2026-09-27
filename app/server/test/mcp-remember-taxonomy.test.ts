@@ -105,4 +105,28 @@ describe("remember.validateType (D5a)", () => {
       path: "/type",
     });
   });
+
+  test("unset ARRA_KNOWLEDGE_DATASET_ROOT bypasses validation (legacy-store-only deployment, fix round finding 1)", async () => {
+    // `composeKnowledgeAccess` still builds a non-null `KnowledgeAccess` when
+    // the root is unset (composition.ts: "keeps starting up exactly as
+    // before"); `getBundle` throws the kernel's own `unsupported_dataset`
+    // envelope. `validateType` must treat that as "nothing to validate
+    // against" and let ANY type through unchanged, not fail closed.
+    const unconfigured: KnowledgeAccess = {
+      async getBundle() {
+        throw Object.assign(new Error("unsupported target dataset"), { code: "unsupported_dataset" });
+      },
+    } as unknown as KnowledgeAccess;
+    await expect(validateType(unconfigured, "alpha", AUTHORITY, "invented_type")).resolves.toBe("invented_type");
+    await expect(validateType(unconfigured, "alpha", AUTHORITY, undefined)).resolves.toBe("note");
+  });
+
+  test("a getBundle failure for any OTHER reason still fails closed", async () => {
+    const broken: KnowledgeAccess = {
+      async getBundle() {
+        throw Object.assign(new Error("boom"), { code: "internal" });
+      },
+    } as unknown as KnowledgeAccess;
+    await expect(validateType(broken, "alpha", AUTHORITY, "note")).rejects.toThrow("boom");
+  });
 });

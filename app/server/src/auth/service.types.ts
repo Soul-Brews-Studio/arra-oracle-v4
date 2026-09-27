@@ -24,6 +24,16 @@ export type StoreDependencies = {
     peer_name?: string;
     subject_peer_name?: string;
   }): Promise<{ id: string; embedded: boolean }>;
+  /**
+   * D5a HTTP parity: the SAME sealed `type` vocabulary check MCP `remember`
+   * enforces (`mcp/remember.validateType.ts`), run here for `POST
+   * /api/memories` before `insert`. Returns the resolved `type` (default
+   * `note`) or throws the kernel's own `arra-taxonomy-error/v1` refusal.
+   * Optional only so a composition wired without a knowledge access (tests
+   * exercising `insert` in isolation) is not forced to supply one; `composeService`
+   * always wires it in the real app.
+   */
+  validateType?(bank: string, authority: RequestAuthority, type: string | undefined): Promise<string>;
   list(bank: string, limit: number, filters?: Record<string, unknown>): Promise<unknown[]>;
   searchText(q: string, bank: string, limit: number): Promise<TextSearchResult>;
   searchVector(q: string, bank: string, limit: number): Promise<unknown[]>;

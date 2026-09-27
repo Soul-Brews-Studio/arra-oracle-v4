@@ -314,3 +314,57 @@ precedence and byte-for-byte valid-write behavior are covered by the existing
 `app/server/test/auth-legacy-peer-binding.test.ts` and `app/server/test/mcp-correctness.test.ts`
 (both updated to wire a fake taxonomy-resolving `KnowledgeAccess`, since their datasets
 predate this change and carry no `vocabularies`/`terms` tables of their own).
+
+### Fix-round amendment 2026-09-28 (Opus verification on the first D5a pass)
+
+The paragraph above overstated one case and was silent on two others. Corrected here,
+not rewritten in place, so the record of what the first pass actually claimed stays
+intact.
+
+**Correction 1 -- what "no `KnowledgeAccess` configured" actually means.** The ruling
+lives at `docs/overnight/NAT-DECISIONS.md:29` (D5, option a), not
+`docs/overnight/DECISIONS.md` -- there is no D5/D5a entry there; the source line in
+`Amendment 2026-09-26` above is wrong and is corrected by this note, not edited in place.
+
+The prior paragraph's claim that an unconfigured deployment "fails closed
+(`invalid_request`, path `/type`)" is true ONLY when `knowledgeAccess` itself is `null`
+(no MCP knowledge wiring at all -- a wiring gap, effectively test-only). It is NOT true
+of the documented, production-real case: `ARRA_KNOWLEDGE_DATASET_ROOT` unset with a
+non-null `KnowledgeAccess` (`composition.ts`'s `composeKnowledgeAccess`: "an existing
+deployment that has not adopted the ... dataset yet keeps starting up exactly as
+before"). In that shape `getBundle` throws the kernel's own
+`arra-publication-error/v1 unsupported_dataset`, which `remember.validateType.ts` now
+catches and treats as "nothing to validate against" -- `remember` accepts ANY `type`
+unchanged, exactly as it did before D5a, rather than refusing every call. Failing every
+call in that shape was never asked for by D5a and was not a choice this contract
+recorded; it was a regression an independent verifier caught by deleting one test-only
+override line and re-running `test/mcp-correctness.test.ts` against real `buildApp`
+wiring.
+
+**Correction 2 -- HTTP parity.** The prior text said nothing about `POST /api/memories`.
+That route is audited as MCP `remember` (`app/server/src/app.ts`'s handler comment,
+#31 legacy-audit) and, as of this fix round, goes through the SAME
+`remember.validateType.ts` call, wired as `StoreDependencies.validateType` in
+`composeService` (`app/server/src/composition.ts`) and invoked from
+`auth/service.ts`'s `insertMemory`, using the SAME `KnowledgeAccess` `buildApp` composes
+for MCP -- not a second one. `buildApp` (`app/server/src/index.ts`) now composes
+`KnowledgeAccess` BEFORE the service, so the service can be given it. An invented type
+over HTTP now gets the identical `arra-taxonomy-error/v1 invalid_reference` envelope,
+propagated through `knowledgeErrorResponse` in `app.ts` rather than falling through to a
+generic `policy_unavailable` 503. Before this fix round, `POST /api/memories` accepted
+any free-text `type`, which broke #31 AC-MATRIX row 111 ("equivalent HTTP/CLI/MCP
+fixtures enforce the same invariants").
+
+**Correction 3 -- test adequacy.** The first pass's new unit tests only exercised
+`validateType` in isolation with a fake `KnowledgeAccess`; nothing dispatched `remember`
+with an invalid type through real wiring. `app/server/test/remember-taxonomy-parity.test.ts`
+now does, with a real `buildApp`, a real fixture-seeded taxonomy dataset
+(`test/helpers/publication-fixture.ts`), and a real legacy `memories` table: it proves
+(a) an unset `ARRA_KNOWLEDGE_DATASET_ROOT` still lets any `type` through on MCP, (b) a
+configured dataset refuses an invented type identically on MCP and HTTP, and (c) a
+seeded active type still succeeds on both, golden-shape unchanged (HTTP:
+`{id, embedded}`).
+
+**Source correction.** The Nat ruling cited by the ORIGINAL Amendment 2026-09-26 above
+as "`docs/overnight/DECISIONS.md` NAT-DECISIONS D5a" is `docs/overnight/NAT-DECISIONS.md:29`
+(D5 option a); this note is the correction of record.

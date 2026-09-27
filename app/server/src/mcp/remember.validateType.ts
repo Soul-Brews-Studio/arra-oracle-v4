@@ -23,9 +23,19 @@ const encode = (payload: Record<string, unknown>) => new TextEncoder().encode(JS
  * error shape -- the same refusal `kb_publishRevision` gives for the same
  * cause (`service.validateTermReferences.ts`).
  *
- * `knowledgeAccess` unset means the taxonomy kernel is not wired at all in
- * this deployment; that is a fail-closed `invalid_request`, not a silent
- * bypass, since D5a is "validate it now", not "validate it when convenient".
+ * `knowledgeAccess` unset (no MCP knowledge access wired at all, e.g. a
+ * bare-`ARRA_DATA_DIR` deployment that never adopted #31's dataset, or an
+ * isolated test) is a fail-closed `invalid_request`: there is no kernel to
+ * even ask, so this is a wiring gap, not the documented optional-root case.
+ *
+ * `ARRA_KNOWLEDGE_DATASET_ROOT` UNSET is different and expected
+ * (`composition.ts`'s `composeKnowledgeAccess` docs, `README.md`): an
+ * existing legacy-store-only deployment "keeps starting up exactly as
+ * before", so `remember` must keep accepting any `type`, same as pre-D5a,
+ * rather than failing every call with `unsupported_dataset`. That case
+ * surfaces here as `getBundle` throwing the kernel's own
+ * `arra-publication-error/v1 unsupported_dataset`, caught below and treated
+ * as "no taxonomy to validate against" -- bypass, not a refusal.
  */
 export async function validateType(
   knowledgeAccess: KnowledgeAccess | null,
@@ -36,12 +46,18 @@ export async function validateType(
   const wanted = type ?? DEFAULT_TYPE;
   if (knowledgeAccess === null) failTaxonomy("invalid_request", "/type");
 
-  const vocabulary = (await callKnowledgeMethod(
-    knowledgeAccess,
-    "lookupVocabularyByName",
-    encode({ workspace_name: bank, name: TYPE_VOCABULARY }),
-    authority,
-  )) as { id: string } | null;
+  let vocabulary: { id: string } | null;
+  try {
+    vocabulary = (await callKnowledgeMethod(
+      knowledgeAccess,
+      "lookupVocabularyByName",
+      encode({ workspace_name: bank, name: TYPE_VOCABULARY }),
+      authority,
+    )) as { id: string } | null;
+  } catch (error) {
+    if ((error as { code?: string }).code === "unsupported_dataset") return wanted;
+    throw error;
+  }
   if (vocabulary === null) failTaxonomy("invalid_reference", "/type");
 
   const term = (await callKnowledgeMethod(

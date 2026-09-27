@@ -280,3 +280,23 @@ itself still lives in the spike `memories` table, not `node_revisions`" on the n
 sweep of this file. Slice 9's row (`docs/overnight/AC-MATRIX.md:212`) is DONE for the
 `type` field; a `remember`-onto-`node_revisions` adapter (the other half of C1's
 question) is out of this slice's scope and not attempted here.
+
+### 6a. Fix round (2026-09-28, Opus-verified)
+
+The Nat ruling is cited above as `docs/overnight/DECISIONS.md`; it is actually
+`docs/overnight/NAT-DECISIONS.md:29` (D5, option a) -- corrected here and in the
+contract amendment's fix-round note, not edited in place above.
+
+An independent verifier found the first implementation regressed every `remember` call
+on a deployment that has not set `ARRA_KNOWLEDGE_DATASET_ROOT` (documented as a
+still-supported shape in `composition.ts`), and left `POST /api/memories` -- audited as
+MCP `remember` per the row 108 caveat -- still accepting free-text `type`, splitting #31's
+"equivalent HTTP/CLI/MCP fixtures enforce the same invariants" (row 111). Both are fixed
+in this round: `remember.validateType.ts` treats the kernel's own `unsupported_dataset`
+throw as "nothing to validate against" (bypass, matching pre-D5a behavior) rather than a
+refusal; `POST /api/memories` now runs the identical validation via
+`StoreDependencies.validateType`, wired in `composeService`/`buildApp` from the SAME
+`KnowledgeAccess` MCP uses. Real-wiring proof (no fake `KnowledgeAccess`):
+`app/server/test/remember-taxonomy-parity.test.ts`. See the contract's "Fix-round
+amendment 2026-09-28" for the full correction, including why the first pass's tests did
+not catch this (they only unit-tested `validateType` in isolation).
