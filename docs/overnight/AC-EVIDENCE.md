@@ -32,7 +32,8 @@ of this slice on six points. Fixed here, each cross-referenced at its section be
   files, 67.41s.** `revision-v1.test.ts` is real and passes; it was never "called passing
   with no run" again after this.
 - **Trace cycle-check test (C6 "no file:line"):** none existed. Root cause: `service.
-  assertTraceChain.ts` (`app/server/src/publication/service.assertTraceChain.ts:20`) has
+  assertTraceChain.ts` (`app/server/src/publication/service.assertTraceChain.ts:20`; *sweep 2026-09-27: `:20` is the
+  function's declaration, and the guard itself is `:34`*) has
   had the guard (`seen.has(id)` -> `integrity_failure`) since #28 landed, but no test
   named it. **Written**, as a pin (the behaviour already exists) plus a manual mutation
   check: `app/server/test/trace-cycle-check.test.ts` (4 tests — a stored B<->C 2-cycle
@@ -102,7 +103,7 @@ this worktree, today, 0 failures.
 - **Proposed-not-active contract object:** `app/server/test/target-schema-cross-language.
   test.ts:150`, `expect(golden.status).toBe("proposed-not-active")`, cross-checked against
   the Python side at `app/migrate-py/tests/test_target_manifest.py:19` and
-  `test_target_schema_v1.py:114`.
+  `test_target_schema_v1.py:114` *(sweep: the `proposed-not-active` assertion is `:115`; `:114` asserts `registry_version`)*.
   - Run: `bun test test/transport-ownership.test.ts test/search-chunk-digest-boot.test.ts
     test/target-schema-cross-language.test.ts test/contract-v1.test.ts` -> **`32 pass /
     0 fail`, 354 expect() calls, 4 files, 3.88s.**
@@ -110,12 +111,12 @@ this worktree, today, 0 failures.
   needed — this is a data-flow fact, not a behavior with its own assertion surface).
   Traced the literal parameter across three layers with no lookup/mapping table
   anywhere in between:
-  - `app/server/src/app.ts:145,212`: the route is `POST /mcp/:bank`; `params.bank` is
+  - `app/server/src/app.ts:145,212` *(sweep 2026-09-27: now `:160,227-228`, after PRs #124/#125 edited `app.ts`)*: the route is `POST /mcp/:bank`; `params.bank` is
     passed as the FIRST positional argument straight into `mcpHandle(params.bank, ...)`.
   - `app/server/src/mcp/index.ts:224-246`: `createMcpAdapter`'s returned `handle`
     receives that value as its own `bank` parameter and passes it straight into
     `service.runMcp(authorization, bank, ...)`.
-  - `app/server/src/auth/service.ts:322-350`: `runMcp`'s second parameter is literally
+  - `app/server/src/auth/service.ts:322-350` *(sweep: now `:331-363`)*: `runMcp`'s second parameter is literally
     named `workspace`, and it is used unchanged as `{ kind: "workspace", workspace,
     action }` for admission — the same string, no lookup.
   There is no `workspaces` table join or rename step anywhere on this path: the bank
@@ -126,10 +127,10 @@ this worktree, today, 0 failures.
 No new test was written (the existing "0 `dangerouslySetInnerHTML`/`innerHTML` in
 `app/ui/v2/src`" grep is real but was flagged "thin" because it is silence, not a
 positive assertion). Stronger positive citation, found and read today:
-`app/ui/v2/src/components/VocabularyTable.tsx:33,49` — a vocabulary's `label` field
+`app/ui/v2/src/components/VocabularyTable.tsx:33,49` *(sweep 2026-09-27: the `{value}` cell is `:52`, not `:49`. `:49` is a JSX `>`. The file has not changed since `cefc8db`, so the citation was off when it was written)* — a vocabulary's `label` field
 (the one taxonomy field the server explicitly allows arbitrary text in, with **no**
 256-byte cap: `app/server/src/publication/taxonomy.requireLabel.ts:4-6`) is put into the
-`rows` array and rendered at line 49 as `<td ...>{value}</td>` — a plain JSX text-child
+`rows` array and rendered at line 49 *(sweep: `:52`)* as `<td ...>{value}</td>` — a plain JSX text-child
 interpolation. React always escapes text children; only `dangerouslySetInnerHTML` (found
 nowhere in this tree) could turn a label into markup or a script. No dedicated
 mount-and-assert UI test exists for this component; this remains a code-path citation,
@@ -181,10 +182,10 @@ evidence, not re-run today — see the table's own note.
 |---|---|---|---|---|
 | 1 | Replay / digest conflicts | `app/server/test/replay-v1.test.ts`; `app/server/test/search-chunk-digest-boot.test.ts` (R20 `embedding_profile_mismatch` -> 409); `app/server/test/search-chunk-digest-pin.test.ts` | `bun test test/replay-v1.test.ts test/search-chunk-digest-boot.test.ts test/search-chunk-digest-pin.test.ts` | **21 pass / 0 fail, 179 expect() calls, 3 files, 11.46s** |
 | 2 | Evidence-key equality | `app/server/test/association-query.test.ts:718` ("two capture digests at one location are two targets; a changed title is one"); `app/server/test/evidence-v1.test.ts` | `bun test test/evidence-v1.test.ts` | **11 pass / 0 fail, 178 expect() calls, 16ms** |
-| 3 | Context method-count pin + wire-byte budget | `app/server/test/context-ownership.test.ts` (facade/method-count PIN, not a budget — see note below); `app/server/test/chat-coverage.test.ts` (`MAX_CONTEXT_ITEMS`/`MAX_CONTEXT_WIRE_BYTES` overflow, 5x51 — the actual budget, `chat-coverage.test.ts:209`) | `bun test test/context-ownership.test.ts test/chat-coverage.test.ts` | **27 pass / 0 fail, 747 expect() calls, 2 files, 27.70s** |
+| 3 | Context method-count pin + wire-byte budget | `app/server/test/context-ownership.test.ts` (facade/method-count PIN, not a budget — see note below); `app/server/test/chat-coverage.test.ts` (`MAX_CONTEXT_ITEMS`/`MAX_CONTEXT_WIRE_BYTES` overflow, 5x51 — the actual budget, `chat-coverage.test.ts:209` *(sweep: now `:248`)*) | `bun test test/context-ownership.test.ts test/chat-coverage.test.ts` | **27 pass / 0 fail, 747 expect() calls, 2 files, 27.70s** *(sweep 2026-09-27: the same command on `594df54` gives a different count, recorded in `docs/overnight/PROOF-SWEEP.md`. PR #124 added 9 live-transport tests to `chat-coverage.test.ts`)* |
 | 4 | Passive locator security | `app/server/src/publication/trace.types.ts:28` ("never dereferenced", no dereference code exists — `rg` confirms); `app/server/test/relic-session-source.test.ts` (bounded excerpts, no whole-transcript read) | `bun test test/relic-session-source.test.ts` | **41 pass / 0 fail, 71 expect() calls, 1.33s** |
 | 5 | MCP CLI error exits | `app/server/test/mcp-correctness.test.ts`; `../cli.test.ts` (nonzero exit codes, per R8) | `bun test test/mcp-correctness.test.ts ../cli.test.ts` | **85 pass / 0 fail, 380 expect() calls, 2 files, 2.44s** |
-| 6 | Code-intel readiness (Serena/CodeGraph MCP dev-tooling, issue #37 — **corrected in the fix round**; NOT migration readback) | `app/docs/verification/2026-09-20-foundation.md`; issue #37 comments 2026-09-20 (Serena 23 tools, CodeGraph 21 tools, index 61 files/621 nodes/1432 edges, all 61 SHA256 hashes verified) | none today — historical evidence only | **Not re-run in this slice.** The prior version of this row cited `app/migrate-py/tests/test_copy_migration.py::test_ts_kernel_reads_every_migrated_node_back`, which measures migration read-back correctness, not dev-tooling readiness — a wrong citation an independent verifier caught (issue #34's own wording is "measured code-intelligence readiness **where used**", and `.gitignore:6` names `/.codegraph/` "code-intelligence database"). That test remains good evidence for AC1/AC4 elsewhere in this matrix; it is removed from this area. |
+| 6 | Code-intel readiness (Serena/CodeGraph MCP dev-tooling, issue #37 — **corrected in the fix round**; NOT migration readback) | `app/docs/verification/2026-09-20-foundation.md`; issue #37 comments 2026-09-20 (Serena 23 tools, CodeGraph 21 tools, index 61 files/621 nodes/1432 edges, all 61 SHA256 hashes verified) | none today — historical evidence only | **Not re-run in this slice.** The prior version of this row cited `app/migrate-py/tests/test_copy_migration.py::test_ts_kernel_reads_every_migrated_node_back`, which measures migration read-back correctness, not dev-tooling readiness — a wrong citation an independent verifier caught (issue #34's own wording is "measured code-intelligence readiness **where used**", and `.gitignore:6` *(sweep 2026-09-27: now `.gitignore:7-8`)* names `/.codegraph/` "code-intelligence database"). That test remains good evidence for AC1/AC4 elsewhere in this matrix; it is removed from this area. |
 
 - **Dedicated `vector_disposition` / never-reused test (#34 TODO 3 caveat):** written —
   `app/migrate-py/tests/test_copy_migration.py::

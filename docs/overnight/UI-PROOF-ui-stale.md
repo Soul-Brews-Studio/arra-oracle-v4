@@ -630,6 +630,9 @@ With the fix: **9 pass, 0 fail** (4 round-1 tests + 5 new).
   `loadingLatch.test.tsx`, `App.stableBank.test.tsx` (26 pass combined), plus the two
   files referencing `DialecticPanel` (`reflowText.test.ts`, `a11yNames.test.ts`, 13 pass)
   -- **48 pass, 0 fail** total.
+  *(Sweep 2026-09-27: true for that round. On `594df54` the same files give `actionStale` 13, the
+  other six 30 and the DialecticPanel pair 13, so 56 pass / 0 fail. Later rounds added tests.
+  Command: `cd app/ui/v2 && bun test <the files named above>`.)*
 - `tsc --noEmit -p app/ui/v2/tsconfig.json`: exit 0. `bun run typecheck` in `app/server`:
   exit 0 (unaffected; no `app/server/src` change).
 - Python architecture guard (`app/migrate-py`, `unittest discover -s tests`): 269 tests,
