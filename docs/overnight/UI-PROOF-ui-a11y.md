@@ -187,3 +187,87 @@ app/server/public/v2 && git clean -fdq app/server/public/v2` was run after, befo
 localStorage), `kill -TERM` on the server PID, `rm -rf` on the mktemp root — all confirmed
 (directory listing after removal: "No such file or directory"; `ps aux` for the server port:
 no output).
+
+## Round 3 (after the wave-5 verifier refuted round 2)
+
+**What round 2 got wrong.** It measured widths and `scrollWidth` only, never heights. Below `lg`
+the Knowledge view stacked into a column and `<main>` stayed `flex-1 overflow-y-auto`. A scroll
+container's automatic min-height is 0, so `<main>` took all of the negative free space: the node
+view was 6px tall at 375x812 and the NodeHead body 32px at 830x859. Explore's detail pane
+(`DetailTabs`, `flex-1 min-h-0`) measured 38px at 830 and 0px at 375.
+
+**Layout now (below `lg`).** Each view's root is the one scroll container, so the page scrolls.
+- Knowledge: the bookmark rail is capped at `max-h-[40vh]` and scrolls on its own. `<main>` is
+  `flex-none` and not a scroll container, so it is as tall as the node it shows.
+- NodeHead is `flex-none` and has no scroller of its own. Its nested `flex-1 overflow-y-auto`
+  also collapsed on desktop: after the stacked fix, it measured 32px at 1440x900.
+- Explore: the lists are capped at `max-h-[45vh]`. `DetailTabs` is a named region
+  (`<section aria-label="Explore detail">`) that is `shrink-0 h-[80vh] min-h-[24rem]`. Its tab
+  bodies, including the transcript, scroll inside it.
+- From `lg`, the three-column desktop layout is back: `lg:flex-1 lg:min-h-0`, and `<main>` is
+  `lg:overflow-y-auto`.
+
+**Measured live.** Real Chrome via `/ego-browser` `page.evaluate`. A real gated server was
+started with `app/just/demo/stack.sh`'s `demo_stack_up` on a fresh `mktemp -d` target19+legacy15
+dataset, with a free port and the model URL pointed at a dead port, so no model was used. The
+bundle came from this branch's `bun run build` (`index-vopEcGuI.js`, confirmed from
+`document.scripts`). Seed, through the real CLI:
+- 12 peers and 12 sessions.
+- 15 Thai/English messages in `session-01`.
+- One published node: a Thai/English title about 110 characters long and a 40-line Thai/English
+  body.
+
+Widths are the CDP override × 1.5, because this sandbox renders at DPR 1.5. `innerWidth` was
+read back each time.
+
+| CSS px (`innerWidth` read back) | 375x812 | 830x859 | 1440x900 |
+|---|---|---|---|
+| `scrollWidth` (all 3 views) | 375 | 830 | 1440 |
+| Knowledge: page scroller client/scroll | 627 / 2977 | 779 / 2119 | 819 / 819 |
+| Knowledge: `<main>` height (scroll) | 2507 (2507) | 1745 (1745) | 819 (1679, its own scroller) |
+| Knowledge: NodeHead height / content | **1503 / 1503** | **823 / 823** | **823 / 823** |
+| Knowledge: title wraps inside its box | yes (80px, 4 lines) | yes (40px) | yes (40px) |
+| Explore: lists height / content | 365 / 656 | 387 / 656 | 735 / 735 |
+| Explore: DetailTabs height | **650** | **687** | 735 |
+| Explore > Messages: transcript viewport / content | **414 / 1894** | **480 / 1294** | 528 / 994 |
+| Messages view: transcript viewport / content | 1894 / 1894 (page scrolls) | 1294 / 1294 (page scrolls) | 649 / 1294 |
+
+Round 2, as the verifier measured it, for comparison: Knowledge `<main>` was 6px at 375 and 147px
+at 830; the NodeHead body was 32px at both. DetailTabs was 0px at 375 and 38px at 830, and the
+transcript viewport was 24px at both. The messages view was not flagged and was not changed. In
+stacked mode its transcript is full height, and the page scrolls to the composer.
+
+**Screenshots** are named by their real CSS width. The PNG pixel size is 1.5× that width because
+this sandbox renders at DPR 1.5:
+- `ui/37-a11y-r3-375-knowledge.png` and `ui/37-a11y-r3-375-explore-messages.png` are 563x1218.
+- `ui/37-a11y-r3-830-*.png` are 1245x1289.
+- `ui/37-a11y-r3-1440-*.png` are 2160x1350.
+
+**Pinned by render tests.** These are `renderToStaticMarkup` tests: no DOM and no new dependency.
+Each one failed before its fix:
+- `KnowledgeView.test.ts`: `<main>` is `flex-none`, with no unprefixed `flex-1` or
+  `overflow-y-auto`, and `lg:flex-1 lg:overflow-y-auto lg:min-h-0`. The rail has
+  `max-h-[Nvh] lg:max-h-none`.
+- `explore/ExploreView.test.ts`: the detail region is `shrink-0 h-[Nvh] min-h-[Nrem]`, with no
+  unprefixed `flex-1`/`min-h-0`, and `lg:flex-1 lg:min-h-0 lg:h-auto`. The lists column is capped.
+- `components/NodeHead.test.ts`: the root is `flex-none`, with no `flex-1` and no
+  `overflow-y-auto`.
+
+Tests can pin the classes but not the heights. The heights are the table above.
+
+**401/403 (nonblocking findings).**
+- `state/useListing.test.ts` drives the real hook through a tiny dispatcher-backed hook runner,
+  with no DOM, over a stubbed `fetch` that returns the auth gate's own `{"error":"forbidden"}`
+  (403) and `{"error":"unauthenticated"}` (401) bodies. It asserts
+  `state.error === authErrorHint(code)` for peers, sessions and nodes. Reverting only
+  `useListing.ts` to `06e5017` makes the 401 and 403 tests fail (2 fail, 1 pass; `Received: null`).
+- Explore > Messages (`Transcript`) now shows the same hint as the list panels above it, inside
+  `role="alert"`. It keys on the code's first word, because `describe()` appends ` at <pointer>`.
+  The `ListPanel` error line is also `role="alert"`.
+- The `forbidden` hint now names both possible causes: missing scope, or a token that is not
+  bound to the peer the request names. The second is the R3 `transport.requireBoundPeers` refusal.
+
+**Teardown.** The origin's `localStorage`/`sessionStorage` were cleared (length read back: 0) and
+the device-metrics override was cleared. The TaskSpace was finished. The server got `kill -TERM`
+(gone). `rm -rf` removed the mktemp root (`ls`: "No such file or directory"). No listener was left
+on the port.
