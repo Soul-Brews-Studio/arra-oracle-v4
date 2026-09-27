@@ -31,6 +31,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import { act } from "react";
 import { type Root, createRoot } from "react-dom/client";
 import type { Bank } from "../api/memory";
+import { mintTaxonomyIds } from "../api/knowledge";
 import { useKnowledge } from "./useKnowledge";
 import { useMemory } from "./useMemory";
 
@@ -74,6 +75,27 @@ function parkedFetch(keyOf: (body: Record<string, unknown>) => string): Pending[
   globalThis.fetch = ((url: string, init?: RequestInit) => {
     const method = url.split("/").pop() ?? "";
     const key = keyOf(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
+    return new Promise<Response>((resolve) => {
+      pending.push({
+        method,
+        key,
+        answer: (body, status = 200) => resolve(new Response(JSON.stringify(body), { status })),
+      });
+    });
+  }) as unknown as typeof fetch;
+  return pending;
+}
+
+/** Same as `parkedFetch`, keyed on the bearer token instead of the body --
+ *  `token` never rides in the request body (it is the `authorization`
+ *  header, see `api/client.ts`), so a token-freshness test cannot key on the
+ *  body the way a workspace/session one does. */
+function parkedFetchByToken(): Pending[] {
+  const pending: Pending[] = [];
+  globalThis.fetch = ((url: string, init?: RequestInit) => {
+    const method = url.split("/").pop() ?? "";
+    const auth = (init?.headers as Record<string, string> | undefined)?.authorization ?? "";
+    const key = auth.replace(/^Bearer /, "");
     return new Promise<Response>((resolve) => {
       pending.push({
         method,
@@ -174,6 +196,128 @@ describe("useMemory.verify: a stale verdict does not overwrite a same-named book
     // w1's stale verify resolves after: an invalid_reference "missing" verdict
     // for a workspace already left.
     await answer(pending, "getPeer", "w1", { error: { code: "invalid_reference" } }, 404);
+    const alice = m.get().roster.peers.find((e) => e.name === "alice");
+    expect(alice?.state).toBe("live");
+  });
+});
+
+/** Fix round (2026-09-27): an independent verifier refuted round 1. The four
+ *  cases above pinned only the IN-FLIGHT race (switch before the response
+ *  arrives) -- `askRead.land()` already dropped those. What was missing:
+ *
+ *   - a chat answer/error that already SETTLED while the selection it was
+ *     asked for was still on screen is never cleared when you later move on
+ *     (useMemory.ts ~82/248-266: nothing calls setAnswer/setAskError on a
+ *     peer/session/bank/workspace/token change).
+ *   - `asking` was a single unkeyed flag: asking in sA and switching to sB
+ *     showed "Asking..." under sB until sA's model call returned.
+ *   - `useKnowledge.publish` dropped the forced navigation on a scope switch
+ *     but still RESOLVED `true`, so both `KnowledgeView` call sites navigated
+ *     anyway (`.then((ok) => { if (!ok) return; ...onSelectNode... })`).
+ *   - `useMemory.verify`'s freshness check compared only `workspace`, not
+ *     `[bank, workspace, token]` like every other key in this hook -- a
+ *     verify issued under an old TOKEN could still overwrite one from the
+ *     current token in the very same workspace. */
+describe("useMemory.ask: a SETTLED answer/error is cleared once the selection moves on (not just guarded in flight)", () => {
+  test("ask settles in sA, then switch to sB: sA's answer is cleared, not shown under sB", async () => {
+    const pending = parkedFetch((b) => String(b.session_name ?? ""));
+    const m = render(() => useMemory(), null);
+    act(() => m.get().setPeer("p1"));
+    act(() => m.get().setSession("sA"));
+    await answerAll(pending, "sA", (method) => (method === "getContext" ? { items: [] } : { rows: [] }));
+    act(() => void m.get().actions.ask("what happened?", 10));
+    await answer(pending, "answerChat", "sA", { answer: "sA's answer", items_used: ["mA1"] });
+    // Settled while sA was still on screen: a real, correctly-landed answer.
+    expect(m.get().answer?.answer).toBe("sA's answer");
+    act(() => m.get().setSession("sB"));
+    await answerAll(pending, "sB", (method) => (method === "getContext" ? { items: [] } : { rows: [] }));
+    expect(m.get().session).toBe("sB");
+    expect(m.get().answer).toBe(null);
+    expect(m.get().askError).toBe(null);
+  });
+
+  test("askError settles in sA, then switch to sB: askError is cleared", async () => {
+    const pending = parkedFetch((b) => String(b.session_name ?? ""));
+    const m = render(() => useMemory(), null);
+    act(() => m.get().setPeer("p1"));
+    act(() => m.get().setSession("sA"));
+    await answerAll(pending, "sA", (method) => (method === "getContext" ? { items: [] } : { rows: [] }));
+    act(() => void m.get().actions.ask("what happened?", 10));
+    await answer(pending, "answerChat", "sA", { error: { code: "model_unavailable" } }, 503);
+    expect(m.get().askError).toBe("model_unavailable");
+    act(() => m.get().setSession("sB"));
+    await answerAll(pending, "sB", (method) => (method === "getContext" ? { items: [] } : { rows: [] }));
+    expect(m.get().askError).toBe(null);
+  });
+});
+
+describe("useMemory.ask: `asking` is keyed to the current selection", () => {
+  test("switching to sB while sA's ask is in flight clears `asking` immediately", async () => {
+    const pending = parkedFetch((b) => String(b.session_name ?? ""));
+    const m = render(() => useMemory(), null);
+    act(() => m.get().setPeer("p1"));
+    act(() => m.get().setSession("sA"));
+    await answerAll(pending, "sA", (method) => (method === "getContext" ? { items: [] } : { rows: [] }));
+    act(() => void m.get().actions.ask("what happened?", 10));
+    expect(m.get().asking).toBe(true);
+    act(() => m.get().setSession("sB"));
+    // sA's answerChat is still parked/unanswered -- `asking` must not still
+    // read true for sB just because SOME request is in flight.
+    expect(m.get().asking).toBe(false);
+    await answer(pending, "answerChat", "sA", { answer: "sA's answer", items_used: [] });
+    await answerAll(pending, "sB", (method) => (method === "getContext" ? { items: [] } : { rows: [] }));
+    expect(m.get().asking).toBe(false);
+    expect(m.get().answer).toBe(null);
+  });
+});
+
+describe("useKnowledge.publish: a scope switch after publish resolves ok drops the forced navigation for real", () => {
+  const NODE = "nodeAAAAAAAAAAAAAAAAA";
+  const INPUT = {
+    title: "t", body: "b", body_format: "text" as const, type_term: "note" as const,
+    horizon: null, author_peer_name: null, session_name: null, change_reason: null, links: [],
+  };
+
+  test("publish resolves false (not true) after a scope switch, so KnowledgeView's `.then` does not navigate", async () => {
+    (globalThis as { localStorage: Storage }).localStorage.setItem(
+      `arra-ui-v2-taxonomy:${BANK.bank}:${BANK.workspace}`,
+      JSON.stringify(mintTaxonomyIds()),
+    );
+    // `publishRevision`'s body nests `workspace_name` under `content`, unlike
+    // every other method here -- see `api/knowledge.ts`'s `publishRevision`.
+    const pending = parkedFetch(
+      (b) => String((b.content as Record<string, unknown> | undefined)?.workspace_name ?? b.workspace_name ?? ""),
+    );
+    type P = { b: Bank };
+    const k = render((p: P) => useKnowledge(p.b), { b: BANK });
+    let resolved: boolean | null = null;
+    act(() => {
+      void k.get().actions.publish(INPUT, NODE, null).then((ok) => {
+        resolved = ok;
+      });
+    });
+    k.set({ b: { ...BANK, workspace: "w2" } });
+    await answer(pending, "publishRevision", "w1", { outcome: "accepted" });
+    await answerAll(pending, "w1", () => null); // the post-success refresh, if any lands for w1
+    expect(resolved).toBe(false);
+    expect(k.get().selected).toBe(null);
+    expect(k.get().nodes.some((n) => n.name === NODE)).toBe(false);
+  });
+});
+
+describe("useMemory.verify: a stale verdict from an old TOKEN does not overwrite the current one", () => {
+  test("bad-token verify landing after good-token verify leaves alice live", async () => {
+    const pending = parkedFetchByToken();
+    const m = render(() => useMemory(), null);
+    act(() => m.get().setToken("bad"));
+    act(() => m.get().actions.addPeer("alice")); // verify -> getPeer, token "bad"
+    act(() => m.get().setToken("good"));
+    act(() => void m.get().actions.verifyAll()); // re-verify -> getPeer, token "good"
+    // The current token's verify answers first: alice is live.
+    await answer(pending, "getPeer", "good", { peer_name: "alice" });
+    // The stale, already-superseded token's verify answers after -- same
+    // workspace, so the old `workspace`-only guard would let this overwrite.
+    await answer(pending, "getPeer", "bad", { error: { code: "unauthorized" } }, 401);
     const alice = m.get().roster.peers.find((e) => e.name === "alice");
     expect(alice?.state).toBe("live");
   });

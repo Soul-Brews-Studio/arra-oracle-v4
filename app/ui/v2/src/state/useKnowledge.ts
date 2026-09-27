@@ -272,7 +272,16 @@ export function useKnowledge(bank: Bank) {
         setSelected(nodeId);
       }
       await refresh();
-      return true;
+      // Fix round (2026-09-27): this used to `return true` unconditionally.
+      // Both `KnowledgeView` call sites do
+      // `.then((ok) => { if (!ok) return; setDraftId(null); onSelectNode(target) })`
+      // -- returning `true` here after a scope switch made them navigate
+      // anyway, landing the operator on the OLD scope's node id inside the
+      // NEW scope (App.tsx's `push` -> KnowledgeView re-selects under the
+      // scope now current). The write happened and stays bookmarked; only
+      // the forced navigation is the caller's to skip, and it can only skip
+      // it if this resolves `false`.
+      return stillInScope;
     },
     refresh,
   };

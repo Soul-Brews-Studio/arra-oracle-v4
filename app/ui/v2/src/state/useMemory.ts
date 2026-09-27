@@ -80,7 +80,6 @@ export function useMemory() {
   const [contextError, setContextError] = useState<string | null>(null);
 
   const [answer, setAnswer] = useState<ChatAnswer | null>(null);
-  const [asking, setAsking] = useState(false);
   const [askError, setAskError] = useState<string | null>(null);
   // Which transcript / context read is current, keyed on the selection it
   // was issued for (useKeyedRead). Switching session (or peer, or bank) while
@@ -91,17 +90,39 @@ export function useMemory() {
   const contextRead = useKeyedRead({ b, peer, session }, contextKey);
   // `ask`'s answer is exactly as selection-scoped as `getContext` (peer +
   // session): a separate ticket, so asking does not perturb `contextRead`'s
-  // own loading flag or land()-clears-pending bookkeeping.
+  // own loading flag or land()-clears-pending bookkeeping. `askRead.loading`
+  // doubles as the externally-visible `asking` flag below -- it is already
+  // keyed on (peer, session), so it reads false the instant the selection
+  // moves on, instead of staying true until whichever request is actually
+  // in flight (for a selection already left) happens to resolve.
   const askRead = useKeyedRead({ b, peer, session }, contextKey);
+  // Fix round (2026-09-27): `askRead.land()` only guards a response still IN
+  // FLIGHT when the selection moves on -- it does nothing for an answer/error
+  // that already SETTLED while the selection it was asked for was still on
+  // screen. Without this, asking in sA, waiting for the answer, then
+  // switching to sB left sA's answer (and askError) on screen under sB
+  // indefinitely: the literal bug this slice exists to close. Clearing on
+  // every key change (not just a fresh land()) closes that gap.
+  useEffect(() => {
+    setAnswer(null);
+    setAskError(null);
+    // Keyed on the same inputs as `contextKey`/`askRead` -- a bank, token,
+    // peer or session change all mean "this is not the selection sA answered
+    // for anymore".
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [b.bank, b.workspace, b.token, peer, session]);
   // Freshness for ACTIONS below (send/join's error, verify's roster write):
   // not a "read" in useKeyedRead's sense, but the same idea -- a result is
   // applied only while the selection it was issued for is still current.
-  // `workspace` alone (not the fuller `b`/session keys) because verify is a
-  // roster-scoped action: the roster itself is swapped out wholesale on a
-  // workspace switch (the effect below), so that is the boundary a stale
-  // verdict must respect.
-  const workspaceRef = useRef(workspace);
-  workspaceRef.current = workspace;
+  // `[bank, workspace, token]`, matching every other key in this hook
+  // (messagesKey/contextKey): verify is a roster-scoped action, and the
+  // roster itself is swapped out wholesale on a WORKSPACE switch (the effect
+  // below) -- but a token (or bank) switch alone, same workspace, is just as
+  // much "this verdict was asked under credentials already left" (fix round:
+  // an old-token 401 could otherwise overwrite a same-workspace verdict
+  // fetched under the token now current).
+  const bKeyRef = useRef(`${b.bank}:${b.workspace}:${b.token}`);
+  bKeyRef.current = `${b.bank}:${b.workspace}:${b.token}`;
 
   // The roster is per-workspace: names in one workspace mean nothing in
   // another, and carrying them across would show rows that cannot exist.
@@ -120,13 +141,14 @@ export function useMemory() {
    *  genuinely absent, which is exactly what the `missing` state records. */
   const verify = useCallback(
     async (kind: "peers" | "sessions", name: string) => {
-      const issuedInWorkspace = workspace;
+      const issuedKey = `${b.bank}:${b.workspace}:${b.token}`;
       const result = kind === "peers" ? await getPeer(b, name) : await getSession(b, name);
       // Policy: DROP. A verdict answers "does this name exist in THAT
-      // workspace's registry" -- applying it after a workspace switch would
-      // write a verdict from one registry onto a same-named bookmark in
-      // another, which is a name collision, not a real answer about it.
-      if (workspaceRef.current !== issuedInWorkspace) return;
+      // workspace's registry, under THOSE credentials" -- applying it after a
+      // workspace, bank or token switch would write a verdict from one
+      // registry/credential onto a same-named bookmark under another, which
+      // is a name collision, not a real answer about it.
+      if (bKeyRef.current !== issuedKey) return;
       const code = asError(result.body)?.code;
       const verdict = result.ok ? "live" : code === "invalid_reference" ? "missing" : "unknown";
       setRoster((r) => ({ ...r, [kind]: setState(r[kind], name, verdict) }));
@@ -252,12 +274,10 @@ export function useMemory() {
     // sB is the literal bug this slice exists to close.
     ask: async (question: string, maxItems: number) => {
       if (peer === null || session === null) return;
-      const t = askRead.begin();
-      setAsking(true);
+      const t = askRead.begin(); // also drives the keyed `asking` flag below
       setAskError(null);
       const result = await answerChat(b, peer, session, question, maxItems);
       const stillCurrent = askRead.land(t);
-      setAsking(false);
       if (!stillCurrent) return; // peer/session moved on since the question was asked
       if (!result.ok) {
         setAnswer(null);
@@ -276,7 +296,7 @@ export function useMemory() {
     roster, peer, setPeer, session, setSession, busy,
     messages, loadingMessages: messagesRead.loading, messageError, sending,
     context, loadingContext: contextRead.loading, contextError,
-    answer, asking, askError,
+    answer, asking: askRead.loading, askError,
     actions,
   };
 }
