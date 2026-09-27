@@ -50,7 +50,7 @@ Every number here was measured on `e00b50b` on 2026-09-27: counts come from the 
 
   Other adapter rules:
   - An inbound `arra_*` alias resolves to its `oracle_*` tool and is never listed (D6, `auth/service.resolveToolName.ts`).
-  - The `X-Arra-Peer` speaker header is read only while the flag is on (`app.ts:172`, D8) and is bound by R3 `peers`.
+  - The `X-Arra-Peer` speaker header is read only while the flag is on (`app.createApp.ts:172`, D8) and is bound by R3 `peers`.
   - The recall tools exclude superseded, retired, inactive and out-of-window nodes; the browse tools include them, flagged (D3).
   - No v3 corpus is imported (D9).
 
@@ -82,9 +82,9 @@ Every number here was measured on `e00b50b` on 2026-09-27: counts come from the 
 - **Lifecycle (#29).** There is one eligibility rule, `publication/service.eligibilityReasonsOf.ts`. It returns `retired`, `superseded`, `inactive`, `not_yet_valid` or `expired`, and the validity window is half-open, `[valid_from, valid_to)`. The transport supplies `as_of` at request time, because readers take no clock. The rule serves `getRecallEligibility`, both searches, and `listNodes {eligible_only:true}` (the recall view). By default `listNodes` hides retired and superseded nodes; `include_inactive:true` is the history mode. `retireNode` and `supersedeNode` are exposed. Superseding into a node that is already retired or superseded is refused.
 - **Auth is implemented, not absent.**
   - `ARRA_AUTH_POLICY` must be an absolute path to an owner-only (0600) `arra-auth/v1` policy file, checked at startup (`composition.ts:84-87`).
-  - The `Host`/`Origin` gate runs on **every** request, including the public ones (`app.ts:152-155`), and the server binds only `127.0.0.1` (`index.ts:95-99`).
+  - The `Host`/`Origin` gate runs on **every** request, including the public ones (`app.createApp.ts:152-155`), and the server binds only `127.0.0.1` (`index.ts:95-99`).
   - Protected routes need exactly one `Authorization: Bearer <64-hex>` (`auth/http.ts:23-33`).
-  - `/health` and the static UI (`GET /`, `/knowledge.html`, `/v2/*`) skip policy admission but not the Host/Origin gate (`app.ts:258`, `app.ts:468-497`, `authorization-integration-v1.md:34`).
+  - `/health` and the static UI (`GET /`, `/knowledge.html`, `/v2/*`) skip policy admission but not the Host/Origin gate (`app.createApp.ts:258`, `app.createApp.ts:468-497`, `authorization-integration-v1.md:34`).
 
   Measured live on this base:
 
@@ -95,7 +95,7 @@ Every number here was measured on `e00b50b` on 2026-09-27: counts come from the 
   GET /                                             foreign Host  400
   ```
 
-  A missing, repeated or malformed `?bank` is refused with 400 before admission (`app.ts:93-99`, `:268-273`), so the 401 needs a bank. Both are pinned: `auth-integration.test.ts:97-107` (401) and `mcp-correctness.test.ts:436-439` (400).
+  A missing, repeated or malformed `?bank` is refused with 400 before admission (`app.createApp.ts:93-99`, `:268-273`), so the 401 needs a bank. Both are pinned: `auth-integration.test.ts:97-107` (401) and `mcp-correctness.test.ts:436-439` (400).
 - **Membership boundary (R3).**
   - `listMessages`, `getMessage` and `listSessionMembers` take an optional `requester_peer_name` (`publication/context.requireMessageReadAuthority.ts`, `service.requireCurrentMembership.ts`):
     - A named requester must be a current member of the session. The two list methods and `getMessage` answer a non-member differently, on purpose:

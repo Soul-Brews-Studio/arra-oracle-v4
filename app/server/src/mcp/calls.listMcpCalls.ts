@@ -62,7 +62,7 @@ export async function listMcpCalls(requestBytes: Uint8Array): ReturnType<typeof 
     // which `revision-publication-v1.md` / `context-ingestion-v1.md` both
     // forbid for every OTHER governed method; HTTP already maps unknown
     // errors to a bare `{"error":"internal"}` (`knowledge/transport.ts`), but
-    // MCP's `tool_error` path (`auth/service.ts`) carries `error.message`
+    // MCP's `tool_error` path (`auth/service.createOperationService.ts`) carries `error.message`
     // through unchanged, so this had to be stopped here, at the source.
     if (error instanceof Error && TABLE_ABSENT.test(error.message)) {
       return { rows: [], next_after_id: null, total: request.include_total ? "0" : null };

@@ -7,7 +7,7 @@
  * (only for `kernel_error`).
  *
  * It travels as a thrown error with string `code` and `path` and a `toJSON`,
- * which is exactly the shape `auth/service.ts` `runMcp` already passes
+ * which is exactly the shape `auth/service.createOperationService.ts` `runMcp` already passes
  * through as exact JSON with `isError:true` and an audit row `status:"error"`.
  */
 

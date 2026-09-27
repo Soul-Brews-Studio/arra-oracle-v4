@@ -1,4 +1,4 @@
-import { failRelic } from "./relic.errors";
+import { failRelic } from "./relic.failRelic";
 import { getSession } from "./relic.getSession";
 import { runRelicJson } from "./relic.runRelicJson";
 import type { RelicAdapterConfig, RelicTailCommandOutput, RelicTailTurn } from "./relic.types";

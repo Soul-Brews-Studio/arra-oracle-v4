@@ -11,7 +11,7 @@
  * `KnowledgeMethod.call`, never re-encoded, never re-serialized.
  *
  * Scope handling mirrors the existing `POST /api/memories` precedent in
- * `app.ts`: the route's `:bank` segment is the authoritative, admitted
+ * `app.createApp.ts`: the route's `:bank` segment is the authoritative, admitted
  * workspace. Because several of these methods carry `workspace_name` inside
  * the body (the admission layer for #25 never anticipated a body-scoped
  * kernel with this many entrypoints), the body is peeked with the SAME

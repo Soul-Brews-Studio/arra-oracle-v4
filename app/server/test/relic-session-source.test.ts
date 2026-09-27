@@ -24,7 +24,7 @@ import { ContractError } from "../src/contracts/errors";
 import { resolveSessionSourceConfig } from "../src/source/relic.resolveSessionSourceConfig";
 import { createRelicSessionSource } from "../src/source/relic.createRelicSessionSource";
 import { runRelicJson } from "../src/source/relic.runRelicJson";
-import { RelicAdapterError } from "../src/source/relic.errors";
+import { RelicAdapterError } from "../src/source/relic.failRelic";
 import { captureDigest } from "../src/source/relic.captureDigest";
 import { buildRelicEventTarget } from "../src/source/relic.buildRelicEventTarget";
 import { buildRelicSessionTarget } from "../src/source/relic.buildRelicSessionTarget";

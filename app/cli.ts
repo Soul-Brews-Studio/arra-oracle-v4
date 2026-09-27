@@ -2,10 +2,10 @@
 export {};
 import { KNOWLEDGE_METHODS, KNOWLEDGE_METHOD_NAMES } from "./server/src/knowledge/registry";
 import { KB_ALIASES } from "./cli/kb.aliases";
-import { kbHelpText } from "./cli/kb.help";
+import { kbHelpText } from "./cli/kb.kbHelpText";
 import { parseFlags, type CliOptions } from "./cli/parseFlags";
 import { positiveInt } from "./cli/positiveInt";
-import { readKbRequestBody } from "./cli/kb.readRequestBody";
+import { readKbRequestBody } from "./cli/kb.readKbRequestBody";
 import { searchKnowledgeRequest } from "./cli/searchKnowledgeRequest";
 
 type Json = Record<string, unknown>;
