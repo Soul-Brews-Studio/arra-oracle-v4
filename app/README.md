@@ -139,8 +139,8 @@ call is needed for the regression suite, whose models are stubs.
 
 Every route needs `Authorization: Bearer <64 lowercase hex>` except `/health` and the
 static UI (`GET /`, `/knowledge.html`, `/v2/*`). Those are deliberately public and skip
-policy admission, but not the Host/Origin gate, which runs on every request (`app.ts:152-155`,
-`app.ts:468-497`; `authorization-integration-v1.md:34`). Measured 2026-09-27:
+policy admission, but not the Host/Origin gate, which runs on every request (`app.createApp.ts:152-155`,
+`app.createApp.ts:468-497`; `authorization-integration-v1.md:34`). Measured 2026-09-27:
 
 ```text
 GET /, /v2/index.html, /knowledge.html, /health   no token      200
@@ -149,7 +149,7 @@ GET /api/health                  (no ?bank)       no token      400
 GET /                                             foreign Host  400
 ```
 
-A missing, repeated or malformed `?bank` is refused with 400 before admission (`app.ts:93-99`,
+A missing, repeated or malformed `?bank` is refused with 400 before admission (`app.createApp.ts:93-99`,
 `:268-273`), so the 401 needs a bank (`test/auth-integration.test.ts:97-107`,
 `test/mcp-correctness.test.ts:436-439`).
 
