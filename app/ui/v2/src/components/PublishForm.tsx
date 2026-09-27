@@ -1,5 +1,8 @@
 import { type ReactNode, useState } from "react";
 import { BODY_FORMATS, HORIZON_TERMS, TYPE_TERMS, type PublishInput, type TypeTerm, type HorizonTerm } from "../api/knowledge";
+import { buildLinkSnapshot } from "../state/buildLinkSnapshot";
+import type { CiteTarget, LinkDraft } from "../state/linkDraft.types";
+import { LinkEditor } from "./LinkEditor";
 
 type Draft = Omit<PublishInput, "node_id" | "base_revision_id">;
 /** Publish a new revision -- either a node's first one or an edit on top of
@@ -12,12 +15,15 @@ export function PublishForm({
   disabled,
   disabledReason,
   editingNode,
+  citeTargets = [],
 }: {
   onPublish: (input: Draft) => void;
   publishing: boolean;
   disabled: boolean;
   disabledReason?: string;
   editingNode: boolean;
+  /** #33 cite: loaded revisions the link editor offers as picks. */
+  citeTargets?: CiteTarget[];
 }) {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
@@ -25,11 +31,13 @@ export function PublishForm({
   const [typeTerm, setTypeTerm] = useState<TypeTerm>("note");
   const [horizon, setHorizon] = useState<HorizonTerm | "none">("none");
   const [changeReason, setChangeReason] = useState("");
+  const [links, setLinks] = useState<LinkDraft[]>([]);
+  const built = buildLinkSnapshot(links);
 
-  const canSubmit = !disabled && !publishing && title !== "" && body !== "";
+  const canSubmit = !disabled && !publishing && title !== "" && body !== "" && built.ok;
 
   const submit = () => {
-    if (!canSubmit) return;
+    if (!canSubmit || !built.ok) return;
     onPublish({
       title,
       body,
@@ -39,10 +47,12 @@ export function PublishForm({
       change_reason: changeReason === "" ? null : changeReason,
       author_peer_name: null,
       session_name: null,
+      links: built.entries,
     });
     setTitle("");
     setBody("");
     setChangeReason("");
+    setLinks([]);
   };
 
   return (
@@ -106,6 +116,7 @@ export function PublishForm({
         aria-label="Change reason (optional)"
         className="rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-100 outline-none focus:border-accent"
       />
+      <LinkEditor drafts={links} onChange={setLinks} citeTargets={citeTargets} />
       <button
         onClick={submit}
         disabled={!canSubmit}

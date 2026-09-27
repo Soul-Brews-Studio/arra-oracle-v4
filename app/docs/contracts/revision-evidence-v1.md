@@ -255,3 +255,56 @@ Required proof:
 8. Full Python discovery, full Bun app/CLI tests, strict TS/build, scoped Ruff/compile/diff. No new dependency; active baseline protected diff. Independent reviewer reports scope and any missing proof before local commit authorization.
 
 #23 remains open until its OTHER specification/namespace/adapter gates are resolved. Auth, cardinality/reference service enforcement, head publication, crashes, cross-process exclusion and runtime migration are not delivered by a byte-contract package.
+
+## Amendment 2026-09-26 (post-merge Nat style (one function per file, no file over 500 lines); behaviour-preserving moves only)
+
+`app/migrate-py/src/arra_migrate/revision_v1.py` was 773 lines, over the 500-line
+cap ruled in `docs/overnight/PLAN.md` §1 (2026-09-26 21:00 entry). To bring it
+under the cap with behaviour-preserving moves only, its request-framing types
+and helpers (`ContractError`, `BatchItem`, `BatchResult`, `WorkerConfig`,
+`strict_binary64_loads`, `encode_request`, and the shared validators they use)
+were moved byte-identical into a new sibling module,
+`app/migrate-py/src/arra_migrate/contract_batch_frame.py`; `revision_v1.py`
+imports them back and is now 465 lines. No canonicalization logic moved and no
+public name was renamed.
+
+This changes what "the adapter" means for §8's two containment clauses
+("no import into active migrator/storage path" and "The adapter does not open
+LanceDB"): both clauses now apply to `contract_batch_frame.py` as well as
+`revision_v1.py`. `app/migrate-py/tests/test_revision_v1.py::IsolationTests`
+was updated accordingly -- `test_no_active_python_path_imports_the_adapter`
+and `test_the_adapter_itself_imports_no_lancedb_or_storage` now scan/check
+both files as one unit, via the new `ADAPTER_UNIT` tuple. This EXTENDS the
+guard's coverage (closing a gap where code moved out of `revision_v1.py`
+would have gone unchecked); nothing already enforced was loosened, and no
+existing assertion was deleted. Verified by temporarily adding
+`from .contract_batch_frame import encode_request, ContractError` to
+`__main__.py` in a scratch copy: `test_no_active_python_path_imports_the_adapter`
+fails as expected, then passes again once removed.
+
+## Amendment 2026-09-26 (post-merge #33 AC1/AC3 + R6 (sealed vocabulary) + R10 (conclusion reserved) + R12)
+
+No server behaviour, codec or field changes. This records a new WRITER of
+`link_snapshot_json`, the v2 UI, and the exact subset it writes, per
+`docs/overnight/DECISIONS.md` R6, R10 and R12.
+
+- **Before**: the v2 UI sent `link_snapshot_json: "[]"` on every
+  `publishRevision`, so no browser path could cite or correct (#33 AC1).
+- **Cite**: the publish form builds entries in the §4 LINK_KEYS shape: contiguous decimal
+  `position`, a `relation` from the closed six, and a closed per-kind `target` for five of
+  the eleven §5 kinds (`node_revision`, `message`, `session`, `trace`, `url`). `excerpt`,
+  `content_hash` and `captured_at` are always `null`, and `capture_status` is always
+  `locator_only`. The UI fetches and hashes nothing, and §4 says a `captured` claim is not
+  verified, so the UI never makes one. The `code`, `commit`, `issue`, `discussion` and
+  `relic_*` kinds are not offered, because their identity (a git OID or a capture digest)
+  is not something a person types. Resolution of internal kinds stays with the server
+  (`invalid_reference`), and the UI shows that refusal verbatim.
+- **Correct** is a new node with no base. Its single `type` term is `correction`, a sealed
+  TYPE_TERM (R6: the vocabulary cannot be extended from any transport, so the UI picks
+  from the existing five). It is never `conclusion`, which is a separate reserved term
+  (R10). Link 0 is `corrects` → `node_revision`, pinned to the exact revision being
+  corrected, and any extra evidence follows from position 1. The corrected revision is not
+  edited. The correction reaches it only as reverse evidence (`scanDependents`).
+- Pinned by `app/ui/v2/src/state/buildLinkSnapshot.test.ts`,
+  `buildCorrection.test.ts`, `api/publishRevision.test.ts` and
+  `components/citeCorrect.test.ts`.

@@ -4,9 +4,10 @@ import { horizonOf, parseTerms, type RevisionRow, typeOf } from "./api/knowledge
 import { EmptyState } from "./components/EmptyState";
 import { ErrorNote } from "./components/ErrorNote";
 import { HorizonBadge } from "./components/HorizonBadge";
+import { LifecycleBanner } from "./components/LifecycleBanner";
 import { NodeHead } from "./components/NodeHead";
 import { NodeRail } from "./components/NodeRail";
-import { PublishForm } from "./components/PublishForm";
+import { NodeWritePanel } from "./components/NodeWritePanel";
 import { RevisionDiff } from "./components/RevisionDiff";
 import { RevisionHistory } from "./components/RevisionHistory";
 import { TaxonomySetup } from "./components/TaxonomySetup";
@@ -14,7 +15,11 @@ import { TermCloud } from "./components/TermCloud";
 import { TermCloudEmpty } from "./components/TermCloudEmpty";
 import { TypeBadge } from "./components/TypeBadge";
 import { compareRevisionNo } from "./state/compareRevisionNo";
+import { lifecycleGate } from "./state/lifecycleGate";
+import { useCiteTargets } from "./state/useCiteTargets";
 import { useKnowledge } from "./state/useKnowledge";
+import { useNodeLifecycle } from "./state/useNodeLifecycle";
+import { writableHead } from "./state/writableHead";
 
 /** The knowledge half: nodes, immutable revisions, type and tags.
  *
@@ -77,6 +82,11 @@ export function KnowledgeView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodeId]);
   const target = k.selected ?? draftId;
+  // #33: the same lifecycle read the Evidence tab uses gates every write here;
+  // a draft has no lifecycle. Cite picks are the revisions already loaded.
+  const gate = lifecycleGate(useNodeLifecycle(bank, k.selected, k.head?.revision?.id ?? null));
+  const citeTargets = useCiteTargets(`${bank.bank}:${bank.workspace}`, k.head?.revision ?? null, sortedHistory);
+  const writable = writableHead(k.selected, k.head?.revision ?? null, sortedHistory);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-visible">
@@ -128,6 +138,7 @@ export function KnowledgeView({
               loading={k.loading}
               error={null}
             />
+            <LifecycleBanner gate={gate} />
             <RevisionHistory
               // Newest first, matching this component's own documented
               // contract ("`revisions` is NOT re-sorted here -- the caller
@@ -186,23 +197,33 @@ export function KnowledgeView({
                 )}
               </div>
             )}
-            <PublishForm
+            <NodeWritePanel
+              gate={gate}
+              nodeId={target}
+              head={writable.head}
+              revisions={writable.revisions}
+              citeTargets={citeTargets}
+              publishing={k.publishing}
+              taxonomyReady={k.taxonomy !== null}
               onPublish={(input) => {
-                void k.actions.publish(input, target).then(() => {
+                void k.actions.publish(input, target, writable.head?.id ?? null).then((ok) => {
+                  if (!ok) return;
                   // A published draft stops being a draft: put it in the URL
                   // so a refresh lands on the node instead of a blank draft.
                   setDraftId(null);
                   onSelectNode(target);
                 });
               }}
-              publishing={k.publishing}
-              disabled={k.taxonomy === null}
-              disabledReason={
-                k.taxonomy === null
-                  ? "Seed the reserved vocabularies first — a revision needs exactly one type term."
-                  : undefined
-              }
-              editingNode={k.head?.revision != null}
+              onCorrect={(input) => {
+                // A correction is its own node: open it once accepted, so its
+                // `corrects` link is on screen (Evidence tab: direct evidence).
+                void k.actions.publish(input, input.node_id, null).then((ok) => {
+                  if (!ok) return;
+                  setDraftId(null);
+                  onSelectNode(input.node_id);
+                });
+              }}
+              mintId={newPublicId}
             />
           </>
         )}
