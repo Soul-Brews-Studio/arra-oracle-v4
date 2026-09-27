@@ -50,7 +50,7 @@ const foldId = (workspace: string, method: string, principal: string, label: str
 
 export interface ConnectionEvent {
   workspace_name: string;
-  /** Transport family: "http", "mcp", or "unknown" when the caller did not say. */
+  /** DECISIONS.md R19: the AUTH method (SPEC §7.2), `bearer` today; not the transport. */
   method: string;
   /**
    * DECISIONS.md R5 (#102): the CREDENTIAL id, matching SPEC §7.2 ("token id

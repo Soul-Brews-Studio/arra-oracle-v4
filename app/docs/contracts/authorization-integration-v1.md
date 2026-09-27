@@ -195,3 +195,106 @@ v4-overnight, v3-search slice (Claude Opus 5.5, AI). Rulings: `docs/overnight/DE
 **Acceptance.** `app/server/test/mcp-v3-acceptance.test.ts` on this slice: before PASS 10 / FAIL 0 / GAP 27, after PASS 15 / FAIL 0 / GAP 22 in each of 10 consecutive runs. Steps 7, 8 (`ลืม`, hybrid), 30 (`arra_search`), 31 (tenant carrier) and 36 (cross-bank isolation) went GAP to PASS. Harness corrections, each stated in its step's notes: step 13 (superseded entry absent) is also gated on `oracle_supersede`, and step 20 (distilled learning found) on `oracle_trace_distill`, since each asserts something only meaningful after that tool ran (the harness's own rule for absence steps). Step 30 compares `arra_search` with `oracle_search` called with the same arguments right after it (`compareToCanonicalCall`, recorded by the session child). A first fix compared it with step 13, but step 21 writes a node in between, and step 30 failed in 3 of 6 runs on a moved snippet. The verdict also no longer compares an alias step with itself when it names no step.
 
 **Evidence.** `app/server/test/mcp-v3-search-wiring.test.ts` (catalogue names, availability, D3 descriptions, reader-only routing and its pin to the registry, the `alsoNeeds` rule, the stable merge snippet, chain idempotency and partial-write disclosure, the narrow embedder-down test). `app/server/test/mcp-v3-search.test.ts` (a gated child on a fresh dataset with a stub query embedder: shape, order, the multi-word OR, hybrid, R14, substring scan, D3 via `kb_supersedeNode`/`kb_retireNode`, filters, paging, refusals, vector before and after backfill, embedder-down fallback, cross-bank isolation, read-only and write-only grants, ask, chain traces and retries). `app/server/test/mcp-v3-frame.test.ts` (a write-only grant at the service) and `app/server/test/mcp-v3-verdict.test.ts` (the alias verdict). First round red 2 pass / 21 fail (`not_yet_available ... searchChunksKeyword, searchChunksSemantic`). Fix round red: unit 37 pass / 10 fail, gated 24 pass / 2 fail, with a write-only principal's `oracle_search_chain` answering 200 with entries. Then all green.
+
+## Amendment 2026-09-26 (post-merge R3/R4/R5 + #85/#31/#75 acceptance criteria)
+
+Behaviour change. The §4 audit now covers every transport, not only MCP.
+Before this change, `POST /api/knowledge/:bank/:method` wrote no audit row. So an
+HTTP call, including a `content:write` method, and the CLI's `kb <method>` leg that
+forwards to it, left no trail. Rulings: #31 TODO5 ("authz/limits/redaction/audit
+across transports"); R8 in `docs/overnight/DECISIONS.md` (keep #31's full
+contract, do not narrow it); R5 (`mcp_calls` and `connections` are "operational
+audit written on every request").
+
+- **One sink.** `composition.ts` `composeAuditSink` is the only audit writer. It
+  appends one `mcp_calls` row and folds `connections` in the operations root (R5).
+  MCP reaches it through `appendAudit`, and the HTTP knowledge route through
+  `buildApp` (`knowledge/transport.auditKnowledgeCall.ts`). `connections.method` is
+  `bearer` and `principal` is the credential id (R19).
+- **What is audited.** Every admitted call on any transport writes one row, whether
+  it succeeds or fails (a body-scope refusal, a bound-peer refusal, a kernel
+  error, an internal fault). What is refused before admission is audited on
+  neither transport; the next amendment lists it exactly. The CLI's `kb` leg is
+  audited as HTTP, and its legacy commands as MCP.
+- **Parity.** An admitted HTTP call to `<method>` writes the same row as an MCP
+  `kb_<method>` call: the same `tool` (`kb_<method>`), the same `status`, the same
+  `input` (`{payload}`, the MCP argument shape, redacted by the same writer), the
+  same `result` (the value, or the governed envelope text on error), the same
+  `auth`, and a null `session_name`, as the MCP `kb_*` path records. Beyond `id`,
+  `created_at` and `duration_ms`, only `internal_metadata.transport.user_agent`
+  differs. `duration_ms` is timed from before admission on HTTP and from after it
+  on MCP, and a whitespace-only User-Agent is recorded as null on HTTP but kept on
+  MCP.
+- **Redaction.** No bearer token appears in any row. `h_metadata` has exactly the keys
+  `{input, result, auth}`, and `auth` has exactly
+  `{principal_id, credential_id, policy_version}`. A secret-shaped argument is
+  redacted the same way whichever client sent it.
+- **Not yet audited.** The legacy HTTP memory routes (`/api/memories*`,
+  `/api/search`, `/api/stats`, `/api/backfill`, `/api/reindex`) still write no
+  row. They are not knowledge methods, and this slice does not change them. This is
+  an open gap against #31 TODO5, not a rule.
+- **`connections` fold key.** The key is (workspace, method, principal, label), so one
+  credential used by two clients gets two rows. This matches the documented `foldId`
+  in `mcp/connections.ts`. It is narrower than SPEC §7.2's `'<method>:<principal>'`
+  key, and this amendment records that difference without resolving it.
+
+Test: `app/server/test/transport-audit-parity.test.ts`, which runs on a real listening
+server and spawns the real CLI process. Red before the change: 8 rows missing
+(`kb_getContext` x2, `kb_listNodes` x4, `kb_listMcpCalls`, `kb_listConnections`),
+because every HTTP and CLI-`kb` row was absent.
+
+## Amendment 2026-09-26 (post-merge #31 TODO 'success/failure audit consistently across all transports' + R5/R19)
+
+Behaviour change, round 3 (2026-09-27). The amendment above said a body-scope
+refusal writes no row on either transport, which was false. An independent
+verifier found the gap: MCP checked the payload's `workspace_name` AFTER
+admission (`mcp/index.ts`, inside the dispatch `runMcp` audits), so it wrote an
+error row. HTTP checked it BEFORE admission (`knowledge/transport.ts`) and wrote
+nothing. A cross-workspace attempt (an alpha route, a beta body) therefore left a
+trail on MCP and none on HTTP. Rulings: #31's TODO "success/failure audit
+consistently across all transports"; R5 in `docs/overnight/DECISIONS.md`
+(`mcp_calls` and `connections` are "operational audit written on every
+request"); R19 (`connections.method` is `bearer`, `principal` the credential
+id).
+
+- **Direction.** Both transports now audit the refusal. The other option,
+  dropping MCP's row, would erase the only trail of an authenticated
+  cross-workspace attempt.
+- **HTTP order.** The route still peeks the body scope before admission, but it
+  now admits before it refuses the mismatch. If admission fails, the response is
+  the same 400 `{"error":"bad request"}` as before and no row is written. If
+  admission succeeds, the response is also the same 400, and one `error` row is
+  written. No HTTP status or body changed.
+- **The row.** Both transports raise one refusal
+  (`knowledge/transport.bodyScopeRefusal.ts`), so both rows have
+  `tool` `kb_<method>`, `status` `error`, `input` `{payload}` (the body that
+  named the other workspace, redacted by the same writer), `result`
+  `payload workspace_name must match the connected bank`, the admitted principal
+  and credential in `auth`, and `workspace_name` set to the route workspace, never
+  the workspace the body named. The two rows differ only in `id`, `created_at` and
+  `duration_ms`. A body with no `workspace_name` at its scope path is refused and
+  audited the same way.
+- **Audited, after admission, on both transports:** every call that runs, whether it
+  succeeds or fails; a body-scope refusal; a bound-peer refusal (#87 / R3); and, on
+  MCP, a `tools/call` whose `arguments` is not an object.
+- **Not audited, on either transport:** a request with no `Authorization` header or
+  with a token no credential matches (401); a valid credential with no grant for the
+  route workspace and action (403); an unreadable policy (503); and, on HTTP, a bad
+  route, an unknown method, a bad body encoding, an oversized body, or a body the
+  governed parser refuses. On MCP, the matching refusals are an unreadable
+  envelope, a method other than `tools/call`, and an unknown or unpermitted tool.
+  Unauthenticated requests leave no row and no `connections` fold. The legacy HTTP
+  memory routes are still unaudited (see above).
+- **Response difference, unchanged.** On HTTP an unauthenticated body-scope
+  mismatch is still a 400 (the body is judged first). On MCP it is a 401 (the
+  credential is judged first).
+
+Test: `app/server/test/transport-audit-refusals.test.ts`, which runs on a real
+listening server (`fixtures/transport-v1/live-server/child.ts`). It checks that a
+body-scope refusal and a bound-peer refusal each write two equal rows (HTTP and
+MCP), and that no header, a bogus token and a foreign credential, with and without
+a scope mismatch, write no row and no fold on either transport. Before the change
+it failed with one `kb_listNodes` row missing, the HTTP body-scope refusal. Mutants,
+each killed by that test: dropping the HTTP scope audit, dropping the HTTP bound-peer
+audit, auditing a different result text on HTTP, returning the auth status for an
+unauthenticated mismatch, and auditing unadmitted HTTP requests.

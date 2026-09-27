@@ -12,6 +12,7 @@ import { configureKnowledgeAccess, createMcpAdapter } from "./mcp";
 import {
   checkChatConfig,
   checkSupportedRuntime,
+  composeAuditSink,
   composeKnowledgeAccess,
   composeService,
   composeV3Compat,
@@ -40,7 +41,9 @@ export async function buildApp(config: { policyPath: string; origin: string; ass
   configureKnowledgeAccess(access);
   return createApp({ origin: config.origin, v3Compat }, service, createMcpAdapter(service), {
     assets: config.assets,
-    knowledge: { policyPath: config.policyPath, access },
+    // #31 / R8: the HTTP route (and the CLI's `kb` leg over it) audits into
+    // the same composed sink MCP does.
+    knowledge: { policyPath: config.policyPath, access, audit: await composeAuditSink() },
   });
 }
 

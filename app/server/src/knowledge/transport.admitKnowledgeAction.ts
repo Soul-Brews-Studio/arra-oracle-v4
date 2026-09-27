@@ -27,12 +27,18 @@ export class KnowledgeAuthDenied extends Error {
  * snapshot and the SAME clock value that admitted it: `operator` is a second
  * `admit` of `audit:read` on this workspace (never inferred from the grant
  * shape), `peers` is that grant's arra-auth/v1 binding.
+ *
+ * `onAdmitted` (#31 / R8 audit parity) receives the admission's non-secret
+ * attribution, the same three fields `auth/service.ts` audits for MCP. It is
+ * a callback rather than a wider return so the frozen `RequestAuthority` the
+ * kernels see is unchanged.
  */
 export function admitKnowledgeAction(
   policyPath: string,
   authorization: string | null,
   workspace: string,
   action: KnowledgeAction,
+  onAdmitted: (auth: { principal_id: string; credential_id: string; policy_version: string }) => void = () => {},
 ): RequestAuthority {
   let policy;
   try {
@@ -61,7 +67,13 @@ export function admitKnowledgeAction(
     }
   }
   try {
-    return Object.freeze({ operator, peers: peerBinding(policy, admission) });
+    const authority = Object.freeze({ operator, peers: peerBinding(policy, admission) });
+    onAdmitted({
+      principal_id: admission.principal_id,
+      credential_id: admission.credential_id,
+      policy_version: admission.policy_version,
+    });
+    return authority;
   } catch {
     // Only a snapshot/admission mismatch can land here: fail closed.
     throw new KnowledgeAuthDenied("policy_unavailable");

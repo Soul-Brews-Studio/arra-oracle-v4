@@ -177,3 +177,31 @@ amend ITS OWN contract, not this file.
 
 **Reverse by:** striking this amendment section; §1/§7/§8 already say what they
 said before, this only makes the scope of "ten"/"five" explicit.
+
+## Amendment 2026-09-26 (post-merge R3/R4/R5 + #85/#31/#75 acceptance criteria)
+
+Evidence only; §§1–9 and the R1/R2 amendment are unchanged. For #75 re-certification,
+a representative set of §2–§5 checks was replayed on a real listening server
+(`buildApp` from `src/index.ts`, bound to 127.0.0.1) over a fresh writer-gated
+dataset, on both HTTP and MCP:
+
+- The owner can advance and read. `created`, then `already_satisfied` with the first
+  `last_read_at` byte for byte, then `advanced`. The five fields come back in physical
+  order, and `last_read_at` is UTC-millisecond text.
+- Other callers are refused with 403 `forbidden`: a peer-bound credential naming
+  another peer (R3, path `/peer_name`), a credential for another workspace, and a
+  `content:read`-only credential calling `advanceReadCursor`. A body naming a
+  different workspace than the route bank gets 400; this one was replayed over HTTP
+  only. MCP refuses the same mismatch as a tool error (`isError`,
+  `payload workspace_name must match the connected bank`), not a 400; see the
+  round-3 amendment in `authorization-integration-v1.md`. None of these changes the
+  row.
+- `conflict/backward` and `conflict/expected` are returned as results, not errors. A
+  wrong-session message is `invalid_reference` at `/last_read_message_id`, and `"42"`
+  fails the grammar.
+- Recovery: a fresh server process that retries a write which already landed gets
+  `already_satisfied` with the row that was kept.
+
+Test: `app/server/test/read-cursor-live-transport.test.ts`. Driver:
+`app/server/test/fixtures/transport-v1/live-server/child.ts`. See
+`docs/overnight/DECISIONS.md` R2 and R3.

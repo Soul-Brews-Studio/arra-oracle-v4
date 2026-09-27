@@ -44,6 +44,33 @@ const ORIGIN = "http://127.0.0.1:3939";
 const TOKEN = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const TOKEN_SHA256 = createHash("sha256").update(TOKEN, "ascii").digest("hex");
 
+/** The overflow scenario's anchor session (`fixtures/chat-v1/gated-coverage.ts`). */
+const OVERFLOW_MAIN = "overflow-main-".padEnd(250, "x");
+/** The mixed overflow scenario's anchor: aggregate + link bound + overflow. */
+const MIXED_MAIN = "mixed-main-".padEnd(250, "x");
+/** Anchor + the 6 authorized linked sessions searched (the 9th link is past
+ *  MAX_LINKED_SESSIONS), 51 candidates each, 50 used. */
+const MIXED_BUDGET_ENTRIES = 7 * 51 - 50;
+
+/** The two fixed entries lead the list, whatever overflows behind them. */
+function expectMixedOverflow(result: Result & { items_used?: string[] }): void {
+  expect(result.coverage).toBe("partial");
+  expect((result.items ?? result.items_used)!.length).toBe(50);
+  expect(utf8(result.excluded)).toBeLessThanOrEqual(MAX_CONTEXT_WIRE_BYTES);
+  expect(result.excluded_omitted).toBeGreaterThan(0);
+  const [aggregate, bound, ...rest] = result.excluded as Record<string, unknown>[];
+  expect(aggregate!.reason).toBe("unauthorized");
+  expect(Object.keys(aggregate!).sort()).toEqual(["count", "reason"]);
+  expect(aggregate!.count as number).toBeGreaterThan(0);
+  expect(bound).toEqual({ reason: "budget_exceeded", session_name: null, public_id: null });
+  for (const entry of rest) {
+    expect(entry.reason).toBe("budget_exceeded");
+    expect(typeof entry.session_name).toBe("string");
+    expect(typeof entry.public_id).toBe("string");
+  }
+  expect(rest.length + result.excluded_omitted).toBe(MIXED_BUDGET_ENTRIES);
+  expect(JSON.stringify(result)).not.toContain("SECRET");
+}
 const pad = (seed: string) => `${seed}${"0".repeat(Math.max(0, 21 - seed.length))}`.slice(0, 21);
 const utf8 = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 
@@ -54,6 +81,13 @@ type Result = {
   excluded: Excluded[];
   excluded_omitted: number;
 };
+/** The wire result carries the in-process items too: getContext the items
+ *  themselves, answerChat the public ids it used. */
+function expectSameItems(wire: Result & { items_used?: string[] }, inProcess: Result): void {
+  const ids = inProcess.items.map((item) => item.public_id);
+  if (wire.items_used !== undefined) expect(wire.items_used).toEqual(ids);
+  else expect(wire.items).toEqual(inProcess.items);
+}
 type Attempt = { ok: boolean; value: Result & { answer?: string; items_used?: string[] }; code?: string; message?: string };
 
 let cleanup: (() => Promise<void>) | null = null;
@@ -114,7 +148,12 @@ beforeAll(async () => {
     }),
     { encoding: "utf-8", mode: 0o600 },
   );
-  const access = createKnowledgeAccess({ datasetRoot: fixture.datasetRoot, env: {} });
+  // A stub model (never a real one), so answerChat can run over the wire too.
+  const access = createKnowledgeAccess({
+    datasetRoot: fixture.datasetRoot,
+    env: {},
+    chat: { model: async () => "stub answer", settings: null },
+  });
   configureKnowledgeAccess(access);
   // Only the audit append is reached on the kb_* path; the legacy memory
   // store is never touched by this file.
@@ -217,6 +256,10 @@ describe("getContext coverage is full only when nothing was excluded (R4)", () =
     // listed or counted as omitted -- none vanishes.
     expect(result.excluded.length + result.excluded_omitted).toBe(5 * 51 - 50);
   });
+
+  test("under overflow the unauthorized aggregate and the link bound still lead the list", () => {
+    expectMixedOverflow(scenario("mixed"));
+  });
 });
 
 describe("answerChat carries the corrected coverage and never feeds unauthorized evidence to the model", () => {
@@ -254,9 +297,9 @@ describe("the same results over the live transports (production reader, real pol
     max_items,
   });
 
-  const viaHttp = async (payload: Record<string, unknown>): Promise<Result> => {
+  const viaHttp = async (payload: Record<string, unknown>, method = "getContext"): Promise<Result> => {
     const res = await app.handle(
-      new Request(`${ORIGIN}/api/knowledge/${WS}/getContext`, {
+      new Request(`${ORIGIN}/api/knowledge/${WS}/${method}`, {
         method: "POST",
         headers: { host: "127.0.0.1:3939", authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
         body: JSON.stringify(payload),
@@ -266,7 +309,7 @@ describe("the same results over the live transports (production reader, real pol
     return res.json();
   };
 
-  const viaMcp = async (payload: Record<string, unknown>): Promise<Result> => {
+  const viaMcp = async (payload: Record<string, unknown>, method = "getContext"): Promise<Result> => {
     const res = await app.handle(
       new Request(`${ORIGIN}/mcp/${WS}`, {
         method: "POST",
@@ -275,7 +318,7 @@ describe("the same results over the live transports (production reader, real pol
           jsonrpc: "2.0",
           id: 1,
           method: "tools/call",
-          params: { name: "kb_getContext", arguments: { payload } },
+          params: { name: `kb_${method}`, arguments: { payload } },
         }),
       }),
     );
@@ -301,6 +344,41 @@ describe("the same results over the live transports (production reader, real pol
       expect(result.excluded).toEqual([]);
       expect(result.excluded_omitted).toBe(0);
     });
+
+    // #85 live overflow (acceptance-criteria slice, 2026-09-26): the excluded
+    // list forced past MAX_CONTEXT_WIRE_BYTES over the wire, for getContext
+    // AND answerChat -- the worst case was proven at service level only.
+    for (const method of ["getContext", "answerChat"]) {
+      test(`${label}: ${method} excluded-list overflow is bounded, partial and counted`, async () => {
+        const payload = { ...request(OVERFLOW_MAIN, 50), ...(method === "answerChat" ? { question: "what happened?" } : {}) };
+        const result = (await via(payload, method)) as Result & { answer?: string };
+        if (method === "answerChat") expect(result.answer).toBe("stub answer");
+        expect(result.coverage).toBe("partial");
+        expect(utf8(result.excluded)).toBeLessThanOrEqual(MAX_CONTEXT_WIRE_BYTES);
+        expect(result.excluded_omitted).toBeGreaterThan(0);
+        for (const entry of result.excluded) {
+          expect(entry.reason).toBe("budget_exceeded");
+          expect(typeof entry.session_name).toBe("string");
+          expect(typeof entry.public_id).toBe("string");
+        }
+        // 5 sessions x 51 candidates, 50 used: every other one is listed or
+        // counted as omitted, over the wire exactly as in-process.
+        expect(result.excluded.length + result.excluded_omitted).toBe(5 * 51 - 50);
+        expect(result.excluded).toEqual(scenario("overflow").excluded);
+        expect(result.excluded_omitted).toBe(scenario("overflow").excluded_omitted);
+        expectSameItems(result, scenario("overflow"));
+      });
+
+      test(`${label}: ${method} mixed overflow keeps the aggregate and link bound first`, async () => {
+        const payload = { ...request(MIXED_MAIN, 50), ...(method === "answerChat" ? { question: "what happened?" } : {}) };
+        const result = (await via(payload, method)) as Result & { answer?: string };
+        if (method === "answerChat") expect(result.answer).toBe("stub answer");
+        expectMixedOverflow(result);
+        expect(result.excluded).toEqual(scenario("mixed").excluded);
+        expect(result.excluded_omitted).toBe(scenario("mixed").excluded_omitted);
+        expectSameItems(result, scenario("mixed"));
+      });
+    }
 
     test(`${label}: count truncation is partial with identifiers`, async () => {
       const result = await via(request("count-main", 2));
