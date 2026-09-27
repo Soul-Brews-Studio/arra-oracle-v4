@@ -27,6 +27,7 @@ import { auditErrorText } from "./service.auditErrorText";
 import { auditedHttpCall } from "./service.auditedHttpCall";
 import { searchAnswer } from "./service.searchAnswer";
 import { AuthDenied, type AuthFailure } from "./service.AuthDenied";
+import { withInstanceAudit } from "./service.withInstanceAudit";
 import type { HttpAudit, McpEnvelope, McpResult, StoreDependencies, TextSearchResult, ToolOperations } from "./service.types";
 
 export type { HttpAudit, McpEnvelope, McpResult, StoreDependencies, TextSearchResult, ToolOperations } from "./service.types";
@@ -71,6 +72,7 @@ function contextFrom(admission: Admission): RequestContext {
   );
   return handle;
 }
+const principalOf = (c: RequestContext) => ({ principalId: CONTEXTS.get(c as object)?.principalId ?? null }); // #31 D4b
 
 /** Reject anything this module did not mint, then require the exact action. */
 function recordFor(
@@ -136,6 +138,8 @@ export function createOperationService(
   deps: StoreDependencies,
   clock: Clock = Date.now,
 ) {
+  // #31 D4b: a no-op when the caller wired no real sink (`service.types.ts` field doc).
+  const logInstanceAudit = deps.logInstanceAudit ?? (async () => {});
   const snapshot = (): Policy => {
     try {
       return loadPolicy(config.policyPath);
@@ -299,28 +303,23 @@ export function createOperationService(
       });
     },
 
-    /**
-     * Admit the global grant FIRST, then run `beforeMutate`, then mutate.
-     *
-     * `beforeMutate` is where the route applies its bounded encoding/body
-     * rules. Ordering matters twice over: an unadmitted caller's body is never
-     * read, and an admitted caller still cannot skip the transport caps just
-     * because the grant is global.
-     */
     async backfill(
       authorization: string | null,
       batch: number,
       beforeMutate: () => Promise<void> = async () => {},
     ) {
-      admitGlobal(authorization, "maintenance:backfill");
-      await beforeMutate();
-      return deps.backfill(batch);
+      const admit = () => principalOf(admitGlobal(authorization, "maintenance:backfill"));
+      const mutate = async () => (await beforeMutate(), deps.backfill(batch));
+      return withInstanceAudit(logInstanceAudit, "/api/backfill", "maintenance:backfill", { batch }, admit, mutate);
     },
 
     async reindex(authorization: string | null, beforeMutate: () => Promise<void> = async () => {}) {
-      admitGlobal(authorization, "maintenance:reindex");
-      await beforeMutate();
-      return deps.ensureFtsIndex(true);
+      const admit = () => principalOf(admitGlobal(authorization, "maintenance:reindex"));
+      const mutate = async () => {
+        await beforeMutate();
+        return deps.ensureFtsIndex(true);
+      };
+      return withInstanceAudit(logInstanceAudit, "/api/reindex", "maintenance:reindex", {}, admit, mutate);
     },
 
     /**

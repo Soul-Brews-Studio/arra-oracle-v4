@@ -247,7 +247,22 @@ async function readOperationsTables() {
     const all = await (await db.openTable(name)).query().toArray();
     return all.map((row) => ({ workspace_name: row.workspace_name, tool: row.tool ?? row.last_tool ?? null, status: row.status ?? null }));
   };
-  return { mcp_calls: await rows("mcp_calls"), connections: await rows("connections") };
+  // #31 maint-audit D4b: instance_audit is a SEPARATE table this same
+  // unscoped connection can read; it does not exist until the first
+  // maintenance call writes it, so an absent table reads as no rows rather
+  // than an error.
+  const names = await db.tableNames();
+  const instanceAudit = names.includes("instance_audit")
+    ? (await (await db.openTable("instance_audit")).query().toArray()).map((row) => ({
+        route: row.route,
+        action: row.action,
+        outcome: row.outcome,
+        status: row.status,
+        principal_id: row.principal_id,
+        input_summary: row.input_summary,
+      }))
+    : [];
+  return { mcp_calls: await rows("mcp_calls"), connections: await rows("connections"), instance_audit: instanceAudit };
 }
 
 const outcomes: Record<string, unknown> = { tokens: { ...TOKENS, bogus: UNADMITTED.bogus }, userAgent: USER_AGENT };

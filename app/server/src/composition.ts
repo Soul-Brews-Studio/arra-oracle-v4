@@ -174,6 +174,19 @@ export async function composeAuditSink(): Promise<StoreDependencies["logCall"]> 
 }
 
 /**
+ * #31 maint-audit D4b: the separate instance-level sink for the two global
+ * maintenance routes, wired ONLY here -- see `logInstanceAudit`'s field doc
+ * on `StoreDependencies` for why no test fixture supplies this.
+ */
+export async function composeInstanceAuditSink(): Promise<NonNullable<StoreDependencies["logInstanceAudit"]>> {
+  const { appendInstanceAuditRow } = await import("./audit/instanceAudit.appendInstanceAuditRow");
+  return (record) =>
+    appendInstanceAuditRow(
+      record as unknown as Parameters<typeof appendInstanceAuditRow>[0],
+    );
+}
+
+/**
  * Build the operation service over the real store/embedder/audit modules.
  *
  * These are imported lazily and deliberately: adapters never see these handles,
@@ -197,6 +210,11 @@ export async function composeService(config: RuntimeConfig): Promise<OperationSe
     recentCalls: (bank, limit, status) => calls.recent(bank, limit, status),
     aggregateCalls: (bank) => calls.aggregate(bank),
     logCall: await composeAuditSink(),
+    // #31 maint-audit D4b: the SEPARATE instance-level sink for the two
+    // global maintenance routes -- only wired here, in the real composition,
+    // never touched by a test's stub `StoreDependencies` (`service.types.ts`
+    // field doc has the regression this avoided).
+    logInstanceAudit: await composeInstanceAuditSink(),
   };
 
   return createOperationService({ policyPath: config.policyPath, v3Compat: config.v3Compat === true }, deps);

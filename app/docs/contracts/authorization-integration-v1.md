@@ -533,3 +533,59 @@ nesting, `1e308`, `-0` and an integer past 2^53, and checks that the
 `POST /api/memories` handler has no swallowing `catch`.
 `app/ui/v2/src/overview/OverviewView.auditCopy.test.ts` was red before the fix
 (`not logged here` in the hint and the bundle).
+
+## Amendment 2026-09-26 (post-merge Nat 2026-09-28 NAT-DECISIONS D4b: a separate instance-level audit log for /api/backfill and /api/reindex)
+
+**Change.** The round-4 "Open for a human" note above is now RULED: Nat's D4b
+(`docs/overnight/DECISIONS.md`) closes the gap with a **separate
+instance-level audit log**, outside `mcp_calls`/`connections` and outside any
+workspace dataset — not the sentinel-workspace option those tables' schema
+would have forced, and not an R5 amendment accepting the gap.
+
+- **What it is.** A dedicated Lance table, `instance_audit`, at the same
+  server data root (`ARRA_DATA_DIR`) `mcp_calls` already lives at, opened the
+  same way (`audit/instanceAudit.openInstanceAuditTable.ts`, mirroring
+  `mcp/calls.openCallLogTable.ts`) — a table, not a JSONL file, because that
+  is this codebase's existing idiom for an append-only server-root log, and
+  introducing a second storage mechanism for one sink was not worth it.
+- **What it records**, one row per call, admit or refuse:
+  `principal_id` (null on refusal — no admission ran), `route`, `action`,
+  `outcome` (`"admitted" | "refused"`), `status` (`"ok" | "error"`),
+  `input_summary` (redacted and truncated with the SAME `redact`/`truncate`
+  `mcp/calls.ts` uses for `mcp_calls` — R5 — reused, not re-derived),
+  `started_at`/`finished_at`/`duration_ms`, and `request_id`.
+- **`mcp_calls` and `connections` are UNCHANGED.** No sentinel workspace, no
+  schema edit to either NOT NULL `workspace_name` column.
+  `transport-audit-maintenance.test.ts` still passes unmodified: it asserts no
+  maintenance row in either tenant table, and that stays true — the new row
+  lands in `instance_audit` only.
+- **Failure is not silent.** A write failure to `instance_audit` never throws
+  back into the route (an audit outage must not block a maintenance action
+  that already succeeded or was already refused), but it is not swallowed
+  invisibly either: `instanceAuditFailureCount()` is an observable counter,
+  the same pattern `mcp/calls.ts`'s own `auditFailureCount()` already uses for
+  the tenant log's write failures.
+- **Read access.** No new HTTP/MCP route reads `instance_audit` in this
+  slice — it has no existing `audit:read`-shaped admission to reuse (that
+  scope is workspace-scoped; this sink is not), and building a new global
+  read scope was out of this slice's time box. Today it is operator-readable
+  only in the sense that `mcp_calls` itself is: direct access to the data
+  root. Documented here as an open follow-up, not silently deferred.
+- **Where it is wired.** `auth/service.ts`'s `backfill`/`reindex` now wrap
+  their existing `admitGlobal` + mutate sequence in
+  `auth/service.withInstanceAudit.ts`: admission runs first and either
+  returns the principal or throws (a refused row, no principal), then the
+  route body runs and writes an admitted row whether it then succeeds or
+  throws. The `app.ts` backfill route comment no longer says the gap is "open
+  for a human" — it says the row exists and where.
+
+Tests. `app/server/test/transport-audit-instance.test.ts` is new: both routes
+write exactly one `instance_audit` row per admitted call (success AND an
+admitted failure) and per refused call; a row never lands in `mcp_calls` or
+`connections` (delegates to the same unscoped-table-read fixture pattern as
+`transport-audit-maintenance.test.ts`); redaction is applied to the recorded
+input; and a forced `instance_audit` write failure leaves
+`instanceAuditFailureCount()` incremented rather than failing the route or the
+caller. `app/server/test/transport-audit-maintenance-open.test.ts` was updated
+in the same commit: the round-4 note it pinned is now superseded by this
+section, not by a silent edit to that note's own text.

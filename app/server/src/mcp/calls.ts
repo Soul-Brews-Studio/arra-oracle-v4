@@ -38,7 +38,11 @@ const wireTime = (value: bigint | number) => {
 
 const jsonSafe = (_key: string, value: unknown) => typeof value === "bigint" ? safeInteger(value) : value;
 
-function redact(value: unknown, seen = new WeakSet<object>()): unknown {
+// Exported for `../audit/instanceAudit.appendInstanceAuditRow.ts` (#31
+// maint-audit): the instance-level audit sink applies the SAME redaction
+// rules (R5) rather than re-deriving the secret-key/pattern lists, which
+// would drift.
+export function redact(value: unknown, seen = new WeakSet<object>()): unknown {
   if (typeof value === "string") {
     return value
       .replace(ASSIGNED_SECRET, "$1=[REDACTED]")
@@ -53,7 +57,7 @@ function redact(value: unknown, seen = new WeakSet<object>()): unknown {
   );
 }
 
-const truncate = (v: unknown): string => {
+export const truncate = (v: unknown): string => {
   const safe = redact(v);
   const encoded = typeof safe === "string" ? safe : JSON.stringify(safe ?? null, jsonSafe);
   const s = encoded ?? String(safe);
