@@ -16,7 +16,6 @@ from datetime import datetime
 from pathlib import Path
 
 import lancedb
-
 from arra_migrate.honcho_roundtrip.dump import (
     FEDERATION_PEER_NAME,
     WORKSPACE_NAME,

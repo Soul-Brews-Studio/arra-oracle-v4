@@ -35,7 +35,6 @@ import unittest
 from pathlib import Path
 
 import lancedb
-
 from arra_migrate.target_v1 import TARGET_TABLE_NAMES, TARGET_TABLES
 from arra_migrate.target_v1.schema import describe_schema
 from arra_migrate.writer_gate import writer_gate
@@ -50,7 +49,8 @@ GOLDEN = json.loads(
 
 sys.path.insert(0, str(TESTS_DIR))
 
-from export_publication_fixture import (
+# Imported after sys.path is extended above, which is why it is not at the top.
+from export_publication_fixture import (  # noqa: E402
     SEED_INSTANT,
     FixtureRefusedError,
     all_table_names,

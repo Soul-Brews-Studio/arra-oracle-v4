@@ -41,7 +41,6 @@ from pathlib import Path
 from typing import Any
 
 import lancedb
-
 from arra_migrate.models import TABLES
 
 LAB = "oracle-lab"

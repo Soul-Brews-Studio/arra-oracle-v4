@@ -25,7 +25,7 @@ from typing import Any
 
 from arra_migrate.honcho_roundtrip.bundle import export_from_honcho, export_to_honcho
 from arra_migrate.honcho_roundtrip.diff import diff_against_input, honcho_to_bundle
-from arra_migrate.honcho_roundtrip.dump import build_spec_15_5_bank, WORKSPACE_NAME
+from arra_migrate.honcho_roundtrip.dump import WORKSPACE_NAME, build_spec_15_5_bank
 from arra_migrate.honcho_roundtrip.target import FakeHonchoTarget
 
 SESSION_NAMES = ["session-one", "session-two"]

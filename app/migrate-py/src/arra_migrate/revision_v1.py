@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from .contract_batch_frame import (
+    _MALFORMED_OUTPUT,
     BATCH_VERSION,
     DEFAULT_WORKER_CWD,
     DEFAULT_WORKER_SCRIPT,
@@ -44,7 +45,6 @@ from .contract_batch_frame import (
     BatchResult,
     ContractError,
     WorkerConfig,
-    _MALFORMED_OUTPUT,
     _is_nanoid21,
     _json_equal,
     _max_json_depth,

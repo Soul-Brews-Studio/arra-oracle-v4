@@ -41,7 +41,6 @@ import sys
 from datetime import datetime, timezone
 
 import lancedb
-
 from arra_migrate.target_v1 import TARGET_TABLE_NAMES, TARGET_TABLES
 from arra_migrate.writer_gate import writer_gate
 

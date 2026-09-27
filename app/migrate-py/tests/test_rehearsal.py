@@ -134,8 +134,6 @@ class ValueLevelVerificationTests(unittest.TestCase):
         source_db, source_rows = build_source(root)
         report, target_db = migrate(_ReadOnlySource(source_db), source_rows, root)
         # Overwrite messages with a corrupted row count staying identical.
-        model = target_db.open_table("messages").schema
-        import pyarrow as pa  # local import: only this test needs it
         target_db.drop_table("messages")
         rows = source_db.open_table("messages").to_arrow().to_pylist()
         rows[0]["content"] = "CORRUPTED"

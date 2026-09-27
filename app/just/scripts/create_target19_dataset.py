@@ -37,7 +37,6 @@ import sys
 from datetime import datetime, timezone
 
 import lancedb
-
 from arra_migrate.target_v1 import TARGET_TABLES
 
 MICROS_PER_MILLI = 1000

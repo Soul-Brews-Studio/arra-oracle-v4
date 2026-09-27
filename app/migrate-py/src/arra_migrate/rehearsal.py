@@ -64,17 +64,14 @@ from __future__ import annotations
 import shutil
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 import lancedb
 import numpy as np
-import pyarrow as pa
 
 from .models import TABLES as ACTIVE_TABLES
-from .target_v1 import TARGET_TABLE_NAMES, TARGET_TABLES
-from .target_v1.schema import describe_schema
 
 # ---------------------------------------------------------------------------
 # Deterministic fixture data, split out to `rehearsal_fixtures.py` for the
@@ -82,9 +79,9 @@ from .target_v1.schema import describe_schema
 # anywhere in it -- a rehearsal that produces different ids on every run
 # cannot prove idempotency by comparing two runs' output.
 # ---------------------------------------------------------------------------
-
 from .rehearsal_fixtures import MICROS_VALUE, MS_VALUE, T0, _source_rows
-
+from .target_v1 import TARGET_TABLE_NAMES, TARGET_TABLES
+from .target_v1.schema import describe_schema
 
 NOT_EXERCISED_NEVER_WRITTEN = ("session_links", "trace_hits", "search_chunks_v1", "read_cursors")
 NOT_EXERCISED_OUT_OF_SCOPE = ("nodes", "node_revisions", "node_revision_terms", "revision_links")

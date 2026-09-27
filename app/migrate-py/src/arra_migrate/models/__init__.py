@@ -24,21 +24,36 @@ a schema the spec never agreed, so they stay absent until specced -- their
 absence here IS the open issue, visible rather than papered over.
 """
 
-from .connection import TABLE as CONNECTIONS, Connection
-from .mcp_call import TABLE as MCP_CALLS, McpCall
-from .memory import TABLE as MEMORIES, Memory
-from .memory_term import TABLE as MEMORY_TERMS, MemoryTerm
-from .message import TABLE as MESSAGES, Message
-from .peer import TABLE as PEERS, Peer
-from .read_cursor import TABLE as READ_CURSORS, ReadCursor
-from .session import TABLE as SESSIONS, Session
-from .session_peer import TABLE as SESSION_PEERS, SessionPeer
-from .supersede_log import TABLE as SUPERSEDE_LOG, SupersedeLog
-from .term import TABLE as TERMS, Term
-from .trace import TABLE as TRACES, Trace
-from .trace_hit import TABLE as TRACE_HITS, TraceHit
-from .vocabulary import TABLE as VOCABULARIES, Vocabulary
-from .workspace import TABLE as WORKSPACES, Workspace
+from .connection import TABLE as CONNECTIONS
+from .connection import Connection
+from .mcp_call import TABLE as MCP_CALLS
+from .mcp_call import McpCall
+from .memory import TABLE as MEMORIES
+from .memory import Memory
+from .memory_term import TABLE as MEMORY_TERMS
+from .memory_term import MemoryTerm
+from .message import TABLE as MESSAGES
+from .message import Message
+from .peer import TABLE as PEERS
+from .peer import Peer
+from .read_cursor import TABLE as READ_CURSORS
+from .read_cursor import ReadCursor
+from .session import TABLE as SESSIONS
+from .session import Session
+from .session_peer import TABLE as SESSION_PEERS
+from .session_peer import SessionPeer
+from .supersede_log import TABLE as SUPERSEDE_LOG
+from .supersede_log import SupersedeLog
+from .term import TABLE as TERMS
+from .term import Term
+from .trace import TABLE as TRACES
+from .trace import Trace
+from .trace_hit import TABLE as TRACE_HITS
+from .trace_hit import TraceHit
+from .vocabulary import TABLE as VOCABULARIES
+from .vocabulary import Vocabulary
+from .workspace import TABLE as WORKSPACES
+from .workspace import Workspace
 
 # tier 1 -- Honcho's five, byte-compatible, additions nullable only (§15)
 TIER_1 = {

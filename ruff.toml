@@ -1,0 +1,30 @@
+# Ruff config for arra-oracle-v4's Python surfaces: app/migrate-py (src +
+# tests) and app/just/scripts. Lives at repo root (not app/migrate-py/
+# pyproject.toml) because it has to cover both, and they are not nested.
+#
+# Why this file exists: docs/overnight/DECISIONS.md R13 promised Python lint
+# in CI and it was never added; the 2026-09-27 acceptance-criteria audit
+# (.tmp/AC-MATRIX.md, issues #34 and #75) found none. This is the ac-lint
+# slice's fix. See .github/workflows/ci.yml for the step that runs this.
+target-version = "py312"
+line-length = 88
+
+[lint]
+# E/F = pycodestyle errors + pyflakes: real defects (unused imports/vars,
+# undefined names). I = isort: import order/grouping. Deliberately not "ALL":
+# meaningful (it catches real bugs, and every hit below was a real one) but
+# honest for a codebase with no prior lint history and no ruff-format pass
+# ever run.
+select = ["E", "F", "I"]
+ignore = [
+    # E501 (line-too-long): measured 1243 hits across these paths before this
+    # config existed, almost entirely long literals (JSON/table fixtures),
+    # long docstring/comment lines and long single-assertion test lines, not
+    # accidental overflow. Ruff's own built-in default select does not
+    # include E501 either. Enforcing it now would mean a purely cosmetic,
+    # repo-wide reformat with no correctness benefit, and it would collide
+    # with every other slice's diff landing tonight. Every real defect this
+    # config can catch (F401/F841, I001) was measured and fixed in the same
+    # change that added this file, not blanket-ignored.
+    "E501",
+]
