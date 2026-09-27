@@ -669,9 +669,41 @@ create won, and the rest threw `already exists`, which
 write. Reproduced standalone (4 concurrent first writes on a fresh
 `ARRA_DATA_DIR` landed 1 row, 3 failures) and pinned by a new isolated
 subprocess test in `transport-audit-instance.test.ts` ("N concurrent
-first writes on a fresh, never-written instance all land"). **Fix:**
-`createEmptyTable` is now called with `{ mode: "create", existOk: true
-}` — LanceDB's own idiom for an idempotent create, already documented on
-`CreateTableOptions` — so every concurrent creator resolves to the same
-table instead of losing its row. No new schema drift: the explicit
-Arrow schema from fix-round 2 is unchanged.
+first writes on a fresh, never-written instance all land"). **Fix (as
+first written this round):** `createEmptyTable` was called with `{ mode:
+"create", existOk: true }` on the theory that LanceDB's `existOk` create
+is idempotent. No new schema drift: the explicit Arrow schema from
+fix-round 2 was unchanged.
+
+## Amendment 2026-09-28b (post-merge Nat 2026-09-28 NAT-DECISIONS D4b (R25), fix round 3 continued: `existOk` alone does not close the create race)
+
+An independent verifier refuted the `existOk: true` fix above: LanceDB's
+`existOk` create is **not** atomic. When two concurrent callers both find
+the table missing, both issue a create; one commits an ordinary Create,
+the other commits as an **Overwrite** (version 2), and every Append
+already in flight against the pre-overwrite table then fails with
+`Incompatible transaction: ... Append ... incompatible with concurrent
+transaction Overwrite`. `appendInstanceAuditRow`'s catch counts that as a
+dropped row — the same loss class this fix round exists to close, one
+interleaving deeper. The verifier reproduced this reliably once N >= 6
+concurrent first writes (N=4, the prior test's count, happened to pass
+even on the broken code).
+
+**Fix:** `openInstanceAuditTable.ts` now memoizes a single in-flight
+"open-or-create" `Promise<Table>` per process (`tablePromise`). Every
+concurrent caller in the same process awaits the *same* promise instead
+of each issuing its own `createEmptyTable` call, so only one create is
+ever attempted while a create is outstanding; once resolved, later calls
+reuse the resolved handle. A rejected attempt clears the memo so a
+subsequent call can retry rather than being stuck on a dead promise.
+`existOk: true` is kept on the single call as a defense for the
+cross-process case (a second server process starting against an
+already-created table), but the in-process race is now closed by
+serialization, not by `existOk` alone.
+
+Pinned by `transport-audit-instance.test.ts`'s race test, widened from N=4
+(passed on the broken code) to N=16 over 3 repetitions — this is what the
+verifier's evidence showed as the threshold where the drop became
+reliable. This amendment corrects the prior one's claim that "every
+concurrent creator resolves to the same table instead of losing its row"
+under `existOk` alone; that claim was false for N>=6 and is retracted.

@@ -51,15 +51,32 @@ const INSTANCE_AUDIT_SCHEMA = new Schema([
 
 let handle: Awaited<ReturnType<typeof connect>> | null = null;
 
+// Round 3, take two (verifier-confirmed): `existOk: true` alone does not
+// close the race. LanceDB's exist_ok create is NOT atomic -- when two
+// concurrent callers both find the table missing, both issue a create; one
+// commits an ordinary Create, the *other* commits as an Overwrite (version
+// 2), and every Append already in flight against the first version then
+// fails with "Incompatible transaction: ... Append ... incompatible with
+// concurrent transaction Overwrite". `appendInstanceAuditRow` catches that
+// and counts it as a dropped row -- exactly the loss this fix round exists
+// to close, just one interleaving deeper. The verifier reproduced this
+// reliably once N >= 6 concurrent first writes.
+//
+// The fix is to never let two callers in this process race the create at
+// all: memoize a SINGLE in-flight "open or create" promise per process, so
+// every concurrent caller awaits the same create instead of each starting
+// their own. Once resolved, later calls reuse the resolved handle directly
+// (no repeated table lookups). A failed attempt clears the memo so a later
+// call can retry rather than being stuck on a rejected promise forever.
+let tablePromise: Promise<Table> | null = null;
+
 export async function openInstanceAuditTable(): Promise<Table> {
-  handle ??= await connect(DATA_DIR, { storageOptions: storageOptions() });
-  // Round 3 (verifier-confirmed): the check-then-create above (`tableNames()`
-  // then `createEmptyTable`) let N concurrent first writes on a NEVER-written
-  // instance all observe "missing" and all race to create the table -- only
-  // one create wins, the rest threw "already exists", and
-  // `appendInstanceAuditRow` counted that as a dropped row. `existOk: true`
-  // makes the create itself idempotent (LanceDB's own idiom for this race,
-  // not a re-check-then-open loop), so every concurrent creator gets a handle
-  // to the SAME table instead of losing its row.
-  return handle.createEmptyTable(TABLE, INSTANCE_AUDIT_SCHEMA, { mode: "create", existOk: true });
+  tablePromise ??= (async () => {
+    handle ??= await connect(DATA_DIR, { storageOptions: storageOptions() });
+    return handle.createEmptyTable(TABLE, INSTANCE_AUDIT_SCHEMA, { mode: "create", existOk: true });
+  })().catch((error) => {
+    tablePromise = null;
+    throw error;
+  });
+  return tablePromise;
 }
