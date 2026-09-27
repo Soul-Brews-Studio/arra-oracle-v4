@@ -24,17 +24,22 @@ export function NodeHead({
   // node, so a keyboard user lands on what they opened instead of on <body>
   // (the NodeRail entry, search hit or correction form that had focus is
   // often gone by then). Only when focus is OUTSIDE <main> or lost: a user
-  // already working in this node's forms is never pulled away, and an
-  // in-place revise (same node) never moves focus at all.
+  // already working in this node's forms is never pulled away. A new head
+  // revision of the SAME node also takes focus, but only if it was lost --
+  // measured by the keyboard e2e: the publish form clears on submit, its
+  // button turns disabled under the focus, and focus fell to <body>.
   const h2Ref = useRef<HTMLHeadingElement>(null);
   const focusedFor = useRef<string | null>(null);
   const ready = !loading && error === null && revision !== null;
+  const revisionId = revision?.id ?? null;
   useEffect(() => {
-    if (!ready || focusedFor.current === node.node_id || h2Ref.current === null) return;
+    if (!ready || h2Ref.current === null) return;
+    const newNode = focusedFor.current !== node.node_id;
     focusedFor.current = node.node_id;
     const at = document.activeElement;
-    if (at === null || at === document.body || at.closest("main") === null) h2Ref.current.focus();
-  }, [ready, node.node_id]);
+    const lost = at === null || at === document.body;
+    if (lost || (newNode && at.closest("main") === null)) h2Ref.current.focus();
+  }, [ready, node.node_id, revisionId]);
 
   if (loading) {
     return <EmptyState title="loading…" detail={node.node_id} />;

@@ -12,6 +12,7 @@ import { appendFileSync, existsSync } from "node:fs";
 import { chain } from "./chain.mjs";
 import { harness } from "./harness.mjs";
 import { historicLabels } from "./historicLabels.mjs";
+import { keys } from "./keys.mjs";
 import { verify } from "./verify.mjs";
 
 export async function drive(configPath) {
@@ -43,10 +44,28 @@ export async function drive(configPath) {
       return `${cfg.origin}/v2/ (token set in localStorage, never in a URL)`;
     });
 
-    const ctx = {};
-    await chain(h, ctx);
-    await verify(h, ctx, cfg);
-    await historicLabels(h, ctx);
+    // `cfg.segment` (UI_E2E_SEGMENT): "all" (default) runs the form-driven
+    // chain and then the keyboard-only segment; "keys" runs only the latter
+    // (app/just/ui-e2e-keys.sh), "chain" only the former.
+    const segment = cfg.segment ?? "all";
+    if (segment !== "keys") {
+      const ctx = {};
+      await chain(h, ctx);
+      await verify(h, ctx, cfg);
+      await historicLabels(h, ctx);
+    }
+    if (segment !== "chain") {
+      // A fresh document, so the keyboard segment starts with focus on
+      // <body> rather than wherever the chain left it.
+      await h.step("keys-start", async () => {
+        await h.go("#/overview");
+        await page.reload({ waitUntil: "load", timeout: 30000 });
+        await h.ensureViewport();
+        await h.waitDom("app shell", () => document.querySelectorAll('[role="tab"]').length >= 5 && document.activeElement === document.body);
+        return "#/overview reloaded, focus on <body>";
+      });
+      await keys(h, cfg);
+    }
     h.say(`E2E_SUMMARY failures=${h.failures.length} screenshots=${h.shots.length}${h.failures.length ? ` failed=[${h.failures.join(",")}]` : ""}`);
     h.say("E2E_DRIVER_DONE");
   } catch (e) {
