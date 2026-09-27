@@ -1425,3 +1425,78 @@ names is still described correctly; only its provenance is corrected here.
 **Reverse by**: nothing to reverse -- this section changes no code and no test, only the
 provenance of two citations in §22's prose. §22 itself, and the fix it documents, stand as
 shipped.
+
+## 24. Amendment 2026-09-27 (chain-coverage slice: the three non-blocking findings the v3-coverage
+verifier left open)
+
+Source: `docs/overnight/DECISIONS.md` R21/R22, issue `Soul-Brews-Studio/arra-oracle-v4#31`,
+and `.tmp/v3-coverage-w10-accept-nonblocking.txt` (untracked, a different worktree; cited the
+same way §23.2 discloses its own out-of-repo citations). §22 shipped the three #30 coverage
+fields for `oracle_search`/`oracle_ask` and said plainly, in its own "1 · The fix": *"`oracle_search_chain`
+is unchanged: it calls `searchKnowledgeSemantic` directly, never through `retrieve()`/`recall()`,
+and was outside the cited finding's scope."* That gap, and two test-strength gaps beside it, are
+closed here.
+
+### 1 · `oracle_search_chain` now carries coverage too, AGGREGATED across hops
+
+`oracle_search_chain.ts:75` read `searchKnowledgeSemantic`'s per-hop answer as only `{ hits }`
+and dropped `coverage`/`coverage_reason`/`candidate_ceiling` on every hop -- the same shape of
+gap §22 fixed for `retrieve()`, in the one v3 recall tool that does not go through it.
+
+- **Choice: aggregated, not per-hop.** `oracle_search_chain` tracks one running bit across every
+  hop's own `searchKnowledgeSemantic` call: `"partial"` the moment ANY hop's candidate read
+  saturated, exposed once as a `compat_warnings` entry (`{code:"partial", field:"hops.coverage"}`)
+  after the loop -- the same OR shape `retrieve()` already uses to fold several fts terms into one
+  `coverage` bit (§22.1). A per-hop field on the `Hop` record was considered and rejected: `Hop` is
+  a small, already-pinned public shape (`mcp-v3-search.test.ts`'s `chain` test asserts it with
+  `toMatchObject`), and `compat_warnings` is already this adapter's one channel for "the kernel
+  measured something that changed the answer's completeness" -- the same reasoning §22.1 gives for
+  putting `oracle_search`'s signal there instead of a new top-level key. The aggregated bit still
+  answers the question v3 clients actually ask ("can I trust this chain completely?"); a caller
+  that needs to know WHICH hop saturated does not exist among v3's own callers today, and can be
+  added additively later without breaking this shape.
+- The type `search.retrieve.ts` already declared locally for A1 (no adapter import from
+  `publication/*`) is now `export`ed as `KernelCoverage` so `oracle_search_chain.ts` shares it
+  rather than retyping the same three fields a third time.
+
+### 2 · The negative case is now pinned for all three v3 recall tools
+
+Nothing tested that a `"full"` answer produces NO coverage warning. The verifier proved this live:
+mutating `search.retrieve.ts`'s `const partial = answers.some(...)` to `const partial = true` left
+`bun run test:mcp`'s 307 tests green. Fixed by adding, for `oracle_search`, `oracle_ask` and
+`oracle_search_chain` alike:
+  - a real-wire negative pin in `mcp-v3-search.test.ts` (the gated dataset never reaches the real
+    4096 ceiling, so `s_apfs`, `ask_false` and `chain` must each carry NO `partial` warning on
+    their respective coverage field); and
+  - a stub-`kb` negative pin in `mcp-v3-search-wiring.test.ts`, plus a direct `retrieve()` pin,
+    each constructing a `coverage:"full"` kernel answer and asserting no warning surfaces.
+
+### 3 · A compile-time tie between the adapter's local type and the kernel's own
+
+Nothing tied `search.retrieve.ts`'s local `KernelCoverage` to
+`publication/search-chunk.coverageSignal.ts`'s `CoverageSignal` at compile time: every v3 test
+stubs `kb` with hand-written field names, so a kernel rename would leave every stub matching
+itself and every warning silently stop firing with the whole suite green. A1 (V3-PARITY.md §3,
+"no import from `publication/*`") binds the ADAPTER's own source, not a test file, so
+`search-chunk-coverage-tie.test.ts` (new) imports both types directly: a compile-time mutual
+`AssertAssignable` check (fails `bun run typecheck` if either type stops matching the other), plus
+a runtime assertion that a real `coverageSignal()` call has exactly the three keys
+`KernelCoverage` expects, at both its `"full"` and `"partial"` shapes.
+
+### Proof
+
+`search.retrieve.ts` and `search-chunk-coverage-tie.test.ts` need no store at all (pure types and
+a pure function); `oracle_search_chain.ts`'s new aggregation is proven against a stub `kb`
+(`mcp-v3-search-wiring.test.ts`) and against the real gate, real dataset, real embedder stub
+(`mcp-v3-search.test.ts`'s existing `chain` step, which already ran hops with distinct real
+kernel answers). `bun run test:mcp` (313 pass / 0 fail, including `mcp-v3-acceptance.test.ts`'s
+37/37 steps), `bun run test:search-chunk` (157 pass / 0 fail across 22 files, including the new
+tie test) and `bun run typecheck` are all green after this section; the Python architecture guard
+(`app/migrate-py` `unittest discover`) is unaffected -- no new TS source file under
+`app/server/src` imports the publication kernel (the tie test lives under `app/server/test`,
+outside `test_no_active_server_source_imports_the_publication_kernel`'s `TS_ROOT` scan).
+
+**Reverse by**: dropping the `hops.coverage` push and the `KernelCoverage` export in
+`oracle_search_chain.ts`/`search.retrieve.ts` (nothing else depends on them), and deleting
+`search-chunk-coverage-tie.test.ts`; the negative-pin assertions are additive lines inside
+existing tests and can be deleted individually without affecting anything else they assert.
