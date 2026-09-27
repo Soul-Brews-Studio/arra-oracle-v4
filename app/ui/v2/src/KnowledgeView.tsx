@@ -8,7 +8,7 @@ import { LifecycleBanner } from "./components/LifecycleBanner";
 import { NodeHead } from "./components/NodeHead";
 import { NodeRail } from "./components/NodeRail";
 import { NodeWritePanel } from "./components/NodeWritePanel";
-import { RevisionDiff } from "./components/RevisionDiff";
+import { RevisionDiffPicker } from "./components/RevisionDiffPicker";
 import { RevisionHistory } from "./components/RevisionHistory";
 import { TaxonomySetup } from "./components/TaxonomySetup";
 import { TermCloud } from "./components/TermCloud";
@@ -168,41 +168,13 @@ export function KnowledgeView({
               }}
             />
             {sortedHistory.length >= 2 && (
-              <div className="flex flex-col gap-2 border-t border-edge p-3">
-                <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
-                  <span className="uppercase tracking-wide">diff</span>
-                  <select
-                    value={diffFromId ?? ""}
-                    onChange={(e) => setDiffFromId(e.target.value)}
-                    aria-label="Diff from revision"
-                    className="rounded border border-edge bg-ink px-2 py-1 text-slate-100 outline-none focus:border-accent"
-                  >
-                    {sortedHistory.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        #{r.revision_no} — {r.title}
-                      </option>
-                    ))}
-                  </select>
-                  <span>vs</span>
-                  <select
-                    value={diffToId ?? ""}
-                    onChange={(e) => setDiffToId(e.target.value)}
-                    aria-label="Diff to revision"
-                    className="rounded border border-edge bg-ink px-2 py-1 text-slate-100 outline-none focus:border-accent"
-                  >
-                    {sortedHistory.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        #{r.revision_no} — {r.title}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                {diffFrom !== null && diffTo !== null && diffFrom.id !== diffTo.id ? (
-                  <RevisionDiff from={diffFrom} to={diffTo} />
-                ) : (
-                  <p className="text-[11px] text-muted">pick two different revisions to diff</p>
-                )}
-              </div>
+              <RevisionDiffPicker
+                revisions={sortedHistory}
+                from={diffFrom}
+                to={diffTo}
+                onFrom={setDiffFromId}
+                onTo={setDiffToId}
+              />
             )}
             <NodeWritePanel
               gate={gate}

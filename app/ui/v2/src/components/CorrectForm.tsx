@@ -76,13 +76,17 @@ export function CorrectForm({
         To change this node&apos;s own text, publish a revision instead.
       </p>
       {disabled && disabledReason && <p className="text-xs text-muted">{disabledReason}</p>}
-      <label className="flex items-center justify-between gap-2 text-[11px] text-muted">
+      {/* #33 AC2 round 4: a <select> is as wide as its longest option, and
+          these options carry revision titles -- one 114-char title made it
+          671px and scrolled the whole view sideways at 375px. `min-w-0
+          max-w-full` caps it at the row; the option text truncates instead. */}
+      <label className="flex min-w-0 items-center justify-between gap-2 text-[11px] text-muted">
         <span className="uppercase tracking-wide">corrects</span>
         <select
           aria-label="revision to correct"
           value={chosen?.id ?? ""}
           onChange={(e) => setRevisionId(e.target.value)}
-          className="rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-100"
+          className="min-w-0 max-w-full flex-1 rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-100"
         >
           {revisions.map((r) => (
             <option key={r.id} value={r.id}>

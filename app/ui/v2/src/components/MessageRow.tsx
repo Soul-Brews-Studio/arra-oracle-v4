@@ -28,7 +28,7 @@ export function MessageRow({
         highlighted ? "border-accent bg-accent/5" : "border-transparent"
       }`}
     >
-      <div className="flex flex-wrap items-baseline gap-2 text-[11px] text-muted">
+      <div className="flex min-w-0 flex-wrap items-baseline gap-2 text-[11px] text-muted [overflow-wrap:anywhere]">
         <span className="font-semibold text-slate-100">{message.peer_name}</span>
         {message.role && <span>{message.role}</span>}
         <span className="font-mono">#{message.seq_in_session}</span>
@@ -37,7 +37,10 @@ export function MessageRow({
       {isEmpty ? (
         <p className="mt-1 text-xs italic text-muted">(empty content)</p>
       ) : (
-        <p className="mt-1 whitespace-pre-wrap text-sm text-slate-100">{message.content}</p>
+        // #33 AC2 round 4: pre-wrap alone keeps an unbroken path (a file path,
+        // a URL) on one line; an 88-char one widened the transcript past a
+        // 375px screen. `anywhere` lets it break mid-token instead.
+        <p className="mt-1 whitespace-pre-wrap text-sm text-slate-100 [overflow-wrap:anywhere]">{message.content}</p>
       )}
     </div>
   );
