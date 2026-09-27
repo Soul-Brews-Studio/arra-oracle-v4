@@ -20,8 +20,34 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/app.createApp";
 import { AuthDenied, createOperationService, type McpEnvelope, type StoreDependencies } from "../src/auth/service.createOperationService";
-import { createMcpAdapter, dispatchTool } from "../src/mcp";
+import { configureKnowledgeAccess, createMcpAdapter, dispatchTool } from "../src/mcp";
 import { EXPIRES_AT, NOT_BEFORE, NOW_MS } from "./helpers/auth-fixture";
+import type { KnowledgeAccess } from "../src/knowledge/transport";
+
+/**
+ * D5a: `remember` now validates `type` against the taxonomy kernel, so the
+ * MCP describe block below needs SOME `KnowledgeAccess` wired -- this test's
+ * `deps` is a plain recording stub with no dataset behind it, and the claim
+ * under test here is the peer-binding precedence (#87/R3), not taxonomy.
+ * This fake always answers "note" is an active term of an existing `type`
+ * vocabulary, so every case's implicit/explicit `type: "note"` (nothing here
+ * asserts any other type) resolves exactly like a real seeded workspace.
+ */
+const fakeKnowledgeAccess: KnowledgeAccess = {
+  async getBundle() {
+    return {
+      taxonomy: {
+        async lookupVocabularyByName() {
+          return { id: "voc-type" };
+        },
+        async lookupTermByName(bytes: Uint8Array) {
+          const { name } = JSON.parse(new TextDecoder().decode(bytes)) as { name: string };
+          return name === "note" ? { id: "t-note", is_active: true } : null;
+        },
+      },
+    };
+  },
+} as unknown as KnowledgeAccess;
 
 const ORIGIN = "http://127.0.0.1:3939";
 const BANK = "alpha";
@@ -140,6 +166,9 @@ const remember = (args: Record<string, unknown>) => async (): Promise<McpEnvelop
 });
 
 describe("service: runMcp remember", () => {
+  beforeAll(() => configureKnowledgeAccess(fakeKnowledgeAccess));
+  afterAll(() => configureKnowledgeAccess(null));
+
   test("a bound grant's spoofed author is a refused, AUDITED tool call; nothing is stored", async () => {
     fresh();
     const result = await service().runMcp(bearer(TOKENS.bound), BANK, remember({ peer_name: "outsider" }), dispatchTool);
@@ -167,6 +196,9 @@ describe("service: runMcp remember", () => {
 });
 
 describe("live transports: real createApp over HTTP and MCP", () => {
+  beforeAll(() => configureKnowledgeAccess(fakeKnowledgeAccess));
+  afterAll(() => configureKnowledgeAccess(null));
+
   const app = () => {
     const svc = service();
     return createApp({ origin: ORIGIN }, svc, createMcpAdapter(svc));

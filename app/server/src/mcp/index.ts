@@ -13,12 +13,15 @@
  */
 
 import type { McpEnvelope, OperationService, ToolOperations } from "../auth/service.createOperationService";
+import { AuthDenied } from "../auth/service.AuthDenied";
+import { isBoundAuthor } from "../auth/service.isBoundAuthor";
 import { KNOWLEDGE_METHODS } from "../knowledge/registry";
 import type { KnowledgeAccess } from "../knowledge/transport";
 import { bodyScopeRefusal } from "../knowledge/transport.bodyScopeRefusal";
 import { payloadRefusal } from "../knowledge/transport.payloadRefusal";
 import { callKnowledgeMethod } from "./index.callKnowledgeMethod";
 import { V3_TOOL_NAMES, V3_TOOLS } from "./legacy-v3/catalogue";
+import { validateType } from "./remember.validateType";
 import { dispatchLegacyV3 } from "./legacy-v3/dispatchLegacyV3";
 import { SERVER_NAME, SERVER_VERSION, err, negotiate, ok, text } from "./protocol";
 import { TOOLS } from "./tools";
@@ -126,12 +129,23 @@ export async function dispatchTool(
   switch (name) {
     case "remember": {
       const content = requiredString(args, "content");
+      // #87 / R3 precedence, unchanged: the peer-binding refusal (`forbidden`)
+      // must still win over a taxonomy refusal, exactly as it wins over the
+      // store write `ops.insert` performs below -- so it is checked here
+      // FIRST, before the (possibly slower, kernel-reaching) taxonomy call.
+      // `ops.insert` re-checks it too; that second check is cheap and keeps
+      // this file from being the only place trusted with the rule.
+      const peerName = optionalString(args, "peer_name");
+      if (!isBoundAuthor({ peer_name: peerName }, ops.authority.peers)) throw new AuthDenied("forbidden");
+      // D5a: the same sealed `type` vocabulary a knowledge-transport publish
+      // enforces, now enforced here too (`remember.validateType.ts`).
+      const type = await validateType(knowledgeAccess, ops.bank, ops.authority, optionalString(args, "type"));
       const res = await ops.insert({
         name: optionalString(args, "name") ?? content.slice(0, 48).replace(/\s+/g, "-").toLowerCase(),
         content,
-        type: optionalString(args, "type"),
+        type,
         session_name: optionalString(args, "session_name"),
-        peer_name: optionalString(args, "peer_name"),
+        peer_name: peerName,
         subject_peer_name: optionalString(args, "subject_peer_name"),
       });
       return {

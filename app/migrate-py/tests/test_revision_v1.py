@@ -743,6 +743,14 @@ class IsolationTests(unittest.TestCase):
         #     EMBEDDING_MODEL fixed at import), because the registry refuses any
         #     other name; still no kernel call and no writer.
         TS_ROOT / "knowledge" / "transport.indexProfile.ts",
+        #   - mcp/remember.validateType (D5a, 2026-09-28): the legacy MCP
+        #     `remember` tool's `type` field now routes through the same
+        #     `type` vocabulary the knowledge transports enforce. It calls
+        #     the reviewed `callKnowledgeMethod` (never opens a writer or a
+        #     dataset itself) and imports only the kernel's PURE error class
+        #     (`failTaxonomy`/`TaxonomyError`) to carry the identical closed
+        #     envelope `kb_publishRevision` already refuses with.
+        TS_ROOT / "mcp" / "remember.validateType.ts",
     )
 
     def test_no_active_server_source_imports_the_publication_kernel(self):
