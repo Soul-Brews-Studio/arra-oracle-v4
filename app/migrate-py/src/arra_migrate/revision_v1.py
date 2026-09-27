@@ -33,17 +33,13 @@ from typing import Any
 
 from .contract_batch_frame import (
     BATCH_VERSION,
-    DEADLINE_SECONDS,
     DEFAULT_WORKER_CWD,
     DEFAULT_WORKER_SCRIPT,
     ERROR_CODES,
     ERROR_VERSION,
-    MAX_CORRELATION_ID_BYTES,
     MAX_DEPTH,
     MAX_DOCUMENT_BYTES,
-    MAX_ITEMS,
     MAX_TRANSPORT_BYTES,
-    OPS,
     BatchItem,
     BatchResult,
     ContractError,

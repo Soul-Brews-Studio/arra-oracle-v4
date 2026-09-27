@@ -614,12 +614,24 @@ class IsolationTests(unittest.TestCase):
     )
     RAW_DEPENDENCY_PATTERNS = ("./db", "../db", "./embed", "../embed", "./storage", "../storage", "./calls", "../mcp/calls")
 
+    #: The adapter is now TWO files: `revision_v1.py` plus the framing/error
+    #: types and worker-invocation shapes it imports from
+    #: `contract_batch_frame.py` (split 2026-09-27 for the 500-line cap,
+    #: py-split slice; app/docs/contracts/revision-evidence-v1.md amendment
+    #: 2026-09-26). Both are excluded from the scan below and both are held
+    #: to the same "no other file may mention it" and "no LanceDB/storage
+    #: import" checks -- this EXTENDS containment to the sibling module, it
+    #: does not narrow what the original single-file guard covered.
+    ADAPTER_UNIT = ("revision_v1.py", "contract_batch_frame.py")
+
     def test_no_active_python_path_imports_the_adapter(self):
-        scanned = [p for p in self.PY_ROOT.rglob("*.py") if p.name != "revision_v1.py"]
+        scanned = [p for p in self.PY_ROOT.rglob("*.py") if p.name not in self.ADAPTER_UNIT]
         self.assertGreaterEqual(len(scanned), 35, f"scan collapsed: {len(scanned)} modules")
         for path in scanned:
             with self.subTest(module=str(path.relative_to(self.PY_ROOT))):
-                self.assertNotIn("revision_v1", path.read_text(encoding="utf-8"))
+                text = path.read_text(encoding="utf-8")
+                for name in self.ADAPTER_UNIT:
+                    self.assertNotIn(Path(name).stem, text)
 
     def test_only_reviewed_modules_reuse_the_contract_helpers(self):
         contracts = self.TS_ROOT / "contracts"
@@ -943,9 +955,14 @@ class IsolationTests(unittest.TestCase):
                     self.assertEqual([], hits(probe.read_text(encoding="utf-8")))
 
     def test_the_adapter_itself_imports_no_lancedb_or_storage(self):
-        text = (self.PY_ROOT / "revision_v1.py").read_text(encoding="utf-8")
-        for forbidden in ("import lancedb", "from lancedb", "from .storage", "from .models", "from . import models", "from .embeddings"):
-            self.assertNotIn(forbidden, text)
+        # Both adapter-unit files (see ADAPTER_UNIT above), not revision_v1.py
+        # alone: contract_batch_frame.py holds framing/error code split out of
+        # revision_v1.py and is bound by the same contract clause.
+        for name in self.ADAPTER_UNIT:
+            text = (self.PY_ROOT / name).read_text(encoding="utf-8")
+            for forbidden in ("import lancedb", "from lancedb", "from .storage", "from .models", "from . import models", "from .embeddings"):
+                with self.subTest(module=name, pattern=forbidden):
+                    self.assertNotIn(forbidden, text)
 
 
 class FixtureAdapterTests(unittest.TestCase):

@@ -77,9 +77,10 @@ from .target_v1 import TARGET_TABLE_NAMES, TARGET_TABLES
 from .target_v1.schema import describe_schema
 
 # ---------------------------------------------------------------------------
-# Deterministic fixture data. No secrets.choice()/uuid4() anywhere below --
-# a rehearsal that produces different ids on every run cannot prove
-# idempotency by comparing two runs' output.
+# Deterministic fixture data, split out to `rehearsal_fixtures.py` for the
+# 500-line cap (py-split slice, 2026-09-27). No secrets.choice()/uuid4()
+# anywhere in it -- a rehearsal that produces different ids on every run
+# cannot prove idempotency by comparing two runs' output.
 # ---------------------------------------------------------------------------
 
 from .rehearsal_fixtures import MICROS_VALUE, MS_VALUE, T0, _source_rows
@@ -128,8 +129,6 @@ class RehearsalReport:
 # ---------------------------------------------------------------------------
 # Source construction
 # ---------------------------------------------------------------------------
-
-
 
 
 def build_source(root: Path) -> tuple[Any, dict[str, list[dict[str, Any]]]]:
