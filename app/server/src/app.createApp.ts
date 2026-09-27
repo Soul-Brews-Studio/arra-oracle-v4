@@ -26,6 +26,7 @@ import {
 import { AuthDenied, type McpEnvelope, type OperationService } from "./auth/service.createOperationService";
 import { searchAnswer } from "./auth/service.searchAnswer";
 import { decodeUtf8Strict, LIMITS, parseStrict } from "./contracts/jcs";
+import { plainBody } from "./app.plainBody";
 import { SERVER_NAME, SERVER_VERSION } from "./mcp/protocol";
 import { handshakeResponse, type createMcpAdapter } from "./mcp";
 import { handleKnowledgeRequest, type KnowledgeAccess } from "./knowledge/transport";
@@ -196,9 +197,7 @@ export function createApp(
               pending.rejection = 400;
               return null;
             }
-            const plain = JSON.parse(
-              JSON.stringify(parsed, (_k, v) => (v instanceof Map ? Object.fromEntries(v) : v)),
-            ) as Record<string, unknown>;
+            const plain = plainBody(parsed as Map<string, unknown>);
             const method = plain.method;
             if (typeof method !== "string") {
               pending.rejection = 400;
@@ -398,11 +397,9 @@ export function createApp(
         };
         // Audited as MCP `remember` (#31 legacy-audit): the body is its
         // arguments minus the scope carrier, which MCP refuses in arguments.
-        let input: Record<string, unknown> | undefined;
-        try {
-          input = JSON.parse(JSON.stringify(document, (_k, v) => (v instanceof Map ? Object.fromEntries(v) : v)));
-          delete input!.workspace_name;
-        } catch {}
+        // No fallback: `plainBody` cannot fail on a parsed body (#31 maint-audit).
+        const input = plainBody(document);
+        delete input.workspace_name;
         const http = { userAgent: request.headers.get("user-agent") ?? "", input };
         try {
           return noStore(await service.insertMemory(readAuthorization(request), workspace, buildRow, http), 201);
@@ -425,8 +422,10 @@ export function createApp(
         // A bank never scopes a global action; supplying one is a 400.
         if (bankParam(url) !== null) return errorResponse(400);
         const batch = positiveInt(url.searchParams.get("batch") ?? undefined, 32);
-        // Not audited (#31 legacy-audit): a global action has no MCP twin and
-        // no workspace for an `mcp_calls` row (`workspace_name` is non-null).
+        // Not in `mcp_calls` (no MCP twin, no workspace for that NOT NULL
+        // column) but NOT unaudited: `service.backfill` writes a row to the
+        // separate instance-level audit sink (Nat 2026-09-28 D4b,
+        // `authorization-integration-v1.md` amendment, #31 maint-audit).
         return guarded(() =>
           service.backfill(readAuthorization(request), batch ?? 32, async () => {
             // Non-scope parameter, checked only after the global admission.
