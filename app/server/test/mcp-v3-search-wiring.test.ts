@@ -27,6 +27,14 @@
 //     `search-chunk-retrieval-candidate-ceiling.test.ts` -- reached
 //     `oracle_search`/`oracle_ask` looking complete (issue #30 coverage
 //     amendment; verifier `.tmp/ac-search-accept-nonblocking.txt` finding 1).
+//
+// Second fix round (an independent re-verification refuted the round above's
+// contract claim, and flagged an untested branch):
+//  7. the OR semantics across fts terms -- `answers.some(...)`, a result is
+//     partial when ANY term's own candidate read saturated (§22.1,
+//     search-chunk-v1.md §21) -- had no test where terms disagreed; every
+//     prior case used one term. Mutating `.some` to `.every` at
+//     search.retrieve.ts's `partial` line left every existing test green.
 
 import { describe, expect, test } from "bun:test";
 import { KNOWLEDGE_METHODS, type KnowledgeBundle } from "../src/knowledge/registry";
@@ -269,6 +277,31 @@ describe("#30 coverage (search-chunk-v1.md §21) reaches oracle_search/oracle_as
     const retrieved = await retrieve(kb, "probe", "vector");
     expect(retrieved.saturated).toBe(false);
     expect(retrieved).toMatchObject({ coverage: "partial", coverageReason: "candidate_ceiling", candidateCeiling: 4096 });
+  });
+
+  test("a two-term fts query is partial when only ONE term's own read saturated (OR, not AND)", async () => {
+    // "alpha beta" becomes two terms (search.keywordTerms.ts). "alpha"'s own
+    // candidate read did not saturate; "beta"'s did. The v3 OR merge (v3's
+    // own semantics: an entry matches when ANY word does) means the answer
+    // still shows both hits, but `coverage` must say "partial" because SOME
+    // underlying read may have missed matches -- not "full" (a wrong AND)
+    // and not keyed to whichever term happened to run first or last.
+    const { retrieve } = await import("../src/mcp/legacy-v3/search.retrieve");
+    const fullTerm = { match: "ngram", scan_reason: null, coverage: "full" as const, coverage_reason: null, candidate_ceiling: 4096, hits: [kernelHit("A")] };
+    const partialTerm = { ...partialKeyword, hits: [kernelHit("B")] };
+    const calls: string[] = [];
+    const kb = async (method: string, payload: Record<string, unknown>) => {
+      calls.push(payload.query as string);
+      if (method !== "searchKnowledgeKeyword") throw new Error(`unexpected ${method}`);
+      return payload.query === "alpha" ? fullTerm : partialTerm;
+    };
+    const retrieved = await retrieve(kb, "alpha beta", "fts");
+    expect(calls).toEqual(["alpha", "beta"]);
+    expect(retrieved).toMatchObject({ coverage: "partial", coverageReason: "candidate_ceiling", candidateCeiling: 4096 });
+    // Which term is the partial one must not matter: this time the FIRST
+    // term's own read saturates and the second one's does not.
+    const swapped = await retrieve(async (method: string, payload: Record<string, unknown>) => (payload.query === "alpha" ? partialTerm : fullTerm), "alpha beta", "fts");
+    expect(swapped.coverage).toBe("partial");
   });
 
   test("oracle_search's compat_warnings say so even when its own 50-hit window looks complete", async () => {
