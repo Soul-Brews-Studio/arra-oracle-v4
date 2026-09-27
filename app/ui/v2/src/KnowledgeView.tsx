@@ -10,6 +10,7 @@ import { NodeRail } from "./components/NodeRail";
 import { NodeWritePanel } from "./components/NodeWritePanel";
 import { RevisionDiffPicker } from "./components/RevisionDiffPicker";
 import { RevisionHistory } from "./components/RevisionHistory";
+import { SearchFreshnessPanel } from "./components/SearchFreshnessPanel";
 import { TaxonomySetup } from "./components/TaxonomySetup";
 import { TermCloud } from "./components/TermCloud";
 import { TermCloudEmpty } from "./components/TermCloudEmpty";
@@ -19,6 +20,8 @@ import { lifecycleGate } from "./state/lifecycleGate";
 import { useCiteTargets } from "./state/useCiteTargets";
 import { useKnowledge } from "./state/useKnowledge";
 import { useNodeLifecycle } from "./state/useNodeLifecycle";
+import { searchFreshnessView } from "./state/searchFreshnessView";
+import { useSearchFreshness } from "./state/useSearchFreshness";
 import { writableHead } from "./state/writableHead";
 
 /** The knowledge half: nodes, immutable revisions, type and tags.
@@ -87,6 +90,9 @@ export function KnowledgeView({
   const gate = lifecycleGate(useNodeLifecycle(bank, k.selected, k.head?.revision?.id ?? null));
   const citeTargets = useCiteTargets(`${bank.bank}:${bank.workspace}`, k.head?.revision ?? null, sortedHistory);
   const writable = writableHead(k.selected, k.head?.revision ?? null, sortedHistory);
+  // #33 design revision 2 "render freshness": only for a head that belongs to
+  // the node on screen (the `writableHead` fence), never a draft.
+  const freshness = useSearchFreshness(bank, writable.head?.id ?? null);
 
   return (
     // #33 AC2 round 3: below `lg` this root is the ONE scroll container -- the
@@ -145,6 +151,9 @@ export function KnowledgeView({
               loading={k.loading}
               error={null}
             />
+            {writable.head !== null && (
+              <SearchFreshnessPanel view={searchFreshnessView(freshness.read)} onRecheck={freshness.recheck} />
+            )}
             <LifecycleBanner gate={gate} />
             <RevisionHistory
               // Newest first, matching this component's own documented

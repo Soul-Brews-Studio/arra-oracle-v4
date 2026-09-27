@@ -4,6 +4,8 @@ import { TypeBadge } from "./TypeBadge";
 import { HorizonBadge } from "./HorizonBadge";
 import { ErrorNote } from "./ErrorNote";
 import { EmptyState } from "./EmptyState";
+import { RevisionProvenance } from "./RevisionProvenance";
+import { RevisionRoles } from "./RevisionRoles";
 
 /** The accepted head of the selected node -- `getAcceptedHead`'s row,
  *  rendered. `node` only needs the id: this tier has no separate "node"
@@ -37,10 +39,6 @@ export function NodeHead({
   const terms = parseTerms(revision);
   const type = typeOf(terms);
   const horizon = horizonOf(terms);
-  // The row DOES carry content_digest -- sha256 over the canonical envelope.
-  // It is the thing that makes "same content" decidable without diffing two
-  // bodies, so it is worth the line even truncated.
-  const digest = `${revision.content_digest.slice(0, 12)}…`;
 
   // #33 AC2 round 3: `flex-none`, not its own scroller. As a nested
   // `flex-1 overflow-y-auto` inside KnowledgeView's scrolling `<main>` it
@@ -72,16 +70,16 @@ export function NodeHead({
         <p className="whitespace-pre-wrap text-xs text-slate-200 [overflow-wrap:anywhere]">{revision.body}</p>
       )}
 
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-1 border-t border-edge pt-2 text-[11px] text-muted">
-        <dt>revision</dt>
-        <dd className="text-slate-200">{revision.revision_no}</dd>
-        <dt>created</dt>
-        <dd className="text-slate-200">{revision.created_at}</dd>
-        <dt>active</dt>
-        <dd className="text-slate-200">{revision.is_active ? "yes" : "no"}</dd>
-        <dt>digest</dt>
-        <dd className="font-mono text-slate-200 [overflow-wrap:anywhere]">{digest}</dd>
-      </dl>
+      {/* #33 design revision 2: roles and provenance for the head itself,
+          not only inside a diff -- a lone head has no other place to say who
+          wrote it, whose view it is, who it is about, or where it came from. */}
+      <section aria-label="roles and provenance" className="flex flex-col gap-2 border-t border-edge pt-2">
+        <RevisionRoles revision={revision} />
+        <RevisionProvenance revision={revision} />
+        <p className="text-[11px] text-muted">
+          active: <span className="text-slate-200">{revision.is_active ? "yes" : "no"}</span>
+        </p>
+      </section>
     </div>
   );
 }
