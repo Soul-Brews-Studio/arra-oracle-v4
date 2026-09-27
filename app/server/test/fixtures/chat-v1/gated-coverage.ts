@@ -211,6 +211,37 @@ try {
     );
   }
   out.overflow = await context(overflowMain, 50);
+
+  // mixed (#85 fix round, 2026-09-27): overflow WITH both fixed entries. An
+  // anchor and 9 linked sessions, past MAX_LINKED_SESSIONS (8), so the link
+  // bound is reported. Two are sessions the requester never joined, so at
+  // least one is searched whichever link is dropped and the unauthorized
+  // aggregate is reported. The other 7 are authorized, with 250-byte names
+  // and 51 messages each, so at least 6 x 51 + 51 - 50 = 307 budget entries
+  // overflow the excluded list's own bound. The two fixed entries must come
+  // first and never be the omitted ones.
+  const mixedMain = "mixed-main-".padEnd(250, "x");
+  await session(mixedMain, ["peer-a"]);
+  await append(
+    mixedMain,
+    "peer-a",
+    Array.from({ length: 51 }, (_, i) => ({ id: pad(`mix0m${i}x`), content: `authorized 0/${i}` })),
+  );
+  for (let s = 1; s <= 9; s++) {
+    const secret = s === 3 || s === 7;
+    const name = secret ? `mixed-SECRET-session-${s}` : `mixed-linked-${s}-`.padEnd(250, "x");
+    await session(name, [secret ? "peer-b" : "peer-a"]);
+    await link(mixedMain, name);
+    await append(
+      name,
+      secret ? "peer-b" : "peer-a",
+      Array.from({ length: secret ? 3 : 51 }, (_, i) => ({
+        id: pad(`mix${s}m${i}x`),
+        content: secret ? `SECRET ${s}/${i}` : `authorized ${s}/${i}`,
+      })),
+    );
+  }
+  out.mixed = await context(mixedMain, 50);
 } catch (error) {
   const e = error as { name?: string; code?: string; path?: string; message?: string };
   out.error = { name: e?.name, code: e?.code, path: e?.path, message: String(e?.message ?? e) };

@@ -61,6 +61,8 @@ import { createChatService } from "../publication/service.createChatService";
 import { KNOWLEDGE_METHODS, type KnowledgeAction, type KnowledgeBundle, type KnowledgeReaderBundle, type RequestAuthority } from "./registry";
 import { KnowledgeAuthDenied, admitKnowledgeAction, type KnowledgeAuthFailure } from "./transport.admitKnowledgeAction";
 import { requireBoundPeers } from "./transport.requireBoundPeers";
+import { auditKnowledgeCall, type KnowledgeAuditCall, type KnowledgeAuditSink } from "./transport.auditKnowledgeCall";
+import { bodyScopeRefusal } from "./transport.bodyScopeRefusal";
 import { indexProfile, type IndexProfile } from "./transport.indexProfile";
 
 /** Matches the governed kernel's own request cap exactly (publication/service.ts). */
@@ -387,11 +389,17 @@ export type KnowledgeAccess = {
  *
  * Order, fixed: validate the route scope grammar and the method name (pure
  * routing, no policy I/O), check body encoding, read the bounded raw bytes,
- * peek the body's own scope claim with the governed parser and require it to
- * equal the route bank, THEN admit (which also yields the request's #87
- * `RequestAuthority`), THEN refuse any caller-asserted peer outside the
- * grant's binding, THEN dispatch the ORIGINAL bytes and that authority to the
- * registered method. A malformed or oversized body never reaches admission
+ * peek the body's own scope claim with the governed parser, THEN admit (which
+ * also yields the request's #87 `RequestAuthority`), THEN refuse a body scope
+ * that differs from the route bank, THEN refuse any caller-asserted peer
+ * outside the grant's binding, THEN dispatch the ORIGINAL bytes and that
+ * authority to the registered method. Every outcome AFTER admission, ok or
+ * error, is appended to `ctx.audit` exactly like an MCP `kb_*` call (#31 / R8;
+ * see `transport.auditKnowledgeCall.ts`); a request refused before admission
+ * is not audited on either transport. A body-scope mismatch is still the
+ * generic 400 whatever admission decides (so no status changed), but an
+ * ADMITTED caller's mismatch is audited, as MCP audits it after admission
+ * (round 3, 2026-09-27). A malformed or oversized body never reaches admission
  * with a false success, but a body-format fault surfaces its own governed
  * envelope rather than a generic 400 wherever this module can tell the two
  * apart.
@@ -399,7 +407,7 @@ export type KnowledgeAccess = {
 export async function handleKnowledgeRequest(
   request: Request,
   params: { bank: string; method: string },
-  ctx: { policyPath: string; access: KnowledgeAccess },
+  ctx: { policyPath: string; access: KnowledgeAccess; audit?: KnowledgeAuditSink },
 ): Promise<Response> {
   if (!isValidWorkspace(params.bank)) return errorResponse(400);
   const entry = KNOWLEDGE_METHODS[params.method];
@@ -419,18 +427,31 @@ export async function handleKnowledgeRequest(
     if (response !== null) return response;
     return errorResponse(400);
   }
-  if (scoped === null || scoped !== params.bank) return errorResponse(400);
+  const scopeMismatch = scoped === null || scoped !== params.bank;
 
   let authority: RequestAuthority;
+  let call: KnowledgeAuditCall | null = null;
+  const startedMs = Date.now();
   try {
-    authority = admitKnowledgeAction(ctx.policyPath, readAuthorization(request), params.bank, entry.action);
+    authority = admitKnowledgeAction(ctx.policyPath, readAuthorization(request), params.bank, entry.action, (auth) => {
+      call = { method: params.method, workspace: params.bank, bytes: raw.bytes, auth, userAgent: request.headers.get("user-agent"), startedMs };
+    });
   } catch (error) {
+    if (scopeMismatch) return errorResponse(400);
     if (error instanceof KnowledgeAuthDenied) return errorResponse(AUTH_STATUS_FOR[error.code]);
     return errorResponse(503);
+  }
+  const audited = call as KnowledgeAuditCall | null;
+  const audit = (outcome: Parameters<typeof auditKnowledgeCall>[2]) =>
+    audited === null ? Promise.resolve() : auditKnowledgeCall(ctx.audit, audited, outcome);
+  if (scopeMismatch) {
+    await audit({ status: "error", error: bodyScopeRefusal() });
+    return errorResponse(400);
   }
   try {
     requireBoundPeers(params.method, raw.bytes, authority);
   } catch (error) {
+    await audit({ status: "error", error });
     return knowledgeErrorResponse(error) ?? errorResponse(400);
   }
 
@@ -441,6 +462,7 @@ export async function handleKnowledgeRequest(
     // even though `entry.call` would never have used the bundle it opened.
     if (entry.operations !== undefined) {
       const result = await entry.operations(raw.bytes);
+      await audit({ status: "ok", value: result });
       return new Response(JSON.stringify(result ?? null), {
         status: 200,
         headers: { "content-type": "application/json", "cache-control": "no-store" },
@@ -448,11 +470,13 @@ export async function handleKnowledgeRequest(
     }
     const bundle = await ctx.access.getBundle(entry.action);
     const result = await entry.call(bundle, raw.bytes, authority);
+    await audit({ status: "ok", value: result });
     return new Response(JSON.stringify(result ?? null), {
       status: 200,
       headers: { "content-type": "application/json", "cache-control": "no-store" },
     });
   } catch (error) {
+    await audit({ status: "error", error });
     const response = knowledgeErrorResponse(error);
     if (response !== null) return response;
     return new Response(JSON.stringify({ error: "internal" }), {

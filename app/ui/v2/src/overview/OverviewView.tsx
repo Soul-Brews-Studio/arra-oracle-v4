@@ -24,13 +24,16 @@ import { TypeBreakdown, type TypeCounts } from "./TypeBreakdown";
 // zeros that could never move -- the reads opened a dataset nothing wrote to --
 // and these lines said so. The readers now open the operations root the
 // writers fill, so the numbers are live; what still needs saying is their
-// SCOPE: only admitted MCP `tools/call` requests are logged and folded, so HTTP
-// API traffic moves neither. Both are claims about a COUNT, so both go through
-// `whenCounted`: they are false the moment nothing counted.
+// SCOPE. Since #31's audit parity (2026-09-27) an admitted knowledge call is
+// logged and folded on HTTP (`POST /api/knowledge/…`, which the CLI's `kb`
+// uses) exactly as on MCP; the legacy HTTP routes and any request refused
+// before admission (no or bad token, no grant) still move neither. Both are
+// claims about a COUNT, so both go through `whenCounted`: they are false the
+// moment nothing counted.
 const MCP_WHY =
-  "admitted MCP tools/call requests in this workspace, successes and failures, read from the operations root (ARRA_DATA_DIR) the call log is written to — HTTP API requests are not logged here";
+  "admitted MCP tools/call and HTTP knowledge API (/api/knowledge) calls in this workspace, successes and failures, read from the operations root (ARRA_DATA_DIR) the call log is written to — the legacy HTTP routes (/api/memories, /api/search) and requests refused before admission are not logged here";
 const CONNECTION_WHY =
-  "distinct MCP callers in this workspace — one row per credential and client label, folded from each admitted tools/call — HTTP API callers are not counted";
+  "distinct callers in this workspace — one row per credential and client label, folded from each admitted MCP tools/call or HTTP knowledge API call — legacy HTTP route callers and unauthenticated requests are not counted";
 
 /** `statFromCount` maps the outcome; this only replaces its `meta`, which
  *  would otherwise lead with an em dash standing in for an HTTP status the
@@ -104,13 +107,13 @@ export function OverviewView({ bank, onGo }: { bank: Bank; onGo: (view: Route["v
             label="mcp calls"
             {...probe(c.mcpCalls)}
             hint={c.mcpCalls.note ?? MCP_WHY}
-            sub={whenCounted(c.mcpCalls, "admitted MCP tool calls · HTTP API not logged")}
+            sub={whenCounted(c.mcpCalls, "admitted MCP + HTTP knowledge calls · legacy routes not logged")}
           />
           <StatCard
             label="connections"
             {...probe(c.connections)}
             hint={c.connections.note ?? CONNECTION_WHY}
-            sub={whenCounted(c.connections, "distinct MCP callers · credential + client label")}
+            sub={whenCounted(c.connections, "distinct callers · credential + client label")}
           />
         </StatGrid>
 

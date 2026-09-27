@@ -52,6 +52,7 @@ test/mcp-correctness.test.ts	0.970	0	24	0
 test/publication-ownership.test.ts	16.389	0	21	0
 test/publication-recovery.test.ts	65.329	0	26	0
 test/publication-service.test.ts	31.759	0	29	0
+test/read-cursor-live-transport.test.ts	1.210	0	2	0
 test/read-cursor-ownership.test.ts	24.774	0	9	0
 test/read-cursor-precision.test.ts	56.187	0	21	0
 test/read-cursor-recovery.test.ts	43.988	0	17	0
@@ -77,6 +78,8 @@ test/trace-ownership.test.ts	9.265	0	5	0
 test/trace-precision.test.ts	40.303	0	11	0
 test/trace-recovery.test.ts	24.114	0	10	0
 test/trace-service.test.ts	15.376	0	9	0
+test/transport-audit-parity.test.ts	0.910	0	2	0
+test/transport-audit-refusals.test.ts	0.790	0	2	0
 test/transport-ownership.test.ts	0.317	0	16	0
 test/transport-precision.test.ts	0.034	0	13	0
 test/transport-recovery.test.ts	6.338	0	4	0

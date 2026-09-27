@@ -28,6 +28,7 @@ import { decodeUtf8Strict, LIMITS, parseStrict } from "./contracts/jcs";
 import { SERVER_NAME, SERVER_VERSION } from "./mcp/protocol";
 import { handshakeResponse, type createMcpAdapter } from "./mcp";
 import { handleKnowledgeRequest, type KnowledgeAccess } from "./knowledge/transport";
+import type { KnowledgeAuditSink } from "./knowledge/transport.auditKnowledgeCall";
 
 export type AppConfig = {
   /** Exact scheme/authority this process answers for, e.g. http://127.0.0.1:3939 */
@@ -92,8 +93,9 @@ export function createApp(
     readonly assets?: string;
     /** #31: publication/taxonomy/context/evidence transport. Optional so every
      *  existing test that constructs `createApp` with 3 args keeps working;
-     *  omitting it means `/api/knowledge/*` answers a fixed 404. */
-    readonly knowledge?: { policyPath: string; access: KnowledgeAccess };
+     *  omitting it means `/api/knowledge/*` answers a fixed 404. `audit` is
+     *  the composed §4 sink (#31 / R8); absent, an admitted call is not audited. */
+    readonly knowledge?: { policyPath: string; access: KnowledgeAccess; audit?: KnowledgeAuditSink };
   } = {},
 ) {
   const origin = new URL(config.origin);

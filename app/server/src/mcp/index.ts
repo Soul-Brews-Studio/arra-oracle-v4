@@ -15,6 +15,7 @@
 import type { McpEnvelope, OperationService, ToolOperations } from "../auth/service";
 import { KNOWLEDGE_METHODS } from "../knowledge/registry";
 import type { KnowledgeAccess } from "../knowledge/transport";
+import { bodyScopeRefusal } from "../knowledge/transport.bodyScopeRefusal";
 import { callKnowledgeMethod } from "./index.callKnowledgeMethod";
 import { V3_TOOL_NAMES, V3_TOOLS } from "./legacy-v3/catalogue";
 import { dispatchLegacyV3 } from "./legacy-v3/dispatchLegacyV3";
@@ -97,9 +98,7 @@ async function dispatchKnowledgeTool(name: string, args: Record<string, unknown>
     throw new Error("payload must be an object");
   }
   const scoped = readWorkspaceAtPlain(payload, entry.scopePath);
-  if (scoped === null || scoped !== ops.bank) {
-    throw new Error("payload workspace_name must match the connected bank");
-  }
+  if (scoped === null || scoped !== ops.bank) throw bodyScopeRefusal();
   const bytes = new TextEncoder().encode(JSON.stringify(payload));
   // Peer binding, the operations-root branch and bundle choice live in the
   // one helper the v3 adapter's kb() shares.

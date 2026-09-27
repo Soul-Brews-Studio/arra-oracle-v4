@@ -20,7 +20,7 @@ const int64 = (name: string, nullable = false) => new Field(name, new Int64(), n
 /** Mirrors `TARGET_SCHEMA.connections` in `publication/storage.ts` exactly --
  *  the legacy and target19 `connections` shapes are identical (12 columns,
  *  same types), unlike `mcp_calls` (10 vs 12). */
-const connectionSchema = new Schema([
+export const connectionSchema = new Schema([
   utf8("id", false),
   utf8("workspace_name", false),
   utf8("method", false),
