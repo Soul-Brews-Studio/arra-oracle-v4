@@ -25,8 +25,8 @@ Friendly aliases (thin sugar over kb; --bank is required on all of these):
   session add --bank NAME --name NAME [--session-id ID]
   message append --bank NAME --session NAME --peer NAME --content TEXT [--role R] [--in-reply-to ID]
   nodes list --bank NAME [--after ID] [--limit N] [--include-total] [--type TERM]
-  context get --bank NAME --peer NAME --session NAME [--max-items N] [--observer NAME] [--about NAME]
-  chat ask --bank NAME --peer NAME --session NAME --question TEXT [--max-items N] [--observer NAME] [--about NAME]
+  context get --bank NAME --peer NAME --session NAME [--max-items N] [--observer NAME] [--about NAME] [--author NAME]
+  chat ask --bank NAME --peer NAME --session NAME --question TEXT [--max-items N] [--observer NAME] [--about NAME] [--author NAME]
   peer context --bank NAME --observer NAME --about NAME [--requester NAME] [--max-items N]
       the scoped observer -> about view of current conclusions (getRepresentation)
   search --bank NAME --query TEXT --mode keyword|semantic [--limit N] [--profile NAME]

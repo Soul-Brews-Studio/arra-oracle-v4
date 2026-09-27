@@ -29,6 +29,8 @@ const literal = (pattern: RegExp) => {
 };
 const MCP_SUB = literal(/whenCounted\(c\.mcpCalls, "([^"]*)"\)/);
 const MCP_WHY = literal(/const MCP_WHY =\s*"([^"]*)"/);
+/** ASCII only, so the minified bundle carries it byte for byte. */
+const MAINT_NOWHERE = "(/api/backfill, /api/reindex) write no call-log row in any workspace";
 
 describe("the 'mcp calls' card states one scope, and it is true", () => {
   test("the subline no longer says legacy routes are not logged", () => {
@@ -42,6 +44,15 @@ describe("the 'mcp calls' card states one scope, and it is true", () => {
     expect(MCP_SUB).toContain("maintenance routes not logged");
   });
 
+  // #31 maint-audit (2026-09-27): "are not logged here" read as "logged
+  // somewhere else". An admitted maintenance call writes no row in ANY
+  // workspace (authorization-integration-v1.md, amendment "#31 TODO 'audit
+  // consistently across all transports' + R5/R19"), so the hint says so.
+  test("the hint says the maintenance routes are logged nowhere, not just 'not here'", () => {
+    expect(MCP_WHY).not.toMatch(/not logged here/);
+    expect(MCP_WHY).toContain(MAINT_NOWHERE);
+  });
+
   test("the shipped bundle carries the same subline, not the stale one", () => {
     const index = readFileSync(new URL("index.html", PUBLIC), "utf8");
     const src = index.match(/<script[^>]*src="\/v2\/(assets\/[^"]+\.js)"/)?.[1];
@@ -50,5 +61,6 @@ describe("the 'mcp calls' card states one scope, and it is true", () => {
     // Booleans, so a failure prints the stale phrase and not 300 KB of bundle.
     expect(bundle.match(LEGACY_UNLOGGED)?.[0] ?? null, src).toBeNull();
     expect(bundle.includes(MCP_SUB), `${src} carries "${MCP_SUB}"`).toBe(true);
+    expect(bundle.includes(MAINT_NOWHERE), `${src} carries "${MAINT_NOWHERE}"`).toBe(true);
   });
 });
