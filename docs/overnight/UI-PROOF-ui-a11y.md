@@ -402,8 +402,8 @@ the viewport and `document.scrollWidth` vs `innerWidth`.
 
 The dataset was a fresh `mktemp -d` gated stack (`.tmp/r5stack.sh`, `demo_stack_up`, model URL on a
 dead port). It held 12 peers and 12 sessions, and 16 messages in `session-01`, the last holding a
-92-char absolute path. It had one node with two revisions. The head body holds
-`app/server/src/knowledge/service.publishRevision.ts:120`, the absolute path, and a 153-char
+97-char absolute path. It had one node with two revisions. The head body holds
+`app/server/src/knowledge/service.publishRevision.ts:120`, the absolute path, and a 159-char
 GitHub URL. The head cites 3 links: `code`, `url` and `node_revision` → revision 1, so the diff
 shows `links (3)`, with link JSON of 253, 337 and 392 chars. The context panel was **expanded**
 (16 items).
