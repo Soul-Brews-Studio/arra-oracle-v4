@@ -192,13 +192,26 @@ export async function composeInstanceAuditSink(): Promise<NonNullable<StoreDepen
  * These are imported lazily and deliberately: adapters never see these handles,
  * only the credential-taking service returned here.
  */
-export async function composeService(config: RuntimeConfig): Promise<OperationService> {
+export async function composeService(
+  config: RuntimeConfig,
+  knowledgeAccess: KnowledgeAccess | null = null,
+): Promise<OperationService> {
   const store = await import("./db");
   const embed = await import("./embed");
   const calls = await import("./mcp/calls");
+  const { validateType } = await import("./mcp/remember.validateType");
 
   const deps: StoreDependencies = {
     insert: (row) => store.insert(row),
+    // D5a HTTP parity (#31 AC-MATRIX row 111): the exact same helper MCP
+    // `remember` calls (`mcp/remember.validateType.ts`), given the SAME
+    // knowledge access `buildApp` composes below -- not a second one, so an
+    // unconfigured `ARRA_KNOWLEDGE_DATASET_ROOT` bypasses identically on
+    // both transports rather than one failing closed and the other silently
+    // skipping. `knowledgeAccess` is `null` only in compositions that never
+    // call this (e.g. isolated `insert`-only tests); production always
+    // passes the real one from `buildApp`.
+    validateType: (bank, authority, type) => validateType(knowledgeAccess, bank, authority, type),
     list: (bank, limit, filters) => store.list(bank, limit, filters as never),
     searchText: (q, bank, limit) => store.searchText(q, bank, limit),
     searchVector: (q, bank, limit) => store.searchVector(q, bank, limit),

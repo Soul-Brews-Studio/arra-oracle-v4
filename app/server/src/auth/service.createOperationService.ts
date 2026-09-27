@@ -16,6 +16,7 @@ import { admit, type Admission, type GlobalAction, type Policy, type WorkspaceAc
 import { loadPolicy } from "./loader.loadPolicy";
 import { peerBinding } from "./policy.peerBinding";
 import { isBoundAuthor } from "./service.isBoundAuthor";
+import { resolveMemoryType } from "./service.resolveMemoryType";
 import { TOOL_NAMES } from "../mcp/tools";
 import { V3_TOOL_NAMES } from "../mcp/legacy-v3/catalogue";
 import type { RequestAuthority } from "../knowledge/registry";
@@ -269,13 +270,10 @@ export function createOperationService(
     },
 
     /**
-     * Admit content:write ONCE, then build the row.
-     *
-     * `buildRow` runs only after admission, so a denied caller triggers no
-     * storage read and no field-level error. An earlier version probed with a
-     * list call first: that admitted the WRONG action (content:read), touched
-     * storage for a request that might be refused, and sampled the clock twice.
-     */
+     * Admit content:write ONCE, then build the row. `buildRow` runs only after
+     * admission, so a denied caller triggers no storage read and no field-level
+     * error (an earlier version probed with a list call first, admitting the
+     * WRONG action and touching storage for a refused request). */
     async insertMemory(
       authorization: string | null,
       workspace: string,
@@ -295,11 +293,13 @@ export function createOperationService(
       return auditHttp<{ id: string; embedded: boolean }>(context, "remember", http, () => ({}))(async () => {
         const row = buildRow();
         if (row === null) deny("invalid_request");
-        // #87 / R3: the row's author is caller-asserted, so the grant's `peers`
-        // binding, read from the SAME snapshot, bounds it.
-        if (!isBoundAuthor(row, bindingOf(policy, admission))) deny("forbidden");
-        // Scope comes from the ADMITTED context, never from the caller's payload.
-        return deps.insert({ ...row, workspace_name: scopeOf(context, "content:write") });
+        // #87/R3 peer binding, checked FIRST (wins over D5a taxonomy below).
+        const peers = bindingOf(policy, admission);
+        if (!isBoundAuthor(row, peers)) deny("forbidden");
+        // Scope is the ADMITTED one, never the caller's payload (D5a: `service.resolveMemoryType.ts`).
+        const scope = scopeOf(context, "content:write");
+        const type = await resolveMemoryType(deps, scope, peers, row.type);
+        return deps.insert({ ...row, type, workspace_name: scope });
       });
     },
 

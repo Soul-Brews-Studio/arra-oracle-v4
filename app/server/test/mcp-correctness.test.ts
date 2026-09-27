@@ -18,6 +18,33 @@ import {
 
 import { bearer, TOKENS } from "./helpers/auth-fixture";
 import { scaledMs } from "./helpers/timing.scaledMs";
+import type { KnowledgeAccess } from "../src/knowledge/transport";
+
+/**
+ * D5a: `remember` now validates `type` against the `type` taxonomy
+ * vocabulary. This file's dataset is the LEGACY 15-table `memories`+`calls`
+ * schema built by hand below -- it has no `vocabularies`/`terms` tables at
+ * all, so `buildApp`'s real `KnowledgeAccess` (wired from the same
+ * `ARRA_DATA_DIR`) answers `unsupported_dataset` for a taxonomy lookup. This
+ * file's claim is about the memories store, not the taxonomy kernel, so it
+ * overrides the singleton with a fake that always resolves "note" as an
+ * active term -- the only type any case here asserts.
+ */
+const fakeKnowledgeAccess: KnowledgeAccess = {
+  async getBundle() {
+    return {
+      taxonomy: {
+        async lookupVocabularyByName() {
+          return { id: "voc-type" };
+        },
+        async lookupTermByName(bytes: Uint8Array) {
+          const { name } = JSON.parse(new TextDecoder().decode(bytes)) as { name: string };
+          return name === "note" ? { id: "t-note", is_active: true } : null;
+        },
+      },
+    };
+  },
+} as unknown as KnowledgeAccess;
 
 const HOST = "127.0.0.1:3939";
 const ORIGIN = `http://${HOST}`;
@@ -232,9 +259,13 @@ beforeAll(async () => {
   };
   const { composeService } = await import("../src/composition");
   mcpHandle = mcp.createMcpAdapter(await composeService({ policyPath, origin: ORIGIN, port: 0 }));
+  // See the fakeKnowledgeAccess comment above: overrides whatever real
+  // (taxonomy-table-less) access `buildApp`/`composeService` just wired.
+  mcp.configureKnowledgeAccess(fakeKnowledgeAccess);
 });
 
 afterAll(async () => {
+  mcp.configureKnowledgeAccess(null);
   globalThis.fetch = originalFetch;
   if (originalDataDir === undefined) delete process.env.ARRA_DATA_DIR;
   else process.env.ARRA_DATA_DIR = originalDataDir;

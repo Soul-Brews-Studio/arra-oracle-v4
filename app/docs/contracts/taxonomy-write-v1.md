@@ -271,3 +271,154 @@ when the conclusion drawn from it survives.
 
 **Command.** `rg -n 'reconcile: true|input.reconcile' app/server/src/mcp/legacy-v3` prints
 exactly `publish.ts:110` and `tools/oracle_trace_distill.ts:88`.
+
+## Amendment 2026-09-26 (post-merge Nat 2026-09-28 NAT-DECISIONS D5a: the legacy free-text MCP remember tool goes through taxonomy validation now)
+
+Source: `docs/overnight/DECISIONS.md` NAT-DECISIONS D5a, and AC-MATRIX conflict C1
+(slice 9: the legacy MCP `remember` tool wrote the spike `memories` table with no
+taxonomy validation and described itself as "planned, not implemented").
+
+**Change.** The legacy MCP `remember` tool (`app/server/src/mcp/index.ts`'s `remember`
+case; schema in `app/server/src/mcp/tools.ts`) now routes its `type` field through the
+same sealed `type` vocabulary `kb_publishRevision`'s `validateTermReferences.ts`
+enforces, via the new `app/server/src/mcp/remember.validateType.ts`. Omitted `type`
+defaults to `note`, exactly like the reserved seed. An unknown or retired term, or a
+missing `type` vocabulary, is refused with the SAME closed `arra-taxonomy-error/v1`
+envelope (`invalid_reference`, path `/type`) `kb_publishRevision` already gives for the
+equivalent cause -- not a bespoke error shape. A valid, active term is accepted and the
+write proceeds byte-for-byte as before (`sync_state`/`embedded` unchanged).
+
+This is validation of the `type` VALUE only: it does not give `remember` a
+`node_revisions`/`term_snapshot_json` row, does not write to `node_revision_terms`, and
+does not let `remember` create, rename, retire or reparent a term -- all taxonomy
+MUTATION stays exactly where this contract already put it (§ above). A `remember` call
+against a deployment with no `KnowledgeAccess` configured at all now fails closed
+(`invalid_request`, path `/type`) rather than silently accepting free text -- D5a is
+"validate it now", not "validate it when convenient".
+
+Precedence: the existing `#87`/R3 peer-binding refusal (`forbidden`, an asserted
+`peer_name` outside the admitting grant's binding) still fires BEFORE the taxonomy
+check -- `mcp/index.ts`'s `remember` case checks `isBoundAuthor` first, mirroring the
+order `ops.insert` already enforced, so this change does not reorder an existing
+refusal.
+
+**Why.** The old free-text `type` let a caller invent or resurrect any string as a
+memory's type outside the sealed vocabulary the rest of the system trusts, and the
+tool's own description claimed the opposite of what AC-MATRIX's C1 required.
+
+**Tests.** `app/server/test/mcp-remember-taxonomy.test.ts` (unit, fake `KnowledgeAccess`):
+unknown type refused, retired term refused, missing `type` vocabulary refused, valid
+term accepted unchanged, omitted type defaults to `note`, a Thai term name accepted when
+it resolves as active, and no `KnowledgeAccess` configured fails closed. Peer-binding
+precedence and byte-for-byte valid-write behavior are covered by the existing
+`app/server/test/auth-legacy-peer-binding.test.ts` and `app/server/test/mcp-correctness.test.ts`
+(both updated to wire a fake taxonomy-resolving `KnowledgeAccess`, since their datasets
+predate this change and carry no `vocabularies`/`terms` tables of their own).
+
+### Fix-round amendment 2026-09-28 (Opus verification on the first D5a pass)
+
+The paragraph above overstated one case and was silent on two others. Corrected here,
+not rewritten in place, so the record of what the first pass actually claimed stays
+intact.
+
+**Correction 1 -- what "no `KnowledgeAccess` configured" actually means.** The ruling
+lives at `docs/overnight/NAT-DECISIONS.md:29` (D5, option a), not
+`docs/overnight/DECISIONS.md` -- there is no D5/D5a entry there; the source line in
+`Amendment 2026-09-26` above is wrong and is corrected by this note, not edited in place.
+
+The prior paragraph's claim that an unconfigured deployment "fails closed
+(`invalid_request`, path `/type`)" is true ONLY when `knowledgeAccess` itself is `null`
+(no MCP knowledge wiring at all -- a wiring gap, effectively test-only). It is NOT true
+of the documented, production-real case: `ARRA_KNOWLEDGE_DATASET_ROOT` unset with a
+non-null `KnowledgeAccess` (`composition.ts`'s `composeKnowledgeAccess`: "an existing
+deployment that has not adopted the ... dataset yet keeps starting up exactly as
+before"). In that shape `getBundle` throws the kernel's own
+`arra-publication-error/v1 unsupported_dataset`, which `remember.validateType.ts` now
+catches and treats as "nothing to validate against" -- `remember` accepts ANY `type`
+unchanged, exactly as it did before D5a, rather than refusing every call. Failing every
+call in that shape was never asked for by D5a and was not a choice this contract
+recorded; it was a regression an independent verifier caught by deleting one test-only
+override line and re-running `test/mcp-correctness.test.ts` against real `buildApp`
+wiring.
+
+**Correction 2 -- HTTP parity.** The prior text said nothing about `POST /api/memories`.
+That route is audited as MCP `remember` (`app/server/src/app.ts`'s handler comment,
+#31 legacy-audit) and, as of this fix round, goes through the SAME
+`remember.validateType.ts` call, wired as `StoreDependencies.validateType` in
+`composeService` (`app/server/src/composition.ts`) and invoked from
+`auth/service.ts`'s `insertMemory`, using the SAME `KnowledgeAccess` `buildApp` composes
+for MCP -- not a second one. `buildApp` (`app/server/src/index.ts`) now composes
+`KnowledgeAccess` BEFORE the service, so the service can be given it. An invented type
+over HTTP now gets the identical `arra-taxonomy-error/v1 invalid_reference` envelope,
+propagated through `knowledgeErrorResponse` in `app.ts` rather than falling through to a
+generic `policy_unavailable` 503. Before this fix round, `POST /api/memories` accepted
+any free-text `type`, which broke #31 AC-MATRIX row 111 ("equivalent HTTP/CLI/MCP
+fixtures enforce the same invariants").
+
+**Correction 3 -- test adequacy.** The first pass's new unit tests only exercised
+`validateType` in isolation with a fake `KnowledgeAccess`; nothing dispatched `remember`
+with an invalid type through real wiring. `app/server/test/remember-taxonomy-parity.test.ts`
+now does, with a real `buildApp`, a real fixture-seeded taxonomy dataset
+(`test/helpers/publication-fixture.ts`), and a real legacy `memories` table: it proves
+(a) an unset `ARRA_KNOWLEDGE_DATASET_ROOT` still lets any `type` through on MCP, (b) a
+configured dataset refuses an invented type identically on MCP and HTTP, and (c) a
+seeded active type still succeeds on both, golden-shape unchanged (HTTP:
+`{id, embedded}`).
+
+**Source correction.** The Nat ruling cited by the ORIGINAL Amendment 2026-09-26 above
+as "`docs/overnight/DECISIONS.md` NAT-DECISIONS D5a" is `docs/overnight/NAT-DECISIONS.md:29`
+(D5 option a); this note is the correction of record.
+
+## Amendment 2026-09-26 (post-merge Nat 2026-09-28 NAT-DECISIONS D5a (R26): the legacy free-text MCP remember tool goes through taxonomy validation now)
+
+### Fix-round amendment, round 3 (Opus verification REFUTE on round 2)
+
+The round-2 fix-round amendment (Correction 1 above) said the bypass fires for "the
+documented, production-real case: `ARRA_KNOWLEDGE_DATASET_ROOT` unset". That was true of
+the intent but not of the implementation: `remember.validateType.ts` decided the bypass
+by CATCHING the error CODE `getBundle` throws (`unsupported_dataset`), and that same
+code is the kernel's one generic envelope for roughly fifteen distinct storage failures
+in `app/server/src/publication/storage.ts` -- a configured root that does not exist, is
+not a directory, is missing a table, or has a schema/field-type/nullability mismatch all
+throw the identical `arra-publication-error/v1 unsupported_dataset` shape. Catching by
+code alone therefore bypassed taxonomy validation on ALL of those broken-but-configured
+cases too, not only the documented root-unset one -- an operator who set
+`ARRA_KNOWLEDGE_DATASET_ROOT` and then had the path go missing, get moved, or never get
+migrated silently got pre-D5a free-text behaviour on both MCP and HTTP, exactly the gap
+D5a exists to close.
+
+**Fix.** `remember.validateType.ts` now decides the bypass from CONFIGURATION, not from
+the error code: `isDatasetConfigured(knowledgeAccess)`
+(`app/server/src/knowledge/transport.isDatasetConfigured.ts`), backed by the
+`KnowledgeAccess.datasetConfigured` flag `composeKnowledgeAccess` sets to `false` ONLY
+when `ARRA_KNOWLEDGE_DATASET_ROOT` itself is unset (`transport.ts`'s
+`createKnowledgeAccess`). A `getBundle` failure is now bypassed (any `type` accepted,
+pre-D5a behaviour) ONLY when the access reports `datasetConfigured === false`. A
+`getBundle` failure on an access that reports `datasetConfigured === true`, or does not
+report the flag at all (treated as configured, matching `isDatasetConfigured`'s own
+rule for bare test fakes), now RE-THROWS and fails the `remember` call closed -- a
+configured-but-missing/unreadable/wrong-schema root refuses the write, it does not
+silently accept an unvalidated type.
+
+**Tests.** `app/server/test/mcp-remember-taxonomy.test.ts` adds: a configured-but-broken
+access (`datasetConfigured: true`, `getBundle` throwing `unsupported_dataset`) must
+reject, not resolve; an access with no `datasetConfigured` flag at all throwing the same
+code must also reject; the existing unset-root bypass test is updated to set
+`datasetConfigured: false` explicitly, matching what `composeKnowledgeAccess` actually
+sets. `app/server/test/remember-taxonomy-parity.test.ts` adds a real-`buildApp`
+integration test with `ARRA_KNOWLEDGE_DATASET_ROOT` pointed at a nonexistent directory
+(the exact live-probe shape the round-2 verifier used) and asserts MCP `remember`
+refuses an invented type rather than succeeding; the unset-root bypass test now also
+asserts the returned id is a real string, not merely `isError !== true`.
+
+**What is still open, stated exactly.** Workspaces with a configured, working dataset
+but no seeded `type` vocabulary (a workspace created after migration that never ran the
+v3 adapter's `taxonomy.ensureReservedVocabularies.ts` self-seed) refuse EVERY `remember`
+call, including one that omits `type` (default `note`). This is intended under the
+current contract (an unresolvable vocabulary is `invalid_reference`, not a bypass) but
+is an operational risk this amendment does not resolve -- it needs a Nat call on
+seed-on-first-use, tracked outside this contract. `docs/overnight/AC-MATRIX.md` rows 47
+and 108 remain stale from the original pass; deferred, not fixed here.
+
+Source: `docs/overnight/DECISIONS.md` NAT-DECISIONS D5a (R26); round-3 verifier findings
+in `.tmp/round3-findings-remember.txt` (scratch, not committed).

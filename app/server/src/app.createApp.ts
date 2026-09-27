@@ -30,6 +30,7 @@ import { plainBody } from "./app.plainBody";
 import { SERVER_NAME, SERVER_VERSION } from "./mcp/protocol";
 import { handshakeResponse, type createMcpAdapter } from "./mcp";
 import { handleKnowledgeRequest, type KnowledgeAccess } from "./knowledge/transport";
+import { memoryInsertErrorResponse } from "./app.memoryInsertErrorResponse";
 import type { KnowledgeAuditSink } from "./knowledge/transport.auditKnowledgeCall";
 
 export type AppConfig = {
@@ -405,7 +406,8 @@ export function createApp(
         } catch (error) {
           // A malformed body only becomes visible to an ADMITTED caller.
           if (error instanceof BodyRejected) return errorResponse(error.status);
-          return denialResponse(error);
+          // D5a HTTP parity: see `app.memoryInsertErrorResponse.ts`.
+          return memoryInsertErrorResponse(error, denialResponse);
         }
       },
       { parse: "none" },
