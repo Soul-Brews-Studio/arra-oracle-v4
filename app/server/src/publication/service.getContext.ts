@@ -47,6 +47,10 @@ const request = parseGetContext(requestBytes);
       // learns nothing about which peer names exist.
       await requirePerspectivePeer(reader, request.workspace_name, request.observer_peer_name, "/observer_peer_name");
       await requirePerspectivePeer(reader, request.workspace_name, request.subject_peer_name, "/subject_peer_name");
+      // R24 (Nat D3b, #32): author narrows SELECTION exactly like
+      // observer/subject -- an unknown author fails closed with the same
+      // code and shape, before any conclusion is read.
+      await requirePerspectivePeer(reader, request.workspace_name, request.author_peer_name, "/author_peer_name");
 
       await reader.refresh(SESSION_LINKS);
       const linkRows = await reader.orderedProjection(
@@ -135,6 +139,7 @@ const request = parseGetContext(requestBytes);
         workspace: request.workspace_name,
         observer: request.observer_peer_name,
         subject: request.subject_peer_name,
+        author: request.author_peer_name,
         asOf,
         maxItems: request.max_items,
         byteBudget: MAX_CONTEXT_WIRE_BYTES - 2,
@@ -236,6 +241,7 @@ const request = parseGetContext(requestBytes);
           effective_sessions: authorizedSessions,
           observer_peer_name: request.observer_peer_name,
           subject_peer_name: request.subject_peer_name,
+          author_peer_name: request.author_peer_name,
         },
         conclusions: selection.conclusions,
         summary: selection.summary,
