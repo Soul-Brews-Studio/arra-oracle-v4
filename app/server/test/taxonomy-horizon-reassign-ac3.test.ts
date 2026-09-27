@@ -15,7 +15,10 @@
  * DESIGN.md §9 actually ties to a node: `is_active`, `valid_from`, `valid_to`
  * and the derived `getRecallEligibility` outcome -- reassigning the horizon
  * term on a new revision must leave all four byte-identical to the prior
- * revision's. The transport-level permission check is NOT pinned here.
+ * revision's. The transport-level permission check is pinned by the sibling
+ * `taxonomy-horizon-reassign-ac3-permissions.test.ts` (round 4): the same
+ * three phases over real HTTP and MCP, with read, write and other-workspace
+ * principals, before and after each reassignment.
  *
  * Round 3 (verifier blocker): the earlier version asked for eligibility
  * through the shared core child, which cannot forward a request time, so
