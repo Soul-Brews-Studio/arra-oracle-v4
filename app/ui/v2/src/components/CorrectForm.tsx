@@ -20,6 +20,9 @@ export function CorrectForm({
   publishing,
   mintId,
   onCorrect,
+  initialTitle = "",
+  initialBody = "",
+  submitRef,
 }: {
   revisions: RevisionRow[];
   citeTargets: CiteTarget[];
@@ -28,12 +31,17 @@ export function CorrectForm({
   publishing: boolean;
   mintId: () => string;
   onCorrect: (input: PublishInput) => void;
+  /** Test-only seams -- see PublishForm.tsx's doc comment for why these
+   *  exist (no jsdom, so nothing can type into a field from outside). */
+  initialTitle?: string;
+  initialBody?: string;
+  submitRef?: { current: (() => void) | null };
 }) {
   // "" = follow the head, so a revise-then-correct targets the NEW head
   // unless another revision was picked on purpose.
   const [revisionId, setRevisionId] = useState<string>("");
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
+  const [title, setTitle] = useState(initialTitle);
+  const [body, setBody] = useState(initialBody);
   const [reason, setReason] = useState("");
   const [links, setLinks] = useState<LinkDraft[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
@@ -65,6 +73,7 @@ export function CorrectForm({
     setReason("");
     setLinks([]);
   };
+  if (submitRef) submitRef.current = submit;
 
   return (
     <section className="flex flex-col gap-2 border-t border-edge p-3">
