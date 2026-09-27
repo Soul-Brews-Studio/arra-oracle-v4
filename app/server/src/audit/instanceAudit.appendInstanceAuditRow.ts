@@ -25,8 +25,8 @@ export type InstanceAuditOutcome = "admitted" | "refused";
 
 export interface InstanceAuditRecord {
   readonly principal_id: string | null;
-  readonly route: "/api/backfill" | "/api/reindex";
-  readonly action: "maintenance:backfill" | "maintenance:reindex";
+  readonly route: "/api/backfill" | "/api/reindex" | "/api/instance-audit";
+  readonly action: "maintenance:backfill" | "maintenance:reindex" | "instance-audit:read";
   readonly outcome: InstanceAuditOutcome;
   readonly status: "ok" | "error";
   readonly input: unknown;
