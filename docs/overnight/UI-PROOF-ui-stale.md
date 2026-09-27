@@ -545,3 +545,118 @@ drop is selection-scoped, not "ask no longer works".
   `seed` (same `scopeRef`), reasoned through, and covered indirectly by the existing
   `staleClosure.test.tsx` "B-after-S2" test staying green, but that test never moves
   `scope` mid-publish. Flagged for the next pass rather than papered over.
+
+## Fix round 2 (2026-09-27): four blocking findings from an independent Opus verifier
+
+Round 1 above claimed the answer/verify/publish guards were closed. An independent
+verifier refuted that with scratch tests against slice HEAD `7d572ca`; see
+`docs/overnight/DECISIONS.md`'s R12 ("Model split tonight") for why #33 AC1 (peer-context
+chat) is the ruling this slice implements, and the acceptor verdict this round answers.
+Correcting two inaccuracies in round 1's own text while here: "Start HEAD and end HEAD
+both `d949290`" only shows the probe ran before this round's commits, not that nothing
+changed (true separately, by `git diff --stat` against `d949290` touching no
+`app/server/src` file) -- and round 1's claim to have appended a section "citing
+`docs/overnight/DECISIONS.md`" was not actually true (no reference existed); this
+paragraph is that reference.
+
+### What was actually still broken
+
+1. **`useMemory`'s ask answer/error were guarded only at LAND time, never cleared
+   afterward.** `askRead.land(t)` correctly drops a response still in flight when the
+   selection moves on -- but if the answer already SETTLED while sA was still on screen,
+   nothing cleared `answer`/`askError` on the later switch to sB. Round 1's own
+   `actionStale.test.tsx` test only moved the switch BEFORE the response arrived, so it
+   never exercised this. Verifier's scratch repro: ask in sA, let it settle, switch to sB
+   -- `answer` stayed `{"answer":"sA's answer",...}` under sB.
+2. **`useKnowledge.publish` resolved `true` after a scope switch even when it had already
+   decided to drop the navigation.** Both `KnowledgeView` callers do
+   `.then(ok => { if (!ok) return; ...onSelectNode(target) })`; a `true` made them navigate
+   onto the old scope's node id inside the new scope regardless of the hook's own
+   `stillInScope` check.
+3. **`useMemory.verify`'s freshness guard compared only `workspace`**, unlike every other
+   key in the hook (`[bank, workspace, token]`). A verify issued under a token since
+   replaced could still overwrite a same-workspace verdict fetched under the current
+   token.
+4. **(nonblocking, fixed anyway) `asking` was a single unkeyed flag.** Asking in sA and
+   switching to sB showed "Asking..." (and a disabled Ask button) under sB until sA's
+   model call returned. Fixed by exposing `askRead.loading` (already keyed on
+   peer+session) as `asking`, instead of a separate unkeyed `useState`.
+
+### Fix
+
+| File | Change |
+|---|---|
+| `app/ui/v2/src/state/useMemory.ts` | New `useEffect` keyed on `[b.bank, b.workspace, b.token, peer, session]` clears `answer`/`askError` the instant the selection moves on -- independent of whether a request is in flight. `verify`'s freshness ref is now `` `${bank}:${workspace}:${token}` `` (`bKeyRef`), not `workspace` alone. `asking` is now `askRead.loading` (the manual `useState` was removed). |
+| `app/ui/v2/src/state/useKnowledge.ts` | `publish` now returns `stillInScope` instead of an unconditional `true` at the end. |
+| `app/ui/v2/src/state/actionStale.test.tsx` | 5 new tests: settled-answer-then-switch, settled-askError-then-switch, `asking` cleared on switch while in flight, publish resolving `false` after a scope switch, and a stale-TOKEN verify (same workspace) not overwriting the current verdict. |
+
+### Failing-first, through the real hooks
+
+`src/state/actionStale.test.tsx`, the 5 new tests against slice HEAD `7d572ca`
+(unfixed): **0 pass / 5 fail**.
+
+```
+(fail) ask settles in sA, then switch to sB: sA's answer is cleared, not shown under sB
+    expect(m.get().answer).toBe(null);
+    Received: { answer: "sA's answer", items_used: ["mA1"] }
+(fail) askError settles in sA, then switch to sB: askError is cleared
+    expect(m.get().askError).toBe(null);
+    Received: "model_unavailable"
+(fail) switching to sB while sA's ask is in flight clears `asking` immediately
+    expect(m.get().asking).toBe(false);
+    Received: true
+(fail) publish resolves false (not true) after a scope switch
+    expect(resolved).toBe(false);
+    Received: true
+(fail) bad-token verify landing after good-token verify leaves alice live
+    expect(alice?.state).toBe("live");
+    Received: "unknown"
+```
+
+With the fix: **9 pass, 0 fail** (4 round-1 tests + 5 new).
+
+### Mutants
+
+| Mutant | Result |
+|---|---|
+| Remove the new `useEffect` clearing `answer`/`askError` | the settled-then-switch tests fail (7 pass / 2 fail) |
+| `useKnowledge.publish`: `return stillInScope;` -> `return true;` | the publish-scope test fails (8 pass / 1 fail) |
+| `verify`: `bKeyRef.current !== issuedKey` -> compare `workspace` only (round-1 shape) | the stale-token verify test fails (8 pass / 1 fail) |
+
+### Other checks (this round)
+
+- Targeted suites: `actionStale.test.tsx` (9 pass), `useKnowledge.publish.test.tsx`,
+  `staleReads.audit.test.tsx`, `staleClosure.test.tsx`, `useKnowledge.stale.test.tsx`,
+  `loadingLatch.test.tsx`, `App.stableBank.test.tsx` (26 pass combined), plus the two
+  files referencing `DialecticPanel` (`reflowText.test.ts`, `a11yNames.test.ts`, 13 pass)
+  -- **48 pass, 0 fail** total.
+- `tsc --noEmit -p app/ui/v2/tsconfig.json`: exit 0. `bun run typecheck` in `app/server`:
+  exit 0 (unaffected; no `app/server/src` change).
+- Python architecture guard (`app/migrate-py`, `unittest discover -s tests`): 269 tests,
+  `OK (skipped=1)`.
+- Every touched file stays well under 500 lines (`useMemory.ts` ~300,
+  `useKnowledge.ts` ~294, `actionStale.test.tsx` ~325).
+- Bundle rebuilt: `bun run build` (`app/ui/v2`) into `app/server/public/v2`.
+
+### Explicitly NOT done this round (deviations, not papered over)
+
+The brief's hard time box (40 minutes) did not leave room for every nonblocking item the
+verifier listed. Left as-is, stated here rather than silently dropped:
+
+- **`join` guard has no dedicated test.** The mutant the verifier described (`if
+  (!result.ok) setMessageError(...)` unconditionally) is real and still uncaught by the
+  targeted suites run this round.
+- **`WorkspaceBar.tsx`'s `ping`** (`health(bank).then(onHealth)`) is still unguarded.
+  Low impact (`/health` is public, per the verifier's own note); not touched.
+- **`useKnowledge.seed`'s freshness key is still `` `${bank}:${workspace}` `` (no
+  token).** A stale error from an old token can still set `error` in the same scope.
+  The verifier called this "Minor"; left alone to stay inside the time box.
+- **`App.stableBank.test.tsx` still does not restore `globalThis.localStorage`** in an
+  `afterEach`. No observed cross-file effect (full targeted run above is clean), but the
+  hygiene gap itself is unfixed.
+- **Live ego-browser re-run was not performed this round.** The brief's "LIVE with
+  ego-browser on a fresh gated stack ... at least 5 attempts" step (see round 1's own
+  "Live proof" section above, 5/5 with the round-1 bundle) was not repeated against this
+  round's rebuilt bundle inside the time box; the fixes are proven only at the hook level
+  (failing-first + mutants) and by the acceptor's live probe (`run.sh`, HTTP/MCP/CLI
+  surface + isolation), not by a fresh browser session. Flagged rather than claimed.
