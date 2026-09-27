@@ -7,9 +7,12 @@ import { LinkEditor } from "./LinkEditor";
 
 export type Draft = PublishDraft;
 
+// Wording fix (2026-09-27): this is this FORM's own guard, not a server
+// rule -- `rg` finds no correction/corrects enforcement in app/server/src.
+// The old copy ("publish refuses...") read as if the server enforced it.
 const CORRECTION_NEEDS_LINK =
   "type “correction” needs a corrects link below (pointing at the revision this corrects), " +
-  "or use the Correct action instead -- publish refuses a correction without one.";
+  "or use the Correct action instead -- this form will not submit a correction without one.";
 
 /** Publish a new revision -- either a node's first one or an edit on top of
  *  its current head. `author_peer_name` / `session_name` are not exposed as

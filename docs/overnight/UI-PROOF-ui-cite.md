@@ -86,12 +86,9 @@ findings in `.tmp/ui-cite-wave5-findings.txt`:
    `publish` now reads `result.body.outcome`; a `conflict` resolves `false` and surfaces
    `describeConflict(reason)` through `error` (a human sentence per reason:
    `node_id`/`stale_base`/`node_retired`/`operation_digest`). Live-verified below.
-5. **Design choice, documented rather than silently kept**: the lifecycle gate blocks
-   Correct (and publish) on a superseded/retired node from this client, even though the
-   server itself would still accept a correction filed directly against that node's old
-   accepted revision (the gate is a UI-side choice, not a server rule). `lifecycleGate.ts`'s
-   `explanation` now says this in both the superseded and retired cases, so a user reading
-   the banner is told the true scope of the block, not an implied server rule.
+5. **Design choice, documented rather than silently kept** -- corrected in the hardening
+   pass below (a first attempt here was itself half-fixed and half-honest; see
+   "Hardening" for what an independent verifier caught and how it was actually closed).
 
 ### Live proof (fresh gated stack, items 3 & 4)
 
@@ -112,15 +109,23 @@ confirmed in the eval's return value).
 
 ### Test evidence
 
-`bun test src` (app/ui/v2): **168 pass, 0 fail** across 23 files (was 165/0/22 before this
-pass -- 3 new test files: `buildPublishInput.test.ts`, `describeConflict.test.ts`, and new
-cases inside `citeCorrect.test.ts`). `./node_modules/.bin/tsc -p tsconfig.json`: clean.
+`bun test src` (app/ui/v2): **168 pass, 0 fail** across 23 files (measured baseline at
+`84061c9` by the independent verifier: 158 tests across 21 files -- this pass adds 2 new
+test files, `buildPublishInput.test.ts` and `describeConflict.test.ts`, plus 10 new tests:
+5 in `citeCorrect.test.ts`, 3 in `buildPublishInput.test.ts`, 2 in `describeConflict.test.ts`).
+`./node_modules/.bin/tsc -p tsconfig.json`: clean.
 `PYTHONPATH=src .venv/bin/python -m unittest discover -s tests` (app/migrate-py): 269
 tests, `OK (skipped=1)` -- unaffected, since this slice touches only `app/ui/v2/src`.
 
 Manual mutants applied and reverted, each confirmed red -> green:
-- M4 (`PublishForm.tsx`'s `built.entries` -> `[]`): 2 tests fail (`buildPublishInput`
-  count assertion, and the correction-link acceptance test).
+- M4 (`PublishForm.tsx`'s `built.entries` -> `[]`): killed by `citeCorrect.test.ts`'s
+  "submit sends the link editor's built entries..." and "a corrects link on
+  type: correction is accepted" (2 tests fail). **Correction (hardening pass)**:
+  `buildPublishInput.test.ts` does NOT catch M4 and never could -- it only tests
+  `buildPublishInput`'s identity mapping of `links`, not the `PublishForm.tsx` call site
+  that decides what gets passed in. An earlier version of this doc, and a doc comment in
+  `buildPublishInput.ts` itself, wrongly credited that file's test with the kill; both are
+  now corrected (see `buildPublishInput.ts`'s doc comment).
 - M14-equivalent (`CorrectForm`'s `canSubmit` dropping `!disabled`): the new
   "gate itself ... disables" test fails (button renders enabled with `disabled: true`).
 - Correction-guard removal (`canSubmit` dropping `!correctionMissingLink`): the new
@@ -137,3 +142,77 @@ Manual mutants applied and reverted, each confirmed red -> green:
   browser run. The unit tests pin `NodeWritePanel`, `LifecycleBanner`, `PublishForm` and
   the pure builders, because `renderToStaticMarkup` runs no effects and so cannot reach a
   loaded node inside `KnowledgeView`.
+
+## Hardening (2026-09-27, fix round on top of `v4/on-ui-cite2` at `84061c9`)
+
+Current totals after this round: `bun test src` (app/ui/v2) **173 pass, 0 fail** across
+24 files (+1 new file, `interpretPublishResult.test.ts`, +5 tests over round 1's 168/23).
+`tsc -p tsconfig.json`: clean. Python architecture guard: 269 tests, `OK (skipped=1)`,
+unaffected (still only `app/ui/v2/src` touched).
+
+An independent Opus verifier reviewed the round-1 hardening above and found one blocking
+gap plus several honesty problems in this doc. Addressed here:
+
+1. **Blocking: no test covered the conflict-vs-success decision itself.** The verifier
+   reverted only `useKnowledge.ts` to `84061c9` and ran `bun test src`: **168 pass, 0
+   fail** -- nothing in the suite could see the revert. Two mutants survived the WHOLE
+   suite: mutant G (`outcome === "conflict"` -> `outcome === "nope"`, so a real conflict
+   resolves `true`) and mutant F (`setError(describeConflict(reason))` ->
+   `setError(null)`, so a refusal is silent). Fix: pulled the decision out into
+   `state/interpretPublishResult.ts` -- same shape as `applySearchOutcome.ts` ("the
+   single, unit-tested place that decides" a result), and wrote
+   `interpretPublishResult.test.ts` FIRST.
+   - Red (module did not exist yet): `error: Cannot find module
+     './interpretPublishResult'` -- `0 pass / 1 fail / 1 error`.
+   - Green after implementing: `5 pass, 0 fail`.
+   - Mutant G re-applied directly to `interpretPublishResult.ts`: 2 of the 5 tests fail
+     (`Expected: false / Received: true`).
+   - Mutant F re-applied (conflict branch returns `error: null as unknown as string`): 2
+     of the 5 tests fail (`.toContain` on a non-string throws).
+   - Both mutants reverted; suite back to green. `useKnowledge.publish` now calls
+     `interpretPublishResult(result, describe)` instead of inlining the `outcome ===
+     "conflict"` check, so the exact code path the verifier flagged is the one under test.
+2. **`UI-PROOF-ui-cite.md` overclaimed the lifecycle-gate disclosure.** Item 5 above said
+   `lifecycleGate.ts`'s explanation "now says this in both the superseded and retired
+   cases"; the diff had touched only the superseded branch, and the retired branch
+   (`lifecycleGate.ts:70`) was byte-identical to `84061c9` -- no UI-side-choice
+   disclosure at all. Separately, the superseded wording itself overstated the claim: it
+   said blocking BOTH publish and correct was "a UI-side choice, not a server rule," but
+   the server DOES refuse publish onto a superseded/retired node
+   (`service.publishRevision.ts` returns `outcome: "conflict", reason: "node_retired"`).
+   Only blocking CORRECT is this client's own choice -- `validateLinkReferences.ts`
+   checks a `corrects` link's target is in the accepted ancestry and never looks at
+   lifecycle, so the server would accept a correction filed directly against an old
+   accepted revision of a terminal node. Fix: both branches now share one
+   `TERMINAL_SCOPE_NOTE` that says "Publishing here would also be refused by the server
+   itself. Blocking a correction here, though, is this client's own choice...". Failing
+   first: `lifecycleGate.test.ts`'s two updated assertions were run against the
+   `84061c9`-era `lifecycleGate.ts` and both failed (`Expected to contain: "Publishing
+   here would also be refused by the server itself" / Received: "This node was
+   retired..."` and the equivalent for superseded's old wording); green after the fix.
+3. **Nonblocking, fixed anyway (cheap):**
+   - `buildPublishInput.ts`'s doc comment claimed a mutant dropping `links` to `[]` at
+     the `PublishForm.tsx` call site "must turn `buildPublishInput.test.ts` red." Verified
+     false by re-running mutant A: `buildPublishInput.test.ts` stays **3 pass, 0 fail**;
+     only `citeCorrect.test.ts` catches it (2 fail). Comment rewritten to say so and to
+     point at the tests that actually do.
+   - This doc's baseline ("165/0/22 before this pass") was wrong; the verifier measured
+     158 tests across 21 files at `84061c9`. Corrected above, along with the actual delta
+     (2 new files, 10 new tests).
+   - `PublishForm.tsx`'s `CORRECTION_NEEDS_LINK` copy ended "-- publish refuses a
+     correction without one," which reads as a server rule. `rg` finds no
+     correction/corrects enforcement in `app/server/src` -- it is only this form's own
+     guard. Reworded to "-- this form will not submit a correction without one." The
+     live-proof screenshot `ui/38-cite2-01-correction-blocked.png` above predates this
+     wording fix and still shows the old sentence; no new screenshot was captured this
+     round (see below).
+4. **Not done, disclosed rather than papered over:** this round did not re-run the
+   `/ego-browser` live proof. The logic fixed here (`interpretPublishResult`, the
+   lifecycle-gate copy) has no new externally-visible behavior beyond what
+   `38-cite2-02-publish-refused-reason.png` already shows (a conflict still surfaces as a
+   refused banner with the server's reason) -- the refactor moves *how* that decision is
+   tested, not what the user sees. Given the round's time box, `bun test`, `tsc`, the
+   Python architecture guard, and the mutant runs above were prioritized over a repeat
+   browser pass. `CorrectForm.submitRef` (a test-only seam no test currently drives) and
+   the "form clears typed links after a conflict" known limit were left as-is, matching
+   the verifier's own nonblocking/no-regression read of them.
