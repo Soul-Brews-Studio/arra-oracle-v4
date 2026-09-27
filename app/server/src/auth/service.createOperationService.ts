@@ -13,7 +13,7 @@
  */
 
 import { admit, type Admission, type GlobalAction, type Policy, type WorkspaceAction } from "./policy";
-import { loadPolicy } from "./loader";
+import { loadPolicy } from "./loader.loadPolicy";
 import { peerBinding } from "./policy.peerBinding";
 import { isBoundAuthor } from "./service.isBoundAuthor";
 import { TOOL_NAMES } from "../mcp/tools";

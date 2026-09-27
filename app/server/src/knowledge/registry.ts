@@ -44,7 +44,7 @@ export type { RequestAuthority };
  * (before fix round 2: `./calls` / `./connections`), which import `../storage`,
  * whose `DATA_DIR` is a `const` read from `process.env.ARRA_DATA_DIR` at
  * MODULE LOAD. A static import here pulls `storage.ts` into the STATIC
- * import graph of `app.ts` (via `knowledge/transport.ts` -> `composition.ts`),
+ * import graph of `app.createApp.ts` (via `knowledge/transport.ts` -> `composition.ts`),
  * which four test files (`transport-service`, `transport-ownership`,
  * `knowledge-chat-transport`, `knowledge-chat-writer-gate`) import statically
  * too -- so whichever of those Bun loads first freezes `DATA_DIR` for every
@@ -66,7 +66,7 @@ async function listConnectionsFromOperationsRoot(bytes: Uint8Array): Promise<unk
 /**
  * `audit:read` widened in for #94 (`listMcpCalls`/`listConnections`): the
  * runtime `admit()`/policy layer (`auth/policy.types.ts`'s `WorkspaceAction`)
- * already supports all four workspace actions, and `auth/service.ts`'s
+ * already supports all four workspace actions, and `auth/service.createOperationService.ts`'s
  * `KNOWLEDGE_TOOL_ACTION` already derives `kb_<method>` grants generically
  * from whatever `entry.action` says here -- this type was the only place
  * still narrowed to two, not a deliberate scope boundary. Call-log data is
@@ -248,7 +248,17 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
   },
   // #33: evidence-grounded chat (#32). `getContext` is retrieval-only and
   // lives on the reader facade, matching every other content:read method.
-  getContext: { action: "content:read", scopePath: [], call: (b, x) => b.context.getContext(x) },
+  // D3b: `Date.now()` is the conclusion eligibility `as_of` and the reported
+  // `assembled_at`, supplied here exactly as for `getRecallEligibility`.
+  getContext: { action: "content:read", scopePath: [], call: (b, x) => b.context.getContext(x, Date.now()) },
+  // D3b (DESIGN.md §12): the scoped `observer -> subject` view of current
+  // conclusions -- model-free, write-free, behind the same R3 read boundary
+  // as listMessages (named requester -> CURRENT membership; none -> operator).
+  getRepresentation: {
+    action: "content:read",
+    scopePath: [],
+    call: (b, x, a) => b.context.getRepresentation(x, a, Date.now()),
+  },
   // Audit data, not content: entitles the caller to `h_metadata.auth.credential_id`
   // (see `context.encodeMcpCallRow.ts`), which `content:read` callers must
   // never see.
@@ -279,7 +289,7 @@ export const KNOWLEDGE_METHODS: Readonly<Record<string, KnowledgeMethod>> = Obje
   // answers the closed `model_unavailable` (503). Admitting it under the
   // same action as `getContext` widens nothing: the model sees exactly the
   // items `getContext` would return to this caller.
-  answerChat: { action: "content:read", scopePath: [], call: (b, x) => chat(b).answerChat(x) },
+  answerChat: { action: "content:read", scopePath: [], call: (b, x) => chat(b).answerChat(x, Date.now()) },
   // The effective model settings, or `{model: null}`: model-free, dataset-free.
   getChatSettings: { action: "content:read", scopePath: [], call: (b, x) => chat(b).getChatSettings(x) },
 

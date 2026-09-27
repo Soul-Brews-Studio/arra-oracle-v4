@@ -1,6 +1,6 @@
 // #31 / R8 audit parity (fix round 2026-09-27): an ADMITTED
 // `POST /api/knowledge/:bank/:method` lands in the same audit sink as MCP
-// `tools/call` (`auth/service.ts` `appendAudit`), through the same composed
+// `tools/call` (`auth/service.createOperationService.ts` `appendAudit`), through the same composed
 // writer (`composition.ts` `composeAuditSink`: one `mcp_calls` row plus the
 // `connections` fold, DECISIONS.md R5). The CLI's `kb <method>` leg forwards
 // to this route, so it is audited here too.

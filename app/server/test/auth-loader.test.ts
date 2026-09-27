@@ -9,7 +9,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync }
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadPolicy, MAX_POLICY_BYTES } from "../src/auth/loader";
+import { loadPolicy, MAX_POLICY_BYTES } from "../src/auth/loader.loadPolicy";
 import { admit } from "../src/auth/policy";
 import { bearer, defaultPolicyDocument, NOW_MS, TOKENS } from "./helpers/auth-fixture";
 import { testTimeout } from "./helpers/timing.testTimeout";
@@ -133,7 +133,7 @@ describe("every rejection is the same opaque failure", () => {
     execFileSync("mkfifo", ["-m", "600", fifo]);
 
     const probe = join(dir, "probe.ts");
-    const loaderUrl = new URL("../src/auth/loader.ts", import.meta.url).pathname;
+    const loaderUrl = new URL("../src/auth/loader.loadPolicy.ts", import.meta.url).pathname;
     writeFileSync(
       probe,
       `const { loadPolicy } = await import(${JSON.stringify(loaderUrl)});\n` +

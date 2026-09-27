@@ -187,6 +187,23 @@ evidence, not re-run today — see the table's own note.
 | 5 | MCP CLI error exits | `app/server/test/mcp-correctness.test.ts`; `../cli.test.ts` (nonzero exit codes, per R8) | `bun test test/mcp-correctness.test.ts ../cli.test.ts` | **85 pass / 0 fail, 380 expect() calls, 2 files, 2.44s** |
 | 6 | Code-intel readiness (Serena/CodeGraph MCP dev-tooling, issue #37 — **corrected in the fix round**; NOT migration readback) | `app/docs/verification/2026-09-20-foundation.md`; issue #37 comments 2026-09-20 (Serena 23 tools, CodeGraph 21 tools, index 61 files/621 nodes/1432 edges, all 61 SHA256 hashes verified) | none today — historical evidence only | **Not re-run in this slice.** The prior version of this row cited `app/migrate-py/tests/test_copy_migration.py::test_ts_kernel_reads_every_migrated_node_back`, which measures migration read-back correctness, not dev-tooling readiness — a wrong citation an independent verifier caught (issue #34's own wording is "measured code-intelligence readiness **where used**", and `.gitignore:6` *(sweep 2026-09-27: now `.gitignore:7-8`)* names `/.codegraph/` "code-intelligence database"). That test remains good evidence for AC1/AC4 elsewhere in this matrix; it is removed from this area. |
 
+**Area 6 re-run live (2026-09-28 03:15 +07, on `aff292a`, the main checkout):** the result is
+**partial readiness, measured**.
+
+- **CodeGraph:** `codegraph_stats` answers 1236 files, 21661 nodes, 81237 edges and 7
+  unresolved refs. `git ls-files` counts 1239 tracked `.ts/.tsx/.py` files.
+- **Call sites and definitions:** `codegraph_search createApp` returns call sites
+  (`auth-transport.test.ts:97` and others). It does **not** return the definition,
+  `export function createApp` at `app/server/src/app.ts:101`, even though `rg` finds it
+  there. Code intelligence is usable for finding callers, but a definition lookup can miss.
+  Confirm definitions with `rg`.
+- **Serena:** `find_symbol getContext` (scoped to `app/server/src`) did not answer
+  within 120 s, was moved to the background, and then failed: `Tool execution timed out after
+  240 seconds`. Serena symbol lookup is **not ready** in this repo today.
+
+Code intelligence is dev tooling only. No product path depends on it, so this row is
+evidence of "readiness where used" and its limits, not a release blocker.
+
 - **Dedicated `vector_disposition` / never-reused test (#34 TODO 3 caveat):** written —
   `app/migrate-py/tests/test_copy_migration.py::
   test_vector_disposition_never_reuses_a_legacy_vector_across_every_migrated_node`.

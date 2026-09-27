@@ -49,9 +49,9 @@ const BETA = "beta-workspace";
 /** §1: writer {publication,taxonomy,context,close}; reader {publication,taxonomy,context}. */
 const WRITER_KEYS = "close,context,publication,taxonomy";
 const READER_KEYS = "context,publication,taxonomy";
-/** §8: context writer has exactly these thirty-three (its own fourteen plus the
- *  nineteen reader methods it spreads in); the reader exactly the nineteen plus
- *  the two reader-only #30 searches, twenty-one. */
+/** §8: context writer has exactly these thirty-four (its own fourteen plus the
+ *  twenty reader methods it spreads in, D3b `getRepresentation` included); the
+ *  reader exactly the twenty plus the two reader-only #30 searches, twenty-two. */
 // #30 overnight R7/R8: `getSearchFreshness` (read) and `embedPendingChunks`
 // (write-only) join the context facade -- both lists below grew accordingly.
 // Overnight R18: + closeSession (K9, D7) on every writer, + listSessionMembers (K10) on both.
@@ -59,14 +59,14 @@ const READER_KEYS = "context,publication,taxonomy";
 // read on the reader and spread onto the writer.
 const CONTEXT_WRITE_METHODS =
   "advanceReadCursor,appendMessages,closeSession,createSessionLink,createTrace,embedPendingChunks," +
-  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
+  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getRepresentation,getSearchFreshness," +
   "getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
   "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits," +
   "listTraces,reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
   "writeChunkEmbedding";
 const CONTEXT_READ_METHODS =
-  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
+  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getRepresentation,getSearchFreshness," +
   "getSession,getTrace," +
   "listConnections,listLifecycleHistory,listMcpCalls,listMessages,listPeers," +
   "listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits,listTraces," +

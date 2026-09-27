@@ -15,7 +15,7 @@ import { type ChatReader } from "./service.types";
  */
 export function createChatService(reader: ChatReader, options: { model?: ChatModelFn; settings: ChatSettings | null }) {
   return Object.freeze({
-    answerChat: (requestBytes: Uint8Array) => answerChat(reader, options.model, requestBytes),
+    answerChat: (requestBytes: Uint8Array, requestTimeMs?: number) => answerChat(reader, options.model, requestBytes, requestTimeMs),
     getChatSettings: (requestBytes: Uint8Array) => getChatSettings(options.settings, requestBytes),
   });
 }

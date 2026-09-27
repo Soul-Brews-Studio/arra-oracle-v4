@@ -1,6 +1,6 @@
 import { hopTrace } from "../chain.hopTrace";
 import { queryText } from "../chain.queryText";
-import { chainStopped } from "../chain.stopped";
+import { chainStopped } from "../chain.chainStopped";
 import { CompatError } from "../compat-error";
 import { ensureSpeaker } from "../ensureSpeaker";
 import type { V3ToolContext } from "../handlers";
@@ -37,7 +37,7 @@ const SCORE_DECAY = 0.5;
  * (A8) each hop's trace id is derived from it, so a client retry over an
  * unchanged bank replays the same traces (`already_satisfied`); a key reused
  * for a different chain is refused. A hop whose trace cannot be written ends
- * the call with a refusal naming the traces already written (`chain.stopped.ts`).
+ * the call with a refusal naming the traces already written (`chain.chainStopped.ts`).
  *
  * With no query embedder the chain cannot start: a `kernel_error` saying so,
  * with the v4 envelope, and no trace written. If the embedder stops answering

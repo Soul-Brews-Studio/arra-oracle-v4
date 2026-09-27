@@ -1,6 +1,6 @@
 import { assertNotFlagLike } from "./relic.assertNotFlagLike";
 import { bankFromRepo } from "./relic.bankFromRepo";
-import { failRelic } from "./relic.errors";
+import { failRelic } from "./relic.failRelic";
 import { runRelicJson } from "./relic.runRelicJson";
 import type { RelicAdapterConfig, RelicSearchCommandOutput, RelicSearchHit } from "./relic.types";
 import type { SessionRef } from "./session-source.types";

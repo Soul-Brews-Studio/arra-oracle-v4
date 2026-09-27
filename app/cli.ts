@@ -2,10 +2,10 @@
 export {};
 import { KNOWLEDGE_METHODS, KNOWLEDGE_METHOD_NAMES } from "./server/src/knowledge/registry";
 import { KB_ALIASES } from "./cli/kb.aliases";
-import { kbHelpText } from "./cli/kb.help";
+import { kbHelpText } from "./cli/kb.kbHelpText";
 import { parseFlags, type CliOptions } from "./cli/parseFlags";
 import { positiveInt } from "./cli/positiveInt";
-import { readKbRequestBody } from "./cli/kb.readRequestBody";
+import { readKbRequestBody } from "./cli/kb.readKbRequestBody";
 import { searchKnowledgeRequest } from "./cli/searchKnowledgeRequest";
 
 type Json = Record<string, unknown>;
@@ -25,8 +25,10 @@ Friendly aliases (thin sugar over kb; --bank is required on all of these):
   session add --bank NAME --name NAME [--session-id ID]
   message append --bank NAME --session NAME --peer NAME --content TEXT [--role R] [--in-reply-to ID]
   nodes list --bank NAME [--after ID] [--limit N] [--include-total] [--type TERM]
-  context get --bank NAME --peer NAME --session NAME [--max-items N]
-  chat ask --bank NAME --peer NAME --session NAME --question TEXT [--max-items N]
+  context get --bank NAME --peer NAME --session NAME [--max-items N] [--observer NAME] [--about NAME]
+  chat ask --bank NAME --peer NAME --session NAME --question TEXT [--max-items N] [--observer NAME] [--about NAME]
+  peer context --bank NAME --observer NAME --about NAME [--requester NAME] [--max-items N]
+      the scoped observer -> about view of current conclusions (getRepresentation)
   search --bank NAME --query TEXT --mode keyword|semantic [--limit N] [--profile NAME]
       knowledge-tier recall (#30): keyword = searchKnowledgeKeyword, semantic =
       searchKnowledgeSemantic (--profile: stored embedding profile, semantic only;

@@ -262,17 +262,19 @@ const MULTI_EXPORT_ALLOWLIST: Record<string, { count: number; reason: string }> 
   "ui/v2/src/overview/StatCard.tsx": { count: 2, reason: "React component + its co-located pure formatter" },
 };
 
-/** Files exporting exactly one function whose name does not follow "named after the file". */
-const MISNAMED_ALLOWLIST: Record<string, { name: string; reason: string }> = {
-  "server/src/app.ts": { name: "createApp", reason: "process-level entrypoint file, named for its role not a dotted convention" },
-  "server/src/auth/loader.ts": { name: "loadPolicy", reason: "pre-dates the dotted naming convention; loader.ts holds the one policy loader" },
-  "server/src/auth/service.ts": { name: "createOperationService", reason: "pre-dates the dotted naming convention; service.ts is the auth service factory" },
-  "server/src/mcp/legacy-v3/chain.stopped.ts": { name: "chainStopped", reason: "dot-segment is the adjective 'stopped', not a callable verb naming mismatch is cosmetic" },
-  "server/src/source/relic.errors.ts": { name: "failRelic", reason: "dot-segment is the plural 'errors', file holds relic's one error constructor" },
-  "cli/kb.help.ts": { name: "kbHelpText", reason: "dot-segment is 'help', function is the concrete kbHelpText constant it returns" },
-  "cli/kb.readRequestBody.ts": { name: "readKbRequestBody", reason: "function name carries a 'Kb' prefix the file's dot-segment omits" },
-  "ui/v2/src/forum/threads.ts": { name: "buildThreads", reason: "pre-dates the dotted naming convention; threads.ts is the one thread builder" },
-};
+/** Files exporting exactly one function whose name does not follow "named after the file".
+ *  Was 8 entries (measured 2026-09-27, see MULTI_EXPORT_ALLOWLIST's header note for the
+ *  706/39/8 baseline split). Style-shrink (2026-09-28, docs/overnight/DECISIONS.md,
+ *  slice style-shrink) renamed all 8 -- each `git mv` to `<stem>.<functionName>.ts`,
+ *  keeping the function name (and every call site) unchanged, which is why every rename
+ *  here is a file move, not a function rename: server/src/app.ts -> app.createApp.ts,
+ *  auth/loader.ts -> loader.loadPolicy.ts, auth/service.ts -> service.createOperationService.ts,
+ *  mcp/legacy-v3/chain.stopped.ts -> chain.chainStopped.ts, source/relic.errors.ts ->
+ *  relic.failRelic.ts, cli/kb.help.ts -> kb.kbHelpText.ts, cli/kb.readRequestBody.ts ->
+ *  kb.readKbRequestBody.ts, ui/v2/src/forum/threads.ts -> threads.buildThreads.ts. The
+ *  allowlist is empty now, not removed, so a future misnamed single-export file still has
+ *  somewhere to be listed. */
+const MISNAMED_ALLOWLIST: Record<string, { name: string; reason: string }> = {};
 
 describe("one exported function per file (ratchet)", () => {
   test("measured today matches the allowlist-sized multi/misnamed split", () => {

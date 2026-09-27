@@ -23,7 +23,7 @@ import {
   readAuthorization,
   readBoundedBody,
 } from "./auth/http";
-import { AuthDenied, type McpEnvelope, type OperationService } from "./auth/service";
+import { AuthDenied, type McpEnvelope, type OperationService } from "./auth/service.createOperationService";
 import { searchAnswer } from "./auth/service.searchAnswer";
 import { decodeUtf8Strict, LIMITS, parseStrict } from "./contracts/jcs";
 import { plainBody } from "./app.plainBody";

@@ -2,6 +2,7 @@ import { getContext } from "./service.getContext";
 import { getMessage } from "./service.getMessage";
 import { getPeer } from "./service.getPeer";
 import { getReadCursor } from "./service.getReadCursor";
+import { getRepresentation } from "./service.getRepresentation";
 import { getRecallEligibility } from "./service.getRecallEligibility";
 import { getSearchFreshness } from "./service.getSearchFreshness";
 import { getSession } from "./service.getSession";
@@ -47,7 +48,12 @@ export function createContextReadMethods(reader: DatasetAdapter, datasetRoot: st
     listTraces: (requestBytes: Uint8Array) => listTraces(reader, requestBytes),
     listSearchChunks: (requestBytes: Uint8Array) => listSearchChunks(reader, requestBytes),
     getSearchFreshness: (requestBytes: Uint8Array) => getSearchFreshness(reader, datasetRoot, requestBytes),
-    getContext: (requestBytes: Uint8Array) => getContext(reader, requestBytes),
+    // D3b: `requestTimeMs` is the conclusion eligibility `as_of` and the
+    // reported `assembled_at`, supplied by the registry as real request time.
+    getContext: (requestBytes: Uint8Array, requestTimeMs?: number) => getContext(reader, requestBytes, requestTimeMs),
+    // D3b: the scoped `observer -> subject` view, behind the R3 read boundary.
+    getRepresentation: (requestBytes: Uint8Array, authority: RequestAuthority, requestTimeMs?: number) =>
+      getRepresentation(reader, requestBytes, authority, requestTimeMs),
     listMcpCalls: (requestBytes: Uint8Array) => listMcpCalls(reader, requestBytes),
     listConnections: (requestBytes: Uint8Array) => listConnections(reader, requestBytes),
   };

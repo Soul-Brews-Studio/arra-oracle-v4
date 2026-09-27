@@ -114,7 +114,7 @@ const wrapped = {
   },
 };
 const { configureKnowledgeAccess, createMcpAdapter } = await import("../../../../src/mcp");
-const { createApp } = await import("../../../../src/app");
+const { createApp } = await import("../../../../src/app.createApp");
 const service = await composition.composeService({ policyPath, origin: "http://127.0.0.1:3939", port: 0, v3Compat: true });
 configureKnowledgeAccess(wrapped);
 // The flag goes to the app too, as buildApp passes it: only then is X-Arra-Peer read.

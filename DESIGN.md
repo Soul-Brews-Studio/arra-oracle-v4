@@ -1246,8 +1246,8 @@ Three headline claims above are superseded by fresh source:
                                    the target root; MCP + /api/knowledge calls
                                    + legacy /api/memories, /api/search, /api/health
                                    (not /api/backfill, /api/reindex: NEEDS-NAT)
- §14 one service, three transports BUILT: 57 methods on HTTP, MCP and CLI (kb +      R7, R8
-                                   6 aliases); v3-compatible adapter behind a flag    R18
+ §14 one service, three transports BUILT: 58 methods on HTTP, MCP and CLI (kb +      R7, R8
+                                   7 aliases); v3-compatible adapter behind a flag    R18
  §15 durability / concurrency      one writer via the fd-42 gate; R2 multi-writer    —
                                    and a distributed lease NOT proven
  §16 migration 15 -> 19            BUILT operator-only on a copy (arra-migrate-copy); R11, R17

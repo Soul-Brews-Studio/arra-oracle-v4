@@ -18,8 +18,8 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createApp } from "../src/app";
-import { AuthDenied, createOperationService, type McpEnvelope, type StoreDependencies } from "../src/auth/service";
+import { createApp } from "../src/app.createApp";
+import { AuthDenied, createOperationService, type McpEnvelope, type StoreDependencies } from "../src/auth/service.createOperationService";
 import { createMcpAdapter, dispatchTool } from "../src/mcp";
 import { EXPIRES_AT, NOT_BEFORE, NOW_MS } from "./helpers/auth-fixture";
 

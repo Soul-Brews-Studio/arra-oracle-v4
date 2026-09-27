@@ -1,4 +1,4 @@
-import { failRelic } from "./relic.errors";
+import { failRelic } from "./relic.failRelic";
 import { bankFromRepo } from "./relic.bankFromRepo";
 import type { RelicSessionRow } from "./relic.types";
 import type { SessionRef } from "./session-source.types";
