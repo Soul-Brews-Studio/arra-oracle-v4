@@ -28,6 +28,7 @@ import {
   publishRevision,
   seedReservedVocabularies,
 } from "../api/knowledge";
+import { describeConflict } from "./describeConflict";
 import { type Entry, addName, removeName, setState } from "./roster";
 
 const NODES_KEY = "arra-ui-v2-nodes";
@@ -183,7 +184,11 @@ export function useKnowledge(b: Bank) {
     },
     // `base` overrides the head-as-base default: a correction is a NEW node,
     // so it passes `null` even while another node's head is on screen.
-    // Resolves `true` only when the server accepted the revision.
+    // Resolves `true` only when the server ACCEPTED the revision (HTTP ok
+    // AND `outcome: "accepted" | "idempotent"`). A `conflict` outcome
+    // (stale base, retired/superseded node, id clash) is a 200 that refused
+    // to write -- it resolves `false` and surfaces the server's reason
+    // through `error`, exactly like a transport failure would.
     publish: async (
       input: Omit<PublishInput, "node_id" | "base_revision_id">,
       nodeId: string,
@@ -206,6 +211,11 @@ export function useKnowledge(b: Bank) {
       setPublishing(false);
       if (!result.ok) {
         setError(describe(result));
+        return false;
+      }
+      const outcome = (result.body as { outcome?: unknown; reason?: unknown } | null)?.outcome;
+      if (outcome === "conflict") {
+        setError(describeConflict((result.body as { reason?: unknown }).reason));
         return false;
       }
       setNodes((n) => addName(n, nodeId));
