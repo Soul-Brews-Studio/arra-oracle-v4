@@ -1,32 +1,68 @@
 // Ratchet Nat's style rule ("one exported function per file, named after the
-// file", docs/overnight/DECISIONS.md, applied 2026-09-27): this test does NOT
-// enforce the rule everywhere yet -- it freezes today's violators on an
+// file" -- docs/overnight/PLAN.md:40 sets "one function per file"; the "named
+// after the file" wording is app/docs/contracts/lifecycle-v1.md:308 and
+// app/docs/contracts/target-v1-decisions.md:122. docs/overnight/DECISIONS.md
+// does not state this rule itself, only adjacent decisions). This test does
+// NOT enforce the rule everywhere yet -- it freezes today's violators on an
 // ALLOWLIST below and fails on anything NEW. The allowlist can only shrink:
-// a file dropping below its listed count, or becoming fully compliant, must
-// have its entry updated or removed in the SAME change, or this test fails.
+// a file dropping below its listed count (still multi-export, or now fully
+// compliant) must have its entry updated or removed in the SAME change, or
+// this test fails -- see "no allowlisted ... entry is stale" below.
 //
-// Sibling to file-size-cap.test.ts: same scan scope (git ls-files, not a
-// filesystem walk), same "deliberately dumb" philosophy so it can't be fooled
-// by reformatting, same exclusions (tests, node_modules, build output).
+// Sibling to file-size-cap.test.ts: same scan scope philosophy (git
+// ls-files, not a filesystem walk) and same exclusions (tests, node_modules,
+// build output). Two consequences worth knowing, shared with that sibling:
+// (1) a brand-new file is invisible to `git ls-files` until it is at least
+// `git add -N`-ed -- a local run against a purely untracked new file will
+// not see it (CI/pre-commit runs against staged/committed trees, so this
+// does not hide anything there). (2) the scan roots below (server/src,
+// cli(.ts), ui/v2/src) are the same three Nat's style pass covered -- they
+// deliberately do NOT include ui/v1/src, ui/v3/src, ui/v2/vite.config.ts,
+// benchmarks/run_lance.ts, or this package's own test.order.ts/
+// test.parallel.ts. The rule is not ratcheted there yet.
 //
-// What counts as an "exported function" (measured against the 2026-09-26
-// f919369 driver's detector, and produces the SAME 706/39/8 split -- see the
-// "measured today" test below):
-//   - `export function NAME(...)`       (incl. `export async function`, `*`)
-//   - `export default function NAME?(...)`  (anonymous default counts as one
-//     export named "default")
-//   - `export const NAME = (...) => ...`    (incl. `export const NAME = async (...) =>`,
-//     with or without a type annotation between NAME and `=`)
-// What does NOT count:
-//   - `export { x } from "./mod"` and bare `export { x }` -- re-exports name
-//     no new function in THIS file; neither matches any pattern above, so
-//     they fall out for free rather than needing a special case.
-//   - overload signatures: `export function foo(a: string): number;` followed
-//     by its implementation share one name, and names are deduped with a
-//     Set, so an overloaded export counts once, not once per signature.
-//   - `export class`, `export interface`, `export type`, `export const` bound
-//     to a non-arrow value (an object, a number, a `new Foo()`) -- none match
-//     the arrow-function pattern.
+// What counts as an "exported function", and how it's detected: this is a
+// two-step scan, not a line-regex (a bare line-regex is what a fix round
+// found could be defeated by `export { localFn }`, an arrow with a return
+// type between the params and `=>`, a generic function name, a reformatted
+// multi-line arrow, `let`/`var` instead of `const`, or an anonymous default
+// arrow -- see exportedFunctionNames below for the enumerated forms this
+// now handles).
+//   1. `Bun.Transpiler().scan(text).exports` (built into Bun, no new
+//      dependency) gives the AUTHORITATIVE list of names this file exports,
+//      for every export form TS has -- function/const/let/var, default,
+//      `export { a, b }`, overloads deduped to one name each, re-exports.
+//      This step can't be fooled by reformatting because it's a real
+//      parse, not a regex over lines.
+//   2. For each exported name, isFunctionDeclared/isDefaultFunction search
+//      the file's full text for a LOCAL declaration of that name shaped
+//      like a function: `function NAME(...)` (incl. `async`, `*`, and a
+//      generic `<T>` before the parens), or `const|let|var NAME = ...`
+//      bound to a `function` expression or an arrow (incl. `async`,
+//      generics before the params, a single bare-identifier param with no
+//      parens, and a return-type annotation between the params and `=>`).
+//      A name that step 1 lists but step 2 finds no local function
+//      declaration for -- a re-export of an import (`export { x } from
+//      "./mod"`, or `import {x} ...; export {x};`), a class, an
+//      interface/type (step 1 already excludes pure type exports), or a
+//      plain-value const -- does NOT count. This is what makes
+//      `export { localHelper }` count when localHelper is a function
+//      declared in THIS file, but not when it's imported from elsewhere:
+//      step 2 only finds a match if the function is actually declared
+//      here, regardless of which export syntax names it.
+//   - overload signatures share one name and names are deduped with a Set,
+//     so an overloaded export counts once, not once per signature.
+//   - `export class`, `export interface`, `export type`, and a `const`
+//     bound to a non-function value (object, number, `new Foo()`) match
+//     neither step 2 pattern, so they don't count. A class whose method
+//     happens to share the class's own name is not mistaken for a
+//     top-level function export (step 2 requires `function`/arrow/`const`
+//     binding syntax, not a class body).
+//   - Known gap, not exercised by any file today: an anonymous
+//     `export default function () {}` or `export default (x) => x` always
+//     counts as compliant (there's no name to check), whatever the
+//     filename claims to hold. `.spec.tsx` is not excluded (no such files
+//     exist in-tree).
 //
 // "Named after the file": Nat's own example is `service.listMessages.ts` ->
 // `listMessages`, i.e. the LAST dot-segment of the filename stem, not the
@@ -77,26 +113,80 @@ function scan(): string[] {
   return SCAN_ROOTS.flatMap(trackedFiles);
 }
 
-/** Exported function-like names in one file's text, overloads deduped. */
-function exportedFunctionNames(text: string): string[] {
-  const names: string[] = [];
-  for (const line of text.split("\n")) {
-    let m: RegExpMatchArray | null;
-    if ((m = line.match(/^\s*export\s+async\s+function\s*\*?\s+(\w+)/))) {
-      names.push(m[1]!);
-    } else if ((m = line.match(/^\s*export\s+function\s*\*?\s+(\w+)/))) {
-      names.push(m[1]!);
-    } else if ((m = line.match(/^\s*export\s+default\s+async\s+function\s*\*?\s*(\w*)/))) {
-      names.push(m[1] || "default");
-    } else if ((m = line.match(/^\s*export\s+default\s+function\s*\*?\s*(\w*)/))) {
-      names.push(m[1] || "default");
-    } else if ((m = line.match(/^\s*export\s+const\s+(\w+)\s*(?::[^=]+)?=\s*async\s*\(/))) {
-      names.push(m[1]!);
-    } else if ((m = line.match(/^\s*export\s+const\s+(\w+)\s*(?::[^=]+)?=\s*\(/))) {
-      names.push(m[1]!);
+// A bare `export { x }` or `export { x } from "./mod"` names no NEW
+// function in THIS file when x is a re-export of an import -- step 2 below
+// already excludes those (no local declaration to find), but this explicit
+// list is kept as defense-in-depth documentation of intent, not load-bearing
+// for correctness.
+const RE_EXPORT_FROM = /export\s*\{([^}]*)\}\s*from\s*["'][^"']*["']/g;
+
+function reExportedFromElsewhere(text: string): Set<string> {
+  const names = new Set<string>();
+  let m: RegExpExecArray | null;
+  RE_EXPORT_FROM.lastIndex = 0;
+  while ((m = RE_EXPORT_FROM.exec(text))) {
+    for (const raw of m[1]!.split(",")) {
+      const part = raw.trim();
+      if (!part) continue;
+      const local = part.replace(/^type\s+/, "").split(/\s+as\s+/).pop()!.trim();
+      if (local) names.add(local);
     }
   }
-  // Overloads (and any accidental duplicate line) count once per name.
+  return names;
+}
+
+function escapeForRegex(name: string): string {
+  return name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// An arrow function's head, starting right after the `=`: optional `async`,
+// optional generics (`<T,>`), then either a parenthesized param list or a
+// single bare identifier, then an optional return-type annotation, then
+// `=>`. Bounded (not `[\s\S]*`) so a failed match on a non-function value
+// can't skip forward across a `;` into an unrelated later declaration.
+const ARROW_HEAD =
+  "(?:async\\s*)?(?:<[^;]{0,150}?>\\s*)?(?:\\([^;]{0,1200}?\\)|[A-Za-z_$][\\w$]*)(?:\\s*:\\s*[^;]{0,300}?)?\\s*=>";
+
+/** Does `text` declare NAME locally as a function, a function expression, or an arrow? */
+function isFunctionDeclared(text: string, name: string): boolean {
+  const esc = escapeForRegex(name);
+  const declaration = new RegExp(`\\bfunction\\s*\\*?\\s*${esc}\\s*(?:<[^>]*>)?\\s*\\(`);
+  if (declaration.test(text)) return true;
+  // `=(?!>)` picks the real assignment `=`, not the `=` inside a `=>` that
+  // may appear in a return-type annotation between NAME and the value.
+  const binding = new RegExp(`\\b(?:const|let|var)\\s+${esc}\\b[^;]{0,300}?=(?!>)\\s*(?:function\\b|${ARROW_HEAD})`);
+  return binding.test(text);
+}
+
+/** Is `export default ...` in `text` a function, function expression, or arrow? */
+function isDefaultFunction(text: string): boolean {
+  if (/export\s+default\s+(?:async\s+)?function\b/.test(text)) return true;
+  return new RegExp(`export\\s+default\\s+${ARROW_HEAD}`).test(text);
+}
+
+function loaderFor(relPath: string): "ts" | "tsx" {
+  return relPath.endsWith(".tsx") ? "tsx" : "ts";
+}
+
+/** Exported function-like names in one file's text, overloads deduped. */
+function exportedFunctionNames(text: string, relPath: string): string[] {
+  const transpiler = new Bun.Transpiler({ loader: loaderFor(relPath) });
+  let scanned: { exports: string[] };
+  try {
+    scanned = transpiler.scan(text);
+  } catch {
+    return [];
+  }
+  const excluded = reExportedFromElsewhere(text);
+  const names: string[] = [];
+  for (const name of scanned.exports) {
+    if (excluded.has(name)) continue;
+    if (name === "default") {
+      if (isDefaultFunction(text)) names.push("default");
+      continue;
+    }
+    if (isFunctionDeclared(text, name)) names.push(name);
+  }
   return [...new Set(names)];
 }
 
@@ -113,17 +203,19 @@ function measure(): FileReport[] {
   return scan()
     .map((relPath) => ({
       path: relPath,
-      names: exportedFunctionNames(readFileSync(resolve(ROOT, relPath), "utf8")),
+      names: exportedFunctionNames(readFileSync(resolve(ROOT, relPath), "utf8"), relPath),
     }))
     .filter((r) => r.names.length > 0);
 }
 
 // --- ALLOWLIST -------------------------------------------------------------
 // Every entry is a file that violates the rule TODAY (measured 2026-09-27 on
-// v4/on-style-ratchet, base 9435719). This list may only shrink: removing an
-// entry (because the file was split or renamed) is always fine; growing an
-// entry's `count`, or leaving a now-compliant file listed, fails the test
-// below on purpose -- see "the allowlist itself stays honest".
+// v4/on-style-ratchet, base 9435719, with the two-step scan/classify
+// detector above -- reproduces the driver's 706/39/8 split exactly). This
+// list may only shrink: removing an entry (because the file was split or
+// renamed) is always fine; growing an entry's `count`, or leaving a now-
+// lower or now-compliant file listed at its old count, fails the test below
+// on purpose -- see "the allowlist itself stays honest".
 
 /** Files exporting MORE than one function, with today's exact count. */
 const MULTI_EXPORT_ALLOWLIST: Record<string, { count: number; reason: string }> = {
@@ -181,19 +273,22 @@ const MISNAMED_ALLOWLIST: Record<string, { name: string; reason: string }> = {
 };
 
 describe("one exported function per file (ratchet)", () => {
-  test("measured today matches the frozen split (706 files export, 39 multi-export, 8 misnamed)", () => {
+  test("measured today matches the frozen split (706 files export, allowlist-sized multi/misnamed)", () => {
     const report = measure();
     // Sanity floor, same purpose as file-size-cap's: a scan that suddenly
     // finds far fewer files means the scan broke, not that the repo shrank.
     expect(report.length).toBeGreaterThanOrEqual(600);
+    expect(report.length).toBe(706);
     const multi = report.filter((r) => r.names.length > 1);
     const misnamed = report.filter((r) => {
       if (r.names.length !== 1) return false;
       const allowed = expectedNames(r.path);
       return !allowed.includes(r.names[0]!) && r.names[0] !== "default";
     });
-    expect(multi.length).toBe(39);
-    expect(misnamed.length).toBe(8);
+    // Derived from the allowlists themselves (not repeated as separate
+    // literals) so this assertion can't silently drift from them.
+    expect(multi.length).toBe(Object.keys(MULTI_EXPORT_ALLOWLIST).length);
+    expect(misnamed.length).toBe(Object.keys(MISNAMED_ALLOWLIST).length);
   });
 
   test("no file outside the allowlist exports more than one function", () => {
@@ -217,15 +312,22 @@ describe("one exported function per file (ratchet)", () => {
     expect(grown).toEqual([]);
   });
 
-  test("no allowlisted multi-export entry is stale (file already compliant)", () => {
+  test("no allowlisted multi-export entry is stale (count dropped, or file is now compliant)", () => {
     const report = measure();
+    // `actual < entry.count`, not `actual <= 1`: a count that drops but
+    // stays multi-export (19 -> 18) must ALSO force the entry to be
+    // updated, not just a drop to full compliance. Freezing the ceiling at
+    // the old high-water mark would let the count wander back up to it
+    // later without ever tripping the "grown" test above, since that test
+    // only compares against this (stale) `entry.count`.
     const stale = Object.entries(MULTI_EXPORT_ALLOWLIST)
-      .filter(([path]) => {
+      .map(([path, entry]) => {
         const found = report.find((r) => r.path === path);
         const actual = found ? found.names.length : 0;
-        return actual <= 1;
+        return { path, entry, actual };
       })
-      .map(([path, entry]) => `${path}: allowlisted for ${entry.count}, now exports ${(report.find((r) => r.path === path)?.names.length) ?? 0} -- remove from MULTI_EXPORT_ALLOWLIST`);
+      .filter(({ entry, actual }) => actual < entry.count)
+      .map(({ path, entry, actual }) => `${path}: allowlisted for ${entry.count}, now exports ${actual} -- update its count in MULTI_EXPORT_ALLOWLIST (or remove the entry if actual <= 1)`);
     expect(stale).toEqual([]);
   });
 
