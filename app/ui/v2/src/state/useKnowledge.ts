@@ -104,6 +104,10 @@ export function useKnowledge(bank: Bank) {
   const refresh = useCallback(async () => {
     const g = ++gen.current;
     if (selected === null) {
+      // The bump above just dropped any read still in flight, and that read
+      // had set loading -- nothing else will clear it (a workspace switch or
+      // "New" while a node is open used to latch "loading…" on the draft).
+      setLoading(false);
       setHead(null);
       setHistory([]);
       return;

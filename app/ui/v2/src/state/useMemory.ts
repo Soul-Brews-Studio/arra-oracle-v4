@@ -121,6 +121,8 @@ export function useMemory() {
   const refreshMessages = useCallback(async () => {
     const g = ++messagesGen.current;
     if (session === null) {
+      // The bump dropped any read in flight; its loading flag is ours to clear.
+      setLoadingMessages(false);
       setMessages([]);
       return;
     }
@@ -148,6 +150,7 @@ export function useMemory() {
   const refreshContext = useCallback(async () => {
     const g = ++contextGen.current;
     if (peer === null || session === null) {
+      setLoadingContext(false);
       setContext(null);
       return;
     }

@@ -95,7 +95,10 @@ export function useEvidenceReview(
   // A trace is scoped to a dataset -- it must not survive a bank/workspace
   // switch just because no new lookup was made yet.
   useEffect(() => {
+    // Every bump that drops a read in flight also clears that read's loading
+    // flag -- the dropped read never will (ui-stale fix round).
     traceGen.current += 1;
+    setTraceLoading(false);
     setTraceId("");
     setTrace(null);
     setTraceError(null);
@@ -171,6 +174,7 @@ export function useEvidenceReview(
   const refreshSessionLinks = useCallback(async () => {
     const gen = ++sessionLinksGen.current;
     if (sessionName === null) {
+      setSessionLinksLoading(false);
       setSessionLinks([]);
       setSessionLinksNextCursor(null);
       setSessionLinksError(null);
@@ -221,6 +225,7 @@ export function useEvidenceReview(
   const refreshLifecycle = useCallback(async () => {
     const gen = ++lifecycleGen.current;
     if (nodeId === null) {
+      setLifecycleLoading(false);
       setLifecycle([]);
       setLifecycleError(null);
       setRecall(null);
@@ -291,7 +296,12 @@ export function useEvidenceReview(
 
   const refreshAssociation = useCallback(async () => {
     const gen = ++associationGen.current;
+    // Cleared here, not per branch: this bump drops any reverse read still in
+    // flight, and a path that never issues its own (no node, a failed or
+    // empty association) would otherwise leave that read's flag on.
+    setDependentsLoading(false);
     if (nodeId === null) {
+      setAssociationLoading(false);
       setAssociation(null);
       setAssociationError(null);
       setDependents([]);
