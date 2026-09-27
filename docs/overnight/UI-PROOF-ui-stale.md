@@ -386,3 +386,162 @@ this round's time box. The one consumer it still protects is `useEvidenceReview`
 refresh callbacks depend on `b` identity. There, an unstable bank means re-requests on
 every App render (wasted work), and no longer wrong data, because the keyed guard compares
 strings. Still open.
+
+## Actions (2026-09-27, slice `ui-actions`, branch `v4/on-ui-actions`)
+
+Closes the two items round 3 left open ("User-triggered actions have no scope guard" and
+"App-level `useStableBank` has no unit test"). UI only: nothing under `app/server/src`
+changed, and no contract under `app/docs/contracts/` changed, so no contract amendment
+was needed. `git diff --stat` against `d949290` touches only `app/ui/v2/src/**` and the
+rebuilt `app/server/public/v2` bundle.
+
+### The bug
+
+Round 3's `useKeyedRead` guards every READ (`refreshMessages`, `refreshContext`, the
+knowledge/evidence lanes). It never reached the ACTIONS layered on top: `useMemory.ask`
+set `answer`/`askError` from whatever `answerChat` call happened to resolve, with no check
+that the peer/session it was asked for was still selected. `send`/`join` set
+`messageError` the same way. `useMemory.verify` (the roster peer/session check behind
+`addPeer`/`addSession`) applied its verdict to whatever workspace's roster was in React
+state when it resolved, not the one it was issued for. `useKnowledge.seed` pinned a
+taxonomy id set under whatever scope was current at LAND time, and `publish` forced
+`setSelected`/bookmarked a node under a scope it may have already left.
+
+### The fix
+
+| File | Change |
+|---|---|
+| `app/ui/v2/src/state/useMemory.ts` | `ask` gets its own `useKeyedRead` ticket (`askRead`, same `contextKey` shape as `contextRead`): the answer/error land only while `askRead.land(t)` says the peer+session are still current. `send`/`join` capture `messagesKey({b, session})` at issue time and compare it against `messagesRead.now.current.key` (updated every render) before writing `messageError`. `verify` captures `workspace` at issue time and compares against a `workspaceRef` before writing a roster verdict. |
+| `app/ui/v2/src/state/useKnowledge.ts` | `seed` captures `scope` at issue time in a `scopeRef` and drops the taxonomy pin if the scope moved on. `publish` keeps the write (it happened) but drops the forced `setSelected`/bookmark if the scope moved on -- a node switch within the SAME scope still navigates, since "go look at what you just published" is the point. |
+| `app/ui/v2/src/App.stableBank.test.tsx` (new) | Mounts the real `App` (via `installFakeDom`) on the Explore view with a node selected, forces a second top-level render with no selection change, and asserts no new `listLifecycleHistory`/`getRecallEligibility`/`getRevisionAssociations` request went out. `useKnowledge` already stabilises its own `bank` argument, so this had to go through a consumer with none: `useEvidenceReview`, wired in via Explore. |
+| `app/ui/v2/src/state/actionStale.test.tsx` (new) | Failing-first, through the real `useMemory`/`useKnowledge` hooks, one test per action: `ask`, `send`'s error, `seed`, `verify`. |
+
+**Policy, stated once because the reasoning repeats:** every one of these is DROP. None of
+`ask`'s answer slot, `send`/`join`'s single error line, `seed`'s taxonomy pin, or `verify`'s
+roster verdict has a place to attribute a stale result TO -- each is "what's true for the
+selection on screen now", not a per-session/per-workspace log. A result for a selection
+already left is discarded, exactly like `useKeyedRead`'s read guard drops a stale read.
+`publish` is the one exception with nuance: the WRITE stays (it is real, wherever it
+targeted), only the forced navigation/bookmark is dropped on a scope change, because
+undoing a write that already happened would be its own lie.
+
+### Failing-first, through the real hooks
+
+`src/state/actionStale.test.tsx`, on the unfixed hooks (HEAD `d949290`): **0 pass / 4 fail**.
+
+```
+(fail) useMemory.ask ... ask in sA, switch to sB mid-ask: no sA answer under sB
+    expect(m.get().answer).toBe(null);
+    Received: { answer: "sA's answer", items_used: [] }
+(fail) useMemory.send ... send fails in sA after switching to sB: messageError stays clear
+    expect(m.get().messageError).toBe(null);
+    Received: "conflict"
+(fail) useKnowledge.seed ... seed resolves in w1 after switching to w2: w2's taxonomy stays unset
+    expect(k.get().taxonomy).toBe(null);
+    Received: { type: {...}, memory_horizon: {...} }   -- w1's minted ids, under w2
+(fail) useMemory.verify ... alice verified live in w2 stays live after w1's stale 'missing' answer lands
+    expect(alice?.state).toBe("live");
+    Received: "missing"
+```
+
+With the fix: **4 pass, 0 fail**.
+
+`App.stableBank.test.tsx`, with App.tsx's `useStableBank` line reverted to the inline
+literal `{ bank: m.bank, token: m.token, workspace: m.workspace }` (the round-3 gap):
+**0 pass / 1 fail** --
+
+```
+expect(after[method] ?? 0).toBe(before[method] ?? 0);
+Expected: 3
+Received: 4   -- one extra listLifecycleHistory fired by the unrelated re-render
+```
+
+With `useStableBank` restored: **1 pass, 0 fail**.
+
+### Mutants: one line removed at a time from the fixed code, restored after each
+
+| Mutant | Result |
+|---|---|
+| `ask`: drop `if (!stillCurrent) return;` | the ask test fails (3 pass / 1 fail) |
+| `send`: drop the `messagesRead.now.current.key === issuedKey` check | the send test fails (3 pass / 1 fail) |
+| `verify`: drop the `workspaceRef.current !== issuedInWorkspace` check | the verify test fails (3 pass / 1 fail) |
+| `useKnowledge.seed`: drop the `scopeRef.current !== issuedInScope` check | the seed test fails (3 pass / 1 fail) |
+| `App.tsx`: `useStableBank` call reverted to the inline literal | `App.stableBank.test.tsx` fails (0 pass / 1 fail) |
+
+After each mutant the file was restored, and `diff` against the pre-mutant copy confirmed
+it matched the fix exactly.
+
+### Other checks
+
+- Targeted suites (16 files covering every hook/component that imports `useMemory`,
+  `useKnowledge`, `useEvidenceReview`, `useLifecycleWrites` or `useStableBank`, found with
+  `rg`): **70 pass, 0 fail**.
+- `npx tsc --noEmit -p app/ui/v2/tsconfig.json`: exit 0.
+- Python architecture guard (`app/migrate-py`, `unittest discover -s tests`): 269 tests,
+  `OK (skipped=1)`. No TS file imports the publication kernel; nothing under
+  `app/server/src` changed.
+- Every touched/added file stays well under 500 lines (`useMemory.ts` 282,
+  `useKnowledge.ts` 286, `actionStale.test.tsx` 180, `App.stableBank.test.tsx` 107).
+- Bundle rebuilt: `bun run build` (app/ui/v2) into `app/server/public/v2`,
+  `index-Cz5DXbTB.js`. Verified byte-identical hash before and after the control-mutant
+  detour (built once clean, once with the `ask` mutant for the live control run below,
+  once more restored -- the final rebuild reproduced the same `index-Cz5DXbTB.js`).
+- Acceptor live probe (`run.sh … ui-actions`), fresh mktemp run: 57 methods, each exposed
+  over HTTP, MCP and CLI; isolation **191 pass / 0 fail**; 26 payload gaps; 0 seed errors;
+  fatal none. Start HEAD and end HEAD both `d949290` -- this slice changed nothing on the
+  server. Same gap count as the prior two rounds (missing fixtures in the probe itself, not
+  a regression here).
+
+### Live proof (fresh gated stack, ego-browser)
+
+**Stack.** `.tmp/ui-actions-stack.sh` (git-ignored, built from `app/just/demo/{lib,stack}.sh`,
+the same building blocks `demo.sh`/`ui-stale-stack.sh` use): a fresh `mktemp -d` target19 +
+legacy15 dataset, a dev policy/token, and a writer-gated server on a free port. Peer `alice`
+registered, sessions `s1`/`s2` both created and joined by `alice`, one seed message in each
+(`s1`: migration/disk-snapshot note; `s2`: an unrelated espresso-machine note). Real local
+Ollama `gemma3:4b` answered every `answerChat` call for real (measured round trip ~0.35s
+via a direct `curl`) -- the race was built with an **in-page `fetch` wrapper** (the brief's
+documented alternative to depending on model latency) that let the real request complete,
+then held the resolved response an extra 1200ms before returning it to the app, and
+prefixed the answer text with `ANSWER-FOR-<session_name>` so the check is exact-string,
+not a judgment call about model phrasing.
+
+**Browser.** ego-browser, space 280, one page, served from `http://127.0.0.1:<port>/v2/`
+(same-origin, `?token=` unlock).
+
+**Procedure, 5 attempts.** Each attempt: select session `s1` (peer `alice` already
+selected), type a fresh question, click Ask, wait 200ms (long enough for the request to
+leave), switch to session `s2`, wait 3000ms (comfortably past the measured ~0.35s real
+round trip plus the 1200ms artificial hold), then check the page text for
+`ANSWER-FOR-s1`.
+
+| Bundle | Attempts showing no `s1` answer under `s2` |
+|---|---|
+| fixed (`index-Cz5DXbTB.js`) | **5 / 5** |
+| control: `ask`'s stale-check line removed, same bundle build, same wait | **0 / 3** (leaked every time) |
+
+Restoring the source and rebuilding reproduced the exact same fixed bundle hash
+(`index-Cz5DXbTB.js`), confirming the control detour left no drift.
+
+**Sanity.** With no switch at all, asking in `s1` and waiting still shows
+`ANSWER-FOR-s1: <real gemma3:4b answer, citing the s1 message's own public_id>` -- the
+drop is selection-scoped, not "ask no longer works".
+
+**Teardown.**
+
+- ego-browser space 280 finished with `keep: []`.
+- The origin's localStorage went from 2 keys (`arra-ui-v2-token`,
+  `arra-ui-v2-roster:default`) to 0; sessionStorage was already 0.
+- `.tmp/ui-actions-stack.sh down`: `kill -TERM` on the server pid, then `kill -0` gave "no
+  such process"; `rm -rf` on the mktemp root, then `ls` gave "No such file or directory".
+
+### Still open
+
+- `verifyAll`/`registerPeer`/`registerSession` share `verify`'s new guard (they call it),
+  so they inherit the fix; no separate test was added for `registerPeer`/`registerSession`
+  themselves beyond the shared `verify` coverage.
+- `useKnowledge.publish`'s dropped-navigation branch (scope changed mid-publish) has no
+  dedicated failing-first test in this round -- it was added for completeness alongside
+  `seed` (same `scopeRef`), reasoned through, and covered indirectly by the existing
+  `staleClosure.test.tsx` "B-after-S2" test staying green, but that test never moves
+  `scope` mid-publish. Flagged for the next pass rather than papered over.
