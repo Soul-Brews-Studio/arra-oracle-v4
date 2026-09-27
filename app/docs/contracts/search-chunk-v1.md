@@ -1500,3 +1500,22 @@ outside `test_no_active_server_source_imports_the_publication_kernel`'s `TS_ROOT
 `oracle_search_chain.ts`/`search.retrieve.ts` (nothing else depends on them), and deleting
 `search-chunk-coverage-tie.test.ts`; the negative-pin assertions are additive lines inside
 existing tests and can be deleted individually without affecting anything else they assert.
+
+## 25. Amendment 2026-09-26 (post-merge PROOF.md rule: every number measured, the command beside it; doc-contradicts-code is a defect)
+
+Source: `docs/overnight/DECISIONS.md` (the PROOF.md rule), issue #22, and the proof sweep
+(`docs/overnight/PROOF-SWEEP.md`). Written 2026-09-27 on `594df54`.
+
+**Change.** §12's **Why** (`search-chunk-v1.md:278`, the paragraph that begins "**Why.** DESIGN.md:1119")
+quotes DESIGN.md: "stale vectors never present superseded content as current truth." That line
+is not `:1119`. It was `:1121` in the commit that wrote the citation (`c3ab9a8`), and on `594df54`
+it is `DESIGN.md:1125`, because lines were added above it later that day. The quoted text is
+right; only the line number is wrong. The original paragraph is left as written, because frozen
+contracts are not rewritten; this amendment is the correction.
+
+**Why.** A `file:line` that no longer holds what the contract says it holds is a
+doc-contradicts-code defect under the PROOF.md rule.
+
+**Command.** `rg -n 'stale vectors never present' DESIGN.md` prints `1125:`, and
+`git show c3ab9a8:DESIGN.md | rg -n 'stale vectors never present'` prints `1121:`.
+`python3 docs/overnight/proof-sweep-check.py` re-checks this row with the others.
