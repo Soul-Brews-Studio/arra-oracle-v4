@@ -195,8 +195,8 @@ runIt(
       expect(wrong.code, JSON.stringify(first[`wrong_session_${via}`])).toBe("invalid_reference");
       expect(wrong.path).toBe("/last_read_message_id");
       const numeric = refusal(first[`numeric_id_${via}`]);
-      expect(numeric.code, JSON.stringify(first[`numeric_id_${via}`])).not.toBeNull();
-      expect(JSON.stringify(first[`numeric_id_${via}`])).toContain("last_read_message_id");
+      expect(numeric.code, JSON.stringify(first[`numeric_id_${via}`])).toBe("invalid_value");
+      expect(numeric.path).toBe("/last_read_message_id");
     }
     expect(first.wrong_session_http.status).toBe(400);
     expect(first.numeric_id_http.status).toBe(400);
