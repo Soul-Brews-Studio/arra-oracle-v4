@@ -79,8 +79,8 @@ export function KnowledgeView({
   const target = k.selected ?? draftId;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto md:flex-row md:overflow-visible">
-      <aside className="flex w-full shrink-0 flex-col gap-3 overflow-y-auto border-b border-edge p-3 md:w-64 md:border-b-0 md:border-r">
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-visible">
+      <aside className="flex w-full shrink-0 flex-col gap-3 overflow-y-auto border-b border-edge p-3 lg:w-64 lg:border-b-0 lg:border-r">
         <NodeRail
           entries={k.nodes}
           selected={k.selected}
@@ -213,7 +213,7 @@ export function KnowledgeView({
         )}
       </main>
 
-      <aside className="flex w-full shrink-0 flex-col gap-4 overflow-y-auto border-t border-edge p-3 md:w-96 md:border-l md:border-t-0">
+      <aside className="flex w-full shrink-0 flex-col gap-4 overflow-y-auto border-t border-edge p-3 lg:w-96 lg:border-l lg:border-t-0">
         <TaxonomySetup
           ids={k.taxonomy}
           seeded={k.taxonomy !== null}

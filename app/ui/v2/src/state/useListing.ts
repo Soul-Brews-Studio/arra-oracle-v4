@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type Bank } from "../api/memory";
 import { type Page, type PeerRow, type SessionRow, type NodeRow, listPeers, listSessions, listNodes } from "../api/listing";
+import { listingErrorMessage } from "./listingErrorMessage";
 
 const PAGE_SIZE = 50;
 
@@ -62,7 +63,11 @@ function useCursorList<T>(fetchPage: (after: string | null, includeTotal: boolea
         total: includeTotal ? page.total : s.total,
         supported: page.supported,
         loading: false,
-        error: page.supported ? null : "this server does not have listing endpoints yet",
+        // #33 fix-round: was `page.supported ? null : "…unsupported…"`, which
+        // read a real 401/403 (supported STAYS true -- the route exists) as
+        // "no error" and let the empty `rows` render as an honest zero. See
+        // `listingErrorMessage` for the full story.
+        error: listingErrorMessage(page),
         pageIndex: index,
         hasNext: page.nextCursor !== null,
         hasPrev: index > 0,

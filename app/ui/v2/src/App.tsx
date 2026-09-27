@@ -166,7 +166,7 @@ export function App() {
           onSelectNode={(id) => push({ node: id })}
         />
       ) : (
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto md:flex-row md:overflow-visible">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-visible">
         <SidebarShell
           collapsed={railCollapsed}
           onToggle={() => setRailCollapsed((v) => !v)}
@@ -222,7 +222,7 @@ export function App() {
           )}
         </main>
 
-        <aside className="flex w-full shrink-0 flex-col gap-4 overflow-y-auto border-t border-edge p-3 md:w-96 md:border-l md:border-t-0">
+        <aside className="flex w-full shrink-0 flex-col gap-4 overflow-y-auto border-t border-edge p-3 lg:w-96 lg:border-l lg:border-t-0">
           <DialecticPanel
             onAsk={(q, n) => void m.actions.ask(q, n)}
             answer={m.answer}

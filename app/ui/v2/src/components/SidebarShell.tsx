@@ -45,7 +45,7 @@ export function SidebarShell({
     );
   }
   return (
-    <aside className="flex w-full shrink-0 flex-col gap-4 overflow-y-auto border-b border-edge p-3 md:w-60 md:border-b-0 md:border-r">
+    <aside className="flex w-full shrink-0 flex-col gap-4 overflow-y-auto border-b border-edge p-3 lg:w-60 lg:border-b-0 lg:border-r">
       <div className="flex items-center justify-between">
         <span className="text-[10px] uppercase tracking-wide text-muted">navigator</span>
         <button

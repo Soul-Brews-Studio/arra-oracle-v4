@@ -13,12 +13,30 @@ import { DialecticPanel } from "./DialecticPanel";
 import { WorkspaceBar } from "./WorkspaceBar";
 
 /** Every `for="…"` in the markup has a matching `id="…"` -- the pairing a
- *  visible `<label htmlFor>` needs to actually associate with its control. */
+ *  visible `<label htmlFor>` needs to actually associate with its control.
+ *
+ * Fix-round finding: the original only inspected the FIRST `for="…"` match
+ * (`.match()` with no `/g` flag stops after one), so a component with three
+ * labels would pass this check on the strength of just the first pair being
+ * correct -- the second and third could point at a missing/wrong `id` and
+ * this would still return `true`. `matchAll` + `every` checks all of them. */
 function hasLabelPair(html: string): boolean {
-  const forMatch = html.match(/\sfor="([^"]+)"/);
-  if (forMatch === null) return false;
-  return html.includes(`id="${forMatch[1]}"`);
+  const forMatches = [...html.matchAll(/\sfor="([^"]+)"/g)];
+  if (forMatches.length === 0) return false;
+  return forMatches.every((m) => html.includes(`id="${m[1]}"`));
 }
+
+describe("hasLabelPair checks EVERY for/id pair, not just the first (fix-round finding)", () => {
+  test("a correct first pair does not mask a mismatched second/third pair", () => {
+    const html = '<label for="a">A</label><input id="a" /><label for="b">B</label><input id="c" />';
+    expect(hasLabelPair(html)).toBe(false);
+  });
+
+  test("all-correct pairs still pass", () => {
+    const html = '<label for="a">A</label><input id="a" /><label for="b">B</label><input id="b" />';
+    expect(hasLabelPair(html)).toBe(true);
+  });
+});
 
 describe("WorkspaceBar: bank/workspace/token inputs are label-associated, not just visually adjacent", () => {
   test("each input has a matching label pair", () => {

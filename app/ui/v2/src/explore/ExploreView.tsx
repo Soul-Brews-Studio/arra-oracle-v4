@@ -111,8 +111,8 @@ export function ExploreView({
         refreshing={listing.peers.state.loading || listing.sessions.state.loading || listing.nodes.state.loading}
       />
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto md:flex-row md:overflow-visible">
-        <div className="flex w-full shrink-0 flex-col overflow-y-auto border-b border-edge md:w-64 md:border-b-0 md:border-r">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-visible">
+        <div className="flex w-full shrink-0 flex-col overflow-y-auto border-b border-edge lg:w-64 lg:border-b-0 lg:border-r">
           <ListPanel
             label="peers"
             rows={listing.peers.state.rows}

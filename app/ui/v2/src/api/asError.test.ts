@@ -36,3 +36,34 @@ describe("asError decodes the auth gate's flat {error: string} shape", () => {
     expect(asError("plain text")).toBeNull();
   });
 });
+
+// Fix-round finding (regression this slice introduced): the FIRST version of
+// the fix above decoded ANY `{error: string}` body, not just the auth gate's
+// two codes. `auth/http.ts`'s `ERROR_BODIES` answers the SAME flat shape for
+// 400/413/415/503, and an unregistered route's bare 404 falls back to
+// `{"error":"error"}`. Treating those as governed codes fed a spaced string
+// ("bad request") to `chatError.ts`'s GOVERNED regex, which cannot match it,
+// so a real 400 that DID reach the server was reported as "Could not reach
+// the server" -- `chatError.test.ts` calls this exact wording "false, not
+// just imprecise". `bun test src/api/asError.test.ts`.
+describe("asError does NOT decode the gate's other flat bodies as governed codes", () => {
+  test("400 bad request stays undecoded, so describe() falls back to HTTP 400", () => {
+    expect(asError({ error: "bad request" })).toBeNull();
+  });
+
+  test("413 payload too large stays undecoded", () => {
+    expect(asError({ error: "payload too large" })).toBeNull();
+  });
+
+  test("415 unsupported media type stays undecoded", () => {
+    expect(asError({ error: "unsupported media type" })).toBeNull();
+  });
+
+  test("503 policy unavailable stays undecoded", () => {
+    expect(asError({ error: "policy unavailable" })).toBeNull();
+  });
+
+  test("an unregistered route's bare 404 fallback ({error:\"error\"}) stays undecoded, so describe() reports HTTP 404", () => {
+    expect(asError({ error: "error" })).toBeNull();
+  });
+});

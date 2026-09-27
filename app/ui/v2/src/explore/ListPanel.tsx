@@ -96,7 +96,14 @@ export function ListPanel<T>({
           {supported && error && <p className="px-2 pb-2 text-[11px] text-rose-300">{error}</p>}
 
           <div className="flex max-h-56 flex-col gap-0.5 overflow-y-auto px-1">
-            {supported && visible.length === 0 && !loading && (
+            {/* #33 fix-round: a 401/403 (or any other real failure) now
+                carries a non-null `error` even though `supported` stays
+                true -- the route exists, it just refused this request. An
+                honest "no rows" only applies when there is no error to
+                report; otherwise this rendered a false-empty workspace
+                ("no peers / nothing on this page matches") over a server
+                that never got to answer. */}
+            {supported && !error && visible.length === 0 && !loading && (
               <EmptyState title={`no ${label}`} detail="nothing on this page matches." />
             )}
             {visible.map((row) => {
