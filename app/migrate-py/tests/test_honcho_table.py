@@ -286,8 +286,13 @@ class BundleToHonchoSqlTests(unittest.TestCase):
             # split is exact for this prefix.
             return values.split(", ")[index]
 
-        rendered = {_nth_value(line, is_active_index) for line in inserts}
-        self.assertEqual(rendered, {"TRUE", "FALSE"})
+        # Pair each session with ITS own insert line (by its quoted id), so a
+        # generator that inverts every boolean is caught, not just one that
+        # writes 1/0 (a set comparison could not tell those apart).
+        for session, expected in ((self.bundle.sessions[0], "TRUE"), (self.bundle.sessions[1], "FALSE")):
+            quoted_id = "'" + str(session["id"]) + "'"
+            (line,) = [row for row in inserts if quoted_id in row]
+            self.assertEqual(_nth_value(line, is_active_index), expected)
 
 
 def _compose_psql(compose_dir: str, project: str, sql: str) -> str:
