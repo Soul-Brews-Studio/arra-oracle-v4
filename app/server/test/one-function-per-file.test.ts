@@ -147,15 +147,44 @@ function escapeForRegex(name: string): string {
 const ARROW_HEAD =
   "(?:async\\s*)?(?:<[^;]{0,150}?>\\s*)?(?:\\([^;]{0,1200}?\\)|[A-Za-z_$][\\w$]*)(?:\\s*:\\s*[^;]{0,300}?)?\\s*=>";
 
-/** Does `text` declare NAME locally as a function, a function expression, or an arrow? */
-function isFunctionDeclared(text: string, name: string): boolean {
+// Identifier boundaries that also work for non-ASCII names (`ทดสอบ`, `debug$`):
+// `\\b` only knows ASCII word characters.
+const ID_BEFORE = "(?<![\\p{L}\\p{N}_$])";
+const ID_AFTER = "(?![\\p{L}\\p{N}_$])";
+
+/** Does the TYPE-STRIPPED `js` declare NAME locally as a function, a function
+ *  expression, or an arrow? Classifying after `transformSync` means generics,
+ *  parameter and return annotations (which may contain `;`, `>` or `=>`) are
+ *  gone, so `<T extends Array<string>>` or `(o: { a: number; b: string })`
+ *  cannot hide a function (wave-13 verifier forms c, d, e). */
+function isFunctionDeclared(js: string, name: string): boolean {
   const esc = escapeForRegex(name);
-  const declaration = new RegExp(`\\bfunction\\s*\\*?\\s*${esc}\\s*(?:<[^>]*>)?\\s*\\(`);
-  if (declaration.test(text)) return true;
-  // `=(?!>)` picks the real assignment `=`, not the `=` inside a `=>` that
-  // may appear in a return-type annotation between NAME and the value.
-  const binding = new RegExp(`\\b(?:const|let|var)\\s+${esc}\\b[^;]{0,300}?=(?!>)\\s*(?:function\\b|${ARROW_HEAD})`);
-  return binding.test(text);
+  const declaration = new RegExp(`${ID_BEFORE}function\\s*\\*?\\s*${esc}${ID_AFTER}\\s*\\(`, "u");
+  if (declaration.test(js)) return true;
+  // A binding either right after const/let/var, or a later declarator in the
+  // same statement (`export const a = () => 1, b = () => 2`).
+  const value = `\\s*=(?!>)\\s*(?:async\\s+)?(?:function\\b|${ARROW_HEAD})`;
+  const binding = new RegExp(`(?:\\b(?:const|let|var)\\s+|,\\s*)${esc}${ID_AFTER}${value}`, "u");
+  return binding.test(js);
+}
+
+// `export { local as alias, other }` with NO `from`: map each exported name
+// back to the local it names, so an aliased local function counts (form b).
+const LOCAL_EXPORT_LIST = /export\s*\{([^}]*)\}(?!\s*from)/g;
+
+function localNameFor(js: string): Map<string, string> {
+  const map = new Map<string, string>();
+  let m: RegExpExecArray | null;
+  LOCAL_EXPORT_LIST.lastIndex = 0;
+  while ((m = LOCAL_EXPORT_LIST.exec(js))) {
+    for (const raw of m[1]!.split(",")) {
+      const part = raw.trim().replace(/^type\s+/, "");
+      if (!part) continue;
+      const [local, alias] = part.split(/\s+as\s+/).map((x) => x.trim());
+      if (local) map.set(alias || local, local);
+    }
+  }
+  return map;
 }
 
 /** Is `export default ...` in `text` a function, function expression, or arrow? */
@@ -171,21 +200,20 @@ function loaderFor(relPath: string): "ts" | "tsx" {
 /** Exported function-like names in one file's text, overloads deduped. */
 function exportedFunctionNames(text: string, relPath: string): string[] {
   const transpiler = new Bun.Transpiler({ loader: loaderFor(relPath) });
-  let scanned: { exports: string[] };
-  try {
-    scanned = transpiler.scan(text);
-  } catch {
-    return [];
-  }
+  // Fail loudly: a file the scanner cannot parse must not silently count as
+  // exporting nothing (wave-13 verifier, non-blocking).
+  const scanned = transpiler.scan(text);
+  const js = transpiler.transformSync(text);
   const excluded = reExportedFromElsewhere(text);
+  const locals = localNameFor(js);
   const names: string[] = [];
   for (const name of scanned.exports) {
     if (excluded.has(name)) continue;
     if (name === "default") {
-      if (isDefaultFunction(text)) names.push("default");
+      if (isDefaultFunction(js)) names.push("default");
       continue;
     }
-    if (isFunctionDeclared(text, name)) names.push(name);
+    if (isFunctionDeclared(js, locals.get(name) ?? name)) names.push(name);
   }
   return [...new Set(names)];
 }
@@ -273,12 +301,14 @@ const MISNAMED_ALLOWLIST: Record<string, { name: string; reason: string }> = {
 };
 
 describe("one exported function per file (ratchet)", () => {
-  test("measured today matches the frozen split (706 files export, allowlist-sized multi/misnamed)", () => {
+  test("measured today matches the allowlist-sized multi/misnamed split", () => {
     const report = measure();
     // Sanity floor, same purpose as file-size-cap's: a scan that suddenly
     // finds far fewer files means the scan broke, not that the repo shrank.
     expect(report.length).toBeGreaterThanOrEqual(600);
-    expect(report.length).toBe(706);
+    // No exact total: adding or deleting a COMPLIANT file must never fail a
+    // ratchet (the wave-13 verifier's finding; 706 on 9435719 is recorded in
+    // the header, not asserted).
     const multi = report.filter((r) => r.names.length > 1);
     const misnamed = report.filter((r) => {
       if (r.names.length !== 1) return false;
