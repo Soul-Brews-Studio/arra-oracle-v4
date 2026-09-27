@@ -440,6 +440,274 @@ mutants, each killed by it: `mode` checked before `limit`, `name` before `conten
 no row for a `forbidden` refusal, a past-2^53 limit recorded as a string, and a fixed
 `{query, mode, limit}` input order.
 
+## Amendment 2026-09-26 (post-merge #31 TODO 'audit consistently across all transports' + R5/R19)
+
+**Change.** None to the maintenance behaviour. The maintenance-route audit gap
+stays **open for a human**, exactly as the round-4 note above leaves it; this
+amendment adds the analysis and the measurements a ruling needs, and fixes two
+inaccuracies. Ruling source: `docs/overnight/DECISIONS.md` R5 (operations tables
+in `ARRA_DATA_DIR`, "written on every request") and R19 (`connections.method` is
+`"bearer"`). Neither ruling changed, and no ruling accepts the gap.
+
+- **The maintenance routes are still unaudited, and that is still a deviation
+  from R5.** `POST /api/backfill` (`maintenance:backfill`) and `POST /api/reindex`
+  (`maintenance:reindex`) write no `mcp_calls` row and no `connections` fold,
+  whether the call succeeds or fails after admission (for example `?batch=0`,
+  which answers the fixed 400). A request refused before admission writes nothing
+  either, as on every other route. R5 says the two tables are "written on every
+  request", and this amendment does not narrow that. It is not a ruling: the
+  round-4 **Open for a human** note stands, and so does its reason.
+- **Why this slice did not add the audit.** Every way to write the row needs a
+  decision this contract cannot make:
+  - §4 of this contract: "Only tool calls admitted for their exact action may
+    append scoped rows", and "Do not change physical schema for this
+    integration". A maintenance route is not a tool call and has no scope. MCP
+    has no maintenance tool to copy: every MCP route is per workspace, and a
+    global-maintenance-only principal has no workspace discovery permission (§1).
+  - SPEC §6.3 defines `mcp_calls.workspace_name` as NOT NULL and a key into
+    `workspaces` ("THE tenant column"). SPEC §7.2 gives `connections` the same
+    column. A global action has no workspace, so a row needs either a schema
+    change or a value that is not a workspace.
+- **Measured, for whoever rules.** Three mutants each wrote a maintenance row
+  through the real audit sink on a live server, and
+  `app/server/test/transport-audit-maintenance.test.ts` killed each one:
+  - backfill success filed under `"__global__"`;
+  - backfill failure filed under `""`;
+  - reindex filed under a real workspace, `beta-workspace` (the verifier's
+    mutant, re-run in the fix round). The unscoped table read showed an
+    `mcp_calls` row `{"workspace_name":"beta-workspace","tool":"reindex","status":"ok"}`
+    and a `connections` fold under `beta-workspace` beside the alpha control.
+
+  So LanceDB accepts a sentinel, and the gap is not a physical limit. What the
+  runs also show is where such a row would land. A sentinel row is invisible to
+  every scoped reader (`listMcpCalls`, `listConnections`, `call_log`,
+  `call_stats`), since each needs a valid admitted workspace. The target copy
+  (`copy_migration/activity_tables.py` `copy_mcp_calls` / `copy_connections`)
+  would drop it as `workspace_unresolved`. A row filed under a real workspace
+  would claim a global action as that workspace's call.
+- **What a human can rule.** Each is a DECISIONS.md entry, not a transport change:
+  - accept the gap in an R5 amendment, which would close this note;
+  - give instance-level audit a home, which is a SPEC §6.3/§7.2 change: a
+    nullable or reserved tenant for global actions, or a separate instance log;
+  - accept a sentinel workspace name, with its reader and copy consequences
+    above.
+- **What the surfaces say.** The Overview "mcp calls" hover hint said the
+  maintenance routes "are not logged here", which reads as "logged somewhere else".
+  It now says they "write no call-log row in any workspace (a global action has no
+  workspace to file one under)". That describes today's behaviour and rules
+  nothing. The subline ("admitted MCP + HTTP calls · maintenance routes not
+  logged") and the `connections` hint were already exact and are unchanged.
+  `OverviewView.auditCopy.test.ts` holds the source and the shipped bundle to the
+  new text.
+- **Correction: `knowledge/transport.auditKnowledgeCall.ts` header.** It said a
+  null `session_name` "is what the MCP path records for every `kb_*` call". That is
+  false: `runMcp` records a top-level string `session_name` argument. The header
+  now states the two documented MCP-only values (`session_name`, `peer_name`), as
+  the round-4 amendment does.
+- **Correction: `POST /api/memories` audit input.** The copy of the parsed body
+  that becomes the `remember` row's input sat in a `try … catch {}` whose fallback
+  (input `{}`) could never run. The strict parser yields only null, booleans, finite
+  numbers, strings, arrays and Maps, and `JSON.stringify` cannot throw on any of
+  them. Had the fallback ever run, the row would have lost its input without saying
+  so. The copy is now `app.plainBody.ts`, with no fallback, and the MCP envelope
+  reader uses the same function. No response and no row changes.
+
+Tests. `app/server/test/transport-audit-maintenance.test.ts` runs on a real listening
+server (`fixtures/transport-v1/live-server/child.ts`, extended with a `tables` step
+that reads both operations tables directly and unscoped; every wire reader is
+scoped, so it cannot see a sentinel row). An admitted backfill (200), an admitted
+backfill failure (`?batch=0`, 400) and an admitted reindex (200) leave exactly one
+row and one fold in the whole dataset: the positive-control MCP `list_memories` in
+the alpha workspace. It pins current behaviour and passed before any change, so it
+guards against a silent row; it does not prove a fix, because there is none.
+`app/server/test/transport-audit-maintenance-open.test.ts` pins this text while R5
+is unchanged: R5 still says "written on every request", this amendment keeps the
+gap "Open for a human", and the `app.ts` backfill comment says the same. It was red
+before this wording (the text then called the gap a contract rule). When a human
+rules, it fails on purpose, and the ruling, this note and the comment move together.
+`app/server/test/transport-plain-body.test.ts` was red before the fix (module
+missing). It pins the copy (nested Maps, key order, `__proto__` copied as data,
+detached from the parsed body), checks that `plainBody` matches the old inline copy
+and does not throw on Thai and emoji text, `toJSON`/`constructor` keys, 62-deep
+nesting, `1e308`, `-0` and an integer past 2^53, and checks that the
+`POST /api/memories` handler has no swallowing `catch`.
+`app/ui/v2/src/overview/OverviewView.auditCopy.test.ts` was red before the fix
+(`not logged here` in the hint and the bundle).
+
+## Amendment 2026-09-26 (post-merge Nat 2026-09-28 NAT-DECISIONS D4b: a separate instance-level audit log for /api/backfill and /api/reindex)
+
+**Change.** The round-4 "Open for a human" note above is now RULED: Nat's D4b
+(`docs/overnight/DECISIONS.md`) closes the gap with a **separate
+instance-level audit log**, outside `mcp_calls`/`connections` and outside any
+workspace dataset — not the sentinel-workspace option those tables' schema
+would have forced, and not an R5 amendment accepting the gap.
+
+- **What it is.** A dedicated Lance table, `instance_audit`, at the same
+  server data root (`ARRA_DATA_DIR`) `mcp_calls` already lives at, opened the
+  same way (`audit/instanceAudit.openInstanceAuditTable.ts`, mirroring
+  `mcp/calls.openCallLogTable.ts`) — a table, not a JSONL file, because that
+  is this codebase's existing idiom for an append-only server-root log, and
+  introducing a second storage mechanism for one sink was not worth it.
+- **What it records**, one row per call, admit or refuse:
+  `principal_id` (null on refusal — no admission ran), `route`, `action`,
+  `outcome` (`"admitted" | "refused"`), `status` (`"ok" | "error"`),
+  `input_summary` (redacted and truncated with the SAME `redact`/`truncate`
+  `mcp/calls.ts` uses for `mcp_calls` — R5 — reused, not re-derived),
+  `started_at`/`finished_at`/`duration_ms`, and `request_id`.
+- **`mcp_calls` and `connections` are UNCHANGED.** No sentinel workspace, no
+  schema edit to either NOT NULL `workspace_name` column.
+  `transport-audit-maintenance.test.ts` still passes unmodified: it asserts no
+  maintenance row in either tenant table, and that stays true — the new row
+  lands in `instance_audit` only.
+- **Failure is not silent.** A write failure to `instance_audit` never throws
+  back into the route (an audit outage must not block a maintenance action
+  that already succeeded or was already refused), but it is not swallowed
+  invisibly either: `instanceAuditFailureCount()` is an observable counter,
+  the same pattern `mcp/calls.ts`'s own `auditFailureCount()` already uses for
+  the tenant log's write failures.
+- **Read access.** No new HTTP/MCP route reads `instance_audit` in this
+  slice — it has no existing `audit:read`-shaped admission to reuse (that
+  scope is workspace-scoped; this sink is not), and building a new global
+  read scope was out of this slice's time box. Today it is operator-readable
+  only in the sense that `mcp_calls` itself is: direct access to the data
+  root. Documented here as an open follow-up, not silently deferred.
+- **Where it is wired.** `auth/service.ts`'s `backfill`/`reindex` now wrap
+  their existing `admitGlobal` + mutate sequence in
+  `auth/service.withInstanceAudit.ts`: admission runs first and either
+  returns the principal or throws (a refused row, no principal), then the
+  route body runs and writes an admitted row whether it then succeeds or
+  throws. The `app.ts` backfill route comment no longer says the gap is "open
+  for a human" — it says the row exists and where.
+
+Tests. `app/server/test/transport-audit-instance.test.ts` is new: both routes
+write exactly one `instance_audit` row per admitted call (success AND an
+admitted failure) and per refused call; a row never lands in `mcp_calls` or
+`connections` (delegates to the same unscoped-table-read fixture pattern as
+`transport-audit-maintenance.test.ts`); redaction is applied to the recorded
+input; and a forced `instance_audit` write failure leaves
+`instanceAuditFailureCount()` incremented rather than failing the route or the
+caller. `app/server/test/transport-audit-maintenance-open.test.ts` was updated
+in the same commit: the round-4 note it pinned is now superseded by this
+section, not by a silent edit to that note's own text.
+
+## Amendment 2026-09-28 fix-round 2 (verifier-confirmed corrections to the D4b amendment above; docs/overnight/DECISIONS.md D4b unchanged)
+
+An independent Opus verifier refuted three claims in the amendment above.
+This section corrects the record rather than editing that text in place.
+
+- **The schema-inference crash (blocking).** `ensureInstanceAuditTable`
+  created `instance_audit` with `createTable(TABLE, [sample])`, which infers
+  the Arrow schema from the FIRST row it ever sees. A REFUSED call's row has
+  `principal_id: null`; if a refusal is the first call an instance ever sees
+  (an anonymous prober, or the live probe's own call order), Lance cannot
+  infer a type for an all-null column and throws — and that throw only ever
+  surfaced as `instanceAuditFailureCount()` ticking up, so the row a security
+  review most needs was silently dropped, on every fresh instance, until an
+  admitted call happened to land first. Reproduced standalone by the
+  verifier; pinned here by a new refusal-first test in
+  `transport-audit-instance.test.ts`. **Fix:** `openInstanceAuditTable.ts`
+  (renamed from `instanceAudit.openInstanceAuditTable.ts`'s old
+  `ensureInstanceAuditTable`) now creates the table with an EXPLICIT schema
+  (`createEmptyTable`), never inferred from data.
+- **The architecture claim (blocking).** The original amendment said the new
+  table mirrors `mcp_calls`'s idiom, but `mcp_calls` is created by the Python
+  migration (`app/migrate-py`) and the TS side only ever OPENS it
+  (`calls.openCallLogTable.ts`) — `instance_audit` broke that by having TS
+  both declare and create the schema, contradicting AGENTS.md ("Python
+  declares the schema, TS never does") and `db.ts`'s own header comment.
+  **Fix:** `migrate-py/src/arra_migrate/models/instance_audit.py` is now the
+  schema authority; `openInstanceAuditTable.ts`'s explicit Arrow schema
+  mirrors it field-for-field by hand (documented in both files) rather than
+  inferring anything from data. It is deliberately NOT added to
+  `models/__init__.py`'s `TABLES` registry: `instance_audit` is
+  instance-level, not per-workspace, so `python -m arra_migrate` (which
+  creates the tenant 15/19-table set inside one workspace-scoped candidate)
+  is not the right place to create it either. This is a declared-and-mirrored
+  schema, not a Python-created table — a narrower claim than "Python declares
+  the schema and creates it," disclosed rather than closed.
+- **The "Tests." paragraph (blocking) overstated coverage.** It claimed a
+  forced-write-failure test existed (`rg instanceAuditFailureCount` found only
+  the counter's own definition) and that "redaction is applied to the
+  recorded input" when the only recorded inputs on either route are `{batch}`
+  or `{}` — no secret ever reaches an `instance_audit` row today, so no test
+  proved end-to-end secret redaction on a real request. **Fix:** added an
+  isolated-subprocess test that forces the Lance write itself to fail (a bad
+  `ARRA_DATA_DIR`) and asserts the DEFINED behaviour — no throw into the
+  caller, `instanceAuditFailureCount()` moves. The existing redaction test is
+  relabelled honestly below as `truncate()`-level only: it proves
+  `appendInstanceAuditRow` reuses `mcp/calls.ts`'s exact `redact`/`truncate`
+  (R5, not re-derived) on a synthetic secret-shaped value, not that a real
+  maintenance request today ever carries one.
+
+**Still open, disclosed, not fixed in this round (nonblocking per the fix-round
+brief):**
+- **R25's read side.** No read route, MCP tool, or operator scope exists for
+  `instance_audit`; it is filesystem/Lance-only, same as `mcp_calls` always
+  was. `docs/overnight/AC-MATRIX.md` row #31 is updated to say so plainly
+  rather than "PARTIAL ... wait on Nat."
+- **A 403 from an authenticated-but-under-scoped principal still records
+  `principal_id: null`**: `admitGlobal` throws (in `service.withInstanceAudit
+  .ts`'s `admit()`) before `principalOf` ever runs on a scope refusal, so an
+  identified caller who fails a scope check is indistinguishable in the row
+  from a fully anonymous one. Needs `admitGlobal` to expose the parsed
+  principal ahead of the scope check; not done this round.
+- **No rate limit or compaction** on `instance_audit`; every POST does a
+  synchronous append before responding, admitted or refused. Abuse-resistance
+  of the sink was out of scope for "where does the row live" (D4b).
+
+## Amendment 2026-09-26 (post-merge Nat 2026-09-28 NAT-DECISIONS D4b (R25): a separate instance-level audit log for /api/backfill and /api/reindex)
+
+Fix-round 3 (verifier-confirmed): the round-2 fix above closed the
+schema-inference crash but left a second, narrower race in the same
+function. `openInstanceAuditTable.ts`'s check-then-create
+(`tableNames()` then `createEmptyTable`) let N concurrent
+`appendInstanceAuditRow` calls, all arriving on a NEVER-written instance
+(e.g. multiple maintenance requests hitting a fresh instance at once),
+all observe the table missing and all race to create it — only one
+create won, and the rest threw `already exists`, which
+`appendInstanceAuditRow`'s catch counted as a dropped row instead of a
+write. Reproduced standalone (4 concurrent first writes on a fresh
+`ARRA_DATA_DIR` landed 1 row, 3 failures) and pinned by a new isolated
+subprocess test in `transport-audit-instance.test.ts` ("N concurrent
+first writes on a fresh, never-written instance all land"). **Fix (as
+first written this round):** `createEmptyTable` was called with `{ mode:
+"create", existOk: true }` on the theory that LanceDB's `existOk` create
+is idempotent. No new schema drift: the explicit Arrow schema from
+fix-round 2 was unchanged.
+
+## Amendment 2026-09-28b (post-merge Nat 2026-09-28 NAT-DECISIONS D4b (R25), fix round 3 continued: `existOk` alone does not close the create race)
+
+An independent verifier refuted the `existOk: true` fix above: LanceDB's
+`existOk` create is **not** atomic. When two concurrent callers both find
+the table missing, both issue a create; one commits an ordinary Create,
+the other commits as an **Overwrite** (version 2), and every Append
+already in flight against the pre-overwrite table then fails with
+`Incompatible transaction: ... Append ... incompatible with concurrent
+transaction Overwrite`. `appendInstanceAuditRow`'s catch counts that as a
+dropped row — the same loss class this fix round exists to close, one
+interleaving deeper. The verifier reproduced this reliably once N >= 6
+concurrent first writes (N=4, the prior test's count, happened to pass
+even on the broken code).
+
+**Fix:** `openInstanceAuditTable.ts` now memoizes a single in-flight
+"open-or-create" `Promise<Table>` per process (`tablePromise`). Every
+concurrent caller in the same process awaits the *same* promise instead
+of each issuing its own `createEmptyTable` call, so only one create is
+ever attempted while a create is outstanding; once resolved, later calls
+reuse the resolved handle. A rejected attempt clears the memo so a
+subsequent call can retry rather than being stuck on a dead promise.
+`existOk: true` is kept on the single call as a defense for the
+cross-process case (a second server process starting against an
+already-created table), but the in-process race is now closed by
+serialization, not by `existOk` alone.
+
+Pinned by `transport-audit-instance.test.ts`'s race test, widened from N=4
+(passed on the broken code) to N=16 over 3 repetitions — this is what the
+verifier's evidence showed as the threshold where the drop became
+reliable. This amendment corrects the prior one's claim that "every
+concurrent creator resolves to the same table instead of losing its row"
+under `existOk` alone; that claim was false for N>=6 and is retracted.
+
 ## Amendment 2026-09-26 (post-merge Nat style: one exported function per file, named after the file (ratchet: app/server/test/one-function-per-file.test.ts))
 
 Three paths cited above moved by `git mv` with no behavior change (style-shrink slice,

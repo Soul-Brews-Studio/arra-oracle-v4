@@ -45,6 +45,19 @@ export type StoreDependencies = {
   recentCalls(bank: string, limit: number, status?: string): Promise<unknown[]>;
   aggregateCalls(bank: string): Promise<unknown>;
   logCall(record: Record<string, unknown>): Promise<void>;
+  /**
+   * #31 maint-audit (Nat 2026-09-28 D4b): the SEPARATE instance-level audit
+   * sink for the two global maintenance routes -- never `mcp_calls`, whose
+   * `workspace_name` is NOT NULL. Optional: every fixture that does not wire
+   * one (nearly every existing test, `helpers/auth-fixture.ts` included)
+   * gets a no-op rather than a real filesystem write to whatever
+   * `ARRA_DATA_DIR` defaults to when a test never overrides it -- writing to
+   * REAL storage from a stub-backed test was the actual bug this optional
+   * field replaces (a `app/data/instance_audit.lance` appeared from
+   * `auth-integration.test.ts`, which never sets `ARRA_DATA_DIR`). Only
+   * `composition.ts` wires the real one.
+   */
+  logInstanceAudit?(record: Record<string, unknown>): Promise<void>;
 };
 
 /** What an MCP adapter may ask the service to do, once projection succeeded. */
