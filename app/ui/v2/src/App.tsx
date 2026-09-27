@@ -15,6 +15,7 @@ import { ForumView } from "./forum/ForumView";
 import { KnowledgeView } from "./KnowledgeView";
 import { OverviewView } from "./overview/OverviewView";
 import { searchHitRoute } from "./state/searchHitRoute";
+import { searchRoutePatch } from "./state/searchRoutePatch";
 import { useMemory } from "./state/useMemory";
 import { type Route, useRoute } from "./state/useRoute";
 
@@ -52,7 +53,7 @@ export function App() {
   // and nothing else, which is why they are tabs rather than one screen.
   // View and selection live in the URL, so a refresh restores where you were
   // and Back steps through what you clicked. See state/useRoute.
-  const { route, push } = useRoute();
+  const { route, push, replace } = useRoute();
   const view = route.view;
   // Typed off Route rather than re-listing the views: the tab bar below maps
   // over the same union, so a view added to the router shows up here or fails
@@ -149,6 +150,9 @@ export function App() {
           onTabChange={(tab) => push({ tab })}
           onBack={() => push({ view: "messages" })}
           onOpenSearchHit={(id) => push(searchHitRoute(id))}
+          searchQuery={route.q}
+          searchMode={route.mode}
+          onSearchChange={(q, mode) => replace(searchRoutePatch(q, mode))}
         />
       ) : view === "forum" ? (
         <ForumView

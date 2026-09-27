@@ -12,11 +12,12 @@
     "types": ["vite/client"]
   },
   "include": ["src"],
-  // *.test.ts run under `bun test` (its own transpiler, no type-check), not
+  // *.test.ts(x) run under `bun test` (its own transpiler, no type-check), not
   // this project's `vite`/`tsc` build -- `bun:test`'s ambient types come from
   // `bun-types`, which is not a dependency of this package (the app itself
   // never imports it), and this slice's hard rule is no new dependencies.
   // Excluding them here keeps `tsc -p app/ui/v2` -- the actual SHIPPED code --
-  // clean without adding one.
-  "exclude": ["src/**/*.test.ts"]
+  // clean without adding one. `.test.tsx` added round-3 (`ExploreView.wiring.test.tsx`
+  // is the first JSX-authoring test file in this package).
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }

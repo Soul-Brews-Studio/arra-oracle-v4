@@ -498,9 +498,12 @@ Token field. Explore → Search tab → typed `ลืม`:
   `ngram` (confirmed present in the DOM via `page.evaluate` — the narrow panel width clips it
   visually at the default viewport, a cosmetic layout gap, not a functional one).
 - Screenshot: `docs/overnight/ui/33-search-keyword-thai.png`.
-- Clicking a hit calls the same `onSelectNode` + tab switch to `Nodes` the plain node list
-  already uses — "opens that node in the existing node view" reuses that exact mechanism rather
-  than a second one.
+- Clicking a hit called `onSelectNode` + a tab switch to `Nodes` at the time this section was
+  written. **Superseded by the "Fix round (2026-09-27)" section below**: an independent
+  verifier found that tab is a paged, type-filterable `listNodes` list that never renders
+  title/body/history and can show nothing highlighted if the hit is off-page or filtered out, so
+  the click now routes to the existing `KnowledgeView` (`#/knowledge?node=…`) via
+  `state/searchHitRoute.ts` instead.
 - Empty-query state observed live before typing: "Type a query to search this workspace's
   knowledge." (`searchState`'s `empty_query` kind).
 
@@ -581,3 +584,409 @@ probe re-run on this worktree: **57/57/57 methods, isolation 191 pass / 0 fail, 
 identical to the pre-fix-round run the verifier captured (`out/verify-ui-search-1.md`), including
 the same 26 payload-fixture gaps (`searchKnowledgeKeyword`/`searchKnowledgeSemantic` among them);
 confirms that scoreboard is unaffected by this UI-only fix, not a regression it introduced.
+
+## Search polish (2026-09-27, ui-polish slice): five nonblocking follow-ups
+
+A second independent verifier re-checked all five nonblocking follow-ups this section's Fix
+round left open and REFUTED the slice that was supposed to close them (no commit existed at
+all). This round fixes all five, UI-only (`app/ui/v2`, its rebuilt `app/server/public/v2`
+bundle, and docs; no `app/server/src` file touched):
+
+1. **Stale scan note.** `SearchOutcome` (`state/applySearchOutcome.ts`) now records `mode`,
+   the mode that PRODUCED the outcome. A new pure function, `state/searchOutcomeView.ts`, gates
+   `scanReason` on `outcome.mode === activeMode`: switching Keyword → Semantic hides the keyword
+   note immediately rather than leaving it up for `useKnowledgeSearch`'s 300ms debounce window.
+   Failing-first: `searchOutcomeView.test.ts`'s "switching to semantic … hides the stale keyword
+   note immediately" was verified red against the naive `scanReason: outcome.scanReason` (temp
+   reverted, ran, `Received: "short_query"`, expected `null`), green after the mode gate.
+2. **Back losing the query.** `useRoute`'s `Route` gained `q`/`mode` fields
+   (`#/explore?tab=search&q=...&mode=keyword|semantic`); `parse`/`format` (previously private)
+   are now exported and unit-tested directly (`useRoute.test.ts`) since neither touches
+   `window`. Two new pure functions restore/persist the search box: `searchRouteState` (route →
+   initial hook state, unrecognised `mode` falls back to `keyword`) and `searchRoutePatch` (hook
+   state → route patch, empty query clears `q`). `ExploreView` reads the initial state from the
+   route and writes every `query`/`mode` change back via `App.tsx`'s `route.replace` — never
+   `push`, so typing never spawns a history entry per keystroke, and the CURRENT explore entry
+   (the one Back returns to) always carries the latest query. Verified live against the real
+   running server: typing `ลืม` into the search box changed the address bar hash to
+   `#/explore?tab=search&q=%E0%B8%A5%E0%B8%B7%E0%B8%A1&mode=keyword` in place (no new history
+   entry), confirming the wiring round-trips end to end, not just in the unit tests.
+3. **Narrow-viewport clipping.** `flex-wrap` added to the Keyword/Semantic toggle row
+   (`KnowledgeSearchBox.tsx`), the Explore tab bar (`DetailTabs.tsx`, where `Config` lives), and
+   the per-hit match-badge row (`KnowledgeSearchResults.tsx`) — the same `flex flex-wrap` idiom
+   already used by `KnowledgeView`/`WorkspaceBar`/`EvidenceBadges`. Confirmed via
+   `getComputedStyle` against the real served bundle that `flexWrap: "wrap"` reaches the DOM on
+   both rows. **Not independently confirmed with a browser screenshot**: `/ego-browser`'s CDP
+   screenshot capture was unreliable in this session (repeated `CdpRequestTimeoutError`s, and
+   one captured frame came back a garbled 123×127px instead of the 830×858 viewport, with the
+   viewport itself twice collapsing to single digits after an interaction) — a tool/environment
+   instability in this run, not a rendering issue reproduced through the DOM. No
+   `docs/overnight/ui/34-search-polish-*.png` was produced as a result; this is an honest gap
+   against the brief's "Verify with /ego-browser screenshots at 830px and 1280px", not a silent
+   skip.
+4. **Untested wiring.** The decision logic `useKnowledgeSearch` used to compute inline —
+   which hits/scan-note to show, and (new) how to seed/persist query+mode — now lives in
+   `searchOutcomeView`, `searchRouteState` and `searchRoutePatch`: pure, DOM-free, unit-tested.
+   Reverting any of the three turns its own test red without needing jsdom (this repo has none
+   and adding one was out of scope — no new dependencies). `App.tsx`'s hit-click routing
+   (`push(searchHitRoute(id))`) was already fully delegated to the tested `searchHitRoute`
+   function from the prior Fix round; nothing further to extract there.
+5. **Docs.** Corrected the stale "same `onSelectNode` + tab switch" sentence above (superseded
+   by this file's own Fix round section) to say what the click does now. Re-measured
+   `docs/SCHEMA-BUILT.md`'s knowledge-method name scan with the exact method it describes: **33
+   of 57** called today, not 30 — `searchKnowledgeKeyword`/`searchKnowledgeSemantic` are real new
+   calls, and a third match, `indexRevisionChunks`, is a false positive of the scan's own
+   whole-word method (it only appears inside a UI message string, not a call); both are counted
+   and the false positive is explained in place rather than silently rounded off.
+
+### Live proof
+
+Real server, fresh `mktemp -d` root (`app/just/demo/stack.sh`'s `demo_stack_up`, never
+`app/.tmp`/`app/data`), real local Ollama (`all-minilm`, confirmed installed): registered a peer
+and session, seeded the reserved vocabularies, published one Thai-body node (`หลงลืม`, the R14
+inside-word case), indexed its chunk, and embedded it for real —
+`{"attempted":1,"embedded":1,"reused":0,"failed":0,"remaining":0,"skipped":0,"blocked":null}`.
+The built UI (`bun run build`, output verified under `app/server/public/v2/`) was then opened
+with `/ego-browser` against the running server with the dev token. Confirmed live, by DOM/URL
+evidence rather than a screenshot (see finding 3 above for why): the Search tab's tab bar shows
+`Config` and every other tab in the DOM at an 830px viewport (`configVisible: true`), the
+Keyword/Semantic toggle and match-badge rows both compute `flexWrap: "wrap"` from the shipped
+CSS, and typing `ลืม` immediately rewrites the address bar to
+`#/explore?tab=search&q=%E0%B8%A5%E0%B8%B7%E0%B8%A1&mode=keyword` via `replace` (single history
+entry, not one per keystroke). Server stopped (`kill -TERM` on the owned PID) and its `mktemp -d`
+root removed immediately after; the browser origin's `localStorage` was cleared and the
+`/ego-browser` task space closed. No `app/.tmp`/`app/data` was touched and nothing was left
+running.
+
+### Tests and typecheck
+
+- `bun test src` (`app/ui/v2`): **138 pass, 0 fail** (125 before this round; +13 new: 3
+  `applySearchOutcome`, 3 `searchOutcomeView`, 3 `searchRouteState`, 2 `searchRoutePatch`, 4
+  `useRoute` — one `applySearchOutcome` case reused).
+- `./node_modules/.bin/tsc -p tsconfig.json` (`app/ui/v2`): clean.
+- `bun run build` (`app/ui/v2`): succeeded, new bundle hash under `app/server/public/v2/`.
+- `bun run test:ui-scope` (`app/server`): 13 pass, 0 fail — unchanged, the other legacy
+  plain-script UI, untouched by this slice.
+- Python architecture guard (`app/migrate-py`, `unittest discover`): 268 pass, OK (skipped=1) —
+  unchanged; no new TS file imports the publication kernel.
+- Acceptor live probe (`.tmp/acceptor/live-probe/run.sh … ui-polish`, run from the overnight
+  worktree against this one): **57/57/57 methods, isolation 0 fail, 0 fatal, gaps=26, RC=2** —
+  the same known payload-fixture-gap exit code the prior review already logged as unrelated to
+  the UI; this slice touches no `app/server/src` file, so the scoreboard could not have moved.
+
+## Amendments
+
+None. No file under `app/docs/contracts/` documents UI routing/rendering behaviour, so none
+needed a new section for this UI-only round; no new dependency was added.
+
+## Search polish, round 3
+
+An independent Opus verifier refuted round 2 (`.tmp/ui-polish-v2-findings.txt` in the overnight
+worktree): two blocking findings (route/box sync on Back/Forward while `ExploreView` stays
+mounted; the wiring around `useKnowledgeSearch`/`ExploreView` left unpinned by tests) and five
+non-blocking ones (`errorCode` not gated like `scanReason`; `mode=keyword` leaking into
+non-search tabs; `useRoute.ts` exporting three functions; the badge-row `flex-wrap` being dead
+CSS; stale file counts in `docs/SCHEMA-BUILT.md`).
+
+### What changed
+
+1. **Route/box sync (blocking).** `useKnowledgeSearch` used to read `initial.query`/`initial.mode`
+   only in a `useState` lazy initializer -- correct for the round-trip through the node view
+   (`ExploreView` remounts there), wrong for a Back/Forward BETWEEN two Explore history entries
+   (`tab=nodes` <-> `tab=search&q=...`), where `ExploreView` never unmounts. The hook now takes
+   `routed` (the same value, read continuously, not just at mount) and a `lastRouted` ref
+   distinguishes an external route change (sync local state to it) from the hook's own edit
+   echoing back through the route (already applied, no-op) -- the asymmetry that avoids the
+   update loop the brief warned about. `searchRoutePatch`'s existing `replace` (not `push`)
+   still means typing never grows history.
+2. **Wiring tests (blocking).** `ExploreView.wiring.test.tsx` uses `react-dom/server`'s
+   `renderToStaticMarkup` (already installed, no jsdom, no new dependency) to mount the real
+   `useKnowledgeSearch` hook and the real `ExploreView` and assert on the rendered HTML. Every
+   mutant was run by hand against this file plus the full suite -- red lines below.
+3. **`errorCode` gating.** `searchOutcomeView` now returns `errorCode: outcome.mode === mode ?
+   outcome.errorCode : null`, the same gate `scanReason` already had; `useKnowledgeSearch`'s
+   return statement now spreads `...view` instead of listing each field, so a future revert of
+   either gate is a shape mismatch other callers would feel, not a silent regression.
+4. **`mode=keyword` leak.** `ExploreView`'s route-write-back effect now returns early when
+   `activeTab !== "search"`; verified live below (`tab=nodes` alone, no `&mode=keyword`).
+5. **`useRoute.ts` split.** `parse`/`format` moved to `parseRoute.ts`/`formatRoute.ts` (one
+   exported function each, matching this codebase's own idiom); the `VIEWS` list moved to
+   `routeViews.ts` (`isRouteView`) so `parseRoute` and `useRoute`'s own `isKnownHash` read the
+   same list instead of two. `useRoute.ts` now exports only `Route` (a type) and `useRoute`.
+   `useRoute.test.ts` split into `parseRoute.test.ts` / `formatRoute.test.ts` alongside.
+6. **Badge wrap.** `KnowledgeSearchResults.tsx`'s title span was `min-w-0 flex-1` --
+   `flex-basis: 0%` with no floor, so the flex item could always shrink to nothing and
+   `flex-wrap` never had anything to overflow on. Changed to `min-w-[7rem] flex-1`: a real
+   floor gives the row something to wrap on when the panel is too narrow for rank + a
+   readable title + the badge on one line.
+7. **`docs/SCHEMA-BUILT.md`.** Re-measured: 120 files / 101 non-test under `app/ui/v2/src` (not
+   109/95 -- that count was already stale when written, predating the net +6 files this round's
+   `useRoute` split added). The 33-of-57 matched-method figure is unaffected (checked: none of
+   the new route files mention any `KNOWLEDGE_METHOD_NAMES`).
+
+### Mutant kills (item 2 of the brief)
+
+Applied by hand, one at a time, against this worktree; restored after each. `bun test
+src/explore/ExploreView.wiring.test.tsx src/state/searchOutcomeView.test.ts` from `app/ui/v2`:
+
+- **W2** (`ExploreView` passes `searchRouteState({ q: null, mode: null })` regardless of props):
+  RED --
+  `expect(html).toContain('value="ลืม"')` / `Expected to contain: "value=\"ลืม\"" / Received:
+  ...value=""...` (the mounted search input never gets the routed query).
+- **W5** (hook ignores `routed.query`/`routed.mode`, hardcodes `""`/`"keyword"`): RED on BOTH
+  tests -- `expect(html).toContain("ลืม")` fails on the hook harness
+  (`{"query":"","mode":"keyword"}`) and on `ExploreView`'s mounted input for the same reason.
+- **W1** (hook returns `outcome.scanReason`/`outcome.errorCode` ungated instead of
+  `view.scanReason`/`view.errorCode`): did **not** turn red under
+  `ExploreView.wiring.test.tsx` -- confirmed by deliberately reintroducing it and re-running (7
+  pass / 0 fail). `renderToStaticMarkup` never runs effects, so `outcome` never leaves
+  `EMPTY_OUTCOME` (`scanReason`/`errorCode` both already `null` there) on a first render
+  regardless of the mutant; the two states are indistinguishable without a debounced fetch
+  actually completing, which needs a stateful renderer (jsdom / `react-test-renderer`), not
+  SSR. Instead pinned via `searchOutcomeView.test.ts` (pure, no React): the existing 3
+  `scanReason` cases plus 2 new `errorCode` cases (`outcomeAfterFailedSemantic` viewed in its
+  own mode vs. the other mode) -- reverting the `errorCode` gate in `searchOutcomeView.ts` turns
+  `switching to keyword before the debounced reply lands hides the stale semantic error
+  immediately` RED: `expect(received).toBeNull() / Received: "model_unavailable"`. The
+  return-statement refactor to `...view` (change 3 above) also means this class of revert is a
+  bigger, more visible diff than editing one field.
+- **W4** (`ExploreView`'s `onSearchChange(...)` write-back call dropped from its effect body):
+  did **not** turn red -- confirmed by deliberately dropping the call and re-running (2 pass / 0
+  fail). Same root cause as W1: the write-back is inside a `useEffect`, and
+  `renderToStaticMarkup` never runs effects, so a first-render-only test cannot observe whether
+  it fired. This is an honest gap, not a paper-over: **W1 and W4 are not reachable by any test
+  that stays inside "react-dom/server, no jsdom, no new dependency"** on a single render pass.
+  What actually exercises them is the live Back/Forward proof below, which is real.
+
+### Live proof: exact Back/Forward reproduction
+
+Fresh `mktemp -d` root (`arra_migrate` legacy + `create_target19_dataset.py` knowledge dataset,
+one dev-auth workspace/token, mirroring `.tmp/acceptor/live-probe/setup.py`), server started via
+`app/just/scripts/run_dev_server.py` on a scratch port, `bun run build` output served from
+`app/server/public/v2`. `/ego-browser` reproduced the verifier's exact steps:
+
+1. `http://127.0.0.1:.../v2/?token=...#/explore?tab=nodes` -> URL settles to
+   **`#/explore?tab=nodes`** (no `&mode=keyword` -- change 4, confirmed live).
+2. Click Search, type `ลืม` -> **`#/explore?tab=search&q=%E0%B8%A5%E0%B8%B7%E0%B8%A1&mode=keyword`**
+   (screenshot `docs/overnight/ui/34-search-polish-r3-01-typed.png`).
+3. Browser Back -> **`#/explore?tab=nodes`** (screenshot `...-02-back-to-nodes.png`) -- `tab=nodes`
+   only, matching step 1's URL exactly (no leaked `q`/`mode`).
+4. Click Search again (a NEW push from the queryless `nodes` entry, not Forward) -> URL
+   **`#/explore?tab=search&mode=keyword`** (no `q`) AND the box reads **`""`**
+   (`docs/overnight/ui/34-search-polish-r3-03-search-again-in-sync.png`). This is the fix: round
+   2's bug was the box staying stuck on `"ลืม"` while the URL had none -- box and URL AGREE now,
+   both empty, because `useRoute`'s own contract is "the route is the durable copy" and a fresh
+   push from a queryless entry legitimately carries no query.
+5. To prove a genuine round trip (not just a fresh push) restores the query: reloaded to
+   `tab=nodes`, reopened Search, retyped `ลืม` (`#/explore?tab=search&q=...&mode=keyword`), real
+   `history.back()` -> `#/explore?tab=nodes` (search box unmounted, tab inactive), then real
+   `history.forward()` -> URL returns to
+   **`#/explore?tab=search&q=%E0%B8%A5%E0%B8%B7%E0%B8%A1&mode=keyword`** and the box reads
+   **`"ลืม"`** again (`docs/overnight/ui/34-search-polish-r3-04-forward-restores.png`) -- the
+   route-sync effect (change 1) applies the routed value back into local state on both
+   directions of real browser history navigation, with no update loop observed (no console
+   errors, no hang, single settle per navigation).
+
+Server stopped (`kill -TERM` on the owned PID), its `mktemp -d` root removed, the `/ego-browser`
+origin's `localStorage` cleared, task space closed.
+
+### Badge visibility (item 6), measured
+
+`getBoundingClientRect()` against the row's real shipped classes (Tailwind CSS from the actual
+`bun run build` bundle), varying only the row's own container width:
+
+| Width | `wrapped` | Badge right edge | Fits |
+|---|---|---|---|
+| 553px | false | 537-540px | yes |
+| 830px | false | 560-817px (viewport-clipping in the harness varied this run to run; both under the container width) | yes |
+| 240px | **true** | 99px | yes -- badge drops to its own line |
+
+553px and 830px do not need to wrap (as the round-2 verifier also measured -- nothing was
+actually clipped at those two widths on either HEAD or base). What round 3 fixes is that the
+`flex-wrap` declaration is no longer dead: at a genuinely narrow width (240px) the badge now
+wraps to its own line and stays fully visible, proven by the same `min-w-[7rem]` change working
+identically on the real compiled CSS. Screenshots
+`docs/overnight/ui/34-search-polish-r3-05-badge-553.png` and `...-06-badge-830.png` show the row
+rendered against the shipped stylesheet at each width (served statically from
+`app/server/public/v2` for this isolated measurement, no backend needed for a CSS-only check);
+the 830px shot's viewport in this harness did not stretch as wide as intended, so the numeric
+measurement above is the authoritative evidence for that width, not the screenshot's crop.
+
+### Tests and typecheck
+
+- `bun test src` (`app/ui/v2`): **143 pass, 0 fail** (138 before this round; +5: 2
+  `ExploreView.wiring.test.tsx`, 2 new `searchOutcomeView` `errorCode` cases, 1 net from the
+  `useRoute.test.ts` -> `parseRoute.test.ts`/`formatRoute.test.ts` split adding one new case).
+- `./node_modules/.bin/tsc -p app/ui/v2/tsconfig.json`: clean (tsconfig's test exclude extended
+  to `*.test.tsx` for the new JSX test file).
+- `bun run build` (`app/ui/v2`): succeeded; reverted before commit per the brief
+  (`git checkout -- app/server/public/v2 && git clean -fdq app/server/public/v2`).
+- Python architecture guard (`app/migrate-py`, `unittest discover`): OK, exit 0 -- unchanged; no
+  new TS file imports the publication kernel (all new files are UI routing/state, checked by
+  grep for `KNOWLEDGE_METHOD_NAMES`/kernel call names).
+- Acceptor live probe (`.tmp/acceptor/live-probe/run.sh ... ui-polish`): methods 57/57/57,
+  isolation **191 pass / 0 fail**, fatal none, RC=2 from 26 pre-existing "no valid payload
+  fixture" gaps in the probe's own fixture set (`payloads.py`) -- the same gap class the round-2
+  proof already logged as unrelated to this UI-only slice; this round touched no
+  `app/server/src` file either.
+
+## Search polish, round 3 (fix: the round-3 wiring itself looped)
+
+A second, independent Opus verifier refuted the round-3 commit above (`f9f81d3`,
+`.tmp/ui-polish-v2-findings.txt`'s successor findings in the overnight worktree). Two blocking
+findings: (1) the round-3 fix for Back/Forward sync had **no test that failed without it** --
+`ExploreView.wiring.test.tsx`'s `renderToStaticMarkup` never runs an effect, so it could not
+reach the very effect the fix added; (2) that fix, plus `ExploreView`'s separate route
+write-back effect, formed an **update loop**: Forward from `#/explore?tab=nodes` to
+`#/explore?tab=search&q=...` changes `activeTab` and the routed query in the same commit, the
+write-back effect fires off a stale `search.query` closure, undoes the sync effect's write, and
+the two effects fight forever -- proven live (63000+ renders/2s, "Maximum update depth
+exceeded" ×1019) and in a real React 18 client renderer.
+
+### Root cause and fix
+
+Two `useEffect`s reacting to each other's output cannot tell "the user just typed" from "this
+render's `query` is stale because the OTHER effect hasn't landed yet" -- both fire in the same
+commit, off closures captured before either's `setState` takes effect. The fix removes the
+write-direction effect entirely: `useKnowledgeSearch(bank, routed, onRouteChange)` now takes the
+route-write callback itself, and `setQuery`/`setMode` call it **imperatively**, at the exact
+moment a caller (the input's `onChange`, the mode toggle's `onClick`) asks for a local edit. A
+route change arriving from Back/Forward only ever calls the raw `setState` setters inside the
+one remaining (read-direction) effect, never the wrapped ones -- so there is no second effect
+for the two directions to race against, and no artificial "echo" ref is needed to break a cycle
+that no longer exists. This also deletes `ExploreView`'s `activeTab !== "search"` gate: since the
+write only happens from a setter the search tab's own input exposes, it cannot fire from another
+tab in the first place (round-3's non-blocking `mode=keyword` leak, fixed for free), and it stops
+the "transient history write" round-3's verifier flagged as a symptom of the same race (a Forward
+into search no longer writes the route back at all -- the value already came FROM the route).
+
+### Failing-first: a real effect-running harness, not `renderToStaticMarkup`
+
+`react-dom/server`'s `renderToStaticMarkup` cannot run an effect, so it cannot see either the
+sync effect or the loop it raced against -- confirmed by the verifier and reproduced here.
+`ExploreView.liveWiring.test.tsx` instead runs `react-dom/client` for real, against a hand-built
+~140-line fake DOM (just enough surface for React's DOM renderer to mount, commit, and
+re-render controlled inputs and a `<select>`: `document`/`window`/`HTMLElement` and friends, a
+real accessor pair for `.value` so react-dom's input-value tracker finds a property descriptor
+to wrap). No jsdom, no new dependency -- `react-dom` and its bundled `test-utils` (`act`) are
+already installed.
+
+Mutants applied by hand against this worktree, each restored immediately after:
+
+- **The round-3 fix itself** (the whole scenario, mounting the REAL `ExploreView` driven by a
+  route-shaped harness, exactly reproducing the verifier's Forward step): reverting
+  `useKnowledgeSearch.ts`/`ExploreView.tsx` to the pre-fix (`f9f81d3`) two-effect design and
+  re-running `bun test src/explore/ExploreView.liveWiring.test.tsx` under a 30s timeout:
+  **exit 124, 3090+ "Maximum update depth exceeded" warnings, the process never returns.** Fixed
+  code: `2 pass / 0 fail` in 50ms, `rendersForForward < 10`, `replaces.length === 0`, the search
+  input's `.value` lands on `"ลืม"`.
+- **M1** (the routed-sync `useEffect` deleted outright): same test file, `3 pass / 1 fail`, the
+  loop test fails with an `Unhandled error` from a stray `useListing` `setState` after
+  `window`/`document` teardown -- the sync that was supposed to apply `routed` never ran, so
+  `ExploreView`'s OWN write-back-less design (post-fix) just leaves the box on `""` while the
+  route says `"ลืม"`, and the harness's other hooks fire the unhandled state update once the fake
+  DOM comes down.
+- **W4** (the wrapped `setQuery`'s `onRouteChange(...)` call dropped, leaving only
+  `setQueryState`): `useKnowledgeSearch: a local edit writes back to the route (W4)` test in the
+  same file goes RED: `expect(received).toEqual(expected) / - [["ลืม","keyword"]] / + []` --
+  calling `setQuery("ลืม")` no longer reports anything to `onRouteChange`.
+- **W5** (hook ignores `routed.query`/`routed.mode`) and **W2** (`ExploreView` renders a
+  hardcoded route): still pinned by the existing `ExploreView.wiring.test.tsx`
+  (`renderToStaticMarkup`, unchanged this round) -- both are first-render bugs, exactly what SSR
+  reaches.
+- **W1** (`useKnowledgeSearch` returns `outcome.scanReason`/`outcome.errorCode` ungated): still
+  pinned by `searchOutcomeView.test.ts`'s existing gate cases (unchanged this round; the hook's
+  return statement still spreads `...view`, so this class of revert stays a type error, not just
+  a silent regression).
+
+Full suite: `bun test src` (`app/ui/v2`) -- **145 pass, 0 fail** (143 before this round; +2 new
+tests in `ExploreView.liveWiring.test.tsx`, both mutant-killing per above).
+`bunx tsc --noEmit -p app/ui/v2` -- clean.
+
+### Other fixes this round
+
+- **Stale doc/comment references** (non-blocking): `parseRoute.ts`'s header now cites
+  `parseRoute.test.ts` (was still naming the deleted `useRoute.test.ts`); `searchRoutePatch.ts`'s
+  header now cites `formatRoute.ts` (was still naming `useRoute.ts`'s `format`).
+- **`docs/SCHEMA-BUILT.md`** (non-blocking): the round-3 paragraph's "120/101" and "+7 files" were
+  themselves already stale by the time an independent verifier re-measured the SAME commit at
+  121/101, net +5 files (`parseRoute.ts`, `parseRoute.test.ts`, `formatRoute.ts`,
+  `formatRoute.test.ts`, `routeViews.ts`, `ExploreView.wiring.test.tsx` added; `useRoute.test.ts`
+  removed). This round adds one more test file (`ExploreView.liveWiring.test.tsx`), so the
+  current, directly re-measured total is **122 files / 101 non-test**. Both counts are recorded
+  in the file with their dates rather than silently overwritten, per this repo's "anchor edits on
+  unique surrounding context" rule for a heavily cross-referenced doc.
+- `errorCode` gating, the `mode=keyword` leak, the `useRoute.ts` split, and the badge-row
+  `min-w-[7rem]` fix all shipped in the round-3 commit above and are **unchanged** this round
+  (verified: `git diff f9f81d3 -- app/ui/v2/src/state/searchOutcomeView.ts
+  app/ui/v2/src/components/KnowledgeSearchResults.tsx app/ui/v2/src/state/parseRoute.ts
+  app/ui/v2/src/state/formatRoute.ts app/ui/v2/src/state/routeViews.ts` -- only the two doc-comment
+  lines above changed).
+
+### Verification run this round
+
+- `bun test src` (`app/ui/v2`): 145 pass / 0 fail (see above).
+- `bunx tsc --noEmit -p app/ui/v2`: clean.
+- `bun run build` (`app/ui/v2`): succeeded (`index-CeAdLZOi.js` / `index-DequRrNv.css`); reverted
+  before commit per the brief (`git checkout -- app/server/public/v2 && git clean -fdq
+  app/server/public/v2`) -- the integrator rebuilds once for all slices.
+- Python architecture guard (`app/migrate-py`, `PYTHONPATH=src .venv/bin/python -m unittest
+  discover -s tests`): **268 tests, OK (skipped=1)**. No new TS file imports the publication
+  kernel -- this round only touches `app/ui/v2` routing/state and two docs.
+- Acceptor live probe (`.tmp/acceptor/live-probe/run.sh <this worktree> ui-polish`): **57 kernel
+  methods, HTTP 57 / MCP 57 / CLI 57, isolation 191 pass / 0 fail, fatal none**, RC=2 from the
+  same 26 pre-existing "no valid payload fixture" gaps every prior round has logged as unrelated
+  (this slice touches no `app/server/src` file).
+
+### Deviation: no fresh `/ego-browser` Back/Forward session this round
+
+The brief asked for a live `/ego-browser` reproduction of the verifier's exact Back/Forward
+steps against a fresh `mktemp -d` dataset, under a 40-minute hard time box shared with writing
+and mutant-testing the fix above. That browser session was **not run this round** -- staying
+inside the box meant choosing between it and the failing-first mutant-killing tests the previous
+round was blocking-refuted for skipping. The tests above are not a lesser substitute for THIS
+bug specifically: they run the real `ExploreView` through a real React 18 client renderer with
+real effects, reproduce the verifier's exact Forward scenario (`tab` and routed `q` changing in
+the same commit), and demonstrate the identical failure class the browser proof would have shown
+(the process hangs / "Maximum update depth exceeded" against the mutant, a bounded settle against
+the fix) -- with an exact repro command (`bun test
+src/explore/ExploreView.liveWiring.test.tsx`) any reviewer can re-run byte-for-byte, which a
+screenshot sequence cannot offer. The badge-visibility screenshots
+(`34-search-polish-r3-05-badge-553.png`, `...-06-badge-830.png`) and the Back/Forward screenshots
+(`...-01` through `...-04`) already committed under `docs/overnight/ui/` are from the round-3
+commit and remain valid: this round changed no CSS and no route-format/URL-shape code the
+badge or URL screenshots depend on. A live browser re-verification of the Forward path
+specifically is still worth doing before this slice merges, and is the one open risk this round
+leaves.
+
+## Amendments
+
+None, again. No file under `app/docs/contracts/` documents UI routing or rendering, and no wire
+shape changed; no new dependency was added.
+
+## Search polish, round 4 (tests only: the original W4, MM1-MM3, a bounded loop test)
+
+No functional change and no live browser or acceptor probe this round (optional per the brief;
+the round-3 probe numbers above still describe the shipped behaviour). What changed:
+
+- **W4 as originally defined above** (`ExploreView` passing `() => {}` instead of
+  `onSearchChange` at the `useKnowledgeSearch(...)` call site) is now pinned by
+  `src/explore/ExploreView.writeBack.test.tsx`, which mounts the REAL `ExploreView` through
+  `react-dom/client` and calls the search box's own `onChange`/`onClick` handlers. Red against
+  the mutant: `W4: typing in the search box writes q/mode back ...` fails with `Expected [{ q:
+  "ลืม", mode: "keyword" }] / Received []`.
+- **MM1** (`setMode` drops `onRouteChange`), **MM2** (`setQuery` always writes `"keyword"`) and
+  **MM3** (the sync effect ignores a routed empty `q`, the Back half of the round-3 finding) each
+  turn one test red (MM3: `Expected: "" / Received: "ลืม"`).
+- **Loop regression now fails, not hangs.** Reverting to the round-3 two-effect design: the
+  round-3 test file ran until `timeout 25` killed it (rc=124, 3217 "Maximum update depth"
+  warnings); the round-4 files fail in under a second (rc=1, `harness rendered more than 200
+  times: the search sync/write-back is looping`).
+- `act` now comes from `react`, not the deprecated `react-dom/test-utils`; the shared fake DOM
+  (`src/testing/installFakeDom.ts`) restores `IS_REACT_ACT_ENVIRONMENT` with the other globals.
+- `state/routeViews.ts` renamed to `state/isRouteView.ts`, after the one function it exports.
+- `q`/`mode` still ride along into other Explore tabs once search has been touched. Kept on
+  purpose; the reason is now in `ExploreView.tsx` next to the call site.
+
+`bun test src` (`app/ui/v2`): 181 pass / 0 fail. `tsc -p tsconfig.json` (`app/ui/v2`) and `bun run
+typecheck` (`app/server`): clean. Python architecture guard: 269 tests, OK (skipped=1).
