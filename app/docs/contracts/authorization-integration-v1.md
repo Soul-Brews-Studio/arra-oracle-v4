@@ -654,3 +654,24 @@ brief):**
 - **No rate limit or compaction** on `instance_audit`; every POST does a
   synchronous append before responding, admitted or refused. Abuse-resistance
   of the sink was out of scope for "where does the row live" (D4b).
+
+## Amendment 2026-09-26 (post-merge Nat 2026-09-28 NAT-DECISIONS D4b (R25): a separate instance-level audit log for /api/backfill and /api/reindex)
+
+Fix-round 3 (verifier-confirmed): the round-2 fix above closed the
+schema-inference crash but left a second, narrower race in the same
+function. `openInstanceAuditTable.ts`'s check-then-create
+(`tableNames()` then `createEmptyTable`) let N concurrent
+`appendInstanceAuditRow` calls, all arriving on a NEVER-written instance
+(e.g. multiple maintenance requests hitting a fresh instance at once),
+all observe the table missing and all race to create it — only one
+create won, and the rest threw `already exists`, which
+`appendInstanceAuditRow`'s catch counted as a dropped row instead of a
+write. Reproduced standalone (4 concurrent first writes on a fresh
+`ARRA_DATA_DIR` landed 1 row, 3 failures) and pinned by a new isolated
+subprocess test in `transport-audit-instance.test.ts` ("N concurrent
+first writes on a fresh, never-written instance all land"). **Fix:**
+`createEmptyTable` is now called with `{ mode: "create", existOk: true
+}` — LanceDB's own idiom for an idempotent create, already documented on
+`CreateTableOptions` — so every concurrent creator resolves to the same
+table instead of losing its row. No new schema drift: the explicit
+Arrow schema from fix-round 2 is unchanged.

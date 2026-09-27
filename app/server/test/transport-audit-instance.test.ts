@@ -190,6 +190,52 @@ describe("instance audit write failure (isolated subprocess: defines the D4b beh
   }, TEST_TIMEOUT_MS);
 });
 
+describe("instance audit table creation race (isolated subprocess: fresh, never-written instance)", () => {
+  // Round-3 verifier (blocking): `openInstanceAuditTable` does
+  // `tableNames()` then `createEmptyTable(TABLE, schema)` with no
+  // `existOk`. On a NEVER-written instance, N concurrent `appendInstanceAuditRow`
+  // calls all see the table missing, all race to create it; only one create
+  // wins and the rest throw "already exists", which `appendInstanceAuditRow`
+  // catches and counts as a *dropped* row -- the same class of loss fix-round
+  // 2 was meant to close, just via a different interleaving. This proves N
+  // parallel first writes on a fresh instance all land, not N-1.
+  test("N concurrent first writes on a fresh, never-written instance all land (no exist_ok race)", async () => {
+    const workDir = await mkdtemp(join(tmpdir(), "arra-v4-audit-instance-race-"));
+    const dataDir = join(workDir, "data");
+    try {
+      const script = `
+        const { appendInstanceAuditRow } = await import("${join(import.meta.dir, "..", "src", "audit", "instanceAudit.appendInstanceAuditRow.ts")}");
+        const { instanceAuditFailureCount } = await import("${join(import.meta.dir, "..", "src", "audit", "instanceAudit.instanceAuditFailureCount.ts")}");
+        const { openInstanceAuditTable } = await import("${join(import.meta.dir, "..", "src", "audit", "instanceAudit.openInstanceAuditTable.ts")}");
+        const N = 4;
+        await Promise.all(Array.from({ length: N }, (_, i) => appendInstanceAuditRow({
+          principal_id: null, route: "/api/reindex", action: "maintenance:reindex",
+          outcome: "refused", status: "error", input: { i }, started_at: 1, finished_at: 2, request_id: "req_" + i,
+        })));
+        const table = await openInstanceAuditTable();
+        const rows = await table.query().toArray();
+        console.log(JSON.stringify({ rowCount: rows.length, failures: instanceAuditFailureCount() }));
+      `;
+      const proc = Bun.spawn(["bun", "-e", script], {
+        env: { ...process.env, ARRA_DATA_DIR: dataDir },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      if (code !== 0) throw new Error(`subprocess exited ${code}: ${stderr.slice(-2000)}`);
+      const result = JSON.parse(stdout.trim().split("\n").at(-1)!);
+      expect(result.rowCount, stdout).toBe(4);
+      expect(result.failures, stdout).toBe(0);
+    } finally {
+      await rm(workDir, { recursive: true, force: true });
+    }
+  }, TEST_TIMEOUT_MS);
+});
+
 describe("instance audit redaction (pure, no storage touched)", () => {
   // Deliberately does NOT call `appendInstanceAuditRow` in-process:
   // `storage.ts`'s `DATA_DIR` is read once at module import, so an in-process
