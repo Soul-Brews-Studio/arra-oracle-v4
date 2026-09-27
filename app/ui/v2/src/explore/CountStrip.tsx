@@ -21,7 +21,9 @@ export function CountStrip({
   refreshing: boolean;
 }) {
   return (
-    <div className="flex items-center gap-4 border-b border-edge px-4 py-2 text-xs">
+    // `flex-wrap`: at 320px the three counts plus "refresh all" ended at
+    // 360px, off the side of the screen (#33 AC2 round 4).
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-edge px-4 py-2 text-xs">
       <Count label="peers" value={peersTotal} />
       <span className="text-edge">|</span>
       <Count label="sessions" value={sessionsTotal} />

@@ -1,4 +1,5 @@
 import type { MessageRow as MessageRowType } from "../api/memory";
+import { authErrorHintFromText } from "../state/authErrorHintFromText";
 import { EmptyState } from "./EmptyState";
 import { MessageRow } from "./MessageRow";
 
@@ -22,6 +23,7 @@ export function Transcript({
   onLoadMore: () => void;
   hasMore: boolean;
 }) {
+  const hint = authErrorHintFromText(error);
   if (!selectedSession) {
     return (
       <EmptyState
@@ -45,7 +47,16 @@ export function Transcript({
       {/* `error` here is a plain message string set by the fetch-owning
           parent; the structured ErrorEnvelope rendering lives in
           ErrorNote, used wherever a raw ApiResult body is available. */}
-      {error && <p className="text-xs text-rose-300">{error}</p>}
+      {/* #33 AC2 round 3: the same 401/403 sentence the list panels show --
+          Explore > Messages used to print the bare code alone. The code is
+          the first word: `describe()` appends ` at <pointer>` to an
+          envelope that has one (an R3 peer-binding refusal does). */}
+      {error && (
+        <div role="alert" className="text-xs">
+          <p className="text-rose-300">{error}</p>
+          {hint !== null && <p className="mt-1 text-muted">{hint}</p>}
+        </div>
+      )}
       {messages.length === 0 && !loading && !error && (
         <EmptyState title="No messages yet" detail="This session has no messages -- append one below." />
       )}

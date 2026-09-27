@@ -10,7 +10,9 @@ import { validateLinkDraft } from "../state/validateLinkDraft";
 
 const INPUT =
   "min-w-0 flex-1 rounded border border-edge bg-ink px-2 py-1 font-mono text-[11px] text-slate-100 outline-none focus:border-accent";
-const SELECT = "rounded border border-edge bg-ink px-1.5 py-1 text-[11px] text-slate-100";
+// `min-w-0 max-w-full`: the loaded-revision pick lists titles, and a <select>
+// is otherwise as wide as its longest option (#33 AC2 round 4).
+const SELECT = "min-w-0 max-w-full rounded border border-edge bg-ink px-1.5 py-1 text-[11px] text-slate-100";
 
 /** Evidence links for the revision being written (#33 AC1 "cite").
  *

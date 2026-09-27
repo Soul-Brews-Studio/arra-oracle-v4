@@ -40,7 +40,7 @@ export function RevisionHistory({
             }`}
           >
             <div className="flex items-center justify-between gap-2">
-              <span className="font-mono text-slate-200">#{rev.revision_no}</span>
+              <span className="font-mono text-slate-200 [overflow-wrap:anywhere]">#{rev.revision_no}</span>
               {isHead && <span className="text-[10px] uppercase tracking-wide text-accent">head</span>}
             </div>
             <span className="truncate text-slate-100">{rev.title}</span>
@@ -52,7 +52,7 @@ export function RevisionHistory({
               <span>
                 ⤷ base:{" "}
                 {rev.base_revision_id ? (
-                  <span className="font-mono">{rev.base_revision_id.slice(0, 8)}…</span>
+                  <span className="font-mono [overflow-wrap:anywhere]">{rev.base_revision_id.slice(0, 8)}…</span>
                 ) : (
                   "none (first revision)"
                 )}

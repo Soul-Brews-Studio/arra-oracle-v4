@@ -24,7 +24,9 @@ function EventRow({ event }: { event: LifecycleEventRow }) {
           → {event.new_title ?? event.new_id}
         </p>
       )}
-      <p className="text-muted">
+      {/* The reason is user text (up to 4096 bytes) and often a URL: one
+          unbroken token that ran 300px past a 375px pane (#33 AC2 r6). */}
+      <p className="text-muted [overflow-wrap:anywhere]">
         reason: {event.reason}
         {event.peer_name !== null && ` · by ${event.peer_name}`}
       </p>
@@ -63,7 +65,7 @@ export function LifecyclePanel({
       ) : (
         <>
           {recallError !== null ? (
-            <p className="text-[11px] text-rose-300">{recallError}</p>
+            <p className="text-[11px] text-rose-300 [overflow-wrap:anywhere]">{recallError}</p>
           ) : recall !== null ? (
             <span
               className={`inline-flex w-fit items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${
@@ -80,7 +82,7 @@ export function LifecyclePanel({
               2 finding): the error replaces the empty state, it does not sit
               beside a claim the failed read cannot support. */}
           {error !== null ? (
-            <p className="text-[11px] text-rose-300">lifecycle history could not be read: {error}</p>
+            <p className="text-[11px] text-rose-300 [overflow-wrap:anywhere]">lifecycle history could not be read: {error}</p>
           ) : history.length === 0 ? (
             <EmptyState title="no lifecycle events" detail="never superseded or retired" />
           ) : (

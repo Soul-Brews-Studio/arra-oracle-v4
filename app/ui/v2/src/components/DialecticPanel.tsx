@@ -47,6 +47,7 @@ export function DialecticPanel({
       <textarea
         className="min-h-16 resize-none rounded border border-edge bg-ink px-3 py-2 text-sm text-slate-100 outline-none focus:border-accent disabled:opacity-50"
         placeholder="What does this peer know about..."
+        aria-label="Question to ask as this peer"
         value={question}
         disabled={disabled}
         onChange={(e) => setQuestion(e.target.value)}
@@ -81,7 +82,7 @@ export function DialecticPanel({
 
       {answer && (
         <div className="flex flex-col gap-3 rounded border border-edge bg-panel p-3">
-          <p className="whitespace-pre-wrap text-sm text-slate-100">{answer.answer}</p>
+          <p className="whitespace-pre-wrap text-sm text-slate-100 [overflow-wrap:anywhere]">{answer.answer}</p>
           <CoverageBadge coverage={answer.coverage} />
           <ExcludedList excluded={answer.excluded} omitted={answer.excluded_omitted} />
           <div>

@@ -55,7 +55,12 @@ export function ListPanel<T>({
   return (
     <div className="flex flex-col border-b border-edge">
       <div className="flex items-center gap-1.5 px-2 py-1.5">
-        <button onClick={() => setCollapsed((v) => !v)} className="text-muted hover:text-accent">
+        <button
+          onClick={() => setCollapsed((v) => !v)}
+          aria-label={collapsed ? `Expand ${label}` : `Collapse ${label}`}
+          aria-expanded={!collapsed}
+          className="text-muted hover:text-accent"
+        >
           {collapsed ? "›" : "⌄"}
         </button>
         <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">{label}</span>
@@ -63,6 +68,7 @@ export function ListPanel<T>({
           onClick={onRefresh}
           disabled={loading}
           title="refresh this list from page 1"
+          aria-label={`Refresh ${label}`}
           className="ml-auto text-muted hover:text-accent disabled:opacity-40"
         >
           ↻
@@ -77,6 +83,7 @@ export function ListPanel<T>({
               onChange={(e) => setFilter(e.target.value)}
               placeholder={`filter loaded ${label}…`}
               title="filters rows already on this page only -- there is no server-side search here"
+              aria-label={`Filter loaded ${label}`}
               className="w-full rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-100 outline-none focus:border-accent"
             />
           </div>
@@ -86,10 +93,20 @@ export function ListPanel<T>({
               this server does not have listing endpoints yet
             </p>
           )}
-          {supported && error && <p className="px-2 pb-2 text-[11px] text-rose-300">{error}</p>}
+          {/* polite `status`, not `alert`: a bad token errors every panel at
+              once, and three assertive alerts with one sentence is noise; the
+              one assertive alert is the transcript's (#33 AC2 round 4). */}
+          {supported && error && <p role="status" className="px-2 pb-2 text-[11px] text-rose-300">{error}</p>}
 
           <div className="flex max-h-56 flex-col gap-0.5 overflow-y-auto px-1">
-            {supported && visible.length === 0 && !loading && (
+            {/* #33 fix-round: a 401/403 (or any other real failure) now
+                carries a non-null `error` even though `supported` stays
+                true -- the route exists, it just refused this request. An
+                honest "no rows" only applies when there is no error to
+                report; otherwise this rendered a false-empty workspace
+                ("no peers / nothing on this page matches") over a server
+                that never got to answer. */}
+            {supported && !error && visible.length === 0 && !loading && (
               <EmptyState title={`no ${label}`} detail="nothing on this page matches." />
             )}
             {visible.map((row) => {

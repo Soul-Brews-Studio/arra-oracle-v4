@@ -50,7 +50,20 @@ export type ConnectionRow = {
 export function toPage<T>(result: ApiResult, cursorKey: string): Page<T> {
   if (!result.ok) {
     const absent = asError(result.body)?.code === "method_not_found" || result.status === 404;
-    return { rows: [], nextCursor: null, total: null, supported: !absent };
+    // `Page.error` (added alongside `listing.ts`'s own `toPage`, #33 fix-round):
+    // this tier only ever feeds `useOverview`'s COUNTS, not a rendered row
+    // list, so there is no "false empty page" UI defect to match here -- but
+    // the shared `Page<T>` shape now requires the field, and a real failure
+    // (401/403/5xx) is worth keeping distinguishable from "route absent" for
+    // the same reason `listing.ts` does it, on the chance a future caller
+    // reads more than `total` off this.
+    return {
+      rows: [],
+      nextCursor: null,
+      total: null,
+      supported: !absent,
+      error: absent ? null : (result.error ?? asError(result.body)?.code ?? `HTTP ${result.status}`),
+    };
   }
   const body = result.body as Record<string, unknown>;
   return {
@@ -58,6 +71,7 @@ export function toPage<T>(result: ApiResult, cursorKey: string): Page<T> {
     nextCursor: typeof body[cursorKey] === "string" ? (body[cursorKey] as string) : null,
     total: typeof body.total === "string" ? body.total : null,
     supported: true,
+    error: null,
   };
 }
 

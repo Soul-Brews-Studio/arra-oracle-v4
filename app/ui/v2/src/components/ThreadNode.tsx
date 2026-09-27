@@ -40,10 +40,10 @@ export function ThreadNode({
           isReplyTarget ? "border-accent bg-accent/10" : isHighlighted ? "border-accent bg-accent/5" : "border-transparent"
         }`}
       >
-        <div className="flex flex-wrap items-baseline gap-2 text-[11px] text-muted">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-2 text-[11px] text-muted [overflow-wrap:anywhere]">
           <span className="font-semibold text-slate-100">{root.peer_name}</span>
           {root.role && <span>{root.role}</span>}
-          <span className="font-mono">#{root.seq_in_session}</span>
+          <span className="font-mono [overflow-wrap:anywhere]">#{root.seq_in_session}</span>
           {orphaned && (
             <span
               className="rounded border border-amber-500/40 bg-amber-500/10 px-1 text-amber-300"
@@ -57,7 +57,8 @@ export function ThreadNode({
         {isEmpty ? (
           <p className="mt-1 text-xs italic text-muted">(empty content)</p>
         ) : (
-          <p className="mt-1 whitespace-pre-wrap text-sm text-slate-100">{root.content}</p>
+          // Same unbroken-path wrap as `MessageRow` (#33 AC2 round 4).
+          <p className="mt-1 whitespace-pre-wrap text-sm text-slate-100 [overflow-wrap:anywhere]">{root.content}</p>
         )}
         <button
           onClick={() => onReply(root.public_id)}

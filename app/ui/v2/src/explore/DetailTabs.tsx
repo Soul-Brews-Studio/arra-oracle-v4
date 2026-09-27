@@ -167,7 +167,21 @@ export function DetailTabs(props: {
     // `min-w-0`: this panel is a flex item of ExploreView's row, and without
     // it one long unbreakable line (a code target's path, measured: 1,807px)
     // set the panel's minimum width and pushed the whole page sideways.
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+    //
+    // #33 AC2 round 3: below `lg` ExploreView stacks the lists above this
+    // pane and scrolls the page, so the pane is a `shrink-0` region with a
+    // viewport-relative height (never squeezed -- round 2's `flex-1 min-h-0`
+    // measured 0px at 375x812) and the tab bodies scroll inside it. From `lg`
+    // it is the row's `flex-1` again, stretched to the row's height.
+    // Round 4: `max-h-full` caps it at the page scroller's own height, so
+    // scrolled into view the tab bar, transcript and composer fit on one
+    // screen. The 24rem floor still wins where the scroller is shorter (a
+    // landscape phone, 812x375: 384px in a 211px scrollport) -- measured,
+    // capping the floor too left the transcript 24px tall there.
+    <section
+      aria-label="Explore detail"
+      className="flex h-[80vh] max-h-full min-h-[24rem] min-w-0 shrink-0 flex-col lg:h-auto lg:min-h-0 lg:flex-1 lg:shrink"
+    >
       <div className="flex flex-wrap gap-1 border-b border-edge px-2 py-1.5">
         {EXPLORE_TABS.map((t) => (
           <button
@@ -185,8 +199,11 @@ export function DetailTabs(props: {
       {active === "nodes" && (
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex items-center gap-2 px-3 py-2">
-            <label className="text-[11px] text-muted">type</label>
+            <label htmlFor="explore-type-filter" className="text-[11px] text-muted">
+              type
+            </label>
             <select
+              id="explore-type-filter"
               value={props.nodes.typeTerm ?? ""}
               onChange={(e) => props.nodes.onTypeTerm(e.target.value === "" ? null : (e.target.value as TypeTerm))}
               className="rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-100 outline-none focus:border-accent"
@@ -367,6 +384,6 @@ export function DetailTabs(props: {
           />
         </div>
       )}
-    </div>
+    </section>
   );
 }

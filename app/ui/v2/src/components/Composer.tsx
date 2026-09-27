@@ -37,14 +37,16 @@ export function Composer({
           onChange={(e) => setPeer(e.target.value)}
           disabled={disabled}
           placeholder="peer name"
-          className="w-32 rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-100 outline-none focus:border-accent disabled:opacity-50"
+          aria-label="Peer name"
+          className="w-32 rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-100 outline-none focus:border-accent focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
         />
         <input
           value={role}
           onChange={(e) => setRole(e.target.value)}
           disabled={disabled}
           placeholder="role (optional)"
-          className="w-32 rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-100 outline-none focus:border-accent disabled:opacity-50"
+          aria-label="Role (optional)"
+          className="w-32 rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-100 outline-none focus:border-accent focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
         />
       </div>
       <textarea
@@ -56,13 +58,14 @@ export function Composer({
         disabled={disabled}
         rows={3}
         placeholder="message content (Ctrl/Cmd+Enter to send)"
-        className="w-full resize-none rounded border border-edge bg-ink px-2 py-1.5 text-sm text-slate-100 outline-none focus:border-accent disabled:opacity-50"
+        aria-label="Message content"
+        className="w-full resize-none rounded border border-edge bg-ink px-2 py-1.5 text-sm text-slate-100 outline-none focus:border-accent focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
       />
       <div className="mt-2 flex justify-end">
         <button
           onClick={send}
           disabled={!canSend}
-          className="rounded border border-accent/40 bg-accent/10 px-3 py-1 text-xs font-medium text-accent hover:bg-accent/20 disabled:opacity-40"
+          className="rounded border border-accent/40 bg-accent/10 px-3 py-1 text-xs font-medium text-accent hover:bg-accent/20 focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-40"
         >
           {sending ? "sending…" : "send"}
         </button>

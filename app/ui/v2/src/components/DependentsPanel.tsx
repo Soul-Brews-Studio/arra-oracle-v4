@@ -28,7 +28,7 @@ function OccurrenceRow({
         <span className="ml-auto text-muted">rev {occurrence.revision_no}</span>
       </div>
       <div className="flex items-center gap-2 text-muted">
-        <span className="rounded border border-edge px-1 font-mono text-[10px]">{occurrence.link.target_kind}</span>
+        <span className="rounded border border-edge px-1 font-mono text-[10px] [overflow-wrap:anywhere]">{occurrence.link.target_kind}</span>
         <span>{occurrence.link.relation}</span>
       </div>
       <EvidenceBadges labels={reverseEvidenceLabels(occurrence, citingStatus)} />
