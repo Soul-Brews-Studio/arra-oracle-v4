@@ -504,3 +504,40 @@ DESIGN.md §12 specifies.
 
 **Evidence.** `app/server/test/context-peer-representation.test.ts` (18 tests after the fix
 round) runs against a real gated dataset through the production registry, HTTP and MCP.
+
+## Amendment 2026-09-26 (post-merge R24 (Nat D3b): #32 perspective filters, the remaining author filter and the stale-search row)
+
+- **`author_peer_name`**: a third, optional narrowing key on `getContext` and `answerChat`
+  (and their CLI aliases, `context get --author` / `chat ask --author`), applied exactly like
+  `observer_peer_name`/`subject_peer_name` -- a SQL predicate on `selectConclusions`' head
+  revisions, SELECTION only, never a permissions check. An unknown `author_peer_name` fails
+  closed with `invalid_reference` at `/author_peer_name`, the same code and path shape unknown
+  `observer_peer_name`/`subject_peer_name` already use (`requirePerspectivePeer`). Naming a
+  peer that exists but is not a member of the requester's scope (the same "outsider" shape
+  observer/subject already allow) is not refused: it simply narrows selection to nothing,
+  because naming a perspective has never required membership in this contract. Combined with
+  `observer_peer_name`/`subject_peer_name`, all three predicates intersect (AND).
+- **NOT on `getRepresentation`.** `getRepresentation`'s grammar is deliberately unchanged:
+  its `observer -> subject` view is one perspective's conclusions, and admitting a third
+  `author_peer_name` axis there would let one call answer for every author under that pair --
+  merging perspectives rather than narrowing one, which the representation contract's own
+  §1 grammar does not allow. `selectConclusions`' shared `author` option is optional (defaults
+  to "any") for exactly this reason: `getContext`/`answerChat` pass it, `getRepresentation`'s
+  call site does not.
+- **Stale search cannot occur, proven not asserted.** `answerChat` never reads search chunks:
+  it composes its context via `getContext`, which reads `sessions`, `messages`,
+  `session_links`, `nodes`, `node_revisions`, `supersede_log` and `peers` only. Neither
+  function ever names `search_chunks_v1`. `context-peer-representation.test.ts`'s new
+  "stale search cannot occur" suite wraps the real `DatasetAdapter` `getContext`/`answerChat`
+  use in production with a `Proxy` that throws the moment `query`/`orderedProjection`/`count`/
+  `refresh`/`version`/`append`/`updateWhere` is called with the `search_chunks_v1` table name,
+  then runs both functions against the real gated dataset end to end. Neither throws. This
+  closes AC-MATRIX #32's "stale search" row as PASS with a live guard, not prose.
+
+**Reason.** `docs/overnight/DECISIONS.md` R24 (Nat D3b): #32 perspective filters closes with
+the author filter and the stale-search row, on top of the D3b observer/subject work merged in
+PR #139.
+
+**Evidence.** `app/server/test/context-peer-representation.test.ts`, new `describe` blocks
+"R24 (Nat D3b, #32): author_peer_name narrows getContext/answerChat selection" and
+"R24 (Nat D3b, #32): stale search cannot occur because chat never reads search_chunks_v1".

@@ -53,6 +53,17 @@ const ANSWER_CHAT_KEYS = ["workspace_name", "peer_name", "session_name", "questi
  *  narrow which conclusions are SELECTED and never who may read: the requester
  *  is still `peer_name`, under exactly the same membership rule. */
 const PERSPECTIVE_KEYS = ["observer_peer_name", "subject_peer_name"] as const;
+/**
+ * R24 (Nat D3b, #32): an optional third narrowing key, `author_peer_name`.
+ * SELECTION only, exactly like observer/subject -- it never grants access,
+ * and it is deliberately NOT part of `getRepresentation`'s grammar: that
+ * contract's `observer -> subject` view is one perspective's conclusions,
+ * and adding a third axis there would let a caller merge perspectives
+ * (any author within one observer/subject pair) rather than narrow one.
+ * getContext/answerChat compose from many perspectives already, so a third
+ * SQL predicate is a narrowing, not a merge.
+ */
+const AUTHOR_KEYS = ["author_peer_name"] as const;
 const GET_CHAT_SETTINGS_KEYS = ["workspace_name"] as const;
 
 export type GetContextRequest = {
@@ -62,6 +73,7 @@ export type GetContextRequest = {
   max_items: number;
   observer_peer_name: string | null;
   subject_peer_name: string | null;
+  author_peer_name: string | null;
 };
 
 export type AnswerChatRequest = GetContextRequest & { question: string };
@@ -103,14 +115,18 @@ function question(value: JcsValue | undefined, tokens: Tokens): string {
 
 /** An optional perspective name: absent or null is "any", else the same
  *  name grammar as every other peer name here. */
-function perspective(o: JcsObject, key: (typeof PERSPECTIVE_KEYS)[number]): string | null {
+function perspective(o: JcsObject, key: (typeof PERSPECTIVE_KEYS)[number] | (typeof AUTHOR_KEYS)[number]): string | null {
   const value = o.get(key);
   return value === undefined || value === null ? null : name(value, [key]);
 }
 
 export function parseGetContext(bytes: Uint8Array): GetContextRequest {
   const raw = parseRequest(bytes);
-  const o = requireClosedObject(raw, [...GET_CONTEXT_KEYS, ...PERSPECTIVE_KEYS.filter((key) => raw.has(key))], []);
+  const o = requireClosedObject(
+    raw,
+    [...GET_CONTEXT_KEYS, ...PERSPECTIVE_KEYS.filter((key) => raw.has(key)), ...AUTHOR_KEYS.filter((key) => raw.has(key))],
+    [],
+  );
   return {
     workspace_name: name(o.get("workspace_name"), ["workspace_name"]),
     peer_name: name(o.get("peer_name"), ["peer_name"]),
@@ -118,12 +134,17 @@ export function parseGetContext(bytes: Uint8Array): GetContextRequest {
     max_items: maxItems(o.get("max_items"), ["max_items"]),
     observer_peer_name: perspective(o, "observer_peer_name"),
     subject_peer_name: perspective(o, "subject_peer_name"),
+    author_peer_name: perspective(o, "author_peer_name"),
   };
 }
 
 export function parseAnswerChat(bytes: Uint8Array): AnswerChatRequest {
   const raw = parseRequest(bytes);
-  const o = requireClosedObject(raw, [...ANSWER_CHAT_KEYS, ...PERSPECTIVE_KEYS.filter((key) => raw.has(key))], []);
+  const o = requireClosedObject(
+    raw,
+    [...ANSWER_CHAT_KEYS, ...PERSPECTIVE_KEYS.filter((key) => raw.has(key)), ...AUTHOR_KEYS.filter((key) => raw.has(key))],
+    [],
+  );
   return {
     workspace_name: name(o.get("workspace_name"), ["workspace_name"]),
     peer_name: name(o.get("peer_name"), ["peer_name"]),
@@ -132,6 +153,7 @@ export function parseAnswerChat(bytes: Uint8Array): AnswerChatRequest {
     max_items: maxItems(o.get("max_items"), ["max_items"]),
     observer_peer_name: perspective(o, "observer_peer_name"),
     subject_peer_name: perspective(o, "subject_peer_name"),
+    author_peer_name: perspective(o, "author_peer_name"),
   };
 }
 
@@ -272,6 +294,7 @@ export type ContextResult = {
     effective_sessions: string[];
     observer_peer_name: string | null;
     subject_peer_name: string | null;
+    author_peer_name: string | null;
   };
   conclusions: ConclusionItem[];
   /** A stored `summary` revision in scope, else null -- never made up per read. */

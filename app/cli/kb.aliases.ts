@@ -48,6 +48,10 @@ const orNull = (options: CliOptions, name: string): string | null => options[nam
 const perspective = (options: CliOptions): Json => ({
   ...(options.observer ? { observer_peer_name: options.observer } : {}),
   ...(options.about ? { subject_peer_name: options.about } : {}),
+  // R24 (Nat D3b, #32): `--author` narrows SELECTION on `getContext` /
+  // `answerChat` only -- deliberately absent from `peer context`
+  // (`getRepresentation`), whose grammar does not admit it.
+  ...(options.author ? { author_peer_name: options.author } : {}),
 });
 
 export const KB_ALIASES: Readonly<Record<string, KbAlias>> = Object.freeze({
@@ -110,7 +114,7 @@ export const KB_ALIASES: Readonly<Record<string, KbAlias>> = Object.freeze({
   },
   "context get": {
     method: "getContext",
-    flags: ["peer", "session", "max-items", "observer", "about"],
+    flags: ["peer", "session", "max-items", "observer", "about", "author"],
     build: (options, bank) => ({
       workspace_name: bank,
       peer_name: need(options, "peer"),
@@ -121,7 +125,7 @@ export const KB_ALIASES: Readonly<Record<string, KbAlias>> = Object.freeze({
   },
   "chat ask": {
     method: "answerChat",
-    flags: ["peer", "session", "question", "max-items", "observer", "about"],
+    flags: ["peer", "session", "question", "max-items", "observer", "about", "author"],
     build: (options, bank) => ({
       workspace_name: bank,
       peer_name: need(options, "peer"),

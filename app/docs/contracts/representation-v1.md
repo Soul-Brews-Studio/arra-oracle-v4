@@ -139,3 +139,20 @@ The registry now has 58 methods.
 | no requester and not operator; requester outside the peer binding | `forbidden` | `/requester_peer_name` |
 | unknown workspace | the existing `requireWorkspace` code | |
 | requester, observer or subject not a peer of the workspace | `invalid_reference` | that field |
+
+## Amendment 2026-09-26 (post-merge R24 (Nat D3b): #32 perspective filters, the remaining author filter and the stale-search row)
+
+`getRepresentation`'s grammar is UNCHANGED by R24. The author filter lands on `getContext`
+and `answerChat` only (`chat-v1.md`'s own amendment of the same date carries the detail): its
+`observer -> subject` shape is one perspective's conclusions, and admitting a third
+`author_peer_name` predicate here would merge every author under one observer/subject pair
+into a single call, rather than narrow one -- exactly what this contract's §1 grammar and §3
+scoping rule exist to prevent. `selectConclusions`' shared `author` option therefore defaults
+to "any" and this method's call site never sets it.
+
+**Reason.** `docs/overnight/DECISIONS.md` R24 (Nat D3b), closing AC-MATRIX #32's two PARTIAL
+rows; this file records why `getRepresentation` is deliberately excluded from that closure.
+
+**Evidence.** `app/server/test/context-peer-representation.test.ts`'s `getRepresentation`
+suite is unchanged and still green; the new author-filter tests live in the `getContext`
+suite only.
