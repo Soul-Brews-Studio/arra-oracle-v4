@@ -185,6 +185,48 @@ class CopyMigrationTests(unittest.TestCase):
                 self.assertIn(node_id, revisions)
                 self.assertEqual(json.loads(revisions[node_id]["internal_metadata"])["legacy_id"], row["id"])
 
+    def test_vector_disposition_never_reuses_a_legacy_vector_across_every_migrated_node(self):
+        """#34 TODO 3 (docs/overnight/AC-MATRIX.md slice 7): a DEDICATED,
+        whole-fixture check, not folded into the general smoke test above.
+
+        Exactly one legacy memory (``m_muigqmxf_qchtyc``, "forgot-keys") carries
+        a legacy ``embedding``; the other nine do not
+        (``export_legacy_fixture.py``'s ``_memory`` defaults `embedding=None`).
+        `plan.py:98` records ``vector_disposition`` per node from exactly that
+        fact: "rebuild_unknown_profile" when a legacy vector existed (it is
+        real, but from an unknown/unpinned profile, so it is discarded, never
+        reused) and "none" when there was nothing to discard. Both are
+        "never reused" -- this test pins the count of each, so a future change
+        that silently started COPYING the one real legacy vector into
+        `search_chunks_v1.embedding` cannot pass unnoticed by continuing to say
+        "rebuild_unknown_profile" while actually reusing it.
+
+        The second half is the actual physical guarantee, independent of the
+        label: EVERY migrated node's derived `search_chunks_v1` row is staged
+        `pending` with a NULL vector, whether or not its legacy memory had an
+        embedding.
+        """
+        revisions = _rows(self.candidate, "node_revisions")
+        heads = [r for r in revisions if r["revision_no"] == 1]
+        self.assertEqual(len(heads), 10, "every migrated node's first revision")
+        dispositions = [json.loads(h["internal_metadata"])["vector_disposition"] for h in heads]
+        self.assertEqual(
+            sorted(dispositions),
+            sorted(["rebuild_unknown_profile"] + ["none"] * 9),
+            "exactly the one legacy memory with a real (discarded) vector is rebuild_unknown_profile",
+        )
+
+        chunks = _rows(self.candidate, "search_chunks_v1")
+        migrated_node_ids = {h["node_id"] for h in heads}
+        migrated_chunks = [c for c in chunks if c["node_id"] in migrated_node_ids]
+        self.assertEqual(len(migrated_chunks), 10, "one pending chunk per migrated node, none pre-embedded")
+        for chunk in migrated_chunks:
+            with self.subTest(chunk_id=chunk["id"]):
+                self.assertEqual(chunk["status"], "pending", "never arrives ready: no vector was carried over")
+                self.assertIsNone(chunk["embedding"], "a null vector, never a copied or invented one -- true even for the one node whose LEGACY row had a real vector")
+                self.assertEqual(chunk["attempts"], 0)
+                self.assertIsNone(chunk["embedded_at"])
+
     def test_memories_become_nodes_with_an_accepted_first_revision(self):
         nodes = _rows(self.candidate, "nodes")
         revisions = {r["id"]: r for r in _rows(self.candidate, "node_revisions")}

@@ -72,6 +72,7 @@ test/target-schema-cross-language.test.ts	4.325	0	4	0
 test/taxonomy-ownership.test.ts	42.789	0	13	0
 test/taxonomy-recovery.test.ts	51.235	0	17	0
 test/taxonomy-service.test.ts	59.156	0	61	0
+test/trace-cycle-check.test.ts	2.540	0	4	0
 test/trace-ownership.test.ts	9.265	0	5	0
 test/trace-precision.test.ts	40.303	0	11	0
 test/trace-recovery.test.ts	24.114	0	10	0
