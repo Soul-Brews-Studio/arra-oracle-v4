@@ -99,14 +99,16 @@ KNOWN = {
     ("app/docs/contracts/search-chunk-v1.md", "DESIGN.md:1119"): "frozen; corrected by its §25 amendment",
     ("docs/overnight/UI-PROOF-ui-cite.md", "app/ui/v2/src/components/PublishForm.tsx:50"):
         "historical refutation record of pre-fix code (PROOF-SWEEP.md §2)",
+    # style-shrink (#22) rewrote exactly these three app/README.md lines (app.ts -> app.createApp.ts,
+    # auth/service.ts -> auth/service.createOperationService.ts); the sweep's other README locators stay checked.
+    ("docs/overnight/PROOF-SWEEP.md", "app/README.md:142"): "style-shrink rename of a cited path (#22)",
+    ("docs/overnight/PROOF-SWEEP.md", "app/README.md:143"): "style-shrink rename of a cited path (#22)",
+    ("docs/overnight/PROOF-SWEEP.md", "app/README.md:152"): "style-shrink rename of a cited path (#22)",
 }
 # Whole target files whose citations from one doc are pinned line by line in proof-sweep-check.py.
 KNOWN_TARGETS = {
     ("docs/overnight/PROOF-SWEEP.md", "AGENTS.md"):
         "the sweep's own locators; AGENTS.md changed after they were written; pinned in proof-sweep-check.py",
-    ("docs/overnight/PROOF-SWEEP.md", "app/README.md"):
-        "the sweep's own locators; app/README.md changed after they were written (style-shrink's"
-        " app.ts -> app.createApp.ts citation fix, #22 fix round); pinned in proof-sweep-check.py",
 }
 checked = drifted = 0
 for doc in docs:
