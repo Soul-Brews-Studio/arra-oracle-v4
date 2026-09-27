@@ -186,7 +186,7 @@ the base — it is new in this slice.
 | `app/server/test/trace-cycle-check.test.ts` | `e69de29bb2d1d6434b8b29ae775ad8c2e48c5391` (new) | `6b72f51ddb0e88444425c6511067638e4bc445ff` |
 | `docs/overnight/AC-EVIDENCE.md` | `e69de29bb2d1d6434b8b29ae775ad8c2e48c5391` (new) | `a96a6d033f3c24202c14c1a55b907eb732a9682f` |
 | `docs/overnight/AC-MATRIX.md` | `e69de29bb2d1d6434b8b29ae775ad8c2e48c5391` (new) | `f2b714bb89bdc6561e65ea2cefe1bf1e12100b5a` |
-| `app/docs/contracts/delivery-gates.md` (this file) | `<computed after this edit lands, see the commit diff for its own before/after pair>` | — |
+| `app/docs/contracts/delivery-gates.md` (this file, as of commit `482e130`) | `f13521de5d020901de3729f63325ac75029a2949` | `c109d88e3174a29b0a7734742c8e14beb46bc9f9` |
 
 Reproduce with: `git cat-file -p <base>:<path> | git hash-object --stdin` for "before"
 and `git hash-object <path>` for "after", from the `ac-evidence` slice worktree. Full
