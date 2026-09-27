@@ -87,6 +87,20 @@ const groupFiles = groups[groupIndex]!.files;
 const shardCount = Math.max(1, Number(process.argv[2] ?? process.env.TEST_SHARDS ?? 6));
 const shards = lpt(groupFiles, shardCount);
 
+// Files that assign process.env.ARRA_DATA_DIR in-process run in a `bun test`
+// process of their own. src/storage.storageOptions.ts reads ARRA_DATA_DIR once,
+// at first import, and src/db.ts caches its connection for the process, so two
+// such files sharing one process silently use whichever data dir was imported
+// first (measured 2026-09-28: remember-taxonomy-parity and mcp-correctness each
+// pass alone and fail 3-15 tests when LPT puts them in the same shard).
+const ownsDataDir = (f: string) => /process\.env\.ARRA_DATA_DIR\s*=/.test(readFileSync(join(here, f), "utf8"));
+/** One shard's `bun test` invocations: the shared files together, then each data-dir owner alone. */
+const invocations = (shardFiles: readonly string[]): string[][] => {
+  const own = shardFiles.filter(ownsDataDir);
+  const shared = shardFiles.filter((f) => !own.includes(f));
+  return [...(shared.length ? [shared] : []), ...own.map((f) => [f])];
+};
+
 const logDir = join(here, ".tmp", "test-parallel");
 mkdirSync(logDir, { recursive: true });
 const started = performance.now();
@@ -152,12 +166,6 @@ const results: ShardResult[] = await Promise.all(
     // that finish in ~2 s here took ~5-6.5 s on a GitHub runner (measured,
     // run 36253113031), so CI sets it; locally it stays unset.
     const timeout = process.env.TEST_TIMEOUT_MS ? ["--timeout", process.env.TEST_TIMEOUT_MS] : [];
-    const proc = Bun.spawn(["bun", "test", ...timeout, ...shard.files], {
-      cwd: here,
-      env: { ...process.env, TMPDIR: scratch },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
     // Streamed to the log AS IT ARRIVES (R13): a job cancelled at its
     // timeout-minutes still uploads what every shard printed so far, which
     // names the file that was running. The parse below reads out + err.
@@ -173,24 +181,46 @@ const results: ShardResult[] = await Promise.all(
       }
       return all + decoder.decode();
     };
-    const [out, err] = await Promise.all([pump(proc.stdout), pump(proc.stderr)]);
-    const exitCode = await proc.exited;
-    const text = out + err;
-    const cpu = proc.resourceUsage()?.cpuTime.total;
-    const num = (re: RegExp) => {
-      const m = text.match(re);
-      return m ? Number(m[1]) : null;
-    };
+    // Each invocation prints its own summary; a missing one makes the shard's
+    // total null, which the checks below report as an incomplete shard.
+    let exitCode = 0;
+    let cpuMicros: number | null = 0;
+    const texts: string[] = [];
+    const totals: { pass: number | null; fail: number | null; ranFiles: number | null } = { pass: 0, fail: 0, ranFiles: 0 };
+    for (const files of invocations(shard.files)) {
+      const proc = Bun.spawn(["bun", "test", ...timeout, ...files], {
+        cwd: here,
+        env: { ...process.env, TMPDIR: scratch },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err] = await Promise.all([pump(proc.stdout), pump(proc.stderr)]);
+      const code = await proc.exited;
+      if (exitCode === 0) exitCode = code;
+      const text = out + err;
+      texts.push(text);
+      const cpu = proc.resourceUsage()?.cpuTime.total;
+      cpuMicros = cpu === undefined || cpuMicros === null ? null : cpuMicros + Number(cpu);
+      const num = (re: RegExp) => {
+        const m = text.match(re);
+        return m ? Number(m[1]) : null;
+      };
+      const add = (k: "pass" | "fail" | "ranFiles", v: number | null) => {
+        totals[k] = v === null || totals[k] === null ? null : totals[k]! + v;
+      };
+      add("pass", num(/^\s*(\d+) pass\s*$/m));
+      add("fail", num(/^\s*(\d+) fail\s*$/m));
+      add("ranFiles", num(/^Ran \d+ tests? across (\d+) files?\./m));
+    }
+    const text = texts.join("\n");
     const result: ShardResult = {
       index,
       exitCode,
-      pass: num(/^\s*(\d+) pass\s*$/m),
-      fail: num(/^\s*(\d+) fail\s*$/m),
-      ranFiles: num(/^Ran \d+ tests? across (\d+) files?\./m),
+      ...totals,
       seconds: (performance.now() - t0) / 1000,
-      cpuSeconds: cpu === undefined ? null : Number(cpu) / 1e6,
+      cpuSeconds: cpuMicros === null ? null : cpuMicros / 1e6,
       failures: text.split("\n").filter((l) => /^\s*(✗|\(fail\))/.test(l)),
-      unnamed: unnamedFailures(text),
+      unnamed: texts.flatMap(unnamedFailures),
     };
     console.log(
       `  shard ${index}: ${result.pass ?? "?"} pass, ${result.fail ?? "?"} fail, ${result.ranFiles ?? "?"}/${shard.files.length} files, rc=${exitCode}, ${result.seconds.toFixed(1)}s wall, ${result.cpuSeconds?.toFixed(1) ?? "?"}s cpu`,
