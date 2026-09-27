@@ -162,14 +162,18 @@ const SEARCH_NOTES: Readonly<Record<string, string>> = Object.freeze({
     " 3-character sequence with the query, including chunks of old revisions, of retired or superseded nodes" +
     " and of every embedding profile, so it can far outnumber the answers. Past 4096 candidate chunks, which" +
     " ones are considered depends on the shared index's scoring, so other workspaces' writes and exact score" +
-    " ties can change the answer." +
+    " ties can change the answer. coverage is \"partial\" (coverage_reason \"candidate_ceiling\") when a" +
+    " candidate read reached candidate_ceiling rows, so the answer may be incomplete; \"full\" when every" +
+    " candidate was read. It counts this workspace's rows only." +
     " Never fused with semantic results.",
   searchKnowledgeSemantic:
     " Semantic recall: payload {workspace_name, query, limit?, embedding_profile?} (profile defaults to the" +
     " server's query embedder's own, the active embedding profile id ollama/<EMBEDDING_MODEL, else" +
     " all-minilm>/384/none; any other profile is refused)." +
     " Answers NODES at their current head revision, nearest READY chunk vector first by squared" +
-    " L2 distance; retired and superseded nodes are excluded. Never fused with keyword results.",
+    " L2 distance; retired and superseded nodes are excluded. coverage is \"partial\" (coverage_reason" +
+    " \"candidate_ceiling\") when candidate_ceiling nearest chunks were read and fewer than limit nodes" +
+    " survived, so a farther match may be missing. Never fused with keyword results.",
 });
 
 export const KNOWLEDGE_TOOLS = KNOWLEDGE_METHOD_NAMES.map((method) => ({

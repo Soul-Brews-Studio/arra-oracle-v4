@@ -1225,3 +1225,89 @@ Every test was run red against the unfixed code first, then green after the fix.
   near 1 MB). Its `spyKeyword` also reports each candidate read (source, rows asked, rows
   returned) and the node ids eligibility judged, in order.
 - The v3 adapter's suites (`mcp-v3-*.test.ts`, the acceptance harness included) pass unchanged.
+
+## 21. Amendment 2026-09-27 (post-merge #30 coverage)
+
+Source: [`docs/overnight/DECISIONS.md`](../../../docs/overnight/DECISIONS.md) **R22** ("Known
+residual: when the workspace has more matches than the candidate overfetch, *which* candidates
+enter the set can still depend on global statistics. It is documented with the measured bound"),
+with R21 (no raw score) and R7. The acceptance audit of `Soul-Brews-Studio/arra-oracle-v4#30`
+found one gap: section 20.3 documented the bound, but no answer said when it was reached, so a
+caller could not tell a complete answer from a saturated one. Sections above are left as written;
+this adds three fields and changes nothing else.
+
+### 1 · The fields
+
+`searchKnowledgeKeyword` and `searchKnowledgeSemantic` both answer three more closed fields, on
+HTTP, MCP and CLI alike (all three pass the kernel's value through the one registry entry):
+
+```
+coverage          "full" | "partial"
+coverage_reason   "candidate_ceiling" | null      (null exactly when coverage is "full")
+candidate_ceiling 4096                            (FTS_CANDIDATE_CEILING, the bound itself)
+```
+
+- **Keyword**: `"partial"` when ANY candidate read of the request -- the index read, the seam
+  scan, or the short-query / no-index scan -- came back holding `candidate_ceiling` rows, counted
+  as read, before `chunkMayHoldQuery` drops any. Section 20.3 already says a full read cannot tell
+  whether more existed, so "4096 or more" counts as past the bound. Past it the answer may be
+  missing matches, and, on the index path, which candidates were read may depend on the index
+  every workspace shares (the R22 residual). `"full"` means every read came back short: every
+  candidate was read, and section 20.3's isolation holds for this answer.
+- **Semantic**: `"partial"` when the shared overfetch loop (`fts.overfetchCoverage.ts`, which
+  `overfetch` now delegates to, unchanged for legacy substring search) stopped at the ceiling:
+  its last round asked for and got `candidate_ceiling` nearest chunks and fewer than `limit` nodes
+  survived (stale revisions, retired nodes and several chunks of one node all take read slots).
+  A farther match may exist unread. An answer that reached `limit`, or whose source ran dry, is
+  `"full"`. Semantic search has no cross-workspace leak to disclose (section 17); this is only
+  completeness.
+- **What it is not.** `limit` is paging, not coverage: `"full"` with `hits.length == limit` is a
+  complete first page. It counts chunks, not matches (section 20.3), so a common-trigram query can
+  be `"partial"` with few answers. A semantic distance tie straddling the last read's boundary is
+  not flagged.
+
+### 2 · Why it cannot leak another workspace
+
+Every read behind the flag is PREFILTERED to the requesting workspace (`fullTextSearchChunks`,
+`vectorSearchChunks` and `orderedProjection` all take the workspace scope as their predicate;
+measured in section 13), so whether a read fills the ceiling is a function of that workspace's
+own rows. BM25 may choose WHICH of them fill it; it cannot change HOW MANY there are. The field
+carries no count and no score: one bit, a closed reason, and a server constant. The bit does say
+that this workspace holds at least `candidate_ceiling` candidate chunks for the query, stale
+revisions and retired nodes included -- about the caller's own workspace, which it may already
+read.
+
+### 3 · Callers
+
+- The v2 UI (`KnowledgeSearchResults`) shows "Results may be incomplete" on a `"partial"` answer,
+  for hits and for an empty answer, in both modes.
+- The v3 adapter (`oracle_search`, `oracle_ask`) is unchanged: it reads `hits` and ignores the new
+  fields. Its own `saturated` warning still speaks only of its 50-hit window; folding the kernel's
+  `coverage` into it is not done here.
+- A caller that pins the exact key set of an answer must add the three keys.
+
+**Reverse by**: dropping the three fields (no stored state depends on them). A per-workspace FTS
+index (R22's own line) closes the keyword residual; the fields then still report the read bound.
+
+### Proof
+
+Fresh `mktemp -d` datasets, real writer gate, stub query vectors, no model.
+
+- `app/server/test/search-chunk-retrieval-coverage.test.ts` (new): the ceiling is injected through
+  the harness op `searchAtCeiling` (a trailing `ceiling` argument only tests pass; production
+  calls the services with three and four arguments and gets 4096). Keyword: 3 matches read under a
+  ceiling of 4 are `"full"` while BETA, holding 6 candidates, is `"partial"` under the same ceiling
+  and never moves ALPHA's; a 4th candidate that is not a match makes ALPHA `"partial"` at any
+  `limit`; 5 makes it `"full"` again; the short-query scan reports its own read, and at a ceiling
+  of 2 answers the first 2 by node id. Semantic: a stale nearest chunk plus the head fill a ceiling
+  of 2 with one node of the two asked for (`"partial"`, `[S]`); a ceiling of 3 is `"full"`,
+  `[S, T]`; a source that runs dry below the ceiling is `"full"`. The default reader path reports
+  `"full"` and 4096 on both methods, and each answer's key set is closed. Red before the fix: 5 of
+  7 failed, every field `undefined`. Mutants, each red: `>` for `>=`; keyword never saturated; the
+  scan ignoring the injected ceiling; semantic never saturated, ignoring `limit`, ignoring a dry
+  source.
+- `app/server/test/search-chunk-retrieval-live.test.ts`: the fields on the HTTP body, and MCP's
+  value still equals it byte for byte. `app/server/test/cli-search.test.ts`: the CLI prints them
+  verbatim.
+- `app/ui/v2/src/components/KnowledgeSearchResults.coverage.test.ts` (new, render): red 3 of 4
+  against the previous component.

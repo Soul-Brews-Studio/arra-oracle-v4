@@ -168,6 +168,8 @@ runIt(
     // ── keyword: same answer over both transports ─────────────────────────
     expect(out.kw_http.status, JSON.stringify(out.kw_http)).toBe(200);
     expect(out.kw_http.body.match).toBe("ngram");
+    // #30 coverage (search-chunk-v1.md section 21): on the wire, both transports.
+    expect(out.kw_http.body).toMatchObject({ coverage: "full", coverage_reason: null, candidate_ceiling: 4096 });
     expect(out.kw_http.body.hits).toHaveLength(1);
     expect(out.kw_http.body.hits[0]).toMatchObject({
       node_id: NODE_THAI,
@@ -199,7 +201,7 @@ runIt(
 
     // ── semantic: nearest first, same answer over both transports ─────────
     expect(out.sem_http.status, JSON.stringify(out.sem_http)).toBe(200);
-    expect(out.sem_http.body).toMatchObject({ embedding_profile: PROFILE, metric: "l2_squared" });
+    expect(out.sem_http.body).toMatchObject({ embedding_profile: PROFILE, metric: "l2_squared", coverage: "full", coverage_reason: null, candidate_ceiling: 4096 });
     expect(out.sem_http.body.hits.map((h: { node_id: string }) => h.node_id)).toEqual([NODE_THAI, NODE_FOX]);
     expect(out.sem_http.body.hits[0].distance).toBeCloseTo(0, 5);
     expect(out.sem_http.body.hits[1].distance).toBeCloseTo(2, 5);

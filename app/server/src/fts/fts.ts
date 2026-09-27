@@ -31,5 +31,6 @@ export { isFtsIndexOn } from "./fts.isFtsIndexOn";
 export { likeContainsPredicate } from "./fts.likeContainsPredicate";
 export { likePrefixPredicate } from "./fts.likePrefixPredicate";
 export { overfetch } from "./fts.overfetch";
+export { overfetchCoverage } from "./fts.overfetchCoverage";
 export { refreshStaleFtsIndexOn } from "./fts.refreshStaleFtsIndexOn";
 export { substringSearch } from "./fts.substringSearch";

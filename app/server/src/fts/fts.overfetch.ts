@@ -1,4 +1,4 @@
-import { FTS_CANDIDATE_CEILING, FTS_CANDIDATE_FACTOR } from "./fts.constants";
+import { overfetchCoverage } from "./fts.overfetchCoverage";
 
 /**
  * The ONE bounded overfetch loop behind the legacy substring answers and
@@ -19,16 +19,13 @@ import { FTS_CANDIDATE_CEILING, FTS_CANDIDATE_FACTOR } from "./fts.constants";
  *
  * Each round refetches from the top: the source's order (BM25, distance, or
  * a stated scan order) decides which candidates a round sees, never a cursor
- * this loop would have to keep consistent across rounds.
+ * this loop would have to keep consistent across rounds. The loop itself
+ * lives in `fts.overfetchCoverage.ts`, which also says whether it stopped at
+ * the ceiling (semantic search reports that as `coverage`).
  */
 export async function overfetch<Kept>(
   limit: number,
   round: (fetch: number) => Promise<{ fetched: number; kept: Kept[] }>,
 ): Promise<Kept[]> {
-  let fetch = Math.max(limit, Math.min(limit * FTS_CANDIDATE_FACTOR, FTS_CANDIDATE_CEILING));
-  for (;;) {
-    const { fetched, kept } = await round(fetch);
-    if (kept.length >= limit || fetched < fetch || fetch >= FTS_CANDIDATE_CEILING) return kept.slice(0, limit);
-    fetch = Math.min(fetch * 2, FTS_CANDIDATE_CEILING);
-  }
+  return (await overfetchCoverage(limit, round)).kept;
 }
