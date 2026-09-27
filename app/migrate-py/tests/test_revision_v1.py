@@ -618,6 +618,13 @@ class IsolationTests(unittest.TestCase):
         # The HTTP entrypoint too: it imported ./db directly, contrary to the
         # frozen section 3, and now delegates trusted index work to composition.
         TS_ROOT / "index.ts",
+        # style-server-split (2026-09-28, #22, commit 0a1b2e4) moved the
+        # entrypoint's real logic (buildApp, startup, and every import) out of
+        # index.ts into these two files; index.ts is now an 18-line re-export
+        # barrel. Both must be scanned or a raw ./db/./storage import landing
+        # here would go uncaught.
+        TS_ROOT / "index.buildApp.ts",
+        TS_ROOT / "index.startup.ts",
     )
     RAW_DEPENDENCY_PATTERNS = ("./db", "../db", "./embed", "../embed", "./storage", "../storage", "./calls", "../mcp/calls")
 
@@ -671,6 +678,23 @@ class IsolationTests(unittest.TestCase):
             for pattern in self.RAW_DEPENDENCY_PATTERNS:
                 with self.subTest(file=path.name, pattern=pattern):
                     self.assertNotIn(f'from "{pattern}"', text)
+
+    def test_adapter_files_covers_the_entrypoint_split(self):
+        """§3 regression guard: index.ts's real logic now lives in
+        index.buildApp.ts and index.startup.ts (style-server-split, #22,
+        commit 0a1b2e4). ADAPTER_FILES must list the files that actually hold
+        the startup/build logic, not just the re-export barrel at index.ts --
+        otherwise a raw `./db`/`./storage` import landing in either split file
+        goes uncaught by this guard. Fails until both paths are added."""
+        ts_root = self.TS_ROOT
+        for name in ("index.buildApp.ts", "index.startup.ts"):
+            path = ts_root / name
+            self.assertTrue(path.exists(), f"expected split file missing: {path}")
+            self.assertIn(
+                path,
+                self.ADAPTER_FILES,
+                f"{path} holds entrypoint logic but is not in ADAPTER_FILES",
+            )
 
     #: The ONLY files permitted to import the publication kernel from outside
     #: it. #31's whole purpose is exposing that kernel over HTTP/MCP, so the
