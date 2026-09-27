@@ -93,6 +93,7 @@ export function LifecycleActions({
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             placeholder="reason (required)…"
+            aria-label="Retire reason (required)"
             rows={2}
             className="rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-100 outline-none focus:border-accent"
           />
@@ -121,18 +122,21 @@ export function LifecycleActions({
             value={newNodeId}
             onChange={(e) => setNewNodeId(e.target.value)}
             placeholder="successor node_id…"
+            aria-label="Successor node id"
             className="rounded border border-edge bg-ink px-2 py-1 font-mono text-xs text-slate-100 outline-none focus:border-accent"
           />
           <input
             value={newRevisionId}
             onChange={(e) => setNewRevisionId(e.target.value)}
             placeholder="successor's current revision_id…"
+            aria-label="Successor's current revision id"
             className="rounded border border-edge bg-ink px-2 py-1 font-mono text-xs text-slate-100 outline-none focus:border-accent"
           />
           <textarea
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             placeholder="reason (required)…"
+            aria-label="Supersede reason (required)"
             rows={2}
             className="rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-100 outline-none focus:border-accent"
           />

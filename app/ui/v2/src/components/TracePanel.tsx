@@ -70,6 +70,7 @@ export function TracePanel({
             if (e.key === "Enter") onLookup();
           }}
           placeholder="trace id (nanoid21)"
+          aria-label="Trace id"
           className="min-w-0 flex-1 rounded border border-edge bg-ink px-2 py-1 font-mono text-xs text-slate-100 outline-none focus:border-accent"
         />
         <button

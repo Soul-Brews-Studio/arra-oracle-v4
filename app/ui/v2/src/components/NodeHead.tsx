@@ -45,7 +45,11 @@ export function NodeHead({
   return (
     <div className="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
       <div className="flex items-start justify-between gap-3">
-        <h2 className="text-sm font-semibold text-slate-100">{revision.title}</h2>
+        {/* min-w-0 + break-words: an unbroken title (no spaces) is a flex
+            item here, and a flex item's default min-width is its content
+            width -- without both, a long enough title pushes this row (and
+            the page) wider than the viewport instead of wrapping. */}
+        <h2 className="min-w-0 break-words text-sm font-semibold text-slate-100">{revision.title}</h2>
         <div className="flex shrink-0 gap-1.5">
           {type && <TypeBadge type={type} />}
           {horizon && <HorizonBadge horizon={horizon} />}

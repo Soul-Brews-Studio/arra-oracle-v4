@@ -31,6 +31,8 @@ export function SidebarShell({
         <button
           onClick={onToggle}
           title="Expand peers and sessions"
+          aria-label="Expand peers and sessions"
+          aria-expanded={false}
           className="rounded border border-edge px-1.5 py-1 text-xs text-muted hover:border-accent hover:text-accent"
         >
           ›
@@ -43,12 +45,14 @@ export function SidebarShell({
     );
   }
   return (
-    <aside className="flex w-60 shrink-0 flex-col gap-4 overflow-y-auto border-r border-edge p-3">
+    <aside className="flex w-full shrink-0 flex-col gap-4 overflow-y-auto border-b border-edge p-3 md:w-60 md:border-b-0 md:border-r">
       <div className="flex items-center justify-between">
         <span className="text-[10px] uppercase tracking-wide text-muted">navigator</span>
         <button
           onClick={onToggle}
           title="Collapse to a strip"
+          aria-label="Collapse to a strip"
+          aria-expanded={true}
           className="rounded border border-edge px-1.5 text-xs text-muted hover:border-accent hover:text-accent"
         >
           ‹

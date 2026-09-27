@@ -5,3 +5,20 @@
 :root { color-scheme: dark; }
 body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
 code, pre { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+/* #33 AC2/R12 (a11y slice), requirement 2: "interactive elements show a
+   visible focus ring". One rule for every button/input/select/textarea/link
+   in the app, rather than a focus-visible:ring-* utility repeated on ~60
+   individual elements across ~30 files -- a missed one there is silent, a
+   missed selector here is not. `:focus-visible` (not `:focus`) so a mouse
+   click still shows no ring, matching every per-element focus-visible: class
+   already in this codebase. */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+a:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+}

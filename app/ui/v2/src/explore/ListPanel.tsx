@@ -55,7 +55,12 @@ export function ListPanel<T>({
   return (
     <div className="flex flex-col border-b border-edge">
       <div className="flex items-center gap-1.5 px-2 py-1.5">
-        <button onClick={() => setCollapsed((v) => !v)} className="text-muted hover:text-accent">
+        <button
+          onClick={() => setCollapsed((v) => !v)}
+          aria-label={collapsed ? `Expand ${label}` : `Collapse ${label}`}
+          aria-expanded={!collapsed}
+          className="text-muted hover:text-accent"
+        >
           {collapsed ? "›" : "⌄"}
         </button>
         <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">{label}</span>
@@ -63,6 +68,7 @@ export function ListPanel<T>({
           onClick={onRefresh}
           disabled={loading}
           title="refresh this list from page 1"
+          aria-label={`Refresh ${label}`}
           className="ml-auto text-muted hover:text-accent disabled:opacity-40"
         >
           ↻
@@ -77,6 +83,7 @@ export function ListPanel<T>({
               onChange={(e) => setFilter(e.target.value)}
               placeholder={`filter loaded ${label}…`}
               title="filters rows already on this page only -- there is no server-side search here"
+              aria-label={`Filter loaded ${label}`}
               className="w-full rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-100 outline-none focus:border-accent"
             />
           </div>

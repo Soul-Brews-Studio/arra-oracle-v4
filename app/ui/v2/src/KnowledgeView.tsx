@@ -79,8 +79,8 @@ export function KnowledgeView({
   const target = k.selected ?? draftId;
 
   return (
-    <div className="flex min-h-0 flex-1">
-      <aside className="flex w-64 shrink-0 flex-col gap-3 overflow-y-auto border-r border-edge p-3">
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto md:flex-row md:overflow-visible">
+      <aside className="flex w-full shrink-0 flex-col gap-3 overflow-y-auto border-b border-edge p-3 md:w-64 md:border-b-0 md:border-r">
         <NodeRail
           entries={k.nodes}
           selected={k.selected}
@@ -156,6 +156,7 @@ export function KnowledgeView({
                   <select
                     value={diffFromId ?? ""}
                     onChange={(e) => setDiffFromId(e.target.value)}
+                    aria-label="Diff from revision"
                     className="rounded border border-edge bg-ink px-2 py-1 text-slate-100 outline-none focus:border-accent"
                   >
                     {sortedHistory.map((r) => (
@@ -168,6 +169,7 @@ export function KnowledgeView({
                   <select
                     value={diffToId ?? ""}
                     onChange={(e) => setDiffToId(e.target.value)}
+                    aria-label="Diff to revision"
                     className="rounded border border-edge bg-ink px-2 py-1 text-slate-100 outline-none focus:border-accent"
                   >
                     {sortedHistory.map((r) => (
@@ -211,7 +213,7 @@ export function KnowledgeView({
         )}
       </main>
 
-      <aside className="flex w-96 shrink-0 flex-col gap-4 overflow-y-auto border-l border-edge p-3">
+      <aside className="flex w-full shrink-0 flex-col gap-4 overflow-y-auto border-t border-edge p-3 md:w-96 md:border-l md:border-t-0">
         <TaxonomySetup
           ids={k.taxonomy}
           seeded={k.taxonomy !== null}

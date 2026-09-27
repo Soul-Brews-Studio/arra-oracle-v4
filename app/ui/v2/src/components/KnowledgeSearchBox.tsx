@@ -21,13 +21,15 @@ export function KnowledgeSearchBox({
         value={query}
         onChange={(e) => onQuery(e.target.value)}
         placeholder="search knowledge (e.g. ลืม)"
+        aria-label="Search knowledge"
         className="flex-1 rounded border border-edge bg-ink px-2 py-1 text-sm text-slate-100 outline-none focus:border-accent"
       />
-      <div className="flex rounded border border-edge text-xs">
+      <div className="flex rounded border border-edge text-xs" role="group" aria-label="Search mode">
         {(["keyword", "semantic"] as const).map((m) => (
           <button
             key={m}
             onClick={() => onMode(m)}
+            aria-pressed={mode === m}
             className={`px-2.5 py-1 capitalize ${
               mode === m ? "bg-accent/15 text-accent" : "text-muted hover:text-slate-200"
             }`}

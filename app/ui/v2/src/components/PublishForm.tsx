@@ -52,17 +52,23 @@ export function PublishForm({
         value={title}
         onChange={(e) => setTitle(e.target.value)}
         placeholder="title…"
+        aria-label="Title"
         className="rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-100 outline-none focus:border-accent"
       />
       <textarea
         value={body}
         onChange={(e) => setBody(e.target.value)}
         placeholder="body…"
+        aria-label="Body"
         rows={5}
         className="rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-100 outline-none focus:border-accent"
       />
       <FieldRow label="format">
-        <select value={bodyFormat} onChange={(e) => setBodyFormat(e.target.value as (typeof BODY_FORMATS)[number])}>
+        <select
+          aria-label="Body format"
+          value={bodyFormat}
+          onChange={(e) => setBodyFormat(e.target.value as (typeof BODY_FORMATS)[number])}
+        >
           {BODY_FORMATS.map((f) => (
             <option key={f} value={f}>
               {f}
@@ -71,7 +77,7 @@ export function PublishForm({
         </select>
       </FieldRow>
       <FieldRow label="type">
-        <select value={typeTerm} onChange={(e) => setTypeTerm(e.target.value as TypeTerm)}>
+        <select aria-label="Type term" value={typeTerm} onChange={(e) => setTypeTerm(e.target.value as TypeTerm)}>
           {TYPE_TERMS.map((t) => (
             <option key={t} value={t}>
               {t}
@@ -80,7 +86,11 @@ export function PublishForm({
         </select>
       </FieldRow>
       <FieldRow label="horizon">
-        <select value={horizon} onChange={(e) => setHorizon(e.target.value as HorizonTerm | "none")}>
+        <select
+          aria-label="Memory horizon"
+          value={horizon}
+          onChange={(e) => setHorizon(e.target.value as HorizonTerm | "none")}
+        >
           <option value="none">none</option>
           {HORIZON_TERMS.map((h) => (
             <option key={h} value={h}>
@@ -93,6 +103,7 @@ export function PublishForm({
         value={changeReason}
         onChange={(e) => setChangeReason(e.target.value)}
         placeholder="change reason (optional)…"
+        aria-label="Change reason (optional)"
         className="rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-100 outline-none focus:border-accent"
       />
       <button
