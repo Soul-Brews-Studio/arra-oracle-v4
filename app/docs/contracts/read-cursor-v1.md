@@ -143,10 +143,14 @@ gates frozen at 10/5 while the facade grows"). Appended, not an edit: every byte
 above is unchanged.
 
 **What §1/§7/§8's "ten"/"five" (and "eight"/"four" before them) meant.** These
-literals were never a claim about the size of the whole context facade, live or
-frozen. They named exactly two counts, true only at the moment this contract's
-§1 amendment landed: the context WRITER facade had ten methods and the context
-READER facade had five, immediately after this slice added `advanceReadCursor`
+literals were never a claim about a live ceiling this contract polices as the
+facade grows over time. **Fix round (2026-09-27):** an independent verifier
+read the sentence below as contradicting the one above it; it is not — this
+sentence is the historical snapshot the sentence above says these literals
+were, not a second, competing claim. They named exactly two counts, true only
+at the moment this contract's §1 amendment landed: the context WRITER facade
+had ten methods and the context READER facade had five, immediately after
+this slice added `advanceReadCursor`
 (writer) and `getReadCursor` (writer + reader) to whatever the facade already
 carried. §1's own words say so ("Explicitly amend the context-ingestion-v1
 section8 eight/four method counts to ten/five") — each pair is a snapshot at
