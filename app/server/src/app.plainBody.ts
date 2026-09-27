@@ -1,6 +1,6 @@
 /**
- * A plain-object copy of a strictly parsed JSON object (`contracts/jcs`
- * `parseStrict`), for the code that needs ordinary property access: the MCP
+ * A plain-object copy of a strictly parsed JSON object (the JCS strict
+ * parser's `parseStrict`), for the code that needs ordinary property access: the MCP
  * envelope reader and `POST /api/memories`' audit input (#31 legacy-audit).
  *
  * It cannot fail on a parsed body. The strict parser yields only null,
