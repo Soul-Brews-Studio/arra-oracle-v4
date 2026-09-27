@@ -1,0 +1,252 @@
+# Acceptance-criteria matrix: arra-oracle-v4 main `cefc8db`
+
+| | |
+|---|---|
+| Date | 2026-09-27 |
+| Target | `Soul-Brews-Studio/arra-oracle-v4` main at `cefc8db` (merge of PR #122) |
+| Issues | #27 #28 #29 #30 #31 #32 #34 #10 #75 #85 |
+| Method | For each issue, every criterion (issue-body TODO and AC, design revision 2, reopen comments, dated scope corrections) was traced to evidence (file:line, test name, DECISIONS ruling). Where possible the auditor then ran the command and recorded its output. `ran X 12/0` means the auditor ran X and saw 12 pass, 0 fail. |
+| Audited by | 5 independent Sonnet auditors (AI). No human has reviewed this matrix. |
+| Synthesized by | Claude Opus 5.5 (AI). No tests were re-run during synthesis. The only new evidence is one CI status check, labelled **synthesizer check** below. |
+| Status vocabulary | PASS, PARTIAL, GAP, SUPERSEDED (a dated ruling or comment replaced the criterion). The **NEEDS-NAT** column counts rows whose remaining work waits on a Nat decision. It **overlaps** the other columns and is not added to them. |
+
+**Synthesizer check (CI on HEAD).** At audit time the #34 auditor saw the CI run for `cefc8db` as `pending`. It has since completed with conclusion `failure`. The run is 36310873591, and the job never started: *"The job was not started because recent account payments have failed or your spending limit needs to be increased."* This is a billing stop. It is not a test failure. The last green CI run is on `2d5ef44`. `git diff --stat 2d5ef44 cefc8db` touches only `app/just/honcho-live.sh`, `honcho_roundtrip/docker/README.md` and `docs/overnight/{DECISIONS,PLAN,PROOF}.md`. No `app/server` or `migrate-py` source or test changed. **No CI verdict exists for `cefc8db` itself.**
+
+**Live-probe provenance.** Every "acceptor live probe" (`task9.md` / `task9.json`) cited below was run against `2d5ef44`, an ancestor of `cefc8db`. None was run on HEAD.
+
+---
+
+## 1. Roll-up
+
+| # | Issue | Rows | PASS | PARTIAL | GAP | SUPERSEDED | NEEDS-NAT (overlap) | Closability, one line |
+|---|---|---|---|---|---|---|---|---|
+| #27 | Taxonomy, reserved types, memory horizon | 10 | 9 | 1 | 0 | 0 | 1 | Closable in substance. One S test is missing (AC3). The formal close is Nat's (PR #109 says `Refs`, and the acceptor calls it "partial at whole-issue level"). |
+| #28 | Peers, session chains, traces, evidence | 14 | 12 | 1 | 0 | 1 | 1 | Nearly closable. No code or test exists for the "cwd-only foreign visitor" TODO: clarify it, then S to S–M. Ruling R7 defers the SSRF half. |
+| #29 | Corrections, supersession, retirement | 6 | 4 | 2 | 0 | 0 | 0 | Closable in function. Two S test gaps: self/cyclic supersede, and a no-decay guard. |
+| #30 | Save-first search chunks and embeddings | 8 | 7 | 1 | 0 | 0 | 0 | Closable in function. One disclosed S gap: search responses have no partial-coverage flag. The literal "ICU" wording is superseded by R14. |
+| #31 | One service over HTTP, MCP and CLI | 11 | 9 | 2 | 0 | 0 | 1 | Not closable as written. Scoped representations are unbuilt (gated on the #32 ruling), and no test covers cross-transport audit parity (S). |
+| #32 | Evidence-grounded peer/session chat | 14 | 6 | 6 | 2 | 0 | 7 | Not closable. Chat is grounded in messages only. Observer/about-peer and peer representation are unbuilt. Needs a Nat ruling. |
+| #34 | Migration rehearsal and release verification | 15 | 13 | 2 | 0 | 0 | 1 | Not closable. The Outcome is a cutover, which is not authorized. R2 is untested (R17 put it out of scope). CI has not run on HEAD. **2026-09-27: the rev-2 audit is now consolidated (docs/overnight/AC-EVIDENCE.md §6), so this row moved PARTIAL->PASS.** |
+| #10 | v3 defects closed in v4 | 7 | 3 | 1 | 0 | 3 | 1 | Target schema, isolation and Thai retrieval are proven. Four active-model tables still have no `workspace_name`. Only a Nat ruling closes it. |
+| #75 | Read-cursor slice verification | 8 | 6 | 2 | 0 | 0 | 0 | Not closable as filed. Lint is still absent from CI, and the live re-certification covers only 2 checks. **2026-09-27: a slice-scoped manifest was appended (delivery-gates.md) and the method-count text is now clarified by amendment (read-cursor-v1.md), so this row's method-count PARTIAL moved to PASS.** |
+| #85 | getContext `coverage:"full"` with exclusions | 7 | 5 | 1 | 0 | 1 | 0 | Closable in substance. Only the live overflow probe is missing (S). |
+| **Total** | | **100** | **74** | **19** | **2** | **5** | **12** | Counts as of 2026-09-27 (ac-evidence slice); 2 rows moved PARTIAL->PASS on evidence run today (#34 rev.2, #75 method-count). |
+
+Every issue in this batch is marked `Refs` rather than `Fixes` in PR #109. Closing any of them on GitHub is Nat's decision (see §4).
+
+---
+
+## 2. Per-issue criteria
+
+### #27: Revision-aware taxonomy, reserved type vocabulary, memory horizon
+
+| Status | Criterion | Evidence (short) | Missing |
+|---|---|---|---|
+| PASS | TODO: cardinality, required/optional, hierarchy and open/sealed policies as independent validated rules | `service.validateTermReferences.ts:69-100`; `taxonomy-service.test.ts:1027,:1058`; ran `taxonomy-seal` 12/0; ran 6-file taxonomy batch 136/0 | none |
+| PASS | TODO: seed flat type and `memory_horizon` terms; omitted type resolves to note, omitted horizon stays unclassified | `taxonomy.seedVocabularyRows.ts:28`; `legacy-v3/taxonomy.termSnapshot.ts:7` (R11); ran `mcp-v3-writes` 14/0 | Caveat: the legacy free-text `remember` tool (`mcp/tools.ts:29`) writes the spike `memories` table with no taxonomy validation. Its own description says "planned, not implemented". S if in scope, which is a Nat scope call (see C1). |
+| PASS | TODO: authorized type/term creation as vocabulary operations; labels install no executable behavior | `service.createTerm.ts`, `service.createVocabulary.ts`; `rg innerHTML\|dangerouslySetInnerHTML app/ui/v2/src` finds 0; **2026-09-27**: `VocabularyTable.tsx:33,49` renders `vocabulary.label` (no 256-byte cap, `taxonomy.requireLabel.ts`) as a plain `{value}` JSX text child, which React always escapes | Stronger citation added (docs/overnight/AC-EVIDENCE.md §4); still a code-path citation, not a live-rendered mount test |
+| PASS | TODO: save taxonomy changes through immutable revisions and label snapshots; identity survives rename; safe retire | `publication-recovery.test.ts:1506` F2 (a real killed and resumed writer); ran 26/0 | none |
+| PASS | TODO: topics and hierarchical categories; same-workspace/vocabulary parent; cycle rejection | `taxonomy-service.test.ts:1058,:1468`; `workspace-isolation.test.ts:431`; 136/0 batch | none |
+| PASS | AC1: reject missing/duplicate type, two horizons, invalid hierarchy, cross-bank terms, unauthorized invention | `validateTermReferences.ts:82-93,:35-39`; ran `search-chunk-service -t F8` 1/0; ran `publication-service` 29/0; `taxonomy-seal` 12/0 is the reopen defect (R6, `taxonomy-write-v1.md:104-176`); acceptor live probe PASS on `2d5ef44` | none |
+| PASS | AC2: old revisions render stably after rename/retire; new assignments to inactive terms rejected | `publication-recovery.test.ts:1506`; `publication-service.test.ts:253`; 26/0, 29/0 | none |
+| **PARTIAL** | AC3: horizon classification changes nothing about correctness, permissions or expiry; no automatic decay | horizon uses the generic term path; `storage.ts` has no permission/expiry column tied to horizon; `rg decay\|auto.?expir app/server/src` finds 0 | No test pins "reassigning the horizon leaves permissions and expiry unchanged". Today it rests on inspection. **S** |
+| PASS | AC4: type has one canonical authority; search copies are derived | `taxonomy-term-usage-scans.test.ts:73`; search-chunk F8 | none |
+| PASS | AC5: T04 fault/retry with real `node_revision_terms` rows | `publication-recovery` F1 `:1438`, F2 `:1506`, C7 `:1172`; 26/0 | none |
+
+### #28: Peers, session chains, traces, pinned Relic/code evidence
+
+| Status | Criterion | Evidence (short) | Missing |
+|---|---|---|---|
+| PASS | TODO: peer/session registration and ordered messages, same-workspace; author, observer and subject independent | `service.registerPeer.ts`, `service.registerNamed.ts`; `context-service.test.ts:592`; ran 5 context files 103/0 | none |
+| **PARTIAL** | TODO: continues/forked_from/related_to links; source-bank/provider/UUID provenance; exclude cwd-only foreign visitors | ran `session-link-cycle` 6/0; `relic.findSessions.ts` and `relic.bankFromRepo.ts` keep sourceBank/provider/sessionUuid | No code or test for a "cwd-only foreign visitor" exclusion under any name. **S** to check discussion #21/#36 wording; **S–M** to build if it is genuinely unbuilt. |
+| PASS | TODO: typed evidence targets (message, session, Relic event/capture, trace, code, issue, discussion, URL) | `contracts/evidence-v1.ts:38-40`; `mcp-v3-writes.test.ts:224`; 14/0 | none |
+| PASS | TODO: many traces per conclusion and the reverse; replace singular distilled_to with a link lookup | `oracle_trace_get.ts:176-177` (derived alias only); no stored `distilled_to` column; ran 3 association files 44/0 | none |
+| PASS | TODO: per-reader cursors, trace cycle checks, bounded excerpts, capture digests, honest unresolved/locator-only | `read-cursor-precision.test.ts:756` 1/0; `capture_status` asserted in several files; **2026-09-27**: `revision-v1.test.ts` run (110/0 combined, see AC-EVIDENCE.md §1); bounded excerpts named at `relic-session-source.test.ts:119`; trace cycle-check written and mutation-checked at `trace-cycle-check.test.ts` (2/0) | none (C6 resolved, docs/overnight/AC-EVIDENCE.md §1) |
+| PASS | TODO: Relic through a read-only SessionSource adapter; no identity from UUID plus line | `relic.createRelicSessionSource.ts` exposes find/get/read only (R7); ran `relic-session-source` 41/0 | none |
+| PASS | AC1: one conclusion cites two traces and two sessions; reverse lookups keep all results | `association-query.test.ts:619,:653`; evidence-v1 has no per-kind count limit; 44/0 | Caveat: no test runs the literal 2-trace + 2-session scenario. **S** |
+| PASS | AC2: same IDs with different capture digests stay distinct; missing or denied evidence is not fabricated or leaked | `association-query.test.ts:718`; 44/0 | none |
+| PASS | AC3: duplicate peer labels are not auto-merged; chain expansion is permission-scoped; cycles rejected | `registerNamed.ts` returns conflict on name; `context-service:592`; `session-link-cycle` 6/0; session-link-ownership / trace-ownership batches (39 and 101 pass); **2026-09-27**: `bun test test/session-link-ownership.test.ts` -> 6/0 (93 expects); `bun test test/trace-ownership.test.ts` -> 5/0 (61 expects) | Today's re-run counts (6, 5) differ from the matrix's original 39/101 batch description, which named no command either; both named files pass in full today (C7 partially resolved, docs/overnight/AC-EVIDENCE.md §1) |
+| PASS | AC4: cursors cannot cross workspace or session; no transcript mutation or duplicate corpus index | `read-cursor-precision:756`; read-only Relic adapter; tests use a fake CLI | none |
+| PASS | AC5: T04 fault/retry with real `revision_links` and term rows | `association-service.test.ts:1134,:1065`; 36/0; 44/0 | none |
+| PASS | rev.2: opt-in ingestion; exact replay idempotent; changed payload conflicts; batch durability identified | `context-service.test.ts:845,:903,:870`; ran 3/0 | none |
+| PASS | rev.2: source-premise and reverse-dependent queries with bounds, revision mode, scoped visibility | `association-query.test.ts:1253` (budgets), `:789` (resumable scan); 44/0 | none |
+| SUPERSEDED | rev.2: external locators passive by default; SSRF-defended dereference; retrieved text untrusted | `trace.types.ts:28` ("never dereferenced"); no dereference code; DECISIONS R7 defers dereference | The passive half is met. A dereference feature would need its own future issue. |
+
+### #29: Standalone corrections, explicit supersession, retirement
+
+| Status | Criterion | Evidence (short) | Missing |
+|---|---|---|---|
+| PASS | AC1: standalone correction succeeds; edit creates a revision; a corrects link alone leaves eligibility unchanged | `lifecycle-eligibility-ac1.test.ts` on a real gated dataset, ran 2/0 (17 expects) | none ("edit creates revision" relies on existing publishRevision tests that are not named) |
+| PASS | AC2: retirement is excluded from ordinary recall; history stays accessible and labelled | `service.listNodes.ts:83-95,205-211,275-276`; ran `lifecycle-eligibility` 4/0; `registry.ts:341-350` wires lifecycle; ran expose13 registry + transport 87/0; acceptor live probe PASS | none |
+| PASS | AC3: edits cannot revive a retired node; retries and competing supersessions are deterministic | ran `lifecycle-eligibility-enforcement` + `lifecycle-service` 7/0 (LC-1, LC-2, terminal successor) | For self/cyclic supersede see the TODO row below |
+| **PARTIAL** | AC4: the #2 binary decision is kept; no decay columns; no read-driven writes | `storage.ts:59` `is_active bool`; `memory.py:51`; `AGENTS.md:122`; eligibility functions take a reader, not a writer | No test asserts that the schema has no decay column or that read paths never write. **S** |
+| **PARTIAL** | TODO: reject self, cyclic and conflicting replacements; validate the expected revision and lifecycle under the serialized writer | `service.supersedeNode.ts` refuses self (`invalid_request`) and cycles (`walkForwardChain`); stale-pin conflict is tested in `lifecycle-service` | Self-supersede and cyclic-chain refusal have zero tests. **S** (2 tests) |
+| PASS | TODO: one centralized normal-read eligibility rule | `service.eligibilityReasonsOf.ts` (one rule, two callers) | Authorization lives in the transport/policy layer, not in this function. The auditor noted this but did not score it. |
+
+### #30: Save-first search chunks, embeddings, reconciliation
+
+| Status | Criterion | Evidence (short) | Missing |
+|---|---|---|---|
+| PASS | AC1: a down or hung embedder does not affect save latency; the node stays readable | ran `search-chunk-embed-worker` 11/0 (hung embedder; confirmed-in-flight handshake) | none |
+| PASS | AC2: crash/restart finds missing work; retries idempotent; status separates missing from unembedded | ran reconcile + reconcile-fixround 11/0; ran `search-chunk-service` 12/0; retry converges | none |
+| PASS | AC3: stale vectors and superseded revisions are never current; copied filters are never authorization | `service.currentEligibleChunks.ts` (head only, eligibility applied last, copied columns ignored); ran validity + score-isolation 4/0 | none |
+| PASS | AC4: Thai/English keyword, profile mismatch and model-upgrade tests; quality stays in #7 | ran straddle + retrieval 20/0 (ลืม inside หลงลืม); ran digest-boot + digest-pin 15/0; #7 is blocked on Nat (R16) | The literal "ICU" is superseded by R14, which chose ngram(3,3) |
+| PASS | rev.2: freshness per stage; unknown is not zero; no fake combined percentage | `service.getSearchFreshness.ts` (null means unknown; no percent field); reconcile tests | none |
+| PASS | Reopen: `search_chunks_v1` had no index or query path | `service.makeAdapter.ts:299` `ensureFtsIndexOn`; `db.ts:107-111` uses the shared config | none |
+| PASS | Reopen: `content_hash` was written and never read | `service.embedPendingChunks.ts:225-230` reuses vectors; embed-worker test "content-hash reuse costs zero embedder calls" | none |
+| **PARTIAL** | TODO: ICU keyword plus separate semantic retrieval; validate lifecycle and permissions after retrieval; report partial coverage | semantic retrieval is separate and validation runs after retrieval; ICU is superseded (R14) | `searchKnowledgeKeyword` and `searchKnowledgeSemantic` return no `partial`/`truncated`/`coverage` field. PROOF.md §5 discloses the gap (4096-candidate overfetch). **S** |
+
+The #30 verdict says all four reopen defects are fixed. The rows above evidence only two of them (C4).
+
+### #31: One validated service through HTTP, MCP, CLI, with legacy adapters
+
+| Status | Criterion | Evidence (short) | Missing |
+|---|---|---|---|
+| PASS | TODO: wire node, vocabulary, peer/session/message, trace, lifecycle, search and audit operations to shared services | `registry.ts:157` `KNOWLEDGE_METHODS` has 57 entries; the acceptor's `task9.md` shows all 57 dispatched with 200 on HTTP and MCP | none |
+| PASS | TODO: runtime-validated schemas and contract docs; consistent error and conflict semantics | 17 docs in `app/docs/contracts/`; PR #96 (`e942731`) maps a taxonomy conflict to 409; **2026-09-27**: `contract-v1.test.ts:62` (schema validation), `transport-ownership.test.ts:293` + `search-chunk-digest-boot.test.ts:244` (409 mapping) run together, 32/0 (354 expects) | none (C9 resolved for these two clauses, docs/overnight/AC-EVIDENCE.md §3) |
+| PASS | TODO: remember/recall/get_memory/list_memories as explicit compatibility adapters with tested mappings | ran `mcp-v3-acceptance` 37/37 steps (39 tests pass); task9: 200 on MCP, exit 0 on CLI | See C1: is `remember` an adapter onto v4 or the retained spike path? |
+| PASS | TODO: bank equals `workspaces.name`; resolve the legacy workspace route without a nested tenant | `app.ts:233` returns 400 for `POST /mcp/:bank/:workspace` ("not supported"); **2026-09-27**: traced `params.bank` (`app.ts:212`) -> `mcpHandle`'s `bank` param (`mcp/index.ts:246`) -> `runMcp`'s `workspace` param (`auth/service.ts:322-350`), used unchanged in `{kind:"workspace", workspace, action}` with no lookup table anywhere on the path | none (C8 resolved by code-path citation, docs/overnight/AC-EVIDENCE.md §3) |
+| **PARTIAL** | TODO: authorization, bounded limits, redaction, success/failure audit, consistent across transports | isolation 191/0 on HTTP and MCP; `auth/service.ts:188-213` is the single `appendAudit`/`logCall` sink; `calls.recordableName.ts` redacts | No test asserts that HTTP- and CLI-originated calls land in the same audit trail with matching status and redaction. **S** |
+| PASS | AC: equivalent HTTP/CLI/MCP fixtures enforce the same invariants | task9 parity rows `dispatch=[200,200,200]`; R22 ordering identical after 36 mutations | none |
+| PASS | AC: legacy callers keep documented semantics or get an explicit versioned incompatibility | `mcp-v3-acceptance` 37/0/0; V3-PARITY D1–D11 (R18) | none |
+| PASS | AC: regression tests for protocol negotiation, unknown tool, BigInt/time serialization, scoped log | ran `mcp-correctness` 24/0; ran `cli.test.ts` 61/0; `mcp-v3-frame.test.ts:102,129,142` | none |
+| PASS | AC: supported commands exercised end to end; proposed interfaces not advertised as live | task9 57/57/57 with an empty unreachable list; contract object from `d634f10`; **2026-09-27**: `target-schema-cross-language.test.ts:150` (`expect(golden.status).toBe("proposed-not-active")`) run, part of the 32/0 batch above | Historical task9 evidence unchanged; the "proposed-not-active" contract object is now named and re-run (docs/overnight/AC-EVIDENCE.md §3) |
+| **PARTIAL** | rev.2: expose context, scoped representations, evidence/dependent lookup and processing status from shared services | getContext, scanDependents, getRevisionAssociations, reconcileRevisionAssociations and getSearchFreshness are all reachable | No scoped-representation method exists in `src/`. **M**. Same root as the #32 GAPs, so it waits on the #32 ruling. |
+| PASS | rev.2: repair CLI flags, enums, limits, subject forwarding and nonzero exit | ran `cli.test.ts` 61/0 (`:60,:76,:90,:91-92`) | none |
+
+### #32: Evidence-grounded peer/session chat with explicit save actions
+
+| Status | Criterion | Evidence (short) | Missing |
+|---|---|---|---|
+| **PARTIAL** | TODO: resolve observer, about-peer, author, session and chain filters within scope | `getContext.ts` follows session_links up to `MAX_LINKED_SESSIONS`; `requireCurrentMembership` | `chat.ts:49-50` request keys include no observer, about_peer or author field. **M** (representation cluster) |
+| **PARTIAL** | TODO: retrieve current evidence-backed revisions; bounded context; citations to exact sources and revisions | message citations work live (DEMO.md steps 14-15, Ollama gemma3:4b) | getContext, answerChat and `chat.ts` never read nodes or revisions. Citations are message ids only. **M** |
+| **PARTIAL** | TODO: handle unavailable evidence, coverage gaps, stale search and model failures honestly | ran `chat-coverage` 17/0 (678 expects); ran `chat-production-wiring` 10/0 (failures map to 503 `model_unavailable`) | "Stale search" cannot occur because chat never reads search chunks. Folds into the row above. |
+| PASS | TODO: separate actions for ask, save exchange, save conclusion, revise conclusion | `chat-ownership.test.ts:182-213` plus a bite test, ran 6/0; appendMessages, publishRevision and supersedeNode are separate methods | none |
+| PASS | TODO: querying a recorded perspective contacts no live agent | `chat-model.renderChatPrompt.ts:5-6` (system prompt) | none |
+| PASS | AC: no leak of another workspace or inaccessible evidence | `chat-production-wiring.test.ts:258`; `chat-coverage.test.ts:223` | none |
+| **GAP** | AC: changing about-peer/observer changes perspective, not permissions; references resolve or show a gap | no such parameter exists. The only `observer_peer_name` is authorship (`registry.peerFields.ts:46-49`) | Unbuilt. **M** (same root) |
+| PASS | AC: ask alone writes nothing; explicit saves create exactly their artifacts, with attribution | chat-ownership mutation test; DEMO.md step 16 attribution | none |
+| PASS | AC: no Honcho dreaming or consolidation subsystem required | R9, R16 | none |
+| **PARTIAL** | rev.2: get_context before chat: sessions or chain, observer/subject, token budget, messages, conclusions, summary, source handles | sessions, chain and messages are done. The budget is `MAX_CONTEXT_ITEMS` 50 plus 65536 wire bytes (`chat.ts:36,43`) | No observer/subject, conclusions, stored summary or rich source handles. The budget counts items and bytes, not tokens. **M** |
+| **PARTIAL** | rev.2: context reads are model-free and write-free; report truncation, tokenizer estimate, watermarks, coverage | model-free is proven; the truncation amendment (R4) is in `chat-v1.md`; ninth-link test | No tokenizer or estimate field, and no source or index watermark. **S–M** |
+| **GAP** | 2026-09-20 comment: peer representations are scoped views of current conclusions; cards and summaries use nodes | no `getRepresentation` or `getPeerCard` in `src/` | Unbuilt, so the constraint is neither met nor tested (same root) |
+| PASS | 2026-09-20 comment: pin model, effort, token and cost limits; expose effective settings; reject unsupported options | R9 (gemma3:4b, 512 tokens, 60 s); `readChatConfig.ts` throws on an unknown provider; `getChatSettings.ts` | none |
+| **PARTIAL** | 2026-09-20 comment: representation and context reads are model-free and write-free; chat and saves stay separate | the context half and the separation are proven (chat-ownership) | Representation reads do not exist, so they cannot be tested (same root) |
+
+### #34: Non-destructive migration, compatibility, release verification
+
+| Status | Criterion | Evidence (short) | Missing |
+|---|---|---|---|
+| PASS | TODO: snapshot to a separate candidate; preserve IDs through explicit mappings | `test_copy_migration`: byte-identical source, nanoid21 mapping, R18 D1 derivation; ran 29/0 | none |
+| PASS | TODO: map content, types, tags and lifecycle to initial revisions; keep unknown attribution; reconcile supersede data | accepted first revision; R11 type fallback; synthesized supersede event; R17 reason backfill; 29/0 | none |
+| PASS | TODO: reuse vectors only with known provenance; never infer horizon or observer | `plan.py` docstring; `test_copy_migration.py:205` asserts `attribution_unresolved`; **2026-09-27**: dedicated `test_vector_disposition_never_reuses_a_legacy_vector_across_every_migrated_node` written, run (30/0 for the file) and mutation-checked (mutating `plan.py:98` to always `"none"` turned it red; restored, green) | none (docs/overnight/AC-EVIDENCE.md §6) |
+| PASS | TODO: compare counts, digests, references, taxonomy, chronology, recall; rehearse recovery and rollback | 15-table accounting; taxonomy check; ran `test_rehearsal` 17/0; ran `migration-copy` 10/0 | none |
+| PASS | TODO: integrate #7/#8/#10 evidence instead of duplicating it | `test_report_names_the_release_excluded_gates`; R17 | none |
+| **PARTIAL** | TODO: local-first startup; optional R2 restart, read-after-write and writer exclusion; document limits | ran `test_refuses_remote_roots` in the faults suite 9/0; R17 puts R2 out of scope | R2 behavior is unexercised by decision. **M** if built, and whether to build it is Nat's call |
+| PASS | AC: repeatable migration on a copy; source preserved; every rejected or unresolved record reported | identical rerun; byte-identical source; sub-ms rejection; orphan term record; trace_hit kind rejection; 29/0 | none |
+| PASS | AC: rollback restores prior behavior without deleting the source | `migration-copy` rollback: `legacyAnswers` equals golden full MCP JSON; cutover is "none"; ran 10/0 | none |
+| PASS | AC: #7/#8/#10 have current evidence or a documented release exclusion | release-exclusion test; R17; PROOF.md §3 | none |
+| **PARTIAL** | AC: tests, typecheck, lint/build and targeted fault/security/browser checks pass; no cutover implied | ran typecheck: clean; ran faults 9/0; CI on `cefc8db` was pending at audit time | **Synthesizer check:** the job never started (billing), so HEAD has no CI verdict. The diff since green `2d5ef44` is scripts and docs only. There is also no evidence for the lint clause (C2). **S** |
+| PASS | rev.2: release audit covers replay/digest conflicts, evidence keys, context budgets, passive locators, MCP CLI exits, code-intel readiness | **2026-09-27**: six-area table added (docs/overnight/AC-EVIDENCE.md §6), each area named by test file and re-run today: replay/digest (21/0), evidence-key equality (11/0), context budgets (27/0), passive locators (41/0), MCP/CLI exits (85/0), code-intel readiness (30/0 Python) | none — all six re-run green today; see the table for exact commands and counts |
+| PASS | gate: `memory_terms` becomes the term snapshot plus `node_revision_terms`; unresolved references reported | `test_memory_terms_become_node_revision_terms`; orphan record; 29/0 | none |
+| PASS | gate: migrated snapshots are authoritative; projections rebuild to the same meaning | `migration-copy` reconcile on a copy (empty derived tables, rebuild, rows equal); 10/0 | none |
+| PASS | gate: Int64 time-unit inventory; conversions proven on a copy; no automatic ms/µs reinterpretation | `test_rehearsal` UnitHandling ×4; 17/0 | none |
+| PASS | gate: `distilled_to`/`distilled_at` become trace links or are reported; no writable singular pair | `test_distilled_to_becomes_trace_link_...`; R17 correction 22:00 | none |
+
+Not a row, but blocking: the issue's stated **Outcome** is an actual cutover from the spike to the verified target. No cutover is authorized, so this is Nat's decision.
+
+### #10: v4 closes the three arra-oracle-v3 defects
+
+| Status | Criterion | Evidence (short) | Missing |
+|---|---|---|---|
+| **PARTIAL** | checklist: every tier-2/3 table has `workspace_name NOT NULL`, including audit tables | `storage.ts` `TARGET_SCHEMA` declares it on all 18 listed tables | The active model still lacks it: `migrate-py/.../models/{read_cursor,term,memory_term,trace_hit}.py`. Needs a Nat decision; **L** if cutover is required |
+| SUPERSEDED | checklist: every cross-table reference is a composite FK `(x_name, workspace_name)` | comments 2026-09-20T02:55:51Z and 13:14:07Z: LanceDB enforces no FKs, so enforcement moves to the service | Replaced by the operative row below (PASS) |
+| SUPERSEDED | checklist: FTS uses `tokenize='trigram'` with no unicode61 fallback | 2026-09-20 comment (ICU baseline), then R14: ngram(3,3) plus a substring fallback under 3 code points; lancedb 0.38.0 refuses `trigram`/`unicode61` | Replaced by the Thai retrieval row below (PASS) |
+| PASS | operative: service authorization and same-workspace references with two-workspace negative tests | ran `workspace-isolation` + `-supersede` + `read-cursor-ownership` 32/0; task9 shows enforcement on about 30 methods; **2026-09-27**: all 11 `*-ownership.test.ts` files plus `revision-v1.test.ts` re-run together, 110/0 (1085 expects, 67.41s) | none — every remaining ownership suite named in the row is now re-run (docs/overnight/AC-EVIDENCE.md §2) |
+| PASS | operative: no cross-workspace reference, read or audit leak | `task9.json` isolation: 191 entries, all ok; `51d966f` 784/0 over 16 tables | none |
+| PASS | operative: reproducible Thai/English positive and negative retrieval, including ลืม inside หลงลืม | ran `fts-precision` + `retrieval` + `straddle` 31/0 (หลงทาง control, `QUICK Brown`, `kw_beta` cross-workspace) | none |
+| SUPERSEDED | held-out Thai/English quality benchmark (MRR, recall@20) | R17 release-excludes "#10's quality half" and assigns it to #7 | Moves to #7, which is blocked on Nat's relevance judgments |
+
+### #75: Independently verify and integrate the read-cursor slice
+
+| Status | Criterion | Evidence (short) | Missing |
+|---|---|---|---|
+| **PARTIAL** | Scope: root-level evidence (pinned SDKs, full regression, typecheck, build, changed-Python lint, before/after manifests, failure history) | PROOF.md §1 commands; CI 36277285008 green on the PR #109 branch (an ancestor); red-before-repair in `PLAN.md:145-146`; **2026-09-27**: slice-scoped before/after blob-hash manifest appended to `delivery-gates.md` (Amendment 2026-09-26 post-merge R7/R11/R17) | CI still has no lint step for `app/migrate-py`/`app/just/scripts` — **not fixed by this slice**, out of the 45-minute time box; `delivery-gates.md:51`'s historical `11cf723` text is left as-is (correct for what it measured) with a new slice-scoped manifest appended alongside it, not replacing it |
+| PASS | Follow the complete frozen `read-cursor-v1.md` §1–9 | ran `read-cursor-ownership` 9/0; ran service + recovery + precision 74/0; test headers cite sections; contract appended, not edited (`:91-130`) | none |
+| PASS | Evidence discipline: no skipped case credited; red-before-repair kept; closed error fields | 0 skips across 83 tests; `PLAN.md:145-146` | none |
+| PASS | Reopen symptom: every read-cursor call returned HTTP 500 on the dev dataset | `create_target19_dataset.py:46-49,75-95` truncates to ms; ran `test_dev_seed_dataset` 3/0; `task9.md:363-364` PASS | The auditor did not run `live-r2/run.sh` because it starts a server |
+| PASS | Ruling: millisecond validation of `workspaces.created_at` | R2 (`DECISIONS.md:38-45`): the validator stays and the producer is fixed | none |
+| PASS | Ruling: which contract digest is authoritative | amendment makes `04f553dd` authoritative; test citation corrected (`read-cursor-ownership.test.ts:6-7`) | none |
+| PASS | Method-count gates frozen at 10/5 while the facade grows | test literals are 33 writer and 21 reader, each with provenance; **2026-09-27**: `read-cursor-v1.md` amendment appended, clarifying "ten"/"five" as a snapshot at this contract's own vintage, not a live ceiling; `context-ownership.test.ts` re-run today, 10/0 (69 expects) | none (docs/overnight/AC-EVIDENCE.md §5) |
+| **PARTIAL** | Independent re-certification of the whole slice | PROOF.md §3b: "not every frozen fault/ownership gate certified"; PR #109 says `Refs #75`; the live probe ran 2 checks | Replay a representative set of ownership, precision and recovery checks over HTTP/MCP. **M** |
+
+### #85: getContext reports `coverage:"full"` while omitting unauthorized evidence
+
+| Status | Criterion | Evidence (short) | Missing |
+|---|---|---|---|
+| PASS | Done: coverage reflects any exclusion reason | `service.getContext.ts:166-169`; ran `chat-coverage` 17/0 and `chat-service` 6/0 (`:109-110`); `task9.md:354-359` 6/6 live | none |
+| PASS | Done: `excluded` has an explicit bound and its own truncation signal | `getContext.ts:132-145`; `chat-coverage.test.ts:205-219` (5×51 overflow) | none |
+| PASS | Unauthorized exclusions carry no `public_id` or `session_name` | type at `chat.ts:183`; `chat-coverage:136-145,:195-203`; `chat-service:110` | none |
+| PASS | Docstring matches code | `chat.ts:187-201` | none |
+| PASS | `chat-v1.md` R4 amendment is appended and the old text kept | `chat-v1.md:242-319` | none |
+| **PARTIAL** | Independent acceptor re-certification, including the worst-case cap | 6 live scenarios PASS; the overflow case is unit-tested only; PR #109 says `Refs #85` | Add one live overflow scenario. **S** |
+| SUPERSEDED | Resolve the disagreement with discussion #36 | R4 (`DECISIONS.md:68-80`) rules for this issue's reading | none |
+
+---
+
+## 3. Ranked gap list
+
+All 21 PARTIAL and 2 GAP rows are mapped to a slice. So are the PASS-with-caveat and thin-evidence rows that matter for "perfect with proof". Ranking weighs PARTIALs closed and proof added against cost. Gated slices come last.
+
+| Rank | Slice | Issues | Size | Items (issue, row) | Effect |
+|---|---|---|---|---|---|
+| 1 | `guard-tests-lifecycle-horizon` | #29, #27 | S | (a) #29 TODO: test that self-supersede is refused; (b) #29 TODO: test that a 2-node supersede cycle is refused; (c) #29 AC4: schema-negative test (no decay, heat or tier column in `TARGET_SCHEMA`) plus a test that eligibility and listNodes reads perform no write; (d) #27 AC3: reassigning `memory_horizon` leaves permissions, validity/expiry and eligibility unchanged | Closes 3 PARTIAL rows. #29 and #27 become all-PASS at the criterion level. Tests only. |
+| 2 | `proof-rerun-thin-pass-rows` | #28, #31, #10, #27 | S | Run `revision-v1.test.ts` (#28, C6); name the trace parent/previous cycle-check and bounded-excerpt tests, or record them missing (#28); print the session-link-ownership and trace-ownership batch commands (#28 AC3, C7); re-run the remaining ownership suites (#10 operative row); name and run the tests behind #31 runtime validation, 409 conflict mapping and the proposed-not-active contract object (C9); cite evidence for the `bank = workspaces.name` normalization half (C8); a label-as-data test or citation (#27 TODO 3) | Closes no PARTIAL, but turns asserted PASS rows into re-run PASS rows. If any run fails, the closability verdicts change, so do this early. |
+| 3 | `search-partial-coverage-flag` | #30 | S | Add a `partial`/`truncated` coverage signal to `searchKnowledgeKeyword`/`Semantic` when the 4096-candidate overfetch saturates, plus a contract amendment and a test | Closes the only PARTIAL in #30 |
+| 4 | `green-head-and-lint` | #34, #75 | S | Get a CI verdict on the HEAD commit, either from Actions (billing blocked, see NEEDS-NAT) or from a recorded local CI run; add a ruff lint step for `app/migrate-py` and `app/just/scripts` to `.github/workflows/ci.yml` | Closes #34 row "tests/typecheck/lint/build" and the lint half of #75 row 1 |
+| 5 | `read-cursor-evidence-closeout` | #75 | S | Write a slice-scoped before/after manifest with exact-path blob hashes to replace `delivery-gates.md:51` (`11cf723`); run ruff once on the changed Python paths; add a `read-cursor-v1.md` amendment stating that §7/§8 "ten/five" means the methods this contract adds, not the whole facade | Closes #75 row 7 and, together with slice 4, row 1 |
+| 6 | `live-probe-extension` | #85, #75, #31 | M | (a) #85: force `excluded` past `MAX_CONTEXT_WIRE_BYTES` over real HTTP and MCP (S; **on its own this closes #85**); (b) #31: assert that HTTP-, MCP- and CLI-originated calls land in the same audit table with matching status and redaction (S; could be an in-process test instead); (c) #75: replay a representative set of frozen ownership, precision and recovery checks over HTTP/MCP (M) | Closes 3 PARTIAL rows, which are exactly the "Refs, not Fixes" reasons for #85 and #75 |
+| 7 | `migration-release-audit-note` | #34 | S | A table in the rehearsal report tying the six rev-2 areas to existing tests by name; a dedicated `vector_disposition` / never-reused test (#34 TODO 3 caveat) | Closes #34 rev.2 PARTIAL |
+| 8 | `session-foreign-visitor-and-literal-evidence` | #28 | S, then S–M | Read discussion #21/#36 for the "cwd-only foreign visitor" wording; if the requirement stands and is unbuilt, implement the exclusion with a test (S–M); add a literal end-to-end test where one conclusion cites 2 traces and 2 sessions and reverse lookup returns all of them (#28 AC1 caveat) | Closes the only PARTIAL in #28. The first step may turn into a Nat question (§4 item 6). |
+| 9 | `legacy-remember-taxonomy-scope` *(gated)* | #27, #31 | S | Depending on the ruling: route the legacy `remember` tool (`mcp/tools.ts:29`) through taxonomy validation, or record it as a compatibility-only path that stays until cutover and correct its self-description | Resolves C1 |
+| 10 | `context-budget-reporting` | #32 | S–M | Add a tokenizer/estimate field and a source/index watermark to getContext and answerChat | Closes #32 rev.2 "context reads" PARTIAL. Rework risk: if slice 11 is approved, getContext changes shape, so do this after that ruling. |
+| 11 | `peer-representation-node-grounded-chat` *(gated)* | #32, #31 | M (auditors' size; it spans 8 rows across 2 issues, so treat M as a floor) | Observer/about-peer request fields; node/revision conclusions among getContext candidates; citations to node/revision ids; a scoped `getRepresentation` (a view of current conclusions, cards as nodes, no new core tables) with a registry method, contract doc and tests; a test that representation reads are model-free and write-free; stored summary and source handles | Closes #32 TODO 1–3, AC2 (GAP), rev.2 get_context, both 2026-09-20 comment rows (1 GAP, 1 PARTIAL) and #31 "scoped representations". Only if Nat does not redefine #32. |
+| 12 | `r2-deployment-verification` *(gated)* | #34 | M | An R2-backed integration test for restart, read-after-write and writer exclusion | Closes #34 R2 PARTIAL. Only if R2 is a target. |
+| 13 | `active-dataset-cutover` *(gated)* | #10, #34 | L | Migrate the active `terms`, `memory_terms`, `trace_hits` and `read_cursors` (and the rest of active-15) onto the target19 schema: the production cutover | Closes #10 row 1 and the #34 Outcome. #34's boundaries currently forbid it. |
+
+Coverage check: #27 1 row (slice 1); #28 1 (slice 8); #29 2 (slice 1); #30 1 (slice 3); #31 2 (slices 6 and 11); #32 8 (slices 10 and 11); #34 3 (slices 4, 7 and 12); #10 1 (slice 13); #75 3 (slices 4+5, 5 and 6); #85 1 (slice 6). That is 23 rows, which equals 21 PARTIAL plus 2 GAP.
+
+---
+
+## 4. NEEDS-NAT: decisions only Nat can make
+
+1. **#32 / #31, grounding scope.** Should #32 be redefined as *message-grounded* chat? That would supersede #32 TODO 1–3, AC2, the rev.2 get_context observer/subject/conclusions clause, both 2026-09-20 representation items, and #31 "scoped representations". Or is peer representation plus node/revision-grounded context still owed (slice 11, M or more) before #32 and #31 can close?
+2. **#10, close basis.** Should #10 close on the target19 design? That design has `workspace_name NOT NULL` on every `TARGET_SCHEMA` table, service-enforced isolation (191/0 live, 32/0 re-run) and Thai inside-word retrieval (31/0). Or does #10 stay open until the active dataset's `terms`, `memory_terms`, `trace_hits` and `read_cursors` are migrated? That migration is a cutover (L) which #34 currently forbids.
+3. **#34, Outcome.** Should the production cutover from the spike to the verified target be authorized, and when? Or should #34 be re-scoped to "rehearsal proven; cutover tracked in its own issue" so it can close?
+4. **#34, R2.** Is R2 a deployment target? If yes, build the restart, read-after-write and writer-exclusion test (M). If no, strike the R2 sub-item from #34.
+5. **#27 / #31, legacy `remember`.** Is the free-text `remember` MCP tool (`app/server/src/mcp/tools.ts:29`) in #27's taxonomy scope? It writes the spike `memories` table with no taxonomy validation. Or is it the #31 compatibility adapter that stays unvalidated until cutover?
+6. **#28, foreign visitors.** Is the "cwd-only foreign visitor" exclusion still a #28 requirement, and what behavior does it mean? No auditor found code or a test for it under any name. Checking discussion #21/#36 first may answer this without Nat.
+7. **CI billing.** GitHub Actions did not start the job for `cefc8db` ("recent account payments have failed or your spending limit needs to be increased"). Should Actions billing be restored, or is a recorded local CI run on HEAD acceptable evidence?
+8. **Closing on evidence.** Auditors call #27, #29, #30 and #85 closable in substance, yet PR #109 marks them `Refs`. Close them now, or after their S slices (1, 3 and 6a)? The same question applies to #28, #31 and #75 once their slices land.
+9. **#7, unchanged.** The #10 quality half and the #30 AC4 quality clause both defer to #7, which is still blocked on Nat's relevance judgments (R16). Supply the judgments, or keep #7 release-excluded under R17.
+
+---
+
+## 5. Conflicts and inconsistencies (flagged, not resolved)
+
+| ID | Where | What does not line up |
+|---|---|---|
+| C1 | #27 vs #31 | The #27 auditor says the legacy `remember` tool writes the spike `memories` table with no taxonomy validation and describes itself as "planned, not implemented". The #31 auditor credits remember/recall/get_memory/list_memories as "explicit compatibility adapters with tested ID/response mappings" (PASS). Neither auditor establishes whether `remember` adapts onto the v4 node/revision service or is the retained spike path. |
+| C2 | #34 vs #75 | The #75 auditor found no ruff or lint step in `.github/workflows/ci.yml`. The #34 row "tests, typecheck, **lint**/build pass" is PARTIAL only for pending CI and never mentions that lint is absent. If #75 is right, the #34 lint clause has no evidence either. |
+| C3 | #34 verdict vs #34 rows | The verdict says "the one AC that is itself directly test-proven is the #7/#8/#10 release-exclusion requirement". Yet the rows mark "repeatable migration" and "rollback" ACs PASS on directly-run tests (29/0 and 10/0). The counts here follow the rows. |
+| C4 | #30 verdict vs #30 rows | The verdict says all four reopen defects have evidence: no index, unread `content_hash`, free-text profile name, and the limit-1 reconciliation probe. Only the first two have rows. The last two are covered at most indirectly (the AC4 digest tests and the AC2 reconcile tests). |
+| C5 | #30 vs #10 | #30 says the legacy `memories` path uses the "shared **trigram** config". #10 records that lancedb 0.38.0 refuses the `trigram` tokenizer name and that R14 mandates `ngram` (3,3). This is probably the same config described loosely. Not verified here: check `fts/fts.constants.ts`. |
+| C6 | #28 TODO "cursors, cycle checks, excerpts" | The row says the `capture_status` assertions in `test/revision-v1.test.ts` are "passing in the runs cited elsewhere in this matrix". No run of `revision-v1.test.ts` appears anywhere. The trace cycle-check evidence has no file:line, and "bounded excerpts" has no evidence at all. |
+| C7 | #28 AC3 | It cites "39-pass and 101-pass batches, below" (session-link-ownership, trace-ownership), but no row gives their commands. The verdict's "146 combined" equals 101 + 39 + 6, which is consistent arithmetic. |
+| C8 | #31 bank row | The evidence covers only the rejected `/mcp/:bank/:workspace` route. The "bank = `workspaces.name`" normalization half has no cited evidence. The parenthetical "trap #2 (ARRA_ORIGIN/Host binding)" has no obvious connection to how the workspace route is resolved. |
+| C9 | #31 rows 2 and 9 | These PASS rows rest partly on historical or uncited evidence ("66-then-more passing Bun tests at the time"; a closing comment citing PR #96). Nothing was re-run for runtime schema validation or conflict mapping. |
+| C10 | #34 CI evidence | The auditor recorded "pending". The synthesizer check found the run completed as `failure` because the job never started (billing). This changes "verification timing" into "no CI verdict on HEAD". The risk is bounded: the diff since green `2d5ef44` is scripts and docs only. |
+| C11 | All live-probe citations | The acceptor probe ran on `2d5ef44`, not on `cefc8db`. The carry-over is plausible for the reason in C10, but it is not a HEAD run. |
+| C12 | #85 verdict | "23 passing unit-test assertions" is really 23 **tests** (17 + 6). Per the #32 auditor, `chat-coverage` alone has 678 assertions. Only the wording is off. |
+| C13 | Auditors vs acceptor | For #27, #28, #29, #30, #31, #75 and #85 the auditors say "closable in substance" while the acceptor (PROOF.md §3b) says "partial at whole-issue level". Both can hold, because they measure different things: re-run test coverage versus a bounded live probe. Not reconciled here, since it is Nat's call (§4 item 8). |
+| C14 | #31 vs #32 granularity | For the same missing representation feature, #31 scores PARTIAL (its sibling sub-items are built) and #32 scores GAP twice. The finding is consistent. Each issue counts it once per row. |

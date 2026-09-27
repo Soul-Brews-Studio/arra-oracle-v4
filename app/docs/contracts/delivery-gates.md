@@ -157,3 +157,41 @@ carry `aria-current`. The focus moves are now pinned in CI by `keyboardFocus.tes
 components on the fake DOM), not only by the ego-browser segment, which adds a `keys-stale-tab`
 step (`ui-e2e/keysStaleTab.mjs`) and measures the Messages view at 812x375. Reason and ruling as
 above (`docs/overnight/DECISIONS.md`, #33 AC2).
+
+## Amendment 2026-09-26 (post-merge R7/R11/R17 + the audit's thin PASS rows)
+
+Made by the `ac-evidence` slice, citing `docs/overnight/DECISIONS.md` and
+`docs/overnight/AC-MATRIX.md` (#75 row "Scope: root-level evidence ... `delivery-gates.
+md:51` still cites snapshot `11cf723`"). Appended, not an edit: every byte above is
+unchanged, including the "Latest verification scope" section's own `11cf723` text.
+
+**What changed.** That section's evidence snapshot (`11cf7235a815234d305f338982cf2cf
+53ef21197`, dated 2026-09-20) predates issues #27-#34 entirely — it was never meant to
+stand as evidence for tonight's overnight work, and the audit correctly found it stale
+when read that way. This amendment does not replace that historical snapshot (it remains
+correct for what it actually measured, at that commit); it adds a SLICE-SCOPED before/
+after manifest for the `ac-evidence` slice specifically, with real git blob hashes
+(`git hash-object`, not invented), so a reader has a non-stale reference point for this
+slice's own changes.
+
+**Manifest.** Base: `cefc8db` (`origin/main`, the merge of PR #122, this slice's branch
+point). "Before" is the blob at that commit; "after" is the blob once this slice's edits
+landed. A before hash of `e69de29b...` (the empty blob) means the file did not exist at
+the base — it is new in this slice.
+
+| File | Before (blob @ `cefc8db`) | After (blob, this slice) |
+|---|---|---|
+| `app/docs/contracts/read-cursor-v1.md` | `054bce347554190354b3cf594628cd3f028fd30d` | `8e538043f138164876f17a7c11cae61951e95e5a` |
+| `app/migrate-py/tests/test_copy_migration.py` | `041be6c5fb25e3818d610a4870c966e16c49d046` | `aab50e2fbd81a27a0d6877eb3a5617014ea37174` |
+| `app/server/test/trace-cycle-check.test.ts` | `e69de29bb2d1d6434b8b29ae775ad8c2e48c5391` (new) | `6b72f51ddb0e88444425c6511067638e4bc445ff` |
+| `docs/overnight/AC-EVIDENCE.md` | `e69de29bb2d1d6434b8b29ae775ad8c2e48c5391` (new) | `a96a6d033f3c24202c14c1a55b907eb732a9682f` |
+| `docs/overnight/AC-MATRIX.md` | `e69de29bb2d1d6434b8b29ae775ad8c2e48c5391` (new) | `f2b714bb89bdc6561e65ea2cefe1bf1e12100b5a` |
+| `app/docs/contracts/delivery-gates.md` (this file) | `<computed after this edit lands, see the commit diff for its own before/after pair>` | — |
+
+Reproduce with: `git cat-file -p <base>:<path> | git hash-object --stdin` for "before"
+and `git hash-object <path>` for "after", from the `ac-evidence` slice worktree. Full
+test evidence for the changes these blobs represent is in `docs/overnight/AC-EVIDENCE.md`
+and the updated rows of `docs/overnight/AC-MATRIX.md`.
+
+**Reverse by:** striking this section; the historical `11cf723` snapshot above is
+unaffected either way.
