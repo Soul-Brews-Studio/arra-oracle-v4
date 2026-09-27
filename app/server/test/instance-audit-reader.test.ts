@@ -244,4 +244,52 @@ describe("instance audit reader (#31 R25)", () => {
       await s.cleanup();
     }
   }, TEST_TIMEOUT_MS);
+
+  test("HTTP order: bank 400 before policy; admission before parameter validation; every attempt audited", async () => {
+    const s = await scratch();
+    try {
+      const out = await runScript(
+        s.dataDir,
+        s.policyPath,
+        `
+        const { Elysia } = await import("elysia");
+        const { instanceAuditRoute } = await import("${join(SRC, "app.instanceAuditRoute.ts")}");
+        const { openInstanceAuditTable } = await import("${join(SRC, "audit", "instanceAudit.openInstanceAuditTable.ts")}");
+        const app = new Elysia().use(instanceAuditRoute(service, () => null));
+        const call = async (query, token) => {
+          const headers = token ? { authorization: "Bearer " + token } : {};
+          return (await app.handle(new Request("http://127.0.0.1/api/instance-audit" + query, { headers }))).status;
+        };
+        const status = {
+          anonBank: await call("?bank=alpha", null),
+          opBank: await call("?bank=alpha", "${TOKENS.backfillOnly.secret}"),
+          anonBadLimit: await call("?limit=0", null),
+          wsBadLimit: await call("?limit=0", "${TOKENS.workspace.secret}"),
+          wsBadRoute: await call("?route=/x", "${TOKENS.workspace.secret}"),
+          opBadLimit: await call("?limit=0", "${TOKENS.backfillOnly.secret}"),
+          opBadRoute: await call("?route=/x", "${TOKENS.backfillOnly.secret}"),
+          opBadOutcome: await call("?outcome=maybe", "${TOKENS.backfillOnly.secret}"),
+          opOk: await call("", "${TOKENS.backfillOnly.secret}"),
+        };
+        const table = await openInstanceAuditTable();
+        const rows = (await table.query().toArray()).filter((r) => r.route === "/api/instance-audit");
+        const tally = (outcome, st) => rows.filter((r) => r.outcome === outcome && r.status === st).length;
+        console.log(JSON.stringify({ status, total: rows.length, refused: tally("refused", "error"), admittedError: tally("admitted", "error"), admittedOk: tally("admitted", "ok") }));
+        `,
+      );
+      expect(out.status).toEqual({
+        anonBank: 400, opBank: 400,
+        anonBadLimit: 401, wsBadLimit: 403, wsBadRoute: 403,
+        opBadLimit: 400, opBadRoute: 400, opBadOutcome: 400,
+        opOk: 200,
+      });
+      // bank 400s never reach policy, so they write nothing. The 3 unadmitted
+      // attempts are refused rows; the 3 bad-parameter reads by the operator
+      // are admitted errors; the good read is admitted ok.
+      expect({ total: out.total, refused: out.refused, admittedError: out.admittedError, admittedOk: out.admittedOk })
+        .toEqual({ total: 7, refused: 3, admittedError: 3, admittedOk: 1 });
+    } finally {
+      await s.cleanup();
+    }
+  }, TEST_TIMEOUT_MS);
 });

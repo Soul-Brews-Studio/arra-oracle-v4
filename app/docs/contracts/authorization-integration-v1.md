@@ -815,3 +815,21 @@ code: 6 of 9 cases failed before this amendment's fix, all 9 pass after) -- no f
 outcome-only, both filters, workspace-scoped refusal over HTTP, anonymous refusal over HTTP,
 invalid cursor, `limit=0` vs `limit=abc` consistency, and four same-millisecond rows never
 dropped across a page boundary.
+
+### Correction (R25 reader, fix round 3, 2026-09-28)
+
+The round-3 verifier found that `GET /api/instance-audit` checked `route`, `outcome` and
+`limit` before admission, and that it ignored a `bank` parameter. Both break line 34 of
+this contract. The route now follows the same order as `/api/backfill`:
+
+1. Any `bank` parameter gets a 400 before policy is read, and no row is written.
+2. Admission follows. An unadmitted caller gets a 401 or 403, whatever parameters it sent,
+   and the attempt is written as a `refused` row.
+3. After admission, the non-scope parameters are validated inside the audited read.
+   - A bad parameter from an admitted operator gets a 400 and is written as an `admitted`
+     row with `status: "error"`.
+   - The row's input is the raw parameters.
+
+`instance-audit-reader.test.ts` ("HTTP order ...") covers this through the route handler.
+It sends 9 requests and expects 7 self-audit rows: 3 refused, 3 admitted with an error,
+and 1 admitted and ok.

@@ -15,9 +15,17 @@ export function makeReadInstanceAudit<TContext>(
   principalOf: (context: TContext) => { principalId: string | null },
   logInstanceAudit: (record: Record<string, unknown>) => Promise<void>,
 ) {
-  return (authorization: string | null, query: InstanceAuditQuery): Promise<InstanceAuditPage> => {
+  // `query` may be a thunk: the HTTP route passes its non-scope parameter
+  // parser here so it runs only AFTER admission (frozen contract line 34), and
+  // a bad parameter from an admitted operator is audited as an admitted error.
+  // `input` is what the audit row records (the raw parameters, not the thunk).
+  return (
+    authorization: string | null,
+    query: InstanceAuditQuery | (() => InstanceAuditQuery),
+    input: unknown = query,
+  ): Promise<InstanceAuditPage> => {
     const admit = () => admitOperator(admitGlobal, principalOf, authorization);
-    const read = () => readInstanceAuditRows(query);
-    return withInstanceAudit(logInstanceAudit, "/api/instance-audit", "instance-audit:read", query, admit, read);
+    const read = () => readInstanceAuditRows(typeof query === "function" ? query() : query);
+    return withInstanceAudit(logInstanceAudit, "/api/instance-audit", "instance-audit:read", input, admit, read);
   };
 }

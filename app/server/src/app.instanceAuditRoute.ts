@@ -6,6 +6,13 @@
  * Model-free, no `bank`/workspace param at all -- this is not a knowledge
  * registry method (`knowledge/transport.ts`), it has no workspace, and
  * accepting `bank` here would suggest a scope this route does not have.
+ *
+ * Order (frozen authorization-integration-v1.md line 34, same as
+ * `/api/backfill`): a `bank` parameter is a 400 before any policy work; then
+ * admission (401/403, audited as refused); only then are `route`, `outcome`,
+ * `limit` and `cursor` validated, inside the audited read, so an admitted
+ * operator's bad parameter is a 400 AND an audit row, and an unadmitted caller
+ * learns nothing about parameter validity.
  */
 
 import { Elysia } from "elysia";
@@ -33,6 +40,9 @@ const noStore = (body: unknown, status = 200): Response =>
   });
 
 const INVALID = Symbol("invalid-limit");
+
+/** A non-scope parameter refused after admission; the handler maps it to 400. */
+class InvalidParameter extends Error {}
 
 /**
  * Digits only, clamped to `1..INSTANCE_AUDIT_MAX_LIMIT` (the reader clamps
@@ -65,29 +75,35 @@ export function instanceAuditRoute(
         const blocked = transportGuard(request);
         if (blocked) return blocked;
         const url = new URL(request.url);
+        // A bank never scopes a global action; supplying one is a 400 before policy.
+        if (url.searchParams.has("bank")) return errorResponse(400);
         const routeFilter = url.searchParams.get("route");
         const outcomeFilter = url.searchParams.get("outcome");
-        if (routeFilter !== null && !ROUTE_VALUES.has(routeFilter)) return errorResponse(400);
-        if (outcomeFilter !== null && !OUTCOME_VALUES.has(outcomeFilter)) return errorResponse(400);
-        const limit = positiveInt(url.searchParams.get("limit"));
-        if (limit === INVALID) return errorResponse(400);
+        const limitParam = url.searchParams.get("limit");
         // `URLSearchParams.get` returns `null` for an absent param, but
         // `InstanceAuditQuery` (and the reader's `!== undefined` filter
         // guard) treats "absent" as `undefined`, not `null` -- a bare pass-
         // through here made every absent filter render as the SQL literal
         // `'null'`, which never matches a row (round-2 verifier finding).
         const cursorParam = url.searchParams.get("cursor");
-        const query: InstanceAuditQuery = {
-          limit,
-          cursor: cursorParam === null ? undefined : cursorParam,
-          route: routeFilter === null ? undefined : (routeFilter as InstanceAuditQuery["route"]),
-          outcome: outcomeFilter === null ? undefined : (outcomeFilter as InstanceAuditQuery["outcome"]),
+        const parse = (): InstanceAuditQuery => {
+          if (routeFilter !== null && !ROUTE_VALUES.has(routeFilter)) throw new InvalidParameter("route");
+          if (outcomeFilter !== null && !OUTCOME_VALUES.has(outcomeFilter)) throw new InvalidParameter("outcome");
+          const limit = positiveInt(limitParam);
+          if (limit === INVALID) throw new InvalidParameter("limit");
+          return {
+            limit,
+            cursor: cursorParam === null ? undefined : cursorParam,
+            route: routeFilter === null ? undefined : (routeFilter as InstanceAuditQuery["route"]),
+            outcome: outcomeFilter === null ? undefined : (outcomeFilter as InstanceAuditQuery["outcome"]),
+          };
         };
+        const input = { route: routeFilter, outcome: outcomeFilter, limit: limitParam, cursor: cursorParam };
         try {
-          const page = await service.readInstanceAudit(readAuthorization(request), query);
+          const page = await service.readInstanceAudit(readAuthorization(request), parse, input);
           return noStore(page);
         } catch (error) {
-          if (error instanceof InvalidCursorError) return errorResponse(400);
+          if (error instanceof InvalidCursorError || error instanceof InvalidParameter) return errorResponse(400);
           const code = error instanceof AuthDenied ? error.code : "policy_unavailable";
           return errorResponse(STATUS_FOR[code] ?? 503);
         }
