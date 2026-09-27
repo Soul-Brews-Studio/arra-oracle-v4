@@ -2,7 +2,7 @@
 
 > Candidate implementation addendum: [target-v1 decisions](app/docs/contracts/target-v1-decisions.md) refines revision association authority and physical fixture gates for isolated #23 work; it is not runtime activation or #23 completion.
 
-> Accepted isolated contract: [revision/evidence v1](app/docs/contracts/revision-evidence-v1.md) pins complete snapshots, typed evidence keys, RFC8785 bytes and fail-closed Python/Bun batch validation. Python still owns physical schema. The isolated codecs were accepted at `6289311`; this is not proof that new MCP features are shipped. Honcho tier-1 interoperability remains a separate unproved #8 gate.
+> Accepted isolated contract: [revision/evidence v1](app/docs/contracts/revision-evidence-v1.md) pins complete snapshots, typed evidence keys, RFC8785 bytes and fail-closed Python/Bun batch validation. Python still owns physical schema. The isolated codecs were accepted at `6289311`; this is not proof that new MCP features are shipped. Honcho tier-1 interoperability remains a separate unproved #8 gate. *(Update: measured on 2026-09-27 against a disposable Honcho v3.2.0 by `bash app/just/honcho-live.sh`: the REST round trip passes, and a table-level import works only with conversions, for one bank into an empty Honcho, with 10 v4 columns lost. "Byte-compatible" is false as stated; SPEC §15.2 has the terms, `docs/overnight/HONCHO-TABLE-DIFF.md` the per-column evidence.)*
 
 > Current delivery overlay: [delivery gates](app/docs/contracts/delivery-gates.md) records accepted isolated physical/byte/source contracts, scoped reads, pure authorization policy `eb281cc` and local HTTP/MCP/CLI/browser integration `11cf723`. The running spike was not restarted; target19 remains isolated and #25 remains open for future target-service/reference coverage. Earlier built-state snapshots below remain historical.
 
@@ -1226,6 +1226,7 @@ Three headline claims above are superseded by fresh source:
      session links                 BUILT; mixed continues/forked_from cycles refused  R7 (#28)
      Relic adapter                 BUILT, isolated, read-only; NO route yet           R7 (#28)
      round-trip vs stock Honcho    phase 1 on fixtures only; live run NOT done        R15 (#8)
+                                   (2026-09-27: live, both legs; SPEC §15.2 verdict)
  §6  nodes + immutable revisions   BUILT                                             #26 closed
  §7  taxonomy, type, horizon       BUILT; sealed vocab refused on every transport;   R6, R10
                                    "conclusion" is a type term, no table (#89)
@@ -1258,7 +1259,6 @@ Still target and not built:
 
 - a per-workspace FTS index or statistics, which would close the R22 residual fully;
 - recall-quality judgments not written by an agent (#7, R16 phase B);
-- a live #8 round-trip against stock Honcho;
 - a workspace-creation API;
 - a release cutover;
 - non-Ollama chat providers.

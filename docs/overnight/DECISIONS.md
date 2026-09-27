@@ -251,6 +251,12 @@ branch, so it reverts cleanly.
   - the generator also refuses JSON numbers that Python reads as non-finite.
   Live re-run: table leg 1 OK, REST leg 1 OK, and teardown left 0 containers
   and no clone.
+- **Ruled (Nat, 2026-09-28, NAT-DECISIONS D11a):** the measured verdict is
+  accepted as the contract. True byte compatibility (global message ids, `metadata`
+  as the stored column name) is not pursued. SPEC §15.2 now states the conversions,
+  the incompatibilities and the lost columns under invariant 5 and in a "Measured"
+  callout; §3 and §15.5 point to it; AGENTS.md and DESIGN.md no longer list the live
+  round trip as unbuilt. #8 was closed by #122.
 
 ## R16 · #7 recall measurement: harness now, judgments from Nat
 
