@@ -233,3 +233,91 @@ runIt(
   },
   TEST_TIMEOUT_MS,
 );
+
+/** Two rows of one call pair are the same row: every column but identity and
+ *  timing, `h_metadata` (input, result, auth) included. */
+function expectSameRow(a: Row, b: Row, label: string) {
+  expect(Object.keys(b).sort(), label).toEqual(Object.keys(a).sort());
+  for (const column of Object.keys(a)) {
+    if (PER_CALL.has(column)) continue;
+    const parse = column === "h_metadata" || column === "internal_metadata";
+    const [va, vb] = parse ? [JSON.parse(String(a[column] ?? "null")), JSON.parse(String(b[column] ?? "null"))] : [a[column], b[column]];
+    expect(vb, `${label} ${column}`).toEqual(va);
+  }
+}
+
+// Fix round (2026-09-27): the amendment's per-route claims that the first test
+// does not reach, each pinned against the mutant the verifier built for it.
+//   - recall checks `limit` before `mode` (mutant: mode first -> "mode must be…");
+//   - remember checks `content` before `name` (mutant: name first -> "name is required");
+//   - a bound credential's #87 author refusal is audited as `forbidden` on both
+//     transports (mutant: skip the row when the error is `forbidden`);
+//   - the HTTP input keeps the caller's parameter order, as MCP keeps its key
+//     order (was {query, mode, limit} whatever the URL said);
+//   - a digit-only limit past 2^53 is recorded as the number it spells, the
+//     input MCP would need to raise the same "safe integer" text (was a string,
+//     which MCP answers with "limit must be a number").
+runIt(
+  "legacy validation order, input order and the bound-author refusal audit as their MCP twin does",
+  async () => {
+    const fixture = await createFixture([ALPHA, BETA]);
+    cleanups.push(fixture.cleanup);
+    const workDir = await mkdtemp(join(tmpdir(), "arra-v4-audit-legacy-order-"));
+    cleanups.push(() => rm(workDir, { recursive: true, force: true }));
+
+    const legacy = (label: string, token: string, httpMethod: "GET" | "POST", path: string, body?: unknown) =>
+      ({ label, transport: "legacy", token, bank: "alpha", method: "", httpMethod, path, body });
+    const mcp = (label: string, token: string, tool: string, args: unknown) =>
+      ({ label, transport: "mcp", token, bank: "alpha", method: tool, body: args });
+    const bound = { name: "n", content: "c", peer_name: "peer-z" };
+    const steps = [
+      legacy("http_recall_order", "write", "GET", "/api/search?bank={alpha}&q=x&limit=abc&mode=foo"),
+      mcp("mcp_recall_order", "write", "recall", { query: "x", limit: "abc", mode: "foo" }),
+      legacy("http_list_huge", "write", "GET", "/api/memories?bank={alpha}&limit=99999999999999999999"),
+      mcp("mcp_list_huge", "write", "list_memories", { limit: 1e20 }),
+      legacy("http_remember_empty", "write", "POST", "/api/memories", { workspace_name: ALPHA }),
+      mcp("mcp_remember_empty", "write", "remember", {}),
+      legacy("http_remember_bound", "bound", "POST", "/api/memories", { workspace_name: ALPHA, ...bound }),
+      mcp("mcp_remember_bound", "bound", "remember", bound),
+      { label: "calls_after", transport: "http", token: "audit", bank: "alpha", method: "listMcpCalls", body: listCalls },
+    ];
+    const result = await runGated(fixture.datasetRoot, CHILD, [
+      fixture.datasetRoot,
+      workDir,
+      JSON.stringify({ banks: { alpha: ALPHA, beta: BETA }, steps }),
+    ]);
+    if (result.code !== 0) throw new Error(`child exited ${result.code}: ${result.stderr.slice(-2000)}`);
+    const out: Record<string, any> = JSON.parse(result.stdout.trim().split("\n").at(-1)!);
+    const show = (label: string) => `${label}: ${JSON.stringify(out[label])}`;
+
+    for (const label of ["http_recall_order", "http_list_huge", "http_remember_empty"]) {
+      expect(out[label], label).toEqual({ status: 400, body: { error: "bad request" } });
+    }
+    expect(out.http_remember_bound.status, show("http_remember_bound")).toBe(403);
+    expect(out.mcp_remember_bound.isError, show("mcp_remember_bound")).toBe(true);
+
+    expect(out.calls_after.status, show("calls_after")).toBe(200);
+    const rows = out.calls_after.body.rows as Row[];
+    const meta = (r: Row) => JSON.parse(r.h_metadata ?? "null") as Record<string, any>;
+    const expected: [string, string, string][] = [
+      ["recall", "limit must be a number", JSON.stringify({ query: "x", limit: "abc", mode: "foo" })],
+      ["list_memories", "limit must be a safe integer between 1 and 1000", JSON.stringify({ limit: 1e20 })],
+      ["remember", "content is required", JSON.stringify({})],
+      ["remember", "forbidden", JSON.stringify(bound)],
+    ];
+    const seen = rows.map((r) => `${r.tool}:${r.status}:${meta(r).result}:${meta(r).input}`);
+    for (const [tool, text, input] of expected) {
+      const both = rows.filter((r) => r.tool === tool && r.status === "error" && meta(r).result === text);
+      expect(both.length, `${tool} "${text}" in ${JSON.stringify(seen)}`).toBe(2);
+      expectSameRow(both[0]!, both[1]!, `${tool} "${text}"`);
+      expect(meta(both[0]!).input, `${tool} input`).toBe(input);
+      expect(both[0]!.workspace_name).toBe(ALPHA);
+    }
+    // The bound refusal is attributed to the bound credential on both rows.
+    const refusal = rows.filter((r) => meta(r).result === "forbidden");
+    expect(refusal.map((r) => meta(r).auth.credential_id)).toEqual(["cred-bound", "cred-bound"]);
+    // Nothing else: the audit read itself is not in its own page.
+    expect(rows.length, JSON.stringify(seen)).toBe(8);
+  },
+  TEST_TIMEOUT_MS,
+);
