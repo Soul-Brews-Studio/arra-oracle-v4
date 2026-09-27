@@ -28,6 +28,9 @@ export function NodeHead({
   // revision of the SAME node also takes focus, but only if it was lost --
   // measured by the keyboard e2e: the publish form clears on submit, its
   // button turns disabled under the focus, and focus fell to <body>.
+  // Never off a role=tab (fix round): Enter on the "knowledge" view tab with
+  // a node in the route mounts this with focus on that tab, and the WAI-ARIA
+  // tabs pattern keeps focus on the tab you just activated.
   const h2Ref = useRef<HTMLHeadingElement>(null);
   const focusedFor = useRef<string | null>(null);
   const ready = !loading && error === null && revision !== null;
@@ -38,7 +41,8 @@ export function NodeHead({
     focusedFor.current = node.node_id;
     const at = document.activeElement;
     const lost = at === null || at === document.body;
-    if (lost || (newNode && at.closest("main") === null)) h2Ref.current.focus();
+    const onTab = at?.getAttribute("role") === "tab";
+    if (lost || (newNode && !onTab && at.closest("main") === null)) h2Ref.current.focus();
   }, [ready, node.node_id, revisionId]);
 
   if (loading) {
