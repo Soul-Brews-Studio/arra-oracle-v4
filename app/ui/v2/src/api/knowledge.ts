@@ -63,6 +63,29 @@ export type TermSnapshot = {
   position: string;
 };
 
+/** `contracts/revision-v1.ts` RELATIONS -- a closed enum; the server refuses
+ *  any other value with `invalid_value` at `/relation`. */
+export const LINK_RELATIONS = ["supports", "contradicts", "derived_from", "discusses", "corrects", "related_to"] as const;
+export type LinkRelation = (typeof LINK_RELATIONS)[number];
+
+/** One `link_snapshot_json` entry, keys in `contracts/revision-v1.ts`
+ *  LINK_KEYS order. `target` is the closed per-kind OBJECT from
+ *  `contracts/evidence-v1.ts` TARGET_KEYS, not a second JSON string. This UI
+ *  never fetches or hashes a target, so it only ever writes `locator_only`
+ *  with null excerpt/hash/capture time -- `captured` would be a claim the
+ *  server does not verify (`revision-evidence-v1.md` §4). */
+export type LinkSnapshotEntry = {
+  position: string;
+  relation: LinkRelation;
+  target_kind: string;
+  target: Record<string, string>;
+  excerpt: null;
+  content_hash: null;
+  captured_at: null;
+  capture_status: "locator_only";
+  note: string | null;
+};
+
 /** The ids minted when the reserved vocabularies were seeded. Held locally
  *  because `getVocabulary` and `getTerm` take IDS, not names -- there is no
  *  lookup from "type" to its vocabulary_id. */
@@ -119,6 +142,9 @@ export type PublishInput = {
   author_peer_name: string | null;
   session_name: string | null;
   change_reason: string | null;
+  /** Evidence links, already built and position-ordered
+   *  (`state/buildLinkSnapshot`). `[]` is a revision that cites nothing. */
+  links: LinkSnapshotEntry[];
 };
 
 /** Build the term snapshots for a revision: exactly one `type`, plus at most
@@ -170,7 +196,7 @@ export const publishRevision = (b: Bank, ids: TaxonomyIds, input: PublishInput) 
       schema_version: SCHEMA_VERSION,
       canonical_version: CANONICAL_VERSION,
       term_snapshot_json: JSON.stringify(termSnapshots(ids, input)),
-      link_snapshot_json: "[]",
+      link_snapshot_json: JSON.stringify(input.links),
       h_metadata: null,
       internal_metadata: null,
     },
