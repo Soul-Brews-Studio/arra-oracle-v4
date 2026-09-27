@@ -94,7 +94,7 @@ I found these with `rg -l useEffect app/ui/v2/src` plus `rg "await |\.then\("`.
 | `App.tsx` bank prop | New object per render, fed to Overview, Explore and Knowledge | Fixed (`useStableBank`) |
 | `useMemory.refreshMessages` / `refreshContext` | No guard. A fast session switch showed A's transcript or context under B | Fixed (gen per lane) |
 | `useListing` → `useCursorList.load` | No guard. Toggling "show history", a scope change, or a fast next/prev let the older page land last | Fixed (gen) |
-| `useEvidenceReview` (trace, session links, lifecycle, association + dependents, every load-more) | Already has a generation counter per lane. Its `refresh*` callbacks depend on `b` identity, so before the App fix every App render refetched the Evidence panels. They showed no wrong data, only wasted requests | Covered by the App fix. File not touched |
+| `useEvidenceReview` (trace, session links, lifecycle, association + dependents, every load-more) | Already has a generation counter per lane. Its `refresh*` callbacks depend on `b` identity, so before the App fix every App render refetched the Evidence panels. They showed no wrong data, only wasted requests. The fix round found the loading latch below in four of its lanes | Covered by the App fix. Loading latch fixed in the fix round |
 | `useNodeLifecycle` (LifecycleBanner's source) | Already guarded (gen). Deps are on the bank's strings | No change |
 | `useEvidenceStatus` | Already guarded (gen per lane). Deps are on the bank's strings | No change |
 | `useKnowledgeSearch` | Already guarded (request id + debounce). Deps are on the bank's strings | No change |
@@ -183,3 +183,87 @@ slice. The DOM reads above are the evidence.
   - exit code 2, which the probe returns whenever payload gaps exist
 - The probe's gaps are missing fixtures in the probe itself. This slice changes nothing on
   the server.
+
+## Fix round (2026-09-27): the guards latched `loading`
+
+An independent verifier refuted the first round, and the finding was correct. The new
+generation bump drops a read that has already set `loading: true`. When the drop came from a
+**deselect** (a null node, session or peer) rather than from a newer read, nothing set
+loading back to false. This needs no race. A workspace switch first runs the refresh effect
+with the new bank and the old selection, which starts a read. Then the scope effect clears
+the selection, and the null branch bumps the generation and returns.
+
+What the user saw:
+
+- **Knowledge.** After a workspace switch, or clicking "New" while a node was open, the
+  draft pane showed NodeHead "loading…" and RevisionHistory "loading history…". Before
+  the first round it showed "no accepted revision".
+- **Forum and Context.** ForumView showed "Fetching messages…" permanently, and
+  ContextPanel's Refresh button stayed disabled.
+
+`useEvidenceReview` already had generation guards before this slice, and it had the same
+shape of latch, which only a race could reach.
+
+| Hook | Fix |
+|---|---|
+| `useKnowledge.refresh` | The null branch calls `setLoading(false)`. |
+| `useMemory.refreshMessages` / `refreshContext` | The null branches call `setLoadingMessages(false)` / `setLoadingContext(false)`. |
+| `useEvidenceReview` lifecycle, association, session links | The null branches clear their own loading flag. |
+| `useEvidenceReview` dependents | `setDependentsLoading(false)` runs at the association bump itself. A failed or empty association on the next node never issues the reverse read that would clear the previous node's flag. |
+| `useEvidenceReview` trace | The scope reset that bumps `traceGen` also clears `traceLoading`. |
+| `useListing`, `useNodeLifecycle`, `useKnowledgeSearch`, `useOverview` | Checked. Every bump is followed by a read that clears the flag, or the early return already clears it. No change. |
+
+### `src/state/loadingLatch.test.tsx`, through the real hooks
+
+- **On the previous HEAD (fba1abd): 0 pass / 6 fail.** Every failure was
+  `Expected: false / Received: true`. They cover the verifier's four probes (Knowledge
+  workspace switch, Knowledge "New" mid-read, Memory workspace switch after settle, and
+  Memory context mid-read with App's `[peer, session]` effect mirrored in the harness),
+  plus two useEvidenceReview cases: deselect mid-read, and a scope switch mid-trace.
+- **Added after the fix, each red before its own fix:** a case where B's dependents read
+  is in flight and the next node's association answers `null` (1 fail before the bump-site
+  clear), and a deselect with the association read itself in flight (added because
+  mutant M5 survived without it).
+- **After the fix:** 8 pass / 0 fail.
+
+Mutants, one line removed at a time from the fixed code. Every mutant fails its matching
+test:
+
+| Mutant | Result |
+|---|---|
+| M1 `useKnowledge` null branch `setLoading(false)` | both Knowledge tests fail (6/2) |
+| M2 `useMemory` `setLoadingMessages(false)` | both Memory tests fail (6/2) |
+| M3 `useMemory` `setLoadingContext(false)` | the context test fails (7/1) |
+| M4 `useEvidenceReview` `setLifecycleLoading(false)` | the deselect test fails (7/1) |
+| M5 `useEvidenceReview` `setAssociationLoading(false)` | the association in-flight test fails (7/1) |
+| M6 `useEvidenceReview` bump-site `setDependentsLoading(false)` | the deselect and "no evidence" tests fail (6/2) |
+| M7 `useEvidenceReview` `setSessionLinksLoading(false)` | the deselect test fails (7/1) |
+| M8 `useEvidenceReview` scope reset `setTraceLoading(false)` | the trace test fails (7/1) |
+
+Other checks in this round:
+
+- `bun test src` (app/ui/v2): 214 pass, 0 fail.
+- UI `tsc -p tsconfig.json`: exit 0.
+- `bun run typecheck` (app/server): exit 0.
+- Python guard: 269 tests, `OK (skipped=1)`.
+- Bundle rebuilt as `index-BEtvicZa.js`.
+- Acceptor live probe, re-run on this tree: 57 methods on HTTP, MCP and CLI; isolation
+  191 pass / 0 fail; 26 payload gaps; 0 seed errors; fatal none; rc 2. That is the same
+  result as the first round (gaps give rc 2), and this slice changes nothing on the server.
+
+The live 10/10 above ran on the first-round bundle (`index-9YwOro3f.js`) and was **not
+re-run** on this one. This round changes only the null-selection branches. The
+successor-link path always has a non-null selection, so it never reaches them.
+
+### Still open, not fixed in this round
+
+- **App-level `useStableBank` has no unit test.** `useKnowledge` stabilises the bank
+  itself, which hides a revert of App.tsx alone. The claimed drop in Evidence and Overview
+  refetches rests only on the live settle run.
+- **Transient badges while S2 loads.** KnowledgeView derives the TypeBadge and
+  HorizonBadge from B's head beside S2's id, and `useNodeLifecycle` receives B's head
+  revision id as `refreshKey`, which costs one extra lifecycle read. NodeHead is masked by
+  `loading`, and the state is correct once it settles. This predates the slice.
+- **User-triggered actions have no scope guard:** `useMemory.ask` / `verify` /
+  `verifyAll` and `useKnowledge.actions.seed` / `publish`.
+- **No screenshot for this slice.** The browser evidence is DOM reads only.
