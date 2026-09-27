@@ -25,7 +25,7 @@ Python LanceModel registries                 local LanceDB, two roots
   target_v1/     (target19, 19 tables) ----->  ARRA_KNOWLEDGE_DATASET_ROOT
     dev:  create_target19_dataset.py             nodes/revisions/taxonomy/context/
     ops:  arra-migrate-copy (#34),               evidence/trace/lifecycle/search:
-          new candidate from a copy              57 registry methods on HTTP,
+          new candidate from a copy              58 registry methods on HTTP,
                                                   MCP (kb_*) and CLI (kb <method>)
                           |                              |
                           v                              v
@@ -45,7 +45,7 @@ Python LanceModel registries                 local LanceDB, two roots
 | `just/scripts/create_target19_dataset.py` | Dev-only stopgap that creates a target19 dataset and seeds its first `workspaces` row, with `created_at` truncated to milliseconds (R1) |
 | `just/scripts/write_dev_policy.py` | Dev-only auth policy + bearer token writer (`arra-auth/v1` shape) |
 | `just/scripts/run_dev_server.py` | Execs the server as the sole target19 writer, holding the fd-42 gate; defaults `ARRA_CHAT_PROVIDER=ollama` (line 45) |
-| `server/src/` | Elysia HTTP/MCP, storage and application behavior. `src/knowledge/registry.ts` is the 57-method target19 method table. `src/mcp/tools.ts` is the MCP catalogue: 8 memory + 57 `kb_*` = 65 tools. `src/mcp/legacy-v3/` holds the 25 v3-compatible tools, served only with `ARRA_MCP_V3_COMPAT=1`. `src/chat-model*.ts` is the chat provider (R9) |
+| `server/src/` | Elysia HTTP/MCP, storage and application behavior. `src/knowledge/registry.ts` is the 58-method target19 method table. `src/mcp/tools.ts` is the MCP catalogue: 8 memory + 58 `kb_*` = 66 tools. `src/mcp/legacy-v3/` holds the 25 v3-compatible tools, served only with `ARRA_MCP_V3_COMPAT=1`. `src/chat-model*.ts` is the chat provider (R9) |
 | `cli.ts`, `cli/` | CLI: 13 legacy memory commands, `kb <method>` for every registry method, 6 daily-loop aliases (#31), and `search --mode keyword\|semantic` over the knowledge tier (#30) |
 | `cli.test.ts`, `server/test/` | Regression tests (156 `*.test.ts` files under `server/test/` on `ec5c2c5`, plus `cli.test.ts`; `git ls-tree -r --name-only HEAD -- app/server/test \| rg -c '\.test\.ts$'`); isolated fixtures/stubs; run per-kernel with `bun run test:<kernel>` (see Verification below) |
 | `ui/v2/` | React UI, built into `server/public/v2` and served at `/v2/`; its own 67 unit-test files (on `ec5c2c5`) run with `bun test` there |
@@ -174,9 +174,9 @@ Message reads are behind membership (R3). `listMessages`, `getMessage` and
   otherwise the answer is 403 `forbidden`.
 
 MCP endpoint: `/mcp/:bank`, with bank = `workspaces.name` (not credentials). `tools/list`
-returns up to **65 tools**, filtered to what the caller's token grants: 8 legacy memory tools
-plus 57 `kb_<method>` tools generated from `src/knowledge/registry.ts`, one per knowledge
-kernel method (33 `content:read`, 22 `content:write`, 2 `audit:read`). `kb_*` tools are
+returns up to **66 tools**, filtered to what the caller's token grants: 8 legacy memory tools
+plus 58 `kb_<method>` tools generated from `src/knowledge/registry.ts`, one per knowledge
+kernel method (34 `content:read`, 22 `content:write`, 2 `audit:read`). `kb_*` tools are
 listed only when `ARRA_KNOWLEDGE_DATASET_ROOT` is configured. Measured live with the dev
 policy: 65.
 
@@ -203,7 +203,7 @@ kb_scanDependents kb_reconcileRevisionAssociations
 **v3-compatible tools** (R18; design in `docs/overnight/V3-PARITY.md`). The family lives in
 `server/src/mcp/legacy-v3/` and is served only with `ARRA_MCP_V3_COMPAT=1` (exactly `1`,
 `composition.ts:211-213`). It lets an existing arra-oracle v3 client talk to v4 unchanged.
-Measured live with the flag on: `tools/list` returns 90 (8 + 57 + 25).
+Measured live with the flag on, before D3b added `getRepresentation`: `tools/list` returns 90 (8 + 57 + 25).
 
 ```text
 carried (25)   ____IMPORTANT
@@ -282,7 +282,7 @@ POST /mcp/:bank                           POST /mcp/:bank/:workspace  (always 40
 GET  /  /knowledge.html  /v2/*            static assets
 ```
 
-`POST /api/knowledge/:bank/:method` is the HTTP leg of the 57 `kb_*` methods above — one
+`POST /api/knowledge/:bank/:method` is the HTTP leg of the 58 `kb_*` methods above — one
 RPC-style route per method, body `workspace_name` must equal `:bank`, capped at 1 MiB
 (the MCP leg caps at 256 KiB). Backfill and reindex are global maintenance operations in
 this prototype; a `?bank` on either gives 400. Do not infer bank isolation from an

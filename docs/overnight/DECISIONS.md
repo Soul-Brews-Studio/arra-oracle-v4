@@ -421,3 +421,21 @@ v3". Measured usage on this machine: 709 real v3 tool calls; `oracle_search` 46%
   mirror or restore Actions") is closed by this ruling.
 - **Reverse by:** restore `push:` / `pull_request:` in `ci.yml`, once billing is restored.
 
+
+## D3b · #32 / #31 peer representation and node/revision-grounded context are owed (Nat, 2026-09-28)
+
+- **Ruling** (NAT-DECISIONS D3, answer b): #32 is not redefined as message-grounded chat.
+  Peer representation plus node/revision-grounded context is owed before #32 and #31 close:
+  AC-MATRIX slice 11, then slice 10.
+- **Landed as** (branch `v4/on-peer-representation`):
+  - `getContext` and `answerChat` accept optional `observer_peer_name` and `subject_peer_name`.
+    They narrow selection only; permissions are unchanged.
+  - Both select eligible current `conclusion` revisions (the R10 type term), with node/revision
+    ids and source handles. `answerChat` cites `conclusions_used`.
+  - A new registry method, `getRepresentation` (observer -> subject), brings the registry to 58.
+  - Slice 10 adds a `budget` block (a named estimate, `tokenizer: null`) and a `freshness`
+    block (`assembled_at`, table-version watermarks, index `"unknown"`).
+  - No new table.
+  - Contracts: `representation-v1.md` (new) and the `chat-v1.md` amendment.
+- **Not assigned an R-number here.** Parallel slices append to this file, so the integrator
+  assigns one at merge.
