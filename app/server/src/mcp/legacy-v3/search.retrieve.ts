@@ -20,8 +20,13 @@ export type KernelHit = {
 
 /** The kernel's own #30 coverage answer (search-chunk-v1.md §21): one bit, a
  *  closed reason and the bound itself -- never a count. Named locally rather
- *  than imported from `publication/*` (A1: the adapter owns no import there). */
-type KernelCoverage = { coverage: "full" | "partial"; coverage_reason: "candidate_ceiling" | null; candidate_ceiling: number };
+ *  than imported from `publication/*` (A1: the adapter owns no import there).
+ *  Exported so every v3 caller of the two #30 searches (this module,
+ *  `oracle_search_chain.ts`) shares one shape rather than each retyping the
+ *  kernel's three fields; `search-chunk-coverage-tie.test.ts` ties this shape
+ *  to the kernel's own `publication/search-chunk.coverageSignal.ts` at compile
+ *  time, from a test, since the adapter itself may still not import it. */
+export type KernelCoverage = { coverage: "full" | "partial"; coverage_reason: "candidate_ceiling" | null; candidate_ceiling: number };
 
 export type Retrieved = {
   hits: KernelHit[];
