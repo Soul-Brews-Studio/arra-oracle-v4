@@ -90,18 +90,18 @@ I found these with `rg -l useEffect app/ui/v2/src` plus `rg "await |\.then\("`.
 
 | Hook / site | Finding | Action |
 |---|---|---|
-| `useKnowledge.refresh` | No guard, last response wins (**the bug**). Keyed on bank identity. | Fixed (gen + `useStableBank`) |
-| `App.tsx` bank prop | New object per render, fed to Overview, Explore and Knowledge | Fixed (`useStableBank`) |
-| `useMemory.refreshMessages` / `refreshContext` | No guard. A fast session switch showed A's transcript or context under B | Fixed (gen per lane) |
-| `useListing` → `useCursorList.load` | No guard. Toggling "show history", a scope change, or a fast next/prev let the older page land last | Fixed (gen) |
-| `useEvidenceReview` (trace, session links, lifecycle, association + dependents, every load-more) | Already has a generation counter per lane. Its `refresh*` callbacks depend on `b` identity, so before the App fix every App render refetched the Evidence panels. They showed no wrong data, only wasted requests. The fix round found the loading latch below in four of its lanes | Covered by the App fix. Loading latch fixed in the fix round |
-| `useNodeLifecycle` (LifecycleBanner's source) | Already guarded (gen). Deps are on the bank's strings | No change |
-| `useEvidenceStatus` | Already guarded (gen per lane). Deps are on the bank's strings | No change |
-| `useKnowledgeSearch` | Already guarded (request id + debounce). Deps are on the bank's strings | No change |
-| `useOverview` | Already guarded (volley id). `OverviewView` memoises the bank itself | No change |
+| `useKnowledge.refresh` (and `publish`'s own refresh) | No guard, last response wins (**the bug**). Keyed on bank identity. | Fixed. Keyed guard (`useKeyedRead`, round 3) plus `useStableBank` inside the hook |
+| `App.tsx` bank prop | New object per render, fed to Overview, Explore and Knowledge | Fixed (`useStableBank`). **Not pinned by any test**; see "Round 3" below |
+| `useMemory.refreshMessages` / `refreshContext`, and `send` / `join` that call them | No guard at base. Round 2's counter guard was wrong for `send`/`join`: they called a refresh bound at click time, so sA's read beat sB's | Fixed in round 3 (keyed guard; the refresh reads the session on screen) |
+| `useListing` → `useCursorList.load`, `refreshAll` | No guard at base. `refreshAll` has always been frozen at the first render, so a workspace switch (and the refresh-all button) re-read the FIRST workspace. Round 2's counter did not fix that | Fixed in round 3 (keyed guard; `load` reads the current `fetchPage`; `refreshAll` is built from the stable per-list refreshes) |
+| `useEvidenceReview` (trace, session links, lifecycle, association + dependents, every load-more) | Had a counter per lane. `applyLifecycleWrite` called a `refreshLifecycle` bound at click time, so node A's lifecycle rows and write outcome landed under node B. Its `refresh*` callbacks still depend on `b` identity, so an unstable bank still refetches the panels (wasted requests only) | Fixed in round 3 (keyed guard per lane; writes moved to `useLifecycleWrites`, which drops A's outcome under B) |
+| `useNodeLifecycle` (LifecycleBanner's source) | Counter guard inside a `useEffect`. Every read is issued by the effect for that render's node, and nothing calls it from a stale closure | No change |
+| `useEvidenceStatus` | Counter guard per lane inside `useEffect`s, keyed on the rows objects. No imperative caller | No change |
+| `useKnowledgeSearch` | Request id + debounce. `run` fires only from its own effect's timer | No change |
+| `useOverview` | Volley id. `refresh` is rebuilt per bank and the button reads the current one; `OverviewView` memoises the bank itself | No change |
 | `useCiteTargets`, `useRoute`, `useToken` | No fetch | No change |
 | `KnowledgeView` / `ExploreView` effects | Route → hook-state sync only, no fetch | No change |
-| `useMemory.ask`, `verify`/`verifyAll`, `useKnowledge.actions.seed`/`publish`, `WorkspaceBar.ping` | User-triggered actions, not effect reads. A switch while one is in flight can still land its result in the new selection or scope. Examples: `seed`'s taxonomy ids saved under a newly chosen bank, or a chat answer shown beside a different session | **Not fixed.** Listed as an open risk |
+| `useMemory.ask`, `verify`/`verifyAll`, `useKnowledge.actions.seed`, `WorkspaceBar.ping` | User-triggered actions, not reads. A switch while one is in flight can still land its result in the new selection or scope. Examples: `seed`'s taxonomy ids saved under a newly chosen bank, or a chat answer shown beside a different session | **Not fixed.** Listed as an open risk |
 
 ## Live proof (fresh gated stack, ego-browser)
 
@@ -304,3 +304,85 @@ first-round files were written into `app/server/public/v2` temporarily and resto
   `verifyAll` and `useKnowledge.actions.seed` / `publish`.
 - **No screenshot for this slice.** `Page.captureScreenshot` times out in this ego-browser
   session. The browser evidence is DOM reads only.
+
+## Round 3 (2026-09-27): a keyed guard, because the counter lost to stale closures
+
+**The finding.** Round 2's guard was "the latest call wins". `useMemory.send` and `join`
+called the `refreshMessages` / `refreshContext` bound at click time, which carried the
+session of that render. Send in sA, switch to sB mid-append: B's read goes out, then the
+post-send read for sA bumps the counter and wins. `useEvidenceReview.applyLifecycleWrite`
+had the same shape for the node, and `useListing.refreshAll` (`[]` deps) re-read the first
+render's workspace on every switch.
+
+**The fix.** `src/state/useKeyedRead.ts` replaces the counters in `useMemory`,
+`useKnowledge`, `useListing` and `useEvidenceReview`:
+
+- a ref rewritten on every render holds the current key (node, session or scope tuple)
+  and the values it came from. `begin()` reads the selection from it, never from the
+  caller's closure, so every post-write refresh reads what is on screen.
+- a result lands only while its key is still current (`live`). Reads for the same key are
+  ordered too: the newest wins, so a select-time read cannot erase a post-send one, and a
+  fast next/prev keeps its order. Since `begin()` only issues for the current key, the
+  newest read can no longer be for a place already left.
+- `loading` is derived: true only while the current key has a read pending. The round-1
+  `setLoading(false)` lines in the null branches are gone; a deselect or scope switch
+  changes the key, so the flag cannot latch.
+
+`useLifecycleWrites.ts` holds retire and supersede (split out to keep
+`useEvidenceReview.ts` at 424 lines). A write that lands after the node changed refreshes
+the node on screen and does not set node A's outcome under node B.
+
+### `src/state/staleClosure.test.tsx`, failing-first through the real hooks
+
+On HEAD 3cd456c (`.tmp/ui-stale-r3/red-head.txt`): **1 pass / 6 fail**.
+
+| Test | On HEAD | Fixed |
+|---|---|---|
+| send in sA, switch to sB mid-append: ends on sB's transcript | fail (`["mA1"]` under sB) | pass |
+| join in sA, switch to sB mid-join (App's context effect mirrored) | fail (`cA1` under sB) | pass |
+| send in sA, deselect mid-append: no transcript, no latched loading | fail (sA's rows under no session) | pass |
+| retire A, switch to B mid-write: B's lifecycle rows, no A outcome | fail (A's rows under B) | pass |
+| workspace switch after the first render reads wsTWO | fail (no wsTWO request at all) | pass |
+| refresh-all after a switch reads the current workspace | fail (three wsONE requests) | pass |
+| publish S2 from B, B's read answering last: S2 on screen | pass (keep-green guard) | pass |
+| trace looked up in w1, answering after a switch to w2, does not land | added after the mutant run below (not failing-first) | pass |
+
+Whole UI suite after the fix: **299 pass / 0 fail**.
+
+### Mutants (`.tmp/ui-stale-r3/mutants.txt`, run against the four stale-read test files)
+
+| Mutant | Killed by |
+|---|---|
+| `live()` ignores the key (the round-2 counter) | the trace test. It **survived** the first run, which is why that test exists: a scope switch starts no new lookup, so only the key can drop the old one |
+| `live()` ignores the sequence (key only) | the audit "show history" toggle test (same key, two loads) |
+| the ref frozen at mount (a stale closure) | 17 tests |
+| `loading` not tied to the current key | loadingLatch "scope switch mid-trace-lookup" |
+| lifecycle write outcome applied whatever node is on screen | the retire-A-switch-to-B test |
+| `useListing.load` uses the render-bound `fetchPage` | both workspace-switch tests and the toggle test |
+| `useMemory.refreshMessages` uses its closure's session | send-switch and send-deselect |
+
+### Live, fresh gated stack, ego-browser (space 269), bundle `index-C7qWYZZr.js`
+
+The stack is `.tmp/ui-stale-r3/stack.sh`, which is `.tmp/ui-stale-stack.sh` plus a second
+session `s2` that alice joins.
+
+| Run | Result |
+|---|---|
+| successor B → S2, settle, 10× | **10 / 10** show S2's id, title and body |
+| successor B → S2, hold, 10× | **10 / 10** |
+| Messages: send in s1, `appendMessages` held 0.8–1.2 s, switch to s2 mid-append, any s1 `listMessages` delayed 0.4–0.9 s, 6× | **6 / 6** end on s2 showing "No messages yet" and no s1 message. The post-send read goes to s2 (`appendMessages(s1)`, `listMessages(s2)`, `getContext(s2)`, `listMessages(s2)`), and all six sends were written to s1 |
+| same send-switch run on the round-2 bundle (`index-DGxyeGVx.js`, 3cd456c), 6× | **0 / 6**. s2 is selected, yet s1's 7+ messages are shown, and a `listMessages(s1)` fires after the append |
+
+There is no screenshot: `Page.captureScreenshot` timed out, so the evidence is DOM reads
+(`.tmp/ui-stale-r3/successor-*.json`, `send-switch-fixed.json`,
+`send-switch-round2-bundle.json`). Afterwards the server and its mktemp root were removed,
+the origin's localStorage was cleared (3 keys → 0), and the space was finished.
+
+### The App-level `useStableBank` is still not pinned
+
+Reverting App.tsx alone would not turn any test red. A DOM is not the obstacle:
+`src/testing/installFakeDom.ts` can mount the real `App`. The pin was not written inside
+this round's time box. The one consumer it still protects is `useEvidenceReview`, whose
+refresh callbacks depend on `b` identity. There, an unstable bank means re-requests on
+every App render (wasted work), and no longer wrong data, because the keyed guard compares
+strings. Still open.
