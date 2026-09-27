@@ -9,7 +9,7 @@ import { describe, expect, test } from "bun:test";
 import type { RequestAuthority } from "../src/knowledge/registry";
 import type { KnowledgeAccess } from "../src/knowledge/transport";
 import { TaxonomyError } from "../src/publication/taxonomy";
-import { validateRememberType } from "../src/mcp/remember.validateType";
+import { validateType } from "../src/mcp/remember.validateType";
 
 const AUTHORITY: RequestAuthority = { peers: null, operator: false };
 
@@ -40,7 +40,7 @@ function fakeAccess(opts: {
 describe("remember.validateType (D5a)", () => {
   test("unknown type term is refused with the kernel's closed envelope", async () => {
     const access = fakeAccess({ termByName: () => null });
-    await expect(validateRememberType(access, "alpha", AUTHORITY, "invented_type")).rejects.toMatchObject({
+    await expect(validateType(access, "alpha", AUTHORITY, "invented_type")).rejects.toMatchObject({
       code: "invalid_reference",
       path: "/type",
     });
@@ -48,12 +48,12 @@ describe("remember.validateType (D5a)", () => {
 
   test("a retired term is refused, not silently accepted", async () => {
     const access = fakeAccess({ termByName: () => ({ id: "t1", is_active: false }) });
-    await expect(validateRememberType(access, "alpha", AUTHORITY, "conclusion")).rejects.toBeInstanceOf(TaxonomyError);
+    await expect(validateType(access, "alpha", AUTHORITY, "conclusion")).rejects.toBeInstanceOf(TaxonomyError);
   });
 
   test("the sealed type vocabulary itself missing is refused (integrity, not silent)", async () => {
     const access = fakeAccess({ vocabulary: null });
-    await expect(validateRememberType(access, "alpha", AUTHORITY, "note")).rejects.toMatchObject({
+    await expect(validateType(access, "alpha", AUTHORITY, "note")).rejects.toMatchObject({
       code: "invalid_reference",
       path: "/type",
     });
@@ -61,17 +61,17 @@ describe("remember.validateType (D5a)", () => {
 
   test("valid, active term is accepted and returned unchanged", async () => {
     const access = fakeAccess({ termByName: (name) => ({ id: `t-${name}`, is_active: true }) });
-    await expect(validateRememberType(access, "alpha", AUTHORITY, "conclusion")).resolves.toBe("conclusion");
+    await expect(validateType(access, "alpha", AUTHORITY, "conclusion")).resolves.toBe("conclusion");
   });
 
   test("omitted type defaults to note, and note must itself be active", async () => {
     const access = fakeAccess({ termByName: (name) => (name === "note" ? { id: "t-note", is_active: true } : null) });
-    await expect(validateRememberType(access, "alpha", AUTHORITY, undefined)).resolves.toBe("note");
+    await expect(validateType(access, "alpha", AUTHORITY, undefined)).resolves.toBe("note");
   });
 
   test("Thai term is accepted when it resolves as an active term", async () => {
     const access = fakeAccess({ termByName: (name) => (name === "บันทึก" ? { id: "t-th", is_active: true } : null) });
-    await expect(validateRememberType(access, "alpha", AUTHORITY, "บันทึก")).resolves.toBe("บันทึก");
+    await expect(validateType(access, "alpha", AUTHORITY, "บันทึก")).resolves.toBe("บันทึก");
   });
 
   test("cross-workspace: a term found in a different workspace's lookup never leaks in (workspace_name is what the fake would have scoped on)", async () => {
@@ -95,12 +95,12 @@ describe("remember.validateType (D5a)", () => {
         };
       },
     } as unknown as KnowledgeAccess;
-    await validateRememberType(access, "beta-workspace", AUTHORITY, "note");
+    await validateType(access, "beta-workspace", AUTHORITY, "note");
     expect(seenBank).toBe("beta-workspace");
   });
 
   test("no knowledge transport configured fails closed, not open", async () => {
-    await expect(validateRememberType(null, "alpha", AUTHORITY, "note")).rejects.toMatchObject({
+    await expect(validateType(null, "alpha", AUTHORITY, "note")).rejects.toMatchObject({
       code: "invalid_request",
       path: "/type",
     });

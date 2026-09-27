@@ -27,7 +27,7 @@ const encode = (payload: Record<string, unknown>) => new TextEncoder().encode(JS
  * this deployment; that is a fail-closed `invalid_request`, not a silent
  * bypass, since D5a is "validate it now", not "validate it when convenient".
  */
-export async function validateRememberType(
+export async function validateType(
   knowledgeAccess: KnowledgeAccess | null,
   bank: string,
   authority: RequestAuthority,

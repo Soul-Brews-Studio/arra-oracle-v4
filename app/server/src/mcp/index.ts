@@ -21,7 +21,7 @@ import { bodyScopeRefusal } from "../knowledge/transport.bodyScopeRefusal";
 import { payloadRefusal } from "../knowledge/transport.payloadRefusal";
 import { callKnowledgeMethod } from "./index.callKnowledgeMethod";
 import { V3_TOOL_NAMES, V3_TOOLS } from "./legacy-v3/catalogue";
-import { validateRememberType } from "./remember.validateType";
+import { validateType } from "./remember.validateType";
 import { dispatchLegacyV3 } from "./legacy-v3/dispatchLegacyV3";
 import { SERVER_NAME, SERVER_VERSION, err, negotiate, ok, text } from "./protocol";
 import { TOOLS } from "./tools";
@@ -139,7 +139,7 @@ export async function dispatchTool(
       if (!isBoundAuthor({ peer_name: peerName }, ops.authority.peers)) throw new AuthDenied("forbidden");
       // D5a: the same sealed `type` vocabulary a knowledge-transport publish
       // enforces, now enforced here too (`remember.validateType.ts`).
-      const type = await validateRememberType(knowledgeAccess, ops.bank, ops.authority, optionalString(args, "type"));
+      const type = await validateType(knowledgeAccess, ops.bank, ops.authority, optionalString(args, "type"));
       const res = await ops.insert({
         name: optionalString(args, "name") ?? content.slice(0, 48).replace(/\s+/g, "-").toLowerCase(),
         content,
