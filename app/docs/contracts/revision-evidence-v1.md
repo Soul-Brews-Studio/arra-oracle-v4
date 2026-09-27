@@ -255,3 +255,29 @@ Required proof:
 8. Full Python discovery, full Bun app/CLI tests, strict TS/build, scoped Ruff/compile/diff. No new dependency; active baseline protected diff. Independent reviewer reports scope and any missing proof before local commit authorization.
 
 #23 remains open until its OTHER specification/namespace/adapter gates are resolved. Auth, cardinality/reference service enforcement, head publication, crashes, cross-process exclusion and runtime migration are not delivered by a byte-contract package.
+
+## Amendment 2026-09-26 (post-merge Nat style (one function per file, no file over 500 lines); behaviour-preserving moves only)
+
+`app/migrate-py/src/arra_migrate/revision_v1.py` was 773 lines, over the 500-line
+cap ruled in `docs/overnight/PLAN.md` §1 (2026-09-26 21:00 entry). To bring it
+under the cap with behaviour-preserving moves only, its request-framing types
+and helpers (`ContractError`, `BatchItem`, `BatchResult`, `WorkerConfig`,
+`strict_binary64_loads`, `encode_request`, and the shared validators they use)
+were moved byte-identical into a new sibling module,
+`app/migrate-py/src/arra_migrate/contract_batch_frame.py`; `revision_v1.py`
+imports them back and is now 465 lines. No canonicalization logic moved and no
+public name was renamed.
+
+This changes what "the adapter" means for §8's two containment clauses
+("no import into active migrator/storage path" and "The adapter does not open
+LanceDB"): both clauses now apply to `contract_batch_frame.py` as well as
+`revision_v1.py`. `app/migrate-py/tests/test_revision_v1.py::IsolationTests`
+was updated accordingly -- `test_no_active_python_path_imports_the_adapter`
+and `test_the_adapter_itself_imports_no_lancedb_or_storage` now scan/check
+both files as one unit, via the new `ADAPTER_UNIT` tuple. This EXTENDS the
+guard's coverage (closing a gap where code moved out of `revision_v1.py`
+would have gone unchecked); nothing already enforced was loosened, and no
+existing assertion was deleted. Verified by temporarily adding
+`from .contract_batch_frame import encode_request, ContractError` to
+`__main__.py` in a scratch copy: `test_no_active_python_path_imports_the_adapter`
+fails as expected, then passes again once removed.

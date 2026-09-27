@@ -24,56 +24,27 @@
  *  - `inputSchema`: v3's argument names, so existing clients keep working.
  */
 
-import type { WorkspaceAction } from "../../auth/policy";
+import {
+  FORUM_WRITE,
+  KEYWORD,
+  NO_FILE,
+  PUBLISH,
+  PUBLISH_REQUIRES,
+  RECALL,
+  RECALL_FULL,
+  SCORE,
+  SEMANTIC,
+  TAXONOMY_READS,
+  TAXONOMY_WRITES,
+} from "./catalogue.vocabulary";
+import { int } from "./catalogue.int";
+import { obj } from "./catalogue.obj";
+import { spec } from "./catalogue.spec";
+import { str } from "./catalogue.str";
+import { strings } from "./catalogue.strings";
+import type { V3ToolSpec } from "./catalogue.types";
 
-export type V3ToolSpec = {
-  readonly name: string;
-  readonly action: Extract<WorkspaceAction, "content:read" | "content:write">;
-  readonly alsoNeeds?: readonly Extract<WorkspaceAction, "content:read">[];
-  readonly uses: readonly string[];
-  readonly requires: readonly string[];
-  readonly description: string;
-  readonly inputSchema: Record<string, unknown>;
-};
-
-const str = (description: string) => ({ type: "string", description });
-const int = (description: string) => ({ type: "integer", description });
-const strings = (description: string) => ({ type: "array", items: { type: "string" }, description });
-const obj = (properties: Record<string, unknown>, required: string[] = []) => ({
-  type: "object",
-  properties,
-  ...(required.length > 0 ? { required } : {}),
-});
-
-const RECALL = " Superseded and retired entries are excluded from recall (a v3 change: v3 still returned them).";
-/** R18 D3 fix round: the V6 recall tools list through `listNodes`'s
- *  `eligible_only` view, #29's FULL rule, so they say so. */
-const RECALL_FULL = RECALL + " So are forgotten (is_active:false) entries and entries outside their validity window.";
-const NO_FILE = " Nothing is written to disk; LanceDB is canonical, so `file` is null.";
-const TAXONOMY_READS = ["lookupVocabularyByName", "lookupTermByName"];
-const TAXONOMY_WRITES = ["seedReservedVocabularies", "createVocabulary", "createTerm"];
-const PUBLISH = [...TAXONOMY_READS, ...TAXONOMY_WRITES, "getPeer", "registerPeer", "publishRevision", "indexRevisionChunks"];
-const PUBLISH_REQUIRES = [...TAXONOMY_READS, ...TAXONOMY_WRITES, "publishRevision", "indexRevisionChunks"];
-/**
- * K1, the #30 knowledge searches, under the names #30 SHIPPED them with
- * (search-chunk-v1.md §13). V3-PARITY.md §5 designed them as
- * `searchChunksKeyword`/`searchChunksSemantic`; those names never existed,
- * so rule (c) kept every tool that required them hidden.
- */
-const KEYWORD = "searchKnowledgeKeyword";
-const SEMANTIC = "searchKnowledgeSemantic";
-/** How a recall tool's `score` is made; the kernel's own value is not v3's. */
-const SCORE = " score is 1/(1+rank) in v4's order, not v3's fused relevance.";
-/** The forum writes (V4): speaker, session, membership, post, reopen link. */
-const FORUM_WRITE = ["getPeer", "registerPeer", "getSession", "registerSession", "joinSession", "appendMessages", "createSessionLink"];
-
-const spec = (s: V3ToolSpec): V3ToolSpec =>
-  Object.freeze({
-    ...s,
-    ...(s.alsoNeeds === undefined ? {} : { alsoNeeds: Object.freeze([...s.alsoNeeds]) }),
-    uses: Object.freeze([...s.uses]),
-    requires: Object.freeze([...s.requires]),
-  });
+export type { V3ToolSpec } from "./catalogue.types";
 
 export const V3_CATALOGUE: readonly V3ToolSpec[] = Object.freeze([
   spec({
