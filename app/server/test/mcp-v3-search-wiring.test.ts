@@ -344,7 +344,11 @@ describe("#30 coverage (search-chunk-v1.md §21) reaches oracle_search/oracle_as
   // fields (oracle_search_chain.ts:75 read `searchKnowledgeSemantic`'s answer
   // as only `{hits}` and dropped them on every hop). Written red first: before
   // the fix, `hits` is cast as `{ hits: KernelHit[] }` only, so `coverage`
-  // never reached the tool at all and this whole block failed.
+  // never reached the tool -- only the two positive-warning tests below this
+  // block's negative pin (the ones that expect a `hops.coverage` entry to
+  // actually appear) failed (2 fail). The negative "full" pin immediately
+  // below passed either way: `.some(...)` over a `hops.coverage` field that
+  // never arrives is trivially false.
   test("a 'full' kernel answer at every hop produces NO coverage warning (pins the always-partial mutant for the chain path, per finding item 2)", async () => {
     expect((await runChain(["full", "full", "full"])).compat_warnings.some((w) => w.field === "hops.coverage")).toBe(false);
   });
