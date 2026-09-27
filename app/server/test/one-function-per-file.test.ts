@@ -126,79 +126,127 @@ function scan(): string[] {
 const REGEX_CAN_FOLLOW = new Set("(,=:[!&|?{};+-*%<>~^".split(""));
 const REGEX_AFTER_WORD = /(?:^|[^\w$])(?:return|typeof|case|do|else|in|of|new|delete|void|throw|yield|await)$/;
 
+/** A small recursive JS lexer over the type-stripped text. It blanks (spaces,
+ *  newlines kept) the contents of strings, regex literals and comments, and
+ *  the WHOLE body of every template literal, expressions included: nothing
+ *  inside a template can be a top-level export. Template `${...}` expressions
+ *  are lexed as code with their own brace depth and their own nested
+ *  strings/templates/regexes/comments, so a `}` from a block-bodied arrow, an
+ *  object literal or an inner template can no longer end the expression early
+ *  (round-4 retry verifier, B1). */
 function blankLiterals(js: string): string {
   const out = js.split("");
   const blank = (from: number, to: number) => {
-    for (let k = from; k < to; k++) if (out[k] !== "\n") out[k] = " ";
+    for (let k = from; k < to && k < out.length; k++) if (out[k] !== "\n") out[k] = " ";
   };
-  let i = 0;
-  let lastSignificant = "";
-  let lastWord = "";
-  while (i < js.length) {
-    const c = js[i]!;
-    const next = js[i + 1];
-    if (c === "/" && next === "/") {
-      const end = js.indexOf("\n", i);
-      const stop = end === -1 ? js.length : end;
-      blank(i, stop);
-      i = stop;
-      continue;
+  const skipString = (i: number): number => {
+    const q = js[i];
+    let j = i + 1;
+    while (j < js.length && js[j] !== q && js[j] !== "\n") j += js[j] === "\\" ? 2 : 1;
+    return Math.min(j + 1, js.length);
+  };
+  const skipTemplate = (i: number): number => {
+    let j = i + 1;
+    while (j < js.length) {
+      if (js[j] === "\\") { j += 2; continue; }
+      if (js[j] === "`") return j + 1;
+      if (js[j] === "$" && js[j + 1] === "{") { j = skipCode(j + 2, true) + 1; continue; }
+      j++;
     }
-    if (c === "/" && next === "*") {
-      const end = js.indexOf("*/", i + 2);
-      const stop = end === -1 ? js.length : end + 2;
-      blank(i, stop);
-      i = stop;
-      continue;
+    return js.length;
+  };
+  const skipRegex = (i: number): number => {
+    let j = i + 1;
+    let inClass = false;
+    while (j < js.length && js[j] !== "\n") {
+      if (js[j] === "\\") { j += 2; continue; }
+      if (js[j] === "[") inClass = true;
+      else if (js[j] === "]") inClass = false;
+      else if (js[j] === "/" && !inClass) { j++; break; }
+      j++;
     }
-    if (c === "'" || c === '"') {
-      let j = i + 1;
-      while (j < js.length && js[j] !== c && js[j] !== "\n") j += js[j] === "\\" ? 2 : 1;
-      blank(i + 1, j);
-      i = j + 1;
-      lastSignificant = c;
-      continue;
-    }
-    if (c === "`") {
-      let j = i + 1;
-      let depth = 0;
-      while (j < js.length) {
-        if (js[j] === "\\") { j += 2; continue; }
-        if (depth === 0 && js[j] === "`") break;
-        if (js[j] === "$" && js[j + 1] === "{") { depth++; j += 2; continue; }
-        if (depth > 0 && js[j] === "}") depth--;
-        j++;
+    while (j < js.length && /[a-z]/i.test(js[j]!)) j++;
+    return j;
+  };
+  // Lex code from `i`. With `inTemplate`, stop at the `}` that closes the
+  // enclosing `${` and return its index; otherwise run to the end.
+  function skipCode(i: number, inTemplate: boolean): number {
+    let depth = 0;
+    let lastSignificant = "";
+    let lastWord = "";
+    while (i < js.length) {
+      const c = js[i]!;
+      const next = js[i + 1];
+      if (c === "/" && next === "/") {
+        const end = js.indexOf("\n", i);
+        const stop = end === -1 ? js.length : end;
+        blank(i, stop);
+        i = stop;
+        continue;
       }
-      blank(i + 1, j);
-      i = j + 1;
-      lastSignificant = "`";
-      continue;
-    }
-    if (c === "/" && (lastSignificant === "" || REGEX_CAN_FOLLOW.has(lastSignificant) || REGEX_AFTER_WORD.test(lastWord))) {
-      let j = i + 1;
-      let inClass = false;
-      while (j < js.length && js[j] !== "\n") {
-        if (js[j] === "\\") { j += 2; continue; }
-        if (js[j] === "[") inClass = true;
-        else if (js[j] === "]") inClass = false;
-        else if (js[j] === "/" && !inClass) break;
-        j++;
+      if (c === "/" && next === "*") {
+        const end = js.indexOf("*/", i + 2);
+        const stop = end === -1 ? js.length : end + 2;
+        blank(i, stop);
+        i = stop;
+        continue;
       }
-      blank(i + 1, j);
-      i = j + 1;
-      while (i < js.length && /[a-z]/i.test(js[i]!)) i++;
-      lastSignificant = "/";
-      continue;
+      if (c === "'" || c === '"') {
+        const j = skipString(i);
+        blank(i + 1, j - 1);
+        i = j;
+        lastSignificant = c;
+        lastWord = "";
+        continue;
+      }
+      if (c === "`") {
+        const j = skipTemplate(i);
+        blank(i + 1, j - 1);
+        i = j;
+        lastSignificant = "`";
+        lastWord = "";
+        continue;
+      }
+      if (c === "/" && (lastSignificant === "" || REGEX_CAN_FOLLOW.has(lastSignificant) || REGEX_AFTER_WORD.test(lastWord))) {
+        const j = skipRegex(i);
+        blank(i + 1, j);
+        i = j;
+        lastSignificant = "/";
+        lastWord = "";
+        continue;
+      }
+      if (c === "{") depth++;
+      else if (c === "}") {
+        if (depth === 0 && inTemplate) return i;
+        depth--;
+      }
+      if (!/\s/.test(c)) {
+        lastSignificant = c;
+        lastWord = /[\w$]/.test(c) ? (lastWord + c).slice(-12) : "";
+      }
+      i++;
     }
-    if (!/\s/.test(c)) {
-      lastSignificant = c;
-      lastWord = /[\w$]/.test(c) ? lastWord + c : "";
-    } else if (lastWord) {
-      lastWord = lastWord.slice(-12);
-    }
-    i++;
+    return js.length;
   }
+  skipCode(0, false);
   return out.join("");
+}
+
+/** Nesting depth (parens, brackets, braces) at every offset of blanked `js`.
+ *  Exported functions are always declared at depth 0, so a parameter default
+ *  (`f(x, now = () => 1)`) or a nested helper sharing an exported name is
+ *  never mistaken for the export (round-4 retry verifier, N2). */
+function depthMap(js: string): Int32Array {
+  const depth = new Int32Array(js.length + 1);
+  let d = 0;
+  for (let k = 0; k < js.length; k++) {
+    depth[k] = d;
+    const c = js[k];
+    if (c === "(" || c === "[" || c === "{") d++;
+    else if (c === ")" || c === "]" || c === "}") d = Math.max(0, d - 1);
+  }
+  depth[js.length] = d;
+  return depth;
 }
 
 function escapeForRegex(name: string): string {
@@ -216,7 +264,27 @@ function isFunctionValueAt(js: string, at: number): boolean {
   let i = at;
   const skipSpace = () => { while (i < js.length && /\s/.test(js[i]!)) i++; };
   skipSpace();
-  if (/^(?:async\s+)?function\b/.test(js.slice(i, i + 20))) return true;
+  const fn = /^(?:async\s+)?function\b\s*\*?\s*(?:[\p{L}_$][\p{L}\p{N}_$]*)?\s*/u.exec(js.slice(i, i + 200));
+  if (fn) {
+    // A function EXPRESSION is a function value unless it is called on the
+    // spot: `function(){...}()` (Bun's transform drops IIFE parens) is its
+    // RESULT (round-4 retry verifier, N1).
+    i += fn[0].length;
+    const balanced = (open: string, close: string): boolean => {
+      if (js[i] !== open) return false;
+      let d = 0;
+      for (; i < js.length; i++) {
+        if (js[i] === open) d++;
+        else if (js[i] === close && --d === 0) { i++; return true; }
+      }
+      return false;
+    };
+    if (!balanced("(", ")")) return false;
+    skipSpace();
+    if (!balanced("{", "}")) return false;
+    skipSpace();
+    return js[i] !== "(";
+  }
   const asyncMatch = /^async(?![\p{L}\p{N}_$])\s*/u.exec(js.slice(i, i + 12));
   if (asyncMatch) i += asyncMatch[0].length;
   if (js[i] === "(") {
@@ -245,15 +313,17 @@ const ID_AFTER = "(?![\\p{L}\\p{N}_$])";
  *  parameter and return annotations (which may contain `;`, `>` or `=>`) are
  *  gone, so `<T extends Array<string>>` or `(o: { a: number; b: string })`
  *  cannot hide a function (wave-13 verifier forms c, d, e). */
-function isFunctionDeclared(js: string, name: string): boolean {
+function isFunctionDeclared(js: string, name: string, depth: Int32Array): boolean {
   const esc = escapeForRegex(name);
-  const declaration = new RegExp(`${ID_BEFORE}function\\s*\\*?\\s*${esc}${ID_AFTER}\\s*\\(`, "u");
-  if (declaration.test(js)) return true;
+  const declaration = new RegExp(`${ID_BEFORE}function\\s*\\*?\\s*${esc}${ID_AFTER}\\s*\\(`, "gu");
+  for (const m of js.matchAll(declaration)) {
+    if (depth[m.index!] === 0) return true;
+  }
   // A binding either right after const/let/var, or a later declarator in the
-  // same statement (`export const a = () => 1, b = () => 2`).
+  // same statement (`export const a = () => 1, b = () => 2`); top level only.
   const binding = new RegExp(`(?:\\b(?:const|let|var)\\s+|,\\s*)${esc}${ID_AFTER}\\s*=(?!>)`, "gu");
   for (const m of js.matchAll(binding)) {
-    if (isFunctionValueAt(js, m.index! + m[0].length)) return true;
+    if (depth[m.index!] === 0 && isFunctionValueAt(js, m.index! + m[0].length)) return true;
   }
   return false;
 }
@@ -303,6 +373,7 @@ function exportedFunctionNames(text: string, relPath: string): string[] {
     throw new Error(`one-function-per-file: cannot parse ${relPath}: ${String(error)}`);
   }
   const locals = localNameFor(js);
+  const depth = depthMap(js);
   const names: string[] = [];
   for (const name of scanned.exports) {
     if (name === "default") {
@@ -314,10 +385,10 @@ function exportedFunctionNames(text: string, relPath: string): string[] {
       // LOCAL: count it under that local's name, so both the count and the
       // naming check see it (round-3 verifier, forms 1 and 2).
       const target = locals.get("default") ?? js.match(/export\s+default\s+([\p{L}_$][\p{L}\p{N}_$]*)\s*;/u)?.[1];
-      if (target && isFunctionDeclared(js, target)) names.push(target);
+      if (target && isFunctionDeclared(js, target, depth)) names.push(target);
       continue;
     }
-    if (isFunctionDeclared(js, locals.get(name) ?? name)) names.push(name);
+    if (isFunctionDeclared(js, locals.get(name) ?? name, depth)) names.push(name);
   }
   return [...new Set(names)];
 }
