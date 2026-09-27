@@ -26,12 +26,15 @@ function gitFiles(...args: string[]): string[] {
 
 describe("policy.registry.state.ts import boundary", () => {
   test("only its two sibling accessor files import it", () => {
-    const files = gitFiles("server/src/auth");
+    // Every tracked TS file under server/ and the CLI, from ANY directory and
+    // in any import form (static, re-export, dynamic), not just ./ siblings.
+    const files = gitFiles("server", "cli.ts", "cli").filter((f) => /\.tsx?$/.test(f));
     const importers = files.filter((f) => {
-      if (f.endsWith("policy.registry.state.ts")) return false;
+      if (f.endsWith("policy.registry.state.ts") || f.endsWith("style-split2-guard.test.ts")) return false;
       const text = readFileSync(join(ROOT, f), "utf8");
-      return /from\s+["']\.\/policy\.registry\.state["']/.test(text);
+      return /(?:from|import\s*\()\s*["'][^"']*policy\.registry\.state(?:\.ts)?["']/.test(text);
     });
+    expect(files.length).toBeGreaterThan(100);
     const allowed = new Set([
       "server/src/auth/policy.registry.registerPolicy.ts",
       "server/src/auth/policy.registry.lookupPolicy.ts",
