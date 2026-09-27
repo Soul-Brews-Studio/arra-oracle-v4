@@ -43,4 +43,14 @@ describe("ListPanel does not render a false-empty state over a real error", () =
     const html = renderToStaticMarkup(createElement(ListPanel, { ...baseProps, error: null }));
     expect(html).toContain("no peers");
   });
+
+  // #33 AC2 round 4 (nonblocking): with a bad token, Explore > Messages raised
+  // THREE simultaneous assertive alerts with the same sentence (peers,
+  // sessions, transcript). The list errors are polite status now; the one
+  // assertive alert is the transcript's (`Transcript.test.ts`).
+  test("the error line is a polite role=status, not another assertive alert", () => {
+    const html = renderToStaticMarkup(createElement(ListPanel, { ...baseProps, error: "forbidden" }));
+    expect(html).toMatch(/<p role="status"[^>]*>forbidden<\/p>/);
+    expect(html).not.toContain('role="alert"');
+  });
 });

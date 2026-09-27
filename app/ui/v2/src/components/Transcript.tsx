@@ -1,5 +1,5 @@
 import type { MessageRow as MessageRowType } from "../api/memory";
-import { authErrorHint } from "../state/authErrorHint";
+import { authErrorHintFromText } from "../state/authErrorHintFromText";
 import { EmptyState } from "./EmptyState";
 import { MessageRow } from "./MessageRow";
 
@@ -23,6 +23,7 @@ export function Transcript({
   onLoadMore: () => void;
   hasMore: boolean;
 }) {
+  const hint = authErrorHintFromText(error);
   if (!selectedSession) {
     return (
       <EmptyState
@@ -53,9 +54,7 @@ export function Transcript({
       {error && (
         <div role="alert" className="text-xs">
           <p className="text-rose-300">{error}</p>
-          {authErrorHint(error.split(" ", 1)[0]) !== null && (
-            <p className="mt-1 text-muted">{authErrorHint(error.split(" ", 1)[0])}</p>
-          )}
+          {hint !== null && <p className="mt-1 text-muted">{hint}</p>}
         </div>
       )}
       {messages.length === 0 && !loading && !error && (

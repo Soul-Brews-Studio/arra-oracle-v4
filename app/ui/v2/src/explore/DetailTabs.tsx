@@ -173,9 +173,14 @@ export function DetailTabs(props: {
     // viewport-relative height (never squeezed -- round 2's `flex-1 min-h-0`
     // measured 0px at 375x812) and the tab bodies scroll inside it. From `lg`
     // it is the row's `flex-1` again, stretched to the row's height.
+    // Round 4: `max-h-full` caps it at the page scroller's own height, so
+    // scrolled into view the tab bar, transcript and composer fit on one
+    // screen. The 24rem floor still wins where the scroller is shorter (a
+    // landscape phone, 812x375: 384px in a 211px scrollport) -- measured,
+    // capping the floor too left the transcript 24px tall there.
     <section
       aria-label="Explore detail"
-      className="flex h-[80vh] min-h-[24rem] min-w-0 shrink-0 flex-col lg:h-auto lg:min-h-0 lg:flex-1 lg:shrink"
+      className="flex h-[80vh] max-h-full min-h-[24rem] min-w-0 shrink-0 flex-col lg:h-auto lg:min-h-0 lg:flex-1 lg:shrink"
     >
       <div className="flex flex-wrap gap-1 border-b border-edge px-2 py-1.5">
         {EXPLORE_TABS.map((t) => (

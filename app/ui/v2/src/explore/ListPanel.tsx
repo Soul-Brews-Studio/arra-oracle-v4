@@ -93,7 +93,10 @@ export function ListPanel<T>({
               this server does not have listing endpoints yet
             </p>
           )}
-          {supported && error && <p role="alert" className="px-2 pb-2 text-[11px] text-rose-300">{error}</p>}
+          {/* polite `status`, not `alert`: a bad token errors every panel at
+              once, and three assertive alerts with one sentence is noise; the
+              one assertive alert is the transcript's (#33 AC2 round 4). */}
+          {supported && error && <p role="status" className="px-2 pb-2 text-[11px] text-rose-300">{error}</p>}
 
           <div className="flex max-h-56 flex-col gap-0.5 overflow-y-auto px-1">
             {/* #33 fix-round: a 401/403 (or any other real failure) now

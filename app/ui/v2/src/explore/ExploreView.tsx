@@ -117,7 +117,9 @@ export function ExploreView({
           neither can squeeze the other: round 2 left the pane `flex-1
           min-h-0` under `shrink-0` lists and it measured 0px at 375x812. */}
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-visible">
-        <div
+        {/* a <section>, not a <div>: ARIA forbids naming a generic element,
+            so the label was ignored by assistive tech (round 4). */}
+        <section
           aria-label="Peers and sessions"
           className="flex max-h-[45vh] w-full shrink-0 flex-col overflow-y-auto border-b border-edge lg:max-h-none lg:w-64 lg:border-b-0 lg:border-r"
         >
@@ -157,7 +159,7 @@ export function ExploreView({
             onPrev={listing.sessions.prev}
             onRefresh={listing.sessions.refresh}
           />
-        </div>
+        </section>
 
         <DetailTabs
           active={activeTab}

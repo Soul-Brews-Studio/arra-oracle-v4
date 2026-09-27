@@ -5,6 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { authErrorHint } from "../state/authErrorHint";
 import { ErrorNote } from "./ErrorNote";
 
 describe("ErrorNote explains 401/403, not just the bare code", () => {
@@ -18,6 +19,18 @@ describe("ErrorNote explains 401/403, not just the bare code", () => {
     const html = renderToStaticMarkup(createElement(ErrorNote, { error: { code: "forbidden" } }));
     expect(html).toContain("forbidden");
     expect(html.toLowerCase()).toMatch(/permission|scope/);
+  });
+
+  // #33 AC2 round 4 (nonblocking): `describe()` appends ` at <pointer>` to an
+  // envelope that has one, and an R3 peer-binding refusal does. The Transcript
+  // already keyed on the first word; this aside (`App.tsx`'s messageError)
+  // dropped the hint for the very same string.
+  test("a pointer-suffixed code in `message` (`forbidden at /peer_name`) still gets its hint", () => {
+    const html = renderToStaticMarkup(
+      createElement(ErrorNote, { error: { code: "refused", message: "forbidden at /peer_name" } }),
+    );
+    expect(html).toContain("forbidden at /peer_name");
+    expect(html).toContain(authErrorHint("forbidden")!);
   });
 
   test("an unrelated code is unaffected: no invented hint text", () => {
