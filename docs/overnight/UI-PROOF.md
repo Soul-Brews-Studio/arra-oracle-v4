@@ -963,3 +963,30 @@ leaves.
 
 None, again. No file under `app/docs/contracts/` documents UI routing or rendering, and no wire
 shape changed; no new dependency was added.
+
+## Search polish, round 4 (tests only: the original W4, MM1-MM3, a bounded loop test)
+
+No functional change and no live browser or acceptor probe this round (optional per the brief;
+the round-3 probe numbers above still describe the shipped behaviour). What changed:
+
+- **W4 as originally defined above** (`ExploreView` passing `() => {}` instead of
+  `onSearchChange` at the `useKnowledgeSearch(...)` call site) is now pinned by
+  `src/explore/ExploreView.writeBack.test.tsx`, which mounts the REAL `ExploreView` through
+  `react-dom/client` and calls the search box's own `onChange`/`onClick` handlers. Red against
+  the mutant: `W4: typing in the search box writes q/mode back ...` fails with `Expected [{ q:
+  "ลืม", mode: "keyword" }] / Received []`.
+- **MM1** (`setMode` drops `onRouteChange`), **MM2** (`setQuery` always writes `"keyword"`) and
+  **MM3** (the sync effect ignores a routed empty `q`, the Back half of the round-3 finding) each
+  turn one test red (MM3: `Expected: "" / Received: "ลืม"`).
+- **Loop regression now fails, not hangs.** Reverting to the round-3 two-effect design: the
+  round-3 test file ran until `timeout 25` killed it (rc=124, 3217 "Maximum update depth"
+  warnings); the round-4 files fail in under a second (rc=1, `harness rendered more than 200
+  times: the search sync/write-back is looping`).
+- `act` now comes from `react`, not the deprecated `react-dom/test-utils`; the shared fake DOM
+  (`src/testing/installFakeDom.ts`) restores `IS_REACT_ACT_ENVIRONMENT` with the other globals.
+- `state/routeViews.ts` renamed to `state/isRouteView.ts`, after the one function it exports.
+- `q`/`mode` still ride along into other Explore tabs once search has been touched. Kept on
+  purpose; the reason is now in `ExploreView.tsx` next to the call site.
+
+`bun test src` (`app/ui/v2`): 181 pass / 0 fail. `tsc -p tsconfig.json` (`app/ui/v2`) and `bun run
+typecheck` (`app/server`): clean. Python architecture guard: 269 tests, OK (skipped=1).
