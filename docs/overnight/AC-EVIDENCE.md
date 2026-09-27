@@ -198,7 +198,8 @@ evidence, not re-run today — see the table's own note.
   there. Code intelligence is usable for finding callers, but a definition lookup can miss.
   Confirm definitions with `rg`.
 - **Serena:** `find_symbol getContext` (scoped to `app/server/src`) did not answer
-  within 120 s and was moved to the background.
+  within 120 s, was moved to the background, and then failed: `Tool execution timed out after
+  240 seconds`. Serena symbol lookup is **not ready** in this repo today.
 
 Code intelligence is dev tooling only. No product path depends on it, so this row is
 evidence of "readiness where used" and its limits, not a release blocker.
