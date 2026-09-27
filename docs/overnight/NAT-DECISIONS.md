@@ -17,7 +17,15 @@ R-number in `DECISIONS.md`, and any work it triggers goes through the same refut
 | D3 | b) peer representation plus node/revision-grounded context is owed | DECISIONS.md "D3b", branch `v4/on-peer-representation` |
 | D11 | a) accept the measured verdict, correct SPEC, close #8 | R15 "Ruled", SPEC §15.2; #8 closed by #122 |
 | D12 | resolved without a restart: screenshots work again after a CDP screencast probe; `ui-e2e.sh` PASS ok=28 fail=0 skip=1 | `UI-E2E.md` |
-| — | close #75 once R23 merges | R23 |
+| — | #75 closed after R23 merged (#134) | R23 |
+| D3 | b) build peer representation and node/revision-grounded context | R24; slice in progress |
+| D4 | b) a separate instance-level audit log for `/api/backfill` and `/api/reindex` | R25; #126 in progress |
+| D5 | a) validate the legacy `remember` tool | R26; slice in progress |
+| D6 | a) #10 closed on the target-19 design | R27 |
+| D7 | b) #34 re-scoped to "rehearsal proven"; cutover in #135 | R27 |
+| D8 | b) R2 is not a target | R28 |
+| D9 | not asked: #28 already closed on reading A | R29 |
+| D10 | b) #7 stays release-excluded | R29 |
 
 ## Quick table
 

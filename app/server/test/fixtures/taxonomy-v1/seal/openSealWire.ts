@@ -6,8 +6,8 @@
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createApp } from "../../../../src/app";
-import { createOperationService, type StoreDependencies } from "../../../../src/auth/service";
+import { createApp } from "../../../../src/app.createApp";
+import { createOperationService, type StoreDependencies } from "../../../../src/auth/service.createOperationService";
 import { createKnowledgeAccess } from "../../../../src/knowledge/transport";
 import { configureKnowledgeAccess, createMcpAdapter } from "../../../../src/mcp";
 

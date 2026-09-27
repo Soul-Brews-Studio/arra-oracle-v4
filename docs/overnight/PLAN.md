@@ -404,3 +404,21 @@ Every slice below went through the same loop as the night: implement → indepen
 - 21:11 PR #128 MERGED (wave 12: proof sweep, ac1-hardening, and the TASK 10 verdict in PROOF §3c), with local CI PASS: 2066/0 across 158 files. 31 merged worktrees from today were archived to /tmp/arra-v4-cleanup-2026-09-27/wt2, with a restore manifest.
 - 21:48 **#8 table-level measurement ACCEPTED** (honcho-table, round 2). Against a disposable pinned Honcho v3.2.0 Postgres, a verbatim INSERT fails on `h_metadata` (Honcho's SQL column is `metadata`), and a second bank collides on `pk_messages` (v4 numbers message ids per dataset; Honcho uses one identity for the whole database). **Verdict: "byte-compatible" is FALSE as stated; it is TRUE WITH CONVERSIONS for one bank imported into an empty Honcho, with 10 v4-only columns lost** (`HONCHO-TABLE-DIFF.md`, R15 table-level update). Both live legs pass (`app/just/honcho-live.sh`), and teardown leaves 0 containers. The driver corrected two doc lines: REST does carry `messages.created_at` at ms, so only three tables lose `created_at` over REST. Local CI on `13f9d17` passed: 2066/0 server, Python 311 OK, UI 408/0. The first CI run was aborted, because the driver launched it before resolving a merge conflict; the clean rerun is the gate.
 - 21:55 `docs/overnight/NAT-DECISIONS.md`: the 12 decisions only Nat can make (D1 to D12), each with its options, evidence and the work each option would trigger.
+
+### 2026-09-28 (+07): Nat's rulings, one by one
+
+- 02:30–03:05 Nat ruled on D1–D10 one at a time, in Thai. They are recorded as R23–R29 in
+  `DECISIONS.md` and in the "Ruled so far" table in `NAT-DECISIONS.md`.
+- 02:45 **PR #134 MERGED** (`e28b354`), carrying R23. `app/just/local-ci.sh` is now the gate,
+  and `ci.yml` runs only on `workflow_dispatch`. Local CI PASS on `328d688`: 2104/0 across 159
+  files, Python 314, benchmarks 123, UI 408. #75 was closed afterwards.
+- 02:53 **PR #133 MERGED** (`aff292a`). SPEC §15.2 now states the measured #8 verdict (D11a).
+  An independent verifier refuted one sentence, which was fixed. Local CI PASS.
+- 03:00 #10 closed (D6a). #34 re-scoped, and cutover split into **#135** (D7b). R2 struck (D8b).
+- 03:05 Wave 13 (`wf_e4035117-eee`) runs three slices: peer-representation (R24, Opus),
+  maint-audit on #126 (R25) and remember-taxonomy (R26). The first launch died in the fleet
+  restart with no commits, and was relaunched.
+- 03:10 style-shrink round 3: the drift exemption is narrowed to the three README lines, and
+  the refuter's only blocking finding is fixed. Local CI is running.
+- 03:15 #34 area 6 (code-intel readiness) re-run live. The result is partial: CodeGraph
+  misses a definition, and Serena exceeds 120 s. Details are in `AC-EVIDENCE.md` §6.

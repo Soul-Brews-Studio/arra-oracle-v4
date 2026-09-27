@@ -12,7 +12,7 @@
  * invalidated when the request ends.
  */
 
-import type { McpEnvelope, OperationService, ToolOperations } from "../auth/service";
+import type { McpEnvelope, OperationService, ToolOperations } from "../auth/service.createOperationService";
 import { KNOWLEDGE_METHODS } from "../knowledge/registry";
 import type { KnowledgeAccess } from "../knowledge/transport";
 import { bodyScopeRefusal } from "../knowledge/transport.bodyScopeRefusal";
@@ -80,13 +80,13 @@ function readWorkspaceAtPlain(value: unknown, tokens: readonly string[]): string
  * Dispatch one `kb_<method>` tool call.
  *
  * `ops.bank` is the workspace THIS request was already admitted for (the
- * four-action MCP projection in `auth/service.ts` ran before `dispatchTool`
+ * four-action MCP projection in `auth/service.createOperationService.ts` ran before `dispatchTool`
  * was ever called). The payload's own `workspace_name` is checked against it
  * for the same reason the HTTP transport checks its route `:bank`: a name
  * inside the request is not itself authorization. `payload` is re-encoded to
  * bytes with a plain `JSON.stringify` — safe here specifically because it was
  * already decoded ONCE by this package's own governed strict parser (the
- * `/mcp/:bank` envelope reader in `app.ts`), so no duplicate key or invalid
+ * `/mcp/:bank` envelope reader in `app.createApp.ts`), so no duplicate key or invalid
  * UTF-8 could have survived to reach this point; this is not a second
  * ungoverned parser, it is a lossless re-encode of an already-validated value.
  */

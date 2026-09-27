@@ -12,7 +12,7 @@
  */
 
 import { createRequire } from "node:module";
-import { createOperationService, type OperationService, type StoreDependencies } from "./auth/service";
+import { createOperationService, type OperationService, type StoreDependencies } from "./auth/service.createOperationService";
 import { createKnowledgeAccess, type KnowledgeAccess } from "./knowledge/transport";
 
 export type RuntimeConfig = {
@@ -147,7 +147,7 @@ export async function composeAuditSink(): Promise<StoreDependencies["logCall"]> 
         label: entry.client_label?.trim() ? entry.client_label : "unlabelled",
         user_agent: entry.client_label ?? null,
         // DECISIONS.md R5: stays null. No caller of `logCall` ever sets
-        // `entry.remote_ip` today (`appendAudit` in `auth/service.ts` does
+        // `entry.remote_ip` today (`appendAudit` in `auth/service.createOperationService.ts` does
         // not collect it) -- capturing it is a privacy decision left for a
         // later slice, not silently done here.
         remote_ip: entry.remote_ip ?? null,

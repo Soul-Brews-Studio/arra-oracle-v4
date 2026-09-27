@@ -422,20 +422,61 @@ v3". Measured usage on this machine: 709 real v3 tool calls; `oracle_search` 46%
 - **Reverse by:** restore `push:` / `pull_request:` in `ci.yml`, once billing is restored.
 
 
-## D3b · #32 / #31 peer representation and node/revision-grounded context are owed (Nat, 2026-09-28)
+## R24 · #32/#31 chat is grounded in peer representation, not messages alone
 
-- **Ruling** (NAT-DECISIONS D3, answer b): #32 is not redefined as message-grounded chat.
-  Peer representation plus node/revision-grounded context is owed before #32 and #31 close:
-  AC-MATRIX slice 11, then slice 10.
-- **Landed as** (branch `v4/on-peer-representation`):
-  - `getContext` and `answerChat` accept optional `observer_peer_name` and `subject_peer_name`.
-    They narrow selection only; permissions are unchanged.
-  - Both select eligible current `conclusion` revisions (the R10 type term), with node/revision
-    ids and source handles. `answerChat` cites `conclusions_used`.
-  - A new registry method, `getRepresentation` (observer -> subject), brings the registry to 58.
-  - Slice 10 adds a `budget` block (a named estimate, `tokenizer: null`) and a `freshness`
-    block (`assembled_at`, table-version watermarks, index `"unknown"`).
-  - No new table.
-  - Contracts: `representation-v1.md` (new) and the `chat-v1.md` amendment.
-- **Not assigned an R-number here.** Parallel slices append to this file, so the integrator
-  assigns one at merge.
+- **Ruling (Nat, 2026-09-28, NAT-DECISIONS D3b):** peer representation and
+  node/revision-grounded context are still owed. #32 is not redefined as
+  message-grounded chat.
+- **Work:** AC-MATRIX slices 11 and then 10 (branch `v4/on-peer-representation`). It covers:
+  - `observer_peer_name` and `subject_peer_name` on getContext and chat. They
+    narrow selection only and never grant permission.
+  - Current conclusion revisions in context, with node and revision citations.
+  - A model-free, write-free `getRepresentation` (method 58) on HTTP, MCP and CLI.
+  - A token-estimate and watermark block.
+  - No new core tables (DESIGN.md §12).
+- **Landed** (v4/on-peer-representation, verifier round 2 ACCEPT): `getRepresentation`
+  (58 methods on HTTP/MCP/CLI, as `POST /api/knowledge/:bank/getRepresentation` per the
+  registry recipe, not the GET that DESIGN.md §12 sketches); conclusions scoped to the
+  requested sessions/chain; a `budget` block (named estimate, `tokenizer: null`) and a
+  `freshness` block (`assembled_at`, table-version watermarks, index `"unknown"`).
+  Contracts: `representation-v1.md` (new), `chat-v1.md` amendment. `summary` stays null:
+  no `summary` type term is seeded, so the stored-summary path is untested.
+
+## R25 · #31 instance-level maintenance routes audit to a separate instance log
+
+- **Ruling (Nat, 2026-09-28, D4b):** `POST /api/backfill` and `POST /api/reindex`
+  write to a separate, append-only, instance-level audit log that sits outside every
+  workspace dataset.
+  - `mcp_calls` keeps `workspace_name NOT NULL`, and no sentinel tenant is added.
+  - Reads need an operator scope.
+  - Draft #126 (`v4/on-maint-audit`) carries the work.
+
+## R26 · #27 the legacy `remember` tool is taxonomy-validated
+
+- **Ruling (Nat, 2026-09-28, D5a):** the free-text MCP `remember` goes through the same
+  taxonomy validation as the knowledge transports. Unknown, retired or sealed terms
+  are refused with the existing closed code, and valid calls keep their golden response.
+  This resolves AC-MATRIX conflict C1 (branch `v4/on-remember-taxonomy`).
+
+## R27 · #10 closes on the target-19 design; cutover is its own issue
+
+- **Ruling (Nat, 2026-09-28, D6a and D7b):**
+  - **#10:** closed on the target-19 evidence. That is isolation 191/0, the
+    ownership suites at 110/0, and Thai retrieval at 31/0.
+  - **#34:** re-scoped to "rehearsal proven". The supervised production cutover
+    moves to **#135**, and nothing touches live data until Nat picks the window.
+
+## R28 · R2 is not a deployment target
+
+- **Ruling (Nat, 2026-09-28, D8b):** v4 is local-disk only. The #34 sub-item
+  "optional R2 restart, read-after-write and writer exclusion" is struck, and a
+  future R2 need gets its own issue.
+
+## R29 · #7 stays release-excluded; #28 keeps the pinned prohibition
+
+- **Ruling (Nat, 2026-09-28, D10b):** #7 stays outside the release (R17) until Nat
+  supplies relevance judgments that no agent wrote. The harness in
+  `app/benchmarks` is ready.
+- **D9 was not asked:** #28 was already closed on the pinned reading A (the
+  cwd-only foreign-visitor prohibition, `relic-foreign-visitor.test.ts` 10/0).
+  Readings B and C stay available if Nat reopens it.

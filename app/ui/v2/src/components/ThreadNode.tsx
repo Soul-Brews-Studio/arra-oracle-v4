@@ -1,4 +1,4 @@
-import type { Thread } from "../forum/threads";
+import type { Thread } from "../forum/threads.buildThreads";
 
 /** Same "how long ago" framing `MessageRow` uses -- exact timestamps aren't
  *  the point of scanning a thread, recency is. Duplicated rather than

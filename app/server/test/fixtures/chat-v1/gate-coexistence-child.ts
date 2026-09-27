@@ -15,8 +15,8 @@ const [, , policyPath, phase] = Bun.argv;
 
 const SRC = new URL("../../../src/", import.meta.url).pathname;
 const { composeKnowledgeAccess } = await import(`${SRC}composition.ts`);
-const { createApp } = await import(`${SRC}app.ts`);
-const { createOperationService } = await import(`${SRC}auth/service.ts`);
+const { createApp } = await import(`${SRC}app.createApp.ts`);
+const { createOperationService } = await import(`${SRC}auth/service.createOperationService.ts`);
 const { configureKnowledgeAccess, createMcpAdapter } = await import(`${SRC}mcp/index.ts`);
 
 const ORIGIN = "http://127.0.0.1:3939";
