@@ -97,3 +97,93 @@ The UI follows the server, not the brief's wording.
   whenever the shared table holds rows from other workspaces (search-chunk-v1 §B).
 - **No push updates.** Freshness does not update on its own. Indexing and embedding run outside
   the view, so the **re-check** button re-reads them.
+
+## Fix round (2026-09-27): search findability follows recall eligibility
+
+**What the verifier refuted.** Every chunk `ready` rendered as *"keyword and semantic search can
+both find this revision"*. That was false for a retired head and for an `is_active: false` head:
+the verifier's gated fixture returned `{"hits":[]}` from both searches. Search drops any node
+that is not recall-eligible (`service.currentEligibleChunks.ts` step 3, which calls
+`evaluateNodeEligibility`: retired, superseded, inactive, not yet valid, expired).
+`getAcceptedHead` still returns those heads, so the panel still shows for them.
+
+**The fix (UI only; `app/server/src` and `app/docs/contracts` untouched).**
+- The panel now states two separate facts.
+  - The **chunk state** (`data-freshness-state`) comes from `listSearchChunks` and makes no
+    findability claim.
+  - The **search line** (`data-freshness="search"`, `data-search-state`) is decided by
+    `getRecallEligibility` for the node on screen. Its states:
+    - `searchable`: eligible and chunked.
+    - `not_searchable`: eligible, but no chunks yet.
+    - `excluded`: not eligible. The line names the server's reasons.
+    - `unknown`: the eligibility read failed, or came back in a shape this UI does not know.
+      This state never makes a findability claim.
+- The `failed` text now reads `attempts` against the 5-attempt cap (search-chunk-v1.md). A row
+  at the cap says *"will not retry"*, not *"until a retry succeeds"*. A mixed set of failed and
+  pending chunks says both.
+- The `indexed` text states that chunk rows carry no expected count, so a chunk row that was
+  never written cannot be seen.
+
+**Tests (red first, in `.tmp/ui-prov-fix/red.txt`).** Before the fix: 23 fail / 23 pass across
+the new and updated files, and both race tests red. After the fix: 46/46, and `bun test src` in
+`app/ui/v2` gives 352 pass / 0 fail.
+
+Mutants, all in `.tmp/ui-prov-fix/mutants.txt`. Each one fails at least one test:
+
+| Mutant | Tests that fail |
+|---|---|
+| `g === gen.current` guard removed | the race test |
+| `KnowledgeView.tsx` reverted to d949290 | the wiring test |
+| pending block moved ahead of failed | the mixed-set test |
+| `eligible: false` ignored | 9 tests |
+| attempt cap ignored | the cap test |
+
+### Live DOM reads on a fresh gated stack (ego-browser task space 286)
+
+The stack was the same as above: `demo_stack_up`, the stub Ollama, and raw HTTP seeding.
+- Three nodes were published, all containing `zebrafish`. One was published with
+  `is_active: false`.
+- All three were indexed and embedded (`{attempted:3, embedded:3}`), and then one was retired.
+- The server's own answers:
+  - `getRecallEligibility`: eligible `true []`, retired `false ["retired"]`, inactive
+    `false ["inactive"]`.
+  - `searchKnowledgeKeyword("zebrafish")`: hits = `[eligible node]` only.
+- A fourth node was indexed and then embedded six times while the stub returned 500. The chunk
+  ended as `["failed","5","embedder_bad_response"]`, and the sixth run `attempted:0`.
+
+**No screenshots.** Ego Lite screenshot capture times out on this machine. Everything below is
+DOM evidence only.
+
+| Node | chunk state / label | `data-search-state` | search line (verbatim) |
+|---|---|---|---|
+| eligible | `indexed` / `indexed` | `searchable` | Recall-eligible: keyword and semantic search can both return this revision. |
+| retired | `indexed` / `indexed` | `excluded` | Search does not return this node: it is retired. Keyword and semantic search both filter it out, whatever its chunks say. |
+| inactive | `indexed` / `indexed` | `excluded` | Search does not return this node: it is inactive (its head revision has is_active false). Keyword and semantic search both filter it out, whatever its chunks say. |
+| capped | `failed` / `failed — embedding failed` | `searchable` | Recall-eligible: keyword search can return it from its chunk text; semantic search skips 1 chunk without a vector. |
+
+The capped node's meaning line read: *"1 of 1 chunks failed to embed; semantic search cannot
+use them. 1 reached the 5-attempt cap, so embedPendingChunks will not retry it; it stays failed.
+The content itself is saved."*
+
+For every indexed node the meaning line read: *"All 1 chunks have a vector under the active
+profile. The rows carry no expected chunk count, so a chunk row that was never written would
+not show here."*
+
+The roles on these nodes were read as well:
+- eligible: nat / neo / boy;
+- retired: nat / `no observer recorded` / boy;
+- inactive: neo / nat / `no subject recorded`.
+
+No `by` label appeared on any node.
+
+**Teardown.**
+- `localStorage` for `http://127.0.0.1:62722` was cleared with `Storage.clearDataForOrigin`:
+  keys before were `arra-ui-v2-nodes:default:default`, `arra-ui-v2-token` and
+  `arra-ui-v2-roster:default`; keys after: none.
+- Task space 286 was closed with `finish({ keep: [] })`.
+- The server (SIGTERM) and the stub were stopped; `/health` was unreachable afterwards.
+- The mktemp root was removed, and `ls` confirmed it was gone. No leftover processes remained.
+
+Not covered live: a `superseded` head and a head outside its validity window. The pure view
+tests pin both (`searchFreshnessView.eligibility.test.ts`), and they take the same `excluded`
+path as retired and inactive.
