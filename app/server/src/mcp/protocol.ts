@@ -28,7 +28,7 @@ export const KNOWN_PROTOCOL_VERSIONS = [
 ] as const;
 
 export const SERVER_NAME = "arra-oracle-v4";
-export const SERVER_VERSION = "26.9.20-alpha.1625";
+export const SERVER_VERSION = "26.9.28-alpha.638";
 
 export interface JsonRpcRequest {
   jsonrpc?: string;
