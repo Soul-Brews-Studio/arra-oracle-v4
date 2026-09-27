@@ -24,6 +24,7 @@ import {
   readBoundedBody,
 } from "./auth/http";
 import { AuthDenied, type McpEnvelope, type OperationService } from "./auth/service";
+import { searchAnswer } from "./auth/service.searchAnswer";
 import { decodeUtf8Strict, LIMITS, parseStrict } from "./contracts/jcs";
 import { SERVER_NAME, SERVER_VERSION } from "./mcp/protocol";
 import { handshakeResponse, type createMcpAdapter } from "./mcp";
@@ -38,12 +39,24 @@ export type AppConfig = {
   readonly v3Compat?: boolean;
 };
 
-/** A bounded-body rejection raised from inside a post-admission hook. */
+/** A bounded-body rejection raised from inside a post-admission hook. Its
+ *  message is what the audit row records (#31 legacy-audit): the text the MCP
+ *  twin's validation raises for the same argument, so the two rows agree. */
 class BodyRejected extends Error {
-  constructor(readonly status: number) {
-    super("body rejected");
+  constructor(readonly status: number, message = "body rejected") {
+    super(message);
   }
 }
+
+/** A query parameter in its MCP argument shape: digits as the number they
+ *  spell, even past 2^53 (a JSON number MCP would refuse with the same text);
+ *  anything else, and digits too long for a finite number, as the string. */
+const argValue = (raw: string): string | number => (/^\d+$/.test(raw) && Number.isFinite(Number(raw)) ? Number(raw) : raw);
+
+/** The MCP `bounded()` text for a `limit` that `positiveInt` refused, keyed on
+ *  the type `argValue` records, so the row's input and text agree. */
+const limitRejected = (raw: string | null) =>
+  new BodyRejected(400, raw !== null && typeof argValue(raw) === "number" ? "limit must be a safe integer between 1 and 1000" : "limit must be a number");
 
 const STATUS_FOR: Readonly<Record<string, number>> = Object.freeze({
   unauthenticated: 401,
@@ -258,7 +271,9 @@ export function createApp(
       const url = new URL(request.url);
       const bank = bankParam(url);
       if (bank === null || bank === "ambiguous") return errorResponse(400);
-      return guarded(() => service.diagnostics(readAuthorization(request), bank));
+      // Audited as MCP `bank_info`, its diagnostics:read twin (#31 legacy-audit).
+      const http = { userAgent: request.headers.get("user-agent") ?? "", input: {} };
+      return guarded(() => service.diagnostics(readAuthorization(request), bank, http));
     })
 
     .get("/api/memories", async ({ request }) => {
@@ -270,11 +285,14 @@ export function createApp(
       // Non-scope parameters are checked INSIDE the guarded call, after the
       // same admission: an unauthenticated caller must not learn that its
       // limit was malformed.
+      // Audited as MCP `list_memories` (#31 legacy-audit), with its arguments.
+      const rawLimit = url.searchParams.get("limit");
+      const http = { userAgent: request.headers.get("user-agent") ?? "", input: rawLimit === null ? {} : { limit: argValue(rawLimit) } };
       return guarded(async () => {
-        const limit = positiveInt(url.searchParams.get("limit") ?? undefined, 50);
+        const limit = positiveInt(rawLimit ?? undefined, 50);
         return service.listMemories(readAuthorization(request), bank, limit ?? 50, () =>
-          limit === null ? new BodyRejected(400) : null,
-        );
+          limit === null ? limitRejected(rawLimit) : null,
+        http);
       });
     })
 
@@ -286,26 +304,36 @@ export function createApp(
       if (bank === null || bank === "ambiguous") return errorResponse(400);
       const q = url.searchParams.get("q");
       const mode = url.searchParams.get("mode") ?? "text";
-      const limit = positiveInt(url.searchParams.get("limit") ?? undefined, 10);
+      const rawLimit = url.searchParams.get("limit");
+      const limit = positiveInt(rawLimit ?? undefined, 10);
+      // Audited as MCP `recall` (#31 legacy-audit): only the arguments sent,
+      // in the order the URL sent them (MCP records its caller's key order),
+      // each at its first occurrence, the one `get` reads.
+      const input: Record<string, string | number> = {};
+      for (const [key, raw] of url.searchParams) {
+        const arg = key === "q" ? "query" : key === "mode" || key === "limit" ? key : null;
+        if (arg !== null && !(arg in input)) input[arg] = arg === "limit" ? argValue(raw) : raw;
+      }
+      const searchMode = mode === "vector" ? "vector" : "text";
       return guarded(async () => {
         const result = await service.searchMemories(
           readAuthorization(request),
           bank,
           typeof q === "string" ? q : "",
-          mode === "vector" ? "vector" : "text",
+          searchMode,
           limit ?? 10,
+          // The order and text of MCP `recall`'s own checks: query, limit, mode.
           () => {
-            if (typeof q !== "string" || !q.trim()) return new BodyRejected(400);
-            if (mode !== "text" && mode !== "vector") return new BodyRejected(400);
-            if (limit === null) return new BodyRejected(400);
+            if (typeof q !== "string") return new BodyRejected(400, "query is required");
+            if (!q.trim()) return new BodyRejected(400, "query must be a non-blank string");
+            if (limit === null) return limitRejected(rawLimit);
+            if (mode !== "text" && mode !== "vector") return new BodyRejected(400, "mode must be 'text' or 'vector'");
             return null;
           },
+          { userAgent: request.headers.get("user-agent") ?? "", input },
         );
-        // Text mode says how it matched (R14): "ngram", or "substring_scan" for
-        // a query under 3 code points. Vector mode has no match mode to report.
-        return result.match === undefined
-          ? { mode, count: result.rows.length, rows: result.rows }
-          : { mode, match: result.match, count: result.rows.length, rows: result.rows };
+        // Text mode says how it matched (R14); the one shape the audit row records too.
+        return searchAnswer(searchMode, result);
       });
     })
 
@@ -344,35 +372,42 @@ export function createApp(
 
         // Non-scope fields are validated by this builder, which the service
         // invokes ONLY after admitting content:write. A denied caller therefore
-        // triggers no storage access and sees no field-level error.
-        let malformed = false;
+        // triggers no storage access and sees no field-level error. It checks
+        // in MCP `remember`'s order with its texts, which the audit records;
+        // unlike MCP, `name` is required here.
         const buildRow = () => {
-          const name = document.get("name");
-          const content = document.get("content");
           const optional = (key: string) => {
             const value = document.get(key);
             if (value === undefined) return undefined;
-            return typeof value === "string" && value.trim() ? value : null;
+            if (typeof value === "string" && value.trim()) return value;
+            throw new BodyRejected(400, `${key} must be a non-blank string`);
           };
-          if (typeof name !== "string" || !name.trim()) return (malformed = true), null;
-          if (typeof content !== "string" || !content.trim()) return (malformed = true), null;
-          for (const key of ["type", "session_name", "peer_name", "subject_peer_name"]) {
-            if (optional(key) === null) return (malformed = true), null;
-          }
+          const content = optional("content");
+          if (content === undefined) throw new BodyRejected(400, "content is required");
+          const name = optional("name");
+          if (name === undefined) throw new BodyRejected(400, "name is required");
           return {
             name,
             content,
-            type: optional("type") ?? undefined,
-            session_name: optional("session_name") ?? undefined,
-            peer_name: optional("peer_name") ?? undefined,
-            subject_peer_name: optional("subject_peer_name") ?? undefined,
+            type: optional("type"),
+            session_name: optional("session_name"),
+            peer_name: optional("peer_name"),
+            subject_peer_name: optional("subject_peer_name"),
           };
         };
+        // Audited as MCP `remember` (#31 legacy-audit): the body is its
+        // arguments minus the scope carrier, which MCP refuses in arguments.
+        let input: Record<string, unknown> | undefined;
         try {
-          return noStore(await service.insertMemory(readAuthorization(request), workspace, buildRow), 201);
+          input = JSON.parse(JSON.stringify(document, (_k, v) => (v instanceof Map ? Object.fromEntries(v) : v)));
+          delete input!.workspace_name;
+        } catch {}
+        const http = { userAgent: request.headers.get("user-agent") ?? "", input };
+        try {
+          return noStore(await service.insertMemory(readAuthorization(request), workspace, buildRow, http), 201);
         } catch (error) {
           // A malformed body only becomes visible to an ADMITTED caller.
-          if (malformed) return errorResponse(400);
+          if (error instanceof BodyRejected) return errorResponse(error.status);
           return denialResponse(error);
         }
       },
@@ -388,6 +423,8 @@ export function createApp(
         // A bank never scopes a global action; supplying one is a 400.
         if (bankParam(url) !== null) return errorResponse(400);
         const batch = positiveInt(url.searchParams.get("batch") ?? undefined, 32);
+        // Not audited (#31 legacy-audit): a global action has no MCP twin and
+        // no workspace for an `mcp_calls` row (`workspace_name` is non-null).
         return guarded(() =>
           service.backfill(readAuthorization(request), batch ?? 32, async () => {
             // Non-scope parameter, checked only after the global admission.

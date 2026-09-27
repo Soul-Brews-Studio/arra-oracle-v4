@@ -88,7 +88,7 @@ export const MEMORY_TOOLS = [
   {
     name: "call_log",
     description:
-      "Recent MCP calls with arguments, outcome and duration — this server's own audit trail. Successes AND failures; a call that errored is the one you most want to read later (§6.3).",
+      "Recent audited calls with arguments, outcome and duration — this server's own audit trail: MCP tools/call plus admitted HTTP knowledge and legacy memory-route calls, each under its MCP tool name. Successes AND failures; a call that errored is the one you most want to read later (§6.3).",
     inputSchema: {
       type: "object",
       properties: {

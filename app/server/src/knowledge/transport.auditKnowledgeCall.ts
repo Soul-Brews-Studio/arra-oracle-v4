@@ -11,6 +11,8 @@
 // it identically), the same result or governed envelope text, and a null
 // `session_name`, which is what the MCP path records for every `kb_*` call.
 
+import { auditErrorText } from "../auth/service.auditErrorText";
+
 /** The composed sink; absent in-process fixtures audit nothing. */
 export type KnowledgeAuditSink = (record: Record<string, unknown>) => Promise<void>;
 
@@ -42,7 +44,7 @@ export async function auditKnowledgeCall(
     tool: `kb_${call.method}`,
     input: { payload },
     status: outcome.status,
-    result: outcome.status === "ok" ? outcome.value : errorText(outcome.error),
+    result: outcome.status === "ok" ? outcome.value : auditErrorText(outcome.error),
     duration_ms: Date.now() - call.startedMs,
     workspace_name: call.workspace,
     session_name: null,
@@ -51,18 +53,4 @@ export async function auditKnowledgeCall(
     requested_as: null,
     auth: call.auth,
   });
-}
-
-/** The same text `auth/service.ts` `runMcp` audits for a failed tool call. */
-function errorText(error: unknown): string {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    typeof (error as { code?: unknown }).code === "string" &&
-    typeof (error as { path?: unknown }).path === "string" &&
-    typeof (error as { toJSON?: unknown }).toJSON === "function"
-  ) {
-    return JSON.stringify((error as { toJSON(): unknown }).toJSON());
-  }
-  return error instanceof Error ? error.message : String(error);
 }

@@ -83,3 +83,10 @@ export type ToolOperations = {
   recentCalls(limit: number, status?: string): Promise<unknown[]>;
   aggregateCalls(): Promise<unknown>;
 };
+
+/**
+ * #31 legacy-audit: what a legacy HTTP route tells the facade about the call,
+ * for its audit row. `input` is the call in its MCP twin's argument shape;
+ * absent, the facade records the arguments it was given.
+ */
+export type HttpAudit = { readonly userAgent?: string; readonly input?: unknown };

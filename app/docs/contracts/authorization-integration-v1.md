@@ -298,3 +298,144 @@ it failed with one `kb_listNodes` row missing, the HTTP body-scope refusal. Muta
 each killed by that test: dropping the HTTP scope audit, dropping the HTTP bound-peer
 audit, auditing a different result text on HTTP, returning the auth status for an
 unauthenticated mismatch, and auditing unadmitted HTTP requests.
+
+## Amendment 2026-09-26 (post-merge #31 TODO 'success/failure audit consistently across all transports' + R5/R19)
+
+Behaviour change, legacy-audit slice (2026-09-27). This closes the gap the two
+amendments above list as "Not yet audited", corrects one sentence in the round-3
+amendment, and records two row differences it left out. Rulings: #31's TODO
+"success/failure audit consistently across all transports"; R5 in
+`docs/overnight/DECISIONS.md` (`mcp_calls` and `connections` are "operational
+audit written on every request"); R19 (`connections.method` is `bearer`,
+`principal` the credential id).
+
+- **Auth model, checked first.** Every legacy HTTP route is protected by design:
+  each one admits a bearer credential before it reads a payload (`app.ts`,
+  `auth/service.ts`). None is unauthenticated, so none is left unaudited for that
+  reason. There is no `/api/stats` route; the workspace stats route is
+  `GET /api/health?bank=`, and there is no `/api/memories/:id` route.
+- **Legacy routes, audited as their MCP twin.** An admitted call writes one row
+  through the same `appendAudit` and `composeAuditSink`, whether it succeeds or
+  fails:
+
+  | HTTP route | action | row `tool` (the MCP twin) | row `input` |
+  |---|---|---|---|
+  | `GET /api/memories?bank=&limit=` | content:read | `list_memories` | `{limit}` when sent |
+  | `GET /api/search?bank=&q=&mode=&limit=` | content:read | `recall` | `query` (from `q`), `mode`, `limit`: each only when sent, in the URL's order |
+  | `POST /api/memories` | content:write | `remember` | the body without `workspace_name` |
+  | `GET /api/health?bank=` | diagnostics:read | `bank_info` | `{}` |
+
+  The input is in the twin's argument shape: a digit-only `limit` is recorded as
+  the number it spells, even past 2^53 (the JSON number MCP would refuse with
+  the same "safe integer" text); anything else, and digits too long for a finite
+  number, as the string sent (which MCP refuses with "must be a number"). Keys
+  keep the order the caller sent, as MCP keeps its caller's key order, and a
+  repeated query parameter is recorded at its first occurrence, the one the
+  route reads. The body's scope carrier `workspace_name` is dropped because MCP
+  refuses one in arguments. `session_name` is read from that
+  input exactly as `runMcp` reads `args.session_name`. `peer_name` and
+  `requested_as` are null: the legacy routes do not read `X-Arra-Peer` and have
+  no aliases. The user agent, redaction, `auth` and `workspace_name` (the admitted
+  route workspace) are recorded as on MCP. `duration_ms` is timed from after
+  admission, as on MCP.
+- **Result.** Each row records what its own caller received. For `list_memories`
+  and `recall` the two transports answer the same value, so the rows are equal
+  except `id`, `created_at` and `duration_ms`. For `remember` HTTP answers
+  `{id, embedded}` and MCP adds `sync_state` and `note`. For `bank_info` HTTP
+  answers `{db, embedder:{ok, dims}}` and MCP
+  `{bank, rows, embedded, unembedded, embedder}`. For those two the `result`
+  differs and every other column is equal.
+- **Failures.** A non-scope parameter the route refuses after admission is audited
+  with the text MCP raises for the same argument, and the HTTP response is still
+  the fixed 400: `query is required`, `query must be a non-blank string`,
+  `limit must be a number`, `limit must be a safe integer between 1 and 1000`,
+  `mode must be 'text' or 'vector'`, `content is required`, `name is required`,
+  and `<field> must be a non-blank string`. The checks run in MCP's order. One
+  validation difference stays: `name` is required on `POST /api/memories` and
+  optional on MCP `remember`. A bound-author refusal (#87 / R3) is audited as
+  `forbidden` on both. A store or embedder failure is recorded with its raw
+  message on both transports (it can name the data directory or quote an
+  embedder response); MCP already returned that text to its caller, and only an
+  `audit:read` holder can read the row.
+- **Input differences that stay, documented rather than aligned.** Both are
+  pre-existing HTTP behaviour that the audit row now makes visible:
+  - Defaults. `GET /api/memories` with no `limit` runs with 50 and records `{}`;
+    MCP `list_memories` with `{}` runs with 20. The row records what the caller
+    sent, not the default, so replaying an HTTP row's input on MCP returns a
+    smaller page. `recall` defaults to 10 on both.
+  - Scope carriers in the `POST /api/memories` body. MCP refuses `bank` and
+    `workspace` in arguments; the HTTP route ignores them, answers 201, and the
+    row's input records them as sent (for example
+    `{"name":"n","content":"c","bank":"zzz"}`). Refusing them would change a
+    frozen legacy response, which this slice does not do.
+- **Not audited.** `POST /api/backfill` and `POST /api/reindex` admit a
+  global action. They have no MCP twin, because MCP is per workspace and has no
+  maintenance tool. There is also no workspace to file a row under, because
+  `mcp_calls.workspace_name` is non-null and every reader is scoped to an
+  admitted workspace. Filing the row under an invented workspace would fabricate
+  attribution, and §4 forbids a physical schema change here. So an admitted
+  maintenance call writes no row and no `connections` fold. A request refused
+  before admission writes no row, as on the knowledge routes: no or bad token
+  (401), no grant (403), or an unreadable policy (503). The same applies to a
+  scope that is malformed, missing, conflicting or repeated (400 before policy),
+  and to a POST body refused by encoding, size or the strict parser before
+  admission. **Open for a human:** R5 says these tables are "written on every
+  request", so the maintenance-route gap is a deviation to accept explicitly,
+  not a ruling this amendment can make; closing it needs a home for a
+  workspace-less row, which is a schema decision.
+- **Correction: a knowledge body that is not an object.** The round-3 sentence "A
+  body with no `workspace_name` at its scope path is refused and audited the
+  same way" holds for objects only. For a body that is an array or a scalar
+  (`[]`), MCP always audited `payload must be an object`, while HTTP audited the
+  body-scope text. Both now raise one refusal
+  (`knowledge/transport.payloadRefusal.ts`), so both rows record
+  `payload must be an object` with input `{payload: []}`. The HTTP response is
+  unchanged (400 `{"error":"bad request"}`). The round-3 amendment's "unreadable
+  policy (503)" is also imprecise: with a scope mismatch, HTTP answers 400 for
+  any unadmitted request, the policy case included, and writes no row.
+- **Two MCP-only row values on `kb_*`, documented rather than aligned.** They are
+  outside the list of differences the amendments above give:
+  - Under `ARRA_MCP_V3_COMPAT=1`, an MCP row's `peer_name` is the speaker the
+    connection asserted in `X-Arra-Peer`, after the R3 binding check. The HTTP
+    knowledge route never reads that header (it belongs to the v3 MCP family,
+    R18 A7/D8), so its `peer_name` is always null. With the flag off, both are
+    null.
+  - An MCP row's `session_name` is a top-level `session_name` argument sent next
+    to `payload` (`{payload, session_name}`), when it is a string. An HTTP
+    knowledge request has no top-level arguments, because the body is the
+    payload. Its `session_name` is therefore always null, and a `session_name`
+    inside the payload is not lifted on either transport.
+
+  Aligning either one would mean inventing an HTTP carrier that no client sends.
+- **What the surfaces say.** The Overview "mcp calls" card's subline reads
+  "admitted MCP + HTTP calls · maintenance routes not logged", and its hover
+  hint names the knowledge and legacy memory routes as logged; the `connections`
+  hint says the same. MCP `call_log`'s description now says the rows include
+  admitted HTTP knowledge and legacy memory-route calls under their MCP tool
+  names. `app/ui/v2/src/overview/OverviewView.auditCopy.test.ts` holds the
+  source and the shipped bundle to that copy.
+- **Shared error text.** The governed-envelope error text is one function
+  (`auth/service.auditErrorText.ts`), used by `runMcp`, the legacy routes and
+  `knowledge/transport.auditKnowledgeCall.ts`, so it cannot drift.
+
+Test: `app/server/test/transport-audit-legacy.test.ts`, on a real listening server
+(`fixtures/transport-v1/live-server/child.ts`, extended with a `legacy` step and
+the `diag`/`maint` credentials). Before the change it failed because every legacy
+HTTP row was missing: 7 rows (`remember`, `list_memories`, `recall` and
+`bank_info` ok; `recall`, `list_memories` and `remember` error). Seven mutants, each
+killed by that test: no audit row on failure, auditing the raw service value
+instead of the answer, recording a defaulted `mode` in the input, a generic error
+text, the body-scope text for `[]` on HTTP, dropping the `list_memories` audit, and
+auditing an unadmitted request.
+
+Fix round (2026-09-27). A second live test in the same file pins the claims above
+that the first does not reach: `?q=x&limit=abc&mode=foo` is audited as
+`limit must be a number` with input `{"query":"x","limit":"abc","mode":"foo"}` on
+both transports; a `remember` with neither `name` nor `content` as
+`content is required`; a bound credential remembering as `peer-z` as `forbidden`,
+attributed to that credential, on both; and `limit=99999999999999999999` as the
+"safe integer" text with input `{"limit":100000000000000000000}` on both. Before the
+fix it failed on the recall input order (`{query, mode, limit}` on HTTP). Five
+mutants, each killed by it: `mode` checked before `limit`, `name` before `content`,
+no row for a `forbidden` refusal, a past-2^53 limit recorded as a string, and a fixed
+`{query, mode, limit}` input order.
