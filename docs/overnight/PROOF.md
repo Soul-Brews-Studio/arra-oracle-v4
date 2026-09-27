@@ -216,7 +216,7 @@ tests with 0 fail. Its per-issue verdict:
   (disclosed per PR).
 - **Needs you.**
   - #7 relevance judgments.
-  - #8: the live leg now passes at REST level (2026-09-27). Whether that is enough to close the issue, given the historical "byte-compatible" wording, is your call.
+  - #8: the live leg passes at REST level, and the TABLE-level measurement (#129, `HONCHO-TABLE-DIFF.md`) found "byte-compatible" FALSE as stated and TRUE WITH CONVERSIONS for one bank (10 v4-only columns lost; `h_metadata` must be renamed to `metadata`; message ids collide across banks). Accepting that verdict, or funding true byte compatibility, is D11 in `NAT-DECISIONS.md`.
   - Chat providers other than local Ollama.
   - Everything in `DECISIONS.md` you want to overturn.
 - **Screenshots (resolved 2026-09-27).** `Page.captureScreenshot` timed out in ego lite on m5 for most of the day.

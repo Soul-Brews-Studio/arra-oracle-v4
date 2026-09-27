@@ -123,7 +123,7 @@ Outcome key, measured live: *rest* is the read-back through Honcho's REST API,
 | v4 column | Honcho column | Verdict | Conversion / reason | rest | table |
 |---|---|---|---|---|---|
 | `workspace_name` string NOT NULL | `workspace_name` text, PK part, FK | exact | | exact | exact |
-| `session_name` string NOT NULL | `session_name` text, PK part, composite FK to sessions | exact | | exact | exact |
+| `session_name` string NOT NULL | `session_name` text, PK part, composite FK to sessions | exact | GET .../sessions/{id}/peers returns Peer objects with no session_id field; the comparator supplies the v4 session_name it already looped on, so rest=exact holds **by construction**, not by an independent read-back. | exact | exact |
 | `peer_name` string NOT NULL | `peer_name` text, PK part, composite FK to peers | exact | | exact | exact |
 | `configuration` string NULL | `configuration` jsonb NOT NULL | convertible | Text to jsonb. NULL becomes `{}` (4 rows). `{"pinned": true}` survives at table level, which the REST leg cannot do. | not-exposed | converted |
 | `internal_metadata` string NULL | `internal_metadata` jsonb NOT NULL | convertible | Text to jsonb. NULL becomes `{}`. | not-exposed | converted |

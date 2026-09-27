@@ -172,6 +172,17 @@ class MeasureTableRoundTripTests(unittest.TestCase):
         row["token_count"] = str(row["token_count"])
         self.assert_mismatch(self._measure(), "messages", "token_count", "table")
 
+    def test_sql_bool_stored_as_the_equal_int_is_a_mismatch(self) -> None:
+        # Accept round, M3: removing `type(given) is type(got) and given ==
+        # got` (leaving only `given == got`) passed every test, because the
+        # existing token_count-as-str case already differs by VALUE ('5' !=
+        # 5) with or without the type check. True == 1 in Python, so only
+        # the type check catches this one -- pins the mutant.
+        row = self._row(self.sql["sessions"], name=self.bundle.sessions[0]["name"])
+        self.assertIs(row["is_active"], True)
+        row["is_active"] = 1
+        self.assert_mismatch(self._measure(), "sessions", "is_active", "table")
+
     def test_sql_timestamp_one_microsecond_later_is_a_mismatch(self) -> None:
         row = self._row(self.sql["messages"], public_id=self.first)
         row["created_at"] = _pg_ts(datetime.fromisoformat(row["created_at"]) + timedelta(microseconds=1))
