@@ -18,9 +18,8 @@ Every number here was measured on `e00b50b` on 2026-09-27: counts come from the 
  models/     active15   15 t / 152 f  ----->  ARRA_DATA_DIR  "legacy + operations root"
    python -m arra_migrate                        memories      8 legacy MCP tools, /api/memories,
                                                                /api/search, 13 legacy CLI cmds
-                                                 mcp_calls  }  written on every admitted MCP call,
-                                                 connections}  HTTP kb call and legacy HTTP
-                                                               memory-route call, AND read here (R5)
+                                                 mcp_calls  }  written on every admitted MCP call, HTTP kb call
+                                                 connections}  and legacy HTTP memory routes, AND read here (R5)
 
  target_v1/  target19   19 t / 228 f  ----->  ARRA_KNOWLEDGE_DATASET_ROOT  "knowledge root"
    dev: create_target19_dataset.py              one fd-42 writer gate; TS refuses a drifted dataset
