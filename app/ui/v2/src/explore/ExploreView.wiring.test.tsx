@@ -23,7 +23,7 @@ const BANK = { bank: "b1", token: "t1", workspace: "w1" };
 function noop() {}
 
 function SearchHookHarness({ query, mode }: { query: string; mode: "keyword" | "semantic" }) {
-  const search = useKnowledgeSearch(BANK, { query, mode });
+  const search = useKnowledgeSearch(BANK, { query, mode }, noop);
   // Rendered as text, not just returned, so a mutant that drops the field
   // entirely (rather than just feeding it the wrong value) is visible too.
   return (

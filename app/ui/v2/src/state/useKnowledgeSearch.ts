@@ -41,10 +41,8 @@ const EMPTY_OUTCOME: SearchOutcome = {
  *  finding #2 (PR #110 follow-up): ExploreView remounts on the round trip to
  *  the node view and back, which used to reset this hook's `useState` and
  *  drop whatever was typed. The caller reads it from the route
- *  (`searchRouteState`) and is responsible for writing it back out
- *  (`searchRoutePatch` + `route.replace` on every `query`/`mode` change) --
- *  this hook stays route-agnostic, same as `useMemory`'s `peer`/`session`
- *  contract with `App.tsx`.
+ *  (`searchRouteState`) and this hook writes it back via `onRouteChange`,
+ *  same as `useMemory`'s `peer`/`session` contract with `App.tsx`.
  *
  * `routed` is read on EVERY render, not just at mount (round-3 blocking
  * finding): a browser Back/Forward between two explore history entries
@@ -53,28 +51,66 @@ const EMPTY_OUTCOME: SearchOutcome = {
  * mount-only `useState` initializer this used to be never saw the new
  * value, and the box and the URL drifted apart. The effect below applies
  * `routed` to local state whenever it differs from the last `routed` value
- * this hook itself has seen -- but `lastRouted` is updated unconditionally,
- * including when local edits (typing) round-trip back through the route via
- * the caller's `onSearchChange`, so that echo is recognised as "already
- * applied" and does not bounce back into another `setQuery`/`setMode` --
- * the update loop the caller has to avoid. */
-export function useKnowledgeSearch(bank: Bank, routed: { query: string; mode: SearchMode }) {
-  const [query, setQuery] = useState(routed.query);
-  const [mode, setMode] = useState<SearchMode>(routed.mode);
+ * this hook itself has seen.
+ *
+ * Round-3 verifier finding (blocking): an EARLIER version of this fix wrote
+ * the route back out from a second `useEffect` in the caller, keyed on
+ * `query`/`mode`. That effect cannot tell "the user just typed" from "this
+ * render's `query` is still the PREVIOUS value because the sync effect
+ * above hasn't landed yet" -- both effects fire in the same commit, off
+ * stale closures, and each one's write undoes the other's, forever (proven
+ * live: Forward between `tab=nodes` and `tab=search&q=...` never settled,
+ * 63000+ renders/2s). The fix is to stop reacting to `query`/`mode` for the
+ * write direction at all: `setQuery`/`setMode` below call `onRouteChange`
+ * THEMSELVES, imperatively, at the exact moment a caller (the input's
+ * `onChange`, the mode toggle's `onClick`) asks for a local edit. A route
+ * update landing from Back/Forward only ever calls the RAW `setState`
+ * setters inside the effect above, never the wrapped ones, so it can never
+ * trigger a write-back -- there is no longer a second effect for the two
+ * directions to race against. */
+export function useKnowledgeSearch(
+  bank: Bank,
+  routed: { query: string; mode: SearchMode },
+  onRouteChange: (query: string, mode: SearchMode) => void,
+) {
+  const [query, setQueryState] = useState(routed.query);
+  const [mode, setModeState] = useState<SearchMode>(routed.mode);
   const [loading, setLoading] = useState(false);
   const [outcome, setOutcome] = useState<SearchOutcome>(EMPTY_OUTCOME);
 
   const requestId = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastRouted = useRef(routed);
+  // Mirrors `query`/`mode` outside of React's render cycle so the wrapped
+  // setters below can read "the other" current value (e.g. `setQuery` needs
+  // today's `mode` to call `onRouteChange(q, mode)`) without adding either
+  // setter to the other's dependency list.
+  const current = useRef({ query, mode });
+  current.current = { query, mode };
 
   useEffect(() => {
     if (routed.query !== lastRouted.current.query || routed.mode !== lastRouted.current.mode) {
-      setQuery(routed.query);
-      setMode(routed.mode);
+      setQueryState(routed.query);
+      setModeState(routed.mode);
     }
     lastRouted.current = routed;
   }, [routed.query, routed.mode]);
+
+  const setQuery = useCallback(
+    (q: string) => {
+      setQueryState(q);
+      onRouteChange(q, current.current.mode);
+    },
+    [onRouteChange],
+  );
+
+  const setMode = useCallback(
+    (m: SearchMode) => {
+      setModeState(m);
+      onRouteChange(current.current.query, m);
+    },
+    [onRouteChange],
+  );
 
   const run = useCallback(
     async (q: string, m: SearchMode) => {

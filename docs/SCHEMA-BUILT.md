@@ -345,6 +345,15 @@ surfaces, with screenshots in `docs/overnight/UI-PROOF.md`:
 - traces;
 - chat with citations.
 
+*Re-measured 2026-09-27 (ui-polish fix round, round 3b).* The round-3 paragraph below still said
+"120 files / 101 non-test" and "the 7 files this round ... added"; an independent verifier
+re-ran the same scan on that same commit and got 121/101, and "+5 files" net (`git ls-files`/`fd`
+agree): `parseRoute.ts`, `parseRoute.test.ts`, `formatRoute.ts`, `formatRoute.test.ts`,
+`routeViews.ts` and `ExploreView.wiring.test.tsx` added (6), `useRoute.test.ts` removed (1). This
+round adds one more test file (`ExploreView.liveWiring.test.tsx`, the `react-dom/client`
+effect-running wiring test the verifier's blocking finding asked for), bringing the current,
+directly re-measured total to **122 files / 101 non-test**.
+
 *Re-measured 2026-09-27 (ui-polish fix round, round 3).* Re-running the same name scan (`find
 app/ui/v2/src -type f`, now 120 files / 101 non-test -- the round-2 count of 109/95 was already
 stale by the time it was written, predating the 7 files this round's `useKnowledgeSearch`/

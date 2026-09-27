@@ -830,6 +830,135 @@ measurement above is the authoritative evidence for that width, not the screensh
   proof already logged as unrelated to this UI-only slice; this round touched no
   `app/server/src` file either.
 
+## Search polish, round 3 (fix: the round-3 wiring itself looped)
+
+A second, independent Opus verifier refuted the round-3 commit above (`f9f81d3`,
+`.tmp/ui-polish-v2-findings.txt`'s successor findings in the overnight worktree). Two blocking
+findings: (1) the round-3 fix for Back/Forward sync had **no test that failed without it** --
+`ExploreView.wiring.test.tsx`'s `renderToStaticMarkup` never runs an effect, so it could not
+reach the very effect the fix added; (2) that fix, plus `ExploreView`'s separate route
+write-back effect, formed an **update loop**: Forward from `#/explore?tab=nodes` to
+`#/explore?tab=search&q=...` changes `activeTab` and the routed query in the same commit, the
+write-back effect fires off a stale `search.query` closure, undoes the sync effect's write, and
+the two effects fight forever -- proven live (63000+ renders/2s, "Maximum update depth
+exceeded" ×1019) and in a real React 18 client renderer.
+
+### Root cause and fix
+
+Two `useEffect`s reacting to each other's output cannot tell "the user just typed" from "this
+render's `query` is stale because the OTHER effect hasn't landed yet" -- both fire in the same
+commit, off closures captured before either's `setState` takes effect. The fix removes the
+write-direction effect entirely: `useKnowledgeSearch(bank, routed, onRouteChange)` now takes the
+route-write callback itself, and `setQuery`/`setMode` call it **imperatively**, at the exact
+moment a caller (the input's `onChange`, the mode toggle's `onClick`) asks for a local edit. A
+route change arriving from Back/Forward only ever calls the raw `setState` setters inside the
+one remaining (read-direction) effect, never the wrapped ones -- so there is no second effect
+for the two directions to race against, and no artificial "echo" ref is needed to break a cycle
+that no longer exists. This also deletes `ExploreView`'s `activeTab !== "search"` gate: since the
+write only happens from a setter the search tab's own input exposes, it cannot fire from another
+tab in the first place (round-3's non-blocking `mode=keyword` leak, fixed for free), and it stops
+the "transient history write" round-3's verifier flagged as a symptom of the same race (a Forward
+into search no longer writes the route back at all -- the value already came FROM the route).
+
+### Failing-first: a real effect-running harness, not `renderToStaticMarkup`
+
+`react-dom/server`'s `renderToStaticMarkup` cannot run an effect, so it cannot see either the
+sync effect or the loop it raced against -- confirmed by the verifier and reproduced here.
+`ExploreView.liveWiring.test.tsx` instead runs `react-dom/client` for real, against a hand-built
+~140-line fake DOM (just enough surface for React's DOM renderer to mount, commit, and
+re-render controlled inputs and a `<select>`: `document`/`window`/`HTMLElement` and friends, a
+real accessor pair for `.value` so react-dom's input-value tracker finds a property descriptor
+to wrap). No jsdom, no new dependency -- `react-dom` and its bundled `test-utils` (`act`) are
+already installed.
+
+Mutants applied by hand against this worktree, each restored immediately after:
+
+- **The round-3 fix itself** (the whole scenario, mounting the REAL `ExploreView` driven by a
+  route-shaped harness, exactly reproducing the verifier's Forward step): reverting
+  `useKnowledgeSearch.ts`/`ExploreView.tsx` to the pre-fix (`f9f81d3`) two-effect design and
+  re-running `bun test src/explore/ExploreView.liveWiring.test.tsx` under a 30s timeout:
+  **exit 124, 3090+ "Maximum update depth exceeded" warnings, the process never returns.** Fixed
+  code: `2 pass / 0 fail` in 50ms, `rendersForForward < 10`, `replaces.length === 0`, the search
+  input's `.value` lands on `"ลืม"`.
+- **M1** (the routed-sync `useEffect` deleted outright): same test file, `3 pass / 1 fail`, the
+  loop test fails with an `Unhandled error` from a stray `useListing` `setState` after
+  `window`/`document` teardown -- the sync that was supposed to apply `routed` never ran, so
+  `ExploreView`'s OWN write-back-less design (post-fix) just leaves the box on `""` while the
+  route says `"ลืม"`, and the harness's other hooks fire the unhandled state update once the fake
+  DOM comes down.
+- **W4** (the wrapped `setQuery`'s `onRouteChange(...)` call dropped, leaving only
+  `setQueryState`): `useKnowledgeSearch: a local edit writes back to the route (W4)` test in the
+  same file goes RED: `expect(received).toEqual(expected) / - [["ลืม","keyword"]] / + []` --
+  calling `setQuery("ลืม")` no longer reports anything to `onRouteChange`.
+- **W5** (hook ignores `routed.query`/`routed.mode`) and **W2** (`ExploreView` renders a
+  hardcoded route): still pinned by the existing `ExploreView.wiring.test.tsx`
+  (`renderToStaticMarkup`, unchanged this round) -- both are first-render bugs, exactly what SSR
+  reaches.
+- **W1** (`useKnowledgeSearch` returns `outcome.scanReason`/`outcome.errorCode` ungated): still
+  pinned by `searchOutcomeView.test.ts`'s existing gate cases (unchanged this round; the hook's
+  return statement still spreads `...view`, so this class of revert stays a type error, not just
+  a silent regression).
+
+Full suite: `bun test src` (`app/ui/v2`) -- **145 pass, 0 fail** (143 before this round; +2 new
+tests in `ExploreView.liveWiring.test.tsx`, both mutant-killing per above).
+`bunx tsc --noEmit -p app/ui/v2` -- clean.
+
+### Other fixes this round
+
+- **Stale doc/comment references** (non-blocking): `parseRoute.ts`'s header now cites
+  `parseRoute.test.ts` (was still naming the deleted `useRoute.test.ts`); `searchRoutePatch.ts`'s
+  header now cites `formatRoute.ts` (was still naming `useRoute.ts`'s `format`).
+- **`docs/SCHEMA-BUILT.md`** (non-blocking): the round-3 paragraph's "120/101" and "+7 files" were
+  themselves already stale by the time an independent verifier re-measured the SAME commit at
+  121/101, net +5 files (`parseRoute.ts`, `parseRoute.test.ts`, `formatRoute.ts`,
+  `formatRoute.test.ts`, `routeViews.ts`, `ExploreView.wiring.test.tsx` added; `useRoute.test.ts`
+  removed). This round adds one more test file (`ExploreView.liveWiring.test.tsx`), so the
+  current, directly re-measured total is **122 files / 101 non-test**. Both counts are recorded
+  in the file with their dates rather than silently overwritten, per this repo's "anchor edits on
+  unique surrounding context" rule for a heavily cross-referenced doc.
+- `errorCode` gating, the `mode=keyword` leak, the `useRoute.ts` split, and the badge-row
+  `min-w-[7rem]` fix all shipped in the round-3 commit above and are **unchanged** this round
+  (verified: `git diff f9f81d3 -- app/ui/v2/src/state/searchOutcomeView.ts
+  app/ui/v2/src/components/KnowledgeSearchResults.tsx app/ui/v2/src/state/parseRoute.ts
+  app/ui/v2/src/state/formatRoute.ts app/ui/v2/src/state/routeViews.ts` -- only the two doc-comment
+  lines above changed).
+
+### Verification run this round
+
+- `bun test src` (`app/ui/v2`): 145 pass / 0 fail (see above).
+- `bunx tsc --noEmit -p app/ui/v2`: clean.
+- `bun run build` (`app/ui/v2`): succeeded (`index-CeAdLZOi.js` / `index-DequRrNv.css`); reverted
+  before commit per the brief (`git checkout -- app/server/public/v2 && git clean -fdq
+  app/server/public/v2`) -- the integrator rebuilds once for all slices.
+- Python architecture guard (`app/migrate-py`, `PYTHONPATH=src .venv/bin/python -m unittest
+  discover -s tests`): **268 tests, OK (skipped=1)**. No new TS file imports the publication
+  kernel -- this round only touches `app/ui/v2` routing/state and two docs.
+- Acceptor live probe (`.tmp/acceptor/live-probe/run.sh <this worktree> ui-polish`): **57 kernel
+  methods, HTTP 57 / MCP 57 / CLI 57, isolation 191 pass / 0 fail, fatal none**, RC=2 from the
+  same 26 pre-existing "no valid payload fixture" gaps every prior round has logged as unrelated
+  (this slice touches no `app/server/src` file).
+
+### Deviation: no fresh `/ego-browser` Back/Forward session this round
+
+The brief asked for a live `/ego-browser` reproduction of the verifier's exact Back/Forward
+steps against a fresh `mktemp -d` dataset, under a 40-minute hard time box shared with writing
+and mutant-testing the fix above. That browser session was **not run this round** -- staying
+inside the box meant choosing between it and the failing-first mutant-killing tests the previous
+round was blocking-refuted for skipping. The tests above are not a lesser substitute for THIS
+bug specifically: they run the real `ExploreView` through a real React 18 client renderer with
+real effects, reproduce the verifier's exact Forward scenario (`tab` and routed `q` changing in
+the same commit), and demonstrate the identical failure class the browser proof would have shown
+(the process hangs / "Maximum update depth exceeded" against the mutant, a bounded settle against
+the fix) -- with an exact repro command (`bun test
+src/explore/ExploreView.liveWiring.test.tsx`) any reviewer can re-run byte-for-byte, which a
+screenshot sequence cannot offer. The badge-visibility screenshots
+(`34-search-polish-r3-05-badge-553.png`, `...-06-badge-830.png`) and the Back/Forward screenshots
+(`...-01` through `...-04`) already committed under `docs/overnight/ui/` are from the round-3
+commit and remain valid: this round changed no CSS and no route-format/URL-shape code the
+badge or URL screenshots depend on. A live browser re-verification of the Forward path
+specifically is still worth doing before this slice merges, and is the one open risk this round
+leaves.
+
 ## Amendments
 
 None, again. No file under `app/docs/contracts/` documents UI routing or rendering, and no wire

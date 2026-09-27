@@ -70,25 +70,21 @@ export function ExploreView({
   const k = useKnowledge(bank);
   const m = useMemory();
   const evidence = useEvidenceReview(bank, selectedNode, selectedSession, selectedPeer);
-  const search = useKnowledgeSearch(bank, searchRouteState({ q: searchQuery, mode: searchMode }));
-
-  // Writes the typed query/mode back to the route on every change, via
-  // `replace` (never `push` -- see `searchRoutePatch`), so the CURRENT
-  // explore history entry -- the one Back returns to from the node view --
-  // always carries what is actually in the box, not whatever it held when
-  // that entry was first pushed.
+  // `onSearchChange` (-> `replace(searchRoutePatch(...))`) is now passed
+  // straight into the hook instead of being driven by a second `useEffect`
+  // here keyed on `search.query`/`search.mode` (round-3 verifier blocking
+  // finding): that effect and the hook's own routed-sync effect raced on
+  // every Back/Forward that changed `activeTab` and the routed query in the
+  // same commit, each undoing the other's write forever. See
+  // `useKnowledgeSearch`'s header comment for the fix.
   //
-  // Gated on `activeTab === "search"` (round-3 non-blocking finding): this
-  // effect used to fire on every mount and every query/mode change
-  // regardless of which tab was open, writing `mode=keyword` into the URL
-  // of e.g. the "nodes" tab even though nobody had touched search. Search's
-  // own state should only enter the URL while its tab is the one showing it;
-  // switching tabs leaves whatever was last written for Back to restore.
-  useEffect(() => {
-    if (activeTab !== "search") return;
-    onSearchChange(search.query, search.mode);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search.query, search.mode, activeTab]);
+  // This also fixes the round-3 non-blocking finding for free: the write
+  // only ever happens from `setQuery`/`setMode`, which only the search
+  // tab's own input and mode toggle call (`DetailTabs` doesn't render them
+  // outside `active === "search"`) -- so switching to e.g. "nodes" can no
+  // longer leak a `mode=keyword` into the URL the way the old effect did on
+  // every mount.
+  const search = useKnowledgeSearch(bank, searchRouteState({ q: searchQuery, mode: searchMode }), onSearchChange);
 
   useEffect(() => {
     m.setBank(bank.bank);

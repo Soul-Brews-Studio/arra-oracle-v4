@@ -9,8 +9,8 @@ import type { SearchMode } from "./useKnowledgeSearch";
  *  to always carry the latest query, not spawn new entries for it.
  *
  * An empty query clears the `q` param instead of leaving `q=` in the
- * address bar, matching how the rest of `useRoute`'s `format` omits params
- * that mean nothing right now (see `useRoute.ts`'s `format`).
+ * address bar, matching how the rest of `formatRoute` omits params that
+ * mean nothing right now (see `formatRoute.ts`).
  */
 export function searchRoutePatch(query: string, mode: SearchMode): { q: string | null; mode: string | null } {
   return { q: query === "" ? null : query, mode };

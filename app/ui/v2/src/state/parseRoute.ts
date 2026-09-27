@@ -5,7 +5,7 @@ import { isRouteView } from "./routeViews";
  *  `useRoute` <-> URL mapping (see that file's header comment for why it is
  *  the hash, not the path). Pure and DOM-free on purpose (no `window`
  *  inside): `useRoute` is the only caller that touches `window.location`,
- *  so this half is testable with a plain string (`useRoute.test.ts`).
+ *  so this half is testable with a plain string (`parseRoute.test.ts`).
  *
  * Split out of `useRoute.ts` (round-3 style finding): that file used to
  * export `parse`, `format` and `useRoute` -- three exports for one file,
