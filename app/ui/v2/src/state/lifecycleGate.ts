@@ -1,5 +1,20 @@
 import { isSupersedeEvent, type LifecycleEventRow } from "../api/evidenceReview";
 
+/** Fix round (2026-09-27): the prior wording said blocking BOTH publish and
+ *  correct here was "a UI-side choice, not a server rule" -- true only for
+ *  correct. The server itself refuses a PUBLISH onto a superseded/retired
+ *  node (`service.publishRevision.ts` returns `outcome: "conflict",
+ *  reason: "node_retired"`). Only CORRECT is this client's own choice:
+ *  `validateLinkReferences.ts` checks a `corrects` link's target is in the
+ *  accepted ancestry and never looks at lifecycle state, so the server
+ *  would accept a correction filed directly against this node's old
+ *  accepted revision. Applied to BOTH the superseded and retired branches
+ *  (the independent verifier found only superseded had been touched). */
+const TERMINAL_SCOPE_NOTE =
+  "Publishing here would also be refused by the server itself. Blocking a correction here, though, is " +
+  "this client's own choice -- the server still accepts a correction filed directly against this node's " +
+  "old accepted revision; this gate blocks it here anyway to keep both write paths behind one rule.";
+
 export type LifecycleGate = {
   state: "active" | "loading" | "superseded" | "retired" | "unknown";
   /** True when publish and correct must be disabled. */
@@ -56,7 +71,8 @@ export function lifecycleGate(read: LifecycleRead): LifecycleGate {
       label: "superseded",
       explanation:
         `This node was superseded by “${name}” (reason: ${event.reason}). Its history stays readable, ` +
-        "but publishing or correcting here is disabled: continue on the successor.",
+        "but publishing or correcting here is disabled: continue on the successor. " +
+        TERMINAL_SCOPE_NOTE,
       successor: { node_id: event.new_id!, revision_id: event.new_revision_id, title: event.new_title },
     };
   }
@@ -64,7 +80,10 @@ export function lifecycleGate(read: LifecycleRead): LifecycleGate {
     state: "retired",
     blocked: true,
     label: "retired",
-    explanation: `This node was retired (reason: ${event.reason}). Its history stays readable, but publishing or correcting here is disabled.`,
+    explanation:
+      `This node was retired (reason: ${event.reason}). Its history stays readable, ` +
+      "but publishing or correcting here is disabled. " +
+      TERMINAL_SCOPE_NOTE,
     successor: null,
   };
 }
