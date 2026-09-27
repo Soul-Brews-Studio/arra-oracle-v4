@@ -435,3 +435,4 @@ Every slice below went through the same loop as the night: implement → indepen
 - 06:44 **PR #146 MERGED** (`94021c5`): the operator-only `instance_audit` reader (R25). Four refuter rounds; round 4 checked 44 live requests. #31 closed. Local CI 2188/0 on the #145 runner.
 - 06:45 **PR #147 MERGED** (`0777111`): `publication/lifecycle` and `rows` split. Allowlist: 20.
 - 06:40–06:50 **GitHub Actions switched off for tests** (Nat): 1 macOS matrix and 19 hosted test/CI workflows disabled across both orgs, with a re-enable log. New `/actions-off` skill.
+- 07:05 **PR #148 MERGED** (`88b4225`): the `policy.registry` and `connections` splits kept from the refuted split2 branch, with the missing contract amendment and a guard on imports of `REGISTRY`. Allowlist: 18.
