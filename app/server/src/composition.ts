@@ -12,7 +12,7 @@
  */
 
 import { createRequire } from "node:module";
-import { createOperationService, type OperationService, type StoreDependencies } from "./auth/service";
+import { createOperationService, type OperationService, type StoreDependencies } from "./auth/service.createOperationService";
 import { createKnowledgeAccess, type KnowledgeAccess } from "./knowledge/transport";
 
 export type RuntimeConfig = {

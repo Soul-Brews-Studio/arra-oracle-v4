@@ -13,9 +13,9 @@
 import { chmodSync, readdirSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { createApp } from "../../../../src/app";
+import { createApp } from "../../../../src/app.createApp";
 import { createKnowledgeAccess } from "../../../../src/knowledge/transport";
-import type { OperationService } from "../../../../src/auth/service";
+import type { OperationService } from "../../../../src/auth/service.createOperationService";
 import type { createMcpAdapter } from "../../../../src/mcp";
 
 const [, , mode, root, workDir] = process.argv as [string, string, string, string, string];

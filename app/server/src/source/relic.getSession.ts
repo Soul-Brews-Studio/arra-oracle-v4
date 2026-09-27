@@ -1,5 +1,5 @@
 import { assertNotFlagLike } from "./relic.assertNotFlagLike";
-import { failRelic } from "./relic.errors";
+import { failRelic } from "./relic.failRelic";
 import { runRelicJson } from "./relic.runRelicJson";
 import { rowToSessionRef } from "./relic.rowToSessionRef";
 import type { RelicAdapterConfig, RelicSessionCommandOutput } from "./relic.types";

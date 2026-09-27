@@ -1,4 +1,4 @@
-import { failRelic } from "./relic.errors";
+import { failRelic } from "./relic.failRelic";
 
 /**
  * Refuses an untrusted string before it becomes a positional `relic` CLI

@@ -1,6 +1,6 @@
 import { hopTrace } from "../chain.hopTrace";
 import { queryText } from "../chain.queryText";
-import { chainStopped } from "../chain.stopped";
+import { chainStopped } from "../chain.chainStopped";
 import { CompatError } from "../compat-error";
 import { ensureSpeaker } from "../ensureSpeaker";
 import type { V3ToolContext } from "../handlers";

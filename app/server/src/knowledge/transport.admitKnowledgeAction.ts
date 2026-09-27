@@ -1,5 +1,5 @@
 import { admit, type Admission, type AdmissionTarget } from "../auth/policy";
-import { loadPolicy } from "../auth/loader";
+import { loadPolicy } from "../auth/loader.loadPolicy";
 import { peerBinding } from "../auth/policy.peerBinding";
 import type { KnowledgeAction, RequestAuthority } from "./registry";
 

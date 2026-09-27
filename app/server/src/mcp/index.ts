@@ -12,7 +12,7 @@
  * invalidated when the request ends.
  */
 
-import type { McpEnvelope, OperationService, ToolOperations } from "../auth/service";
+import type { McpEnvelope, OperationService, ToolOperations } from "../auth/service.createOperationService";
 import { KNOWLEDGE_METHODS } from "../knowledge/registry";
 import type { KnowledgeAccess } from "../knowledge/transport";
 import { bodyScopeRefusal } from "../knowledge/transport.bodyScopeRefusal";

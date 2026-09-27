@@ -1567,3 +1567,12 @@ aggregation, BOTH the positive and negative case, is proven against the stub `kb
 **Reverse by**: nothing to reverse -- this section changes no code and no test, only the heading
 markup and the provenance of one claim in §24's prose. §24 itself, and the fix it documents,
 stand as shipped.
+
+## Amendment 2026-09-26 (post-merge Nat style: one exported function per file, named after the file (ratchet: app/server/test/one-function-per-file.test.ts))
+
+The path cited above, `auth/service.ts`, moved. The style-shrink slice
+(`docs/overnight/DECISIONS.md`; ratchet `app/server/test/one-function-per-file.test.ts`
+MISNAMED_ALLOWLIST) renamed it to `auth/service.createOperationService.ts` by a pure `git mv`
+-- `runMcp` and every other export are byte-identical; only the filename changed, to satisfy
+the ratchet's "one exported function per file, named after the file" rule. This section is
+not rewritten in place; read `auth/service.ts` above as `auth/service.createOperationService.ts`.
