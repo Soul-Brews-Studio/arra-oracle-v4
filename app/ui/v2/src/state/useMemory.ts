@@ -6,7 +6,7 @@
  * instead of spread across a dozen components, which is the only reason a POC
  * this small can stay readable.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   type Bank,
   type ChatAnswer,
@@ -25,6 +25,7 @@ import {
 } from "../api/memory";
 import { type ApiResult } from "../api/client";
 import { type Roster, addName, loadRoster, removeName, saveRoster, setState } from "./roster";
+import { useKeyedRead } from "./useKeyedRead";
 import { useToken } from "./useToken";
 
 /** One place to turn any failed ApiResult into display text. The error
@@ -51,6 +52,13 @@ function rows(body: unknown): MessageRow[] {
   return Array.isArray(value) ? (value as MessageRow[]) : [];
 }
 
+/** What a transcript / context read is FOR: every input that changes its
+ *  answer. A read whose key is no longer this is a read for somewhere left. */
+const messagesKey = (v: { b: Bank; session: string | null }) =>
+  v.session === null ? null : JSON.stringify([v.b.bank, v.b.workspace, v.b.token, v.session]);
+const contextKey = (v: { b: Bank; peer: string | null; session: string | null }) =>
+  v.peer === null || v.session === null ? null : JSON.stringify([v.b.bank, v.b.workspace, v.b.token, v.peer, v.session]);
+
 export function useMemory() {
   const [bank, setBank] = useState("default");
   const [workspace, setWorkspace] = useState("default");
@@ -65,23 +73,22 @@ export function useMemory() {
   const [busy, setBusy] = useState(false);
 
   const [messages, setMessages] = useState<MessageRow[]>([]);
-  const [loadingMessages, setLoadingMessages] = useState(false);
   const [messageError, setMessageError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
 
   const [context, setContext] = useState<ContextResult | null>(null);
   const [contextError, setContextError] = useState<string | null>(null);
-  const [loadingContext, setLoadingContext] = useState(false);
 
   const [answer, setAnswer] = useState<ChatAnswer | null>(null);
   const [asking, setAsking] = useState(false);
   const [askError, setAskError] = useState<string | null>(null);
-  // Which transcript / context read is current. Switching session (or peer,
-  // or bank) while one is in flight must not let the old answer land last
-  // and show one session's messages under another's name -- the same race
-  // `useKnowledge.refresh` had (ui-stale). Checked after every await.
-  const messagesGen = useRef(0);
-  const contextGen = useRef(0);
+  // Which transcript / context read is current, keyed on the selection it
+  // was issued for (useKeyedRead). Switching session (or peer, or bank) while
+  // one is in flight must not show one session's messages under another's
+  // name -- and `send`/`join` below refresh whatever is on screen when their
+  // write lands, not the session they were clicked in (ui-stale round 3).
+  const messagesRead = useKeyedRead({ b, session }, messagesKey);
+  const contextRead = useKeyedRead({ b, peer, session }, contextKey);
 
   // The roster is per-workspace: names in one workspace mean nothing in
   // another, and carrying them across would show rows that cannot exist.
@@ -119,28 +126,28 @@ export function useMemory() {
   }, [workspace, verify]);
 
   const refreshMessages = useCallback(async () => {
-    const g = ++messagesGen.current;
+    const t = messagesRead.begin();
+    const { b, session } = t.value;
     if (session === null) {
-      // The bump dropped any read in flight; its loading flag is ours to clear.
-      setLoadingMessages(false);
       setMessages([]);
       return;
     }
-    setLoadingMessages(true);
     setMessageError(null);
     // The transcript pane is the OPERATOR view (no requester): it shows the
     // whole session whichever peer is selected, and needs audit:read (#87 /
     // R3). A token without it gets 403 here, surfaced by `describe` below;
     // the selected peer's own view is the getContext column.
     const result = await listMessages(b, session, 50, null);
-    if (g !== messagesGen.current) return; // a newer read has started
-    setLoadingMessages(false);
+    if (!messagesRead.land(t)) return; // a session already left, or a newer read
     if (!result.ok) {
       setMessages([]);
       setMessageError(describe(result));
       return;
     }
     setMessages(rows(result.body));
+    // Reads its selection from `messagesRead`, not this closure; the deps
+    // only say WHEN a read is due -- a new bank, token or session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [b, session]);
 
   useEffect(() => {
@@ -148,23 +155,22 @@ export function useMemory() {
   }, [refreshMessages]);
 
   const refreshContext = useCallback(async () => {
-    const g = ++contextGen.current;
+    const t = contextRead.begin();
+    const { b, peer, session } = t.value;
     if (peer === null || session === null) {
-      setLoadingContext(false);
       setContext(null);
       return;
     }
-    setLoadingContext(true);
     setContextError(null);
     const result = await getContext(b, peer, session, 20);
-    if (g !== contextGen.current) return;
-    setLoadingContext(false);
+    if (!contextRead.land(t)) return;
     if (!result.ok) {
       setContext(null);
       setContextError(describe(result));
       return;
     }
     setContext(result.body as ContextResult);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [b, peer, session]);
 
   const actions = {
@@ -233,8 +239,8 @@ export function useMemory() {
   return {
     bank, setBank, workspace, setWorkspace, token, setToken,
     roster, peer, setPeer, session, setSession, busy,
-    messages, loadingMessages, messageError, sending,
-    context, loadingContext, contextError,
+    messages, loadingMessages: messagesRead.loading, messageError, sending,
+    context, loadingContext: contextRead.loading, contextError,
     answer, asking, askError,
     actions,
   };

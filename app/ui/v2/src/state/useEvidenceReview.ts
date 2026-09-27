@@ -24,9 +24,11 @@
  * Fix-round hardening (all four were nonblocking findings on the previous
  * pass, addressed here):
  *   1. every async lane guards against a STALE response landing after the
- *      selection has already moved on (a generation counter per lane,
- *      bumped at the start of each fetch; a result is applied only if its
- *      generation is still current).
+ *      selection has already moved on -- since ui-stale round 3 a KEYED
+ *      guard per lane (`useKeyedRead`): a result lands only while the
+ *      node / session / scope it was issued for is still the one on screen,
+ *      and every refresh -- including the one after a lifecycle write --
+ *      reads that selection at call time, never from a stale closure.
  *   2. `hitsNextAfter` is reset on every trace-lookup or hits-read failure,
  *      so "load more" can never send one trace's cursor against a different
  *      `trace_id`.
@@ -35,15 +37,13 @@
  *   4. a looked-up trace (and its hits) resets when the bank/workspace scope
  *      changes, instead of surviving under a dataset it was never read from.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
-import { type ApiResult } from "../api/client";
+import { useCallback, useEffect, useState } from "react";
 import { type Bank } from "../api/memory";
 import {
   type AssociationResult,
   type DependentOccurrence,
   type DependentsCursor,
   type LifecycleEventRow,
-  type LifecycleWriteOutcome,
   type RecallEligibility,
   type SessionLinkRow,
   type TraceHitRow,
@@ -56,23 +56,28 @@ import {
   getTrace,
   hitsOf,
   lifecycleHistoryOf,
-  lifecycleWriteOutcomeOf,
   listLifecycleHistory,
   listSessionLinks,
   listTraceHits,
   recallEligibilityOf,
-  retireNode,
   scanDependents,
   sessionLinksOf,
-  supersedeNode,
   traceOf,
 } from "../api/evidenceReview";
 import { describeResult as describe } from "./describeResult";
+import { useKeyedRead } from "./useKeyedRead";
+import { useLifecycleWrites } from "./useLifecycleWrites";
 import { useEvidenceStatus } from "./useEvidenceStatus";
 
 const HITS_PAGE = 50;
 const LINKS_PAGE = 50;
 const LIFECYCLE_PAGE = 50;
+
+const k = (...parts: Array<string | null>) => JSON.stringify(parts);
+
+/** What a node-scoped read is FOR: the node and every input that changes it. */
+const nodeKey = (v: { b: Bank; nodeId: string | null }) =>
+  v.nodeId === null ? null : k(v.b.bank, v.b.workspace, v.b.token, v.nodeId);
 
 export function useEvidenceReview(
   b: Bank,
@@ -86,19 +91,16 @@ export function useEvidenceReview(
   const [traceId, setTraceId] = useState("");
   const [trace, setTrace] = useState<TraceRow | null>(null);
   const [traceError, setTraceError] = useState<string | null>(null);
-  const [traceLoading, setTraceLoading] = useState(false);
   const [hits, setHits] = useState<TraceHitRow[]>([]);
   const [hitsNextAfter, setHitsNextAfter] = useState<string | null>(null);
   const [hitsError, setHitsError] = useState<string | null>(null);
-  const traceGen = useRef(0);
+  const traceRead = useKeyedRead(b, (v) => k(v.bank, v.workspace, v.token));
 
   // A trace is scoped to a dataset -- it must not survive a bank/workspace
   // switch just because no new lookup was made yet.
   useEffect(() => {
-    // Every bump that drops a read in flight also clears that read's loading
-    // flag -- the dropped read never will (ui-stale fix round).
-    traceGen.current += 1;
-    setTraceLoading(false);
+    // A lookup in flight for the old scope is dropped by its key, and its
+    // loading flag with it (ui-stale).
     setTraceId("");
     setTrace(null);
     setTraceError(null);
@@ -109,14 +111,14 @@ export function useEvidenceReview(
 
   const lookupTrace = useCallback(
     async (id: string) => {
-      const gen = ++traceGen.current;
-      setTraceLoading(true);
+      const t = traceRead.begin();
+      const b = t.value;
       setTraceError(null);
       setHitsError(null);
       const traceResult = await getTrace(b, id);
-      if (gen !== traceGen.current) return; // superseded by a newer lookup or a scope change
+      if (!traceRead.live(t)) return; // superseded by a newer lookup or a scope change
       if (!traceResult.ok) {
-        setTraceLoading(false);
+        traceRead.land(t);
         setTrace(null);
         setHits([]);
         setHitsNextAfter(null);
@@ -128,14 +130,13 @@ export function useEvidenceReview(
       if (found === null) {
         // Not an error: `getTrace` answers `null` for an id it does not
         // have, same as `getAcceptedHead` for a node it does not have.
-        setTraceLoading(false);
+        traceRead.land(t);
         setHits([]);
         setHitsNextAfter(null);
         return;
       }
       const hitsResult = await listTraceHits(b, id, null, HITS_PAGE);
-      if (gen !== traceGen.current) return;
-      setTraceLoading(false);
+      if (!traceRead.land(t)) return;
       if (!hitsResult.ok) {
         setHits([]);
         setHitsNextAfter(null);
@@ -146,14 +147,14 @@ export function useEvidenceReview(
       setHits(page.rows);
       setHitsNextAfter(page.nextAfterPosition);
     },
-    [b],
+    [traceRead],
   );
 
   const loadMoreHits = useCallback(async () => {
     if (trace === null || hitsNextAfter === null) return;
-    const gen = traceGen.current;
-    const hitsResult = await listTraceHits(b, trace.id, hitsNextAfter, HITS_PAGE);
-    if (gen !== traceGen.current) return;
+    const t = traceRead.peek();
+    const hitsResult = await listTraceHits(t.value, trace.id, hitsNextAfter, HITS_PAGE);
+    if (!traceRead.live(t)) return;
     if (!hitsResult.ok) {
       setHitsError(describe(hitsResult));
       return;
@@ -161,30 +162,29 @@ export function useEvidenceReview(
     const page = hitsOf(hitsResult);
     setHits((prev) => [...prev, ...page.rows]);
     setHitsNextAfter(page.nextAfterPosition);
-  }, [b, trace, hitsNextAfter]);
+  }, [traceRead, trace, hitsNextAfter]);
 
   // ---- session links: follow the selected session ------------------------
   const [linkDirection, setLinkDirection] = useState<"from" | "to">("from");
   const [sessionLinks, setSessionLinks] = useState<SessionLinkRow[]>([]);
   const [sessionLinksNextCursor, setSessionLinksNextCursor] = useState<string | null>(null);
-  const [sessionLinksLoading, setSessionLinksLoading] = useState(false);
   const [sessionLinksError, setSessionLinksError] = useState<string | null>(null);
-  const sessionLinksGen = useRef(0);
+  const linksRead = useKeyedRead({ b, sessionName, linkDirection }, (v) =>
+    v.sessionName === null ? null : k(v.b.bank, v.b.workspace, v.b.token, v.sessionName, v.linkDirection),
+  );
 
   const refreshSessionLinks = useCallback(async () => {
-    const gen = ++sessionLinksGen.current;
+    const t = linksRead.begin();
+    const { b, sessionName, linkDirection } = t.value;
     if (sessionName === null) {
-      setSessionLinksLoading(false);
       setSessionLinks([]);
       setSessionLinksNextCursor(null);
       setSessionLinksError(null);
       return;
     }
-    setSessionLinksLoading(true);
     setSessionLinksError(null);
     const result = await listSessionLinks(b, sessionName, linkDirection, null, LINKS_PAGE);
-    if (gen !== sessionLinksGen.current) return;
-    setSessionLinksLoading(false);
+    if (!linksRead.land(t)) return;
     if (!result.ok) {
       setSessionLinks([]);
       setSessionLinksNextCursor(null);
@@ -194,6 +194,7 @@ export function useEvidenceReview(
     const page = sessionLinksOf(result);
     setSessionLinks(page.rows);
     setSessionLinksNextCursor(page.nextCursor);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- selection read from `linksRead`
   }, [b, sessionName, linkDirection]);
 
   useEffect(() => {
@@ -201,10 +202,11 @@ export function useEvidenceReview(
   }, [refreshSessionLinks]);
 
   const loadMoreSessionLinks = useCallback(async () => {
+    const t = linksRead.peek();
+    const { b, sessionName, linkDirection } = t.value;
     if (sessionName === null || sessionLinksNextCursor === null) return;
-    const gen = sessionLinksGen.current;
     const result = await listSessionLinks(b, sessionName, linkDirection, sessionLinksNextCursor, LINKS_PAGE);
-    if (gen !== sessionLinksGen.current) return;
+    if (!linksRead.live(t)) return;
     if (!result.ok) {
       setSessionLinksError(describe(result));
       return;
@@ -212,27 +214,25 @@ export function useEvidenceReview(
     const page = sessionLinksOf(result);
     setSessionLinks((prev) => [...prev, ...page.rows]);
     setSessionLinksNextCursor(page.nextCursor);
-  }, [b, sessionName, linkDirection, sessionLinksNextCursor]);
+  }, [linksRead, sessionLinksNextCursor]);
 
   // ---- lifecycle + recall eligibility: follow the selected node ----------
   const [lifecycle, setLifecycle] = useState<LifecycleEventRow[]>([]);
-  const [lifecycleLoading, setLifecycleLoading] = useState(false);
   const [lifecycleError, setLifecycleError] = useState<string | null>(null);
   const [recall, setRecall] = useState<RecallEligibility | null>(null);
   const [recallError, setRecallError] = useState<string | null>(null);
-  const lifecycleGen = useRef(0);
+  const lifecycleRead = useKeyedRead({ b, nodeId }, nodeKey);
 
   const refreshLifecycle = useCallback(async () => {
-    const gen = ++lifecycleGen.current;
+    const t = lifecycleRead.begin();
+    const { b, nodeId } = t.value;
     if (nodeId === null) {
-      setLifecycleLoading(false);
       setLifecycle([]);
       setLifecycleError(null);
       setRecall(null);
       setRecallError(null);
       return;
     }
-    setLifecycleLoading(true);
     setLifecycleError(null);
     setRecallError(null);
     const [historyResult, recallResult] = await Promise.all([
@@ -242,8 +242,7 @@ export function useEvidenceReview(
     // A response for a node the caller has already navigated AWAY from must
     // never land on the now-selected one -- switching nodes quickly must not
     // show node A's recall verdict under node B.
-    if (gen !== lifecycleGen.current) return;
-    setLifecycleLoading(false);
+    if (!lifecycleRead.land(t)) return;
     if (!historyResult.ok) {
       setLifecycle([]);
       setLifecycleError(describe(historyResult));
@@ -260,6 +259,7 @@ export function useEvidenceReview(
       // silently hiding the badge with no error at all -- say so instead.
       setRecallError(parsed === null ? "malformed recall eligibility response" : null);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- node read from `lifecycleRead`
   }, [b, nodeId]);
 
   useEffect(() => {
@@ -272,16 +272,17 @@ export function useEvidenceReview(
   // scopes evidence review to "for a node", and the diff view already covers
   // comparing two exact revisions).
   const [association, setAssociation] = useState<AssociationResult | null>(null);
-  const [associationLoading, setAssociationLoading] = useState(false);
   const [associationError, setAssociationError] = useState<string | null>(null);
   const [dependents, setDependents] = useState<DependentOccurrence[]>([]);
   const [dependentsNextCursor, setDependentsNextCursor] = useState<DependentsCursor | null>(null);
-  const [dependentsLoading, setDependentsLoading] = useState(false);
+  // The key whose reverse read is in flight; `loading` only while it is the
+  // key on screen, so a dropped chain cannot latch the flag.
+  const [dependentsFor, setDependentsFor] = useState<string | null>(null);
   const [dependentsError, setDependentsError] = useState<string | null>(null);
-  const associationGen = useRef(0);
+  const associationRead = useKeyedRead({ b, nodeId }, nodeKey);
 
   const fetchDependentsPage = useCallback(
-    async (target: { node_id: string; revision_id: string }, cursor: DependentsCursor | null) => {
+    async (b: Bank, target: { node_id: string; revision_id: string }, cursor: DependentsCursor | null) => {
       const result = await scanDependents(b, target, MAX_DEPENDENTS_PAGE, cursor);
       if (!result.ok) return { ok: false as const, error: describe(result) };
       const page = dependentsOf(result);
@@ -291,17 +292,17 @@ export function useEvidenceReview(
       if (page.outcome === "error") return { ok: false as const, error: "could not read dependents" };
       return { ok: true as const, occurrences: page.occurrences, nextCursor: page.nextCursor };
     },
-    [b],
+    [],
   );
 
   const refreshAssociation = useCallback(async () => {
-    const gen = ++associationGen.current;
-    // Cleared here, not per branch: this bump drops any reverse read still in
-    // flight, and a path that never issues its own (no node, a failed or
-    // empty association) would otherwise leave that read's flag on.
-    setDependentsLoading(false);
+    const t = associationRead.begin();
+    const { b, nodeId } = t.value;
+    // Cleared here, not per branch: this read supersedes any reverse read
+    // still in flight, and a path that never issues its own (no node, a
+    // failed or empty association) would otherwise leave that read's flag on.
+    setDependentsFor(null);
     if (nodeId === null) {
-      setAssociationLoading(false);
       setAssociation(null);
       setAssociationError(null);
       setDependents([]);
@@ -309,11 +310,9 @@ export function useEvidenceReview(
       setDependentsError(null);
       return;
     }
-    setAssociationLoading(true);
     setAssociationError(null);
     const result = await getRevisionAssociations(b, nodeId, null);
-    if (gen !== associationGen.current) return;
-    setAssociationLoading(false);
+    if (!associationRead.land(t)) return;
     if (!result.ok) {
       setAssociation(null);
       setAssociationError(describe(result));
@@ -329,11 +328,11 @@ export function useEvidenceReview(
       setDependentsError(null);
       return;
     }
-    setDependentsLoading(true);
+    setDependentsFor(t.key);
     setDependentsError(null);
-    const page = await fetchDependentsPage({ node_id: row.node_id, revision_id: row.revision_id }, null);
-    if (gen !== associationGen.current) return;
-    setDependentsLoading(false);
+    const page = await fetchDependentsPage(b, { node_id: row.node_id, revision_id: row.revision_id }, null);
+    if (!associationRead.live(t)) return;
+    setDependentsFor(null);
     if (!page.ok) {
       setDependents([]);
       setDependentsNextCursor(null);
@@ -342,6 +341,7 @@ export function useEvidenceReview(
     }
     setDependents(page.occurrences);
     setDependentsNextCursor(page.nextCursor);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- node read from `associationRead`
   }, [b, nodeId, fetchDependentsPage]);
 
   useEffect(() => {
@@ -350,87 +350,23 @@ export function useEvidenceReview(
 
   const loadMoreDependents = useCallback(async () => {
     if (association === null || dependentsNextCursor === null) return;
-    const gen = associationGen.current;
+    const t = associationRead.peek();
     const page = await fetchDependentsPage(
+      t.value.b,
       { node_id: association.node_id, revision_id: association.revision_id },
       dependentsNextCursor,
     );
-    if (gen !== associationGen.current) return;
+    if (!associationRead.live(t)) return;
     if (!page.ok) {
       setDependentsError(page.error);
       return;
     }
     setDependents((prev) => [...prev, ...page.occurrences]);
     setDependentsNextCursor(page.nextCursor);
-  }, [association, dependentsNextCursor, fetchDependentsPage]);
+  }, [associationRead, association, dependentsNextCursor, fetchDependentsPage]);
 
   // ---- lifecycle writes: retire / supersede (#29, #33 R12) ----------------
-  const [lifecycleActionBusy, setLifecycleActionBusy] = useState(false);
-  const [lifecycleActionError, setLifecycleActionError] = useState<string | null>(null);
-  const [lifecycleActionOutcome, setLifecycleActionOutcome] = useState<LifecycleWriteOutcome | null>(null);
-
-  // Fix-round 2 finding: node A's retire/supersede outcome must not linger
-  // under node B (`DetailTabs` also remounts `LifecycleActions` per node, so
-  // a half-filled form cannot be confirmed against the next node either).
-  useEffect(() => {
-    setLifecycleActionOutcome(null);
-    setLifecycleActionError(null);
-  }, [nodeId, scope]);
-
-  const applyLifecycleWrite = useCallback(
-    async (result: ApiResult) => {
-      setLifecycleActionBusy(false);
-      if (!result.ok) {
-        setLifecycleActionError(describe(result));
-        return;
-      }
-      const outcome = lifecycleWriteOutcomeOf(result);
-      if (outcome === null) {
-        setLifecycleActionError("malformed lifecycle write response");
-        return;
-      }
-      setLifecycleActionOutcome(outcome);
-      setLifecycleActionError(outcome.outcome === "conflict" ? `conflict: ${outcome.reason}` : null);
-      await refreshLifecycle();
-    },
-    [refreshLifecycle],
-  );
-
-  const retire = useCallback(
-    async (expectedRevisionId: string, reason: string) => {
-      if (nodeId === null) return;
-      setLifecycleActionBusy(true);
-      setLifecycleActionError(null);
-      setLifecycleActionOutcome(null);
-      const result = await retireNode(b, {
-        node_id: nodeId,
-        expected_revision_id: expectedRevisionId,
-        reason,
-        peer_name: peerName,
-      });
-      await applyLifecycleWrite(result);
-    },
-    [b, nodeId, peerName, applyLifecycleWrite],
-  );
-
-  const supersede = useCallback(
-    async (expectedRevisionId: string, newNodeId: string, newRevisionId: string, reason: string) => {
-      if (nodeId === null) return;
-      setLifecycleActionBusy(true);
-      setLifecycleActionError(null);
-      setLifecycleActionOutcome(null);
-      const result = await supersedeNode(b, {
-        node_id: nodeId,
-        expected_revision_id: expectedRevisionId,
-        new_node_id: newNodeId,
-        new_revision_id: newRevisionId,
-        reason,
-        peer_name: peerName,
-      });
-      await applyLifecycleWrite(result);
-    },
-    [b, nodeId, peerName, applyLifecycleWrite],
-  );
+  const lifecycleActions = useLifecycleWrites(b, nodeId, peerName, lifecycleRead.key, refreshLifecycle);
 
   // #33 AC3: live status behind the stale/unavailable evidence labels.
   const evidenceStatus = useEvidenceStatus(b, association, dependents);
@@ -440,7 +376,7 @@ export function useEvidenceReview(
       id: traceId,
       setId: setTraceId,
       row: trace,
-      loading: traceLoading,
+      loading: traceRead.loading,
       error: traceError,
       lookup: () => void lookupTrace(traceId.trim()),
     },
@@ -452,7 +388,7 @@ export function useEvidenceReview(
     },
     sessionLinks: {
       rows: sessionLinks,
-      loading: sessionLinksLoading,
+      loading: linksRead.loading,
       error: sessionLinksError,
       direction: linkDirection,
       setDirection: setLinkDirection,
@@ -462,16 +398,9 @@ export function useEvidenceReview(
     },
     lifecycle: {
       rows: lifecycle,
-      loading: lifecycleLoading,
+      loading: lifecycleRead.loading,
       error: lifecycleError,
-      actions: {
-        busy: lifecycleActionBusy,
-        error: lifecycleActionError,
-        outcome: lifecycleActionOutcome,
-        retire: (expectedRevisionId: string, reason: string) => void retire(expectedRevisionId, reason),
-        supersede: (expectedRevisionId: string, newNodeId: string, newRevisionId: string, reason: string) =>
-          void supersede(expectedRevisionId, newNodeId, newRevisionId, reason),
-      },
+      actions: lifecycleActions,
     },
     recall: {
       value: recall,
@@ -479,13 +408,13 @@ export function useEvidenceReview(
     },
     association: {
       row: association,
-      loading: associationLoading,
+      loading: associationRead.loading,
       error: associationError,
       citedStatus: evidenceStatus.cited,
     },
     dependents: {
       rows: dependents,
-      loading: dependentsLoading,
+      loading: dependentsFor !== null && dependentsFor === associationRead.key,
       error: dependentsError,
       hasMore: dependentsNextCursor !== null,
       loadMore: () => void loadMoreDependents(),
