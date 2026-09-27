@@ -129,7 +129,7 @@ export function ExploreView({
       <div className="flex items-center gap-2 border-b border-edge px-4 py-2 text-xs text-muted">
         <span>Workspaces</span>
         <span>&gt;</span>
-        <span className="text-slate-100">{bank.workspace}</span>
+        <span className="min-w-0 text-slate-100 [overflow-wrap:anywhere]">{bank.workspace}</span>
         <button
           onClick={onBack}
           className="ml-auto rounded border border-edge px-2 py-1 text-muted hover:border-accent hover:text-accent"

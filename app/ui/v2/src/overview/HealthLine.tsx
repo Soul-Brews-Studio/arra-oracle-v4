@@ -44,9 +44,9 @@ export function HealthLine({
   const reachable = version !== null || auth !== null;
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-edge px-4 py-2 text-[11px] text-muted">
-      <span className="text-slate-100">{bank}</span>
+      <span className="min-w-0 text-slate-100 [overflow-wrap:anywhere]">{bank}</span>
       <span className="text-edge">·</span>
-      <span title="the workspace every count on this page is scoped to">
+      <span title="the workspace every count on this page is scoped to" className="min-w-0 [overflow-wrap:anywhere]">
         workspace <span className="text-slate-100">{workspace}</span>
       </span>
       <span className="text-edge">·</span>
