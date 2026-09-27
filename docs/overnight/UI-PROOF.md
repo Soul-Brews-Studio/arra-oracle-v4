@@ -430,3 +430,154 @@ under `docs/overnight/ui/`.
 ## Amendments
 
 None. No file under `app/docs/contracts/` was touched, and no new dependency was added.
+
+---
+
+# UI-search proof: keyword/semantic search box in Explore (issue #33 remainder, R7/R14/R21/R22)
+
+**Slice**: `ui-search`. **Branch**: `v4/on-ui-search`, based on `v4/overnight-26sep` `5b3f40e`.
+UI-only change, `app/ui/v2` (no `app/server/src` file touched). Before this slice the UI called
+neither `searchKnowledgeKeyword` nor `searchKnowledgeSemantic` (`docs/SCHEMA-BUILT.md`'s name
+scan). This adds a `Search` tab to the existing Explore view (`explore/DetailTabs.tsx`), beside
+`Nodes`/`Chat`/`Messages`/`Evidence`/`Config`, with a query box + keyword/semantic mode toggle.
+
+**New files**: `state/searchHitView.ts` (+ test), `state/searchState.ts` (+ test),
+`api/search.ts`, `state/useKnowledgeSearch.ts`, `components/KnowledgeSearchBox.tsx`,
+`components/KnowledgeSearchResults.tsx`. Wired into `explore/DetailTabs.tsx` / `ExploreView.tsx`.
+
+## Failing-first evidence
+
+`searchHitView.ts` / `searchState.ts` were written as empty (moved aside), their test files
+written against the intended API, and run RED before any implementation existed:
+
+```
+error: Cannot find module './searchState' from '.../src/state/searchState.test.ts'
+error: Cannot find module './searchHitView' from '.../src/state/searchHitView.test.ts'
+0 pass / 2 fail / 2 errors
+```
+
+Then the implementations were restored and the same run went GREEN: `12 pass / 0 fail / 27
+expect() calls`. Full `app/ui/v2` suite after: `bun test src` → **118 pass, 0 fail** (was 106
+before this slice; 12 new).
+
+## Server-side facts these tests pin against the real service files
+
+- `searchKnowledgeKeyword` answers `{match, scan_reason, hits: [{..., rank, match}]}` — a 1-based
+  `rank`, never a raw score (R21), and a per-hit `match` (`"ngram" | "substring_scan"`).
+- `searchKnowledgeSemantic` answers `{embedding_profile, metric, hits: [{..., distance}]}` — a
+  raw per-row `distance` (no cross-tenant leak, so no R21 hiding needed) and a response-level
+  `embedding_profile`, not a per-hit field.
+- `scan_reason` is `"short_query"` (query &lt; 3 code points) or `"index_unavailable"` (the FTS
+  index has not been built by `indexRevisionChunks` yet) — a note on an otherwise normal answer,
+  not an error. `searchState.ts` renders it as a banner, distinct from a bare empty list.
+- `model_unavailable` (R9/R21: semantic with no/failing embedder) is its own UI state, same
+  `chatError.ts` idiom: a dedicated banner explaining Ollama must be running, not a generic error.
+
+## Live proof: real server, fresh `mktemp -d` dataset, writer gate
+
+Server started the same way `app/just/demo.sh`/`stack.sh` does (`arra_migrate.writer_gate` via
+`run_dev_server.py`), on a fresh `mktemp -d` root — never `app/.tmp`/`app/data`. Steps, via the
+real CLI (`bun app/cli.ts`), stopping before the demo's later supersede step so the published
+node stays in the default (non-history) recall view:
+
+1. `peer add alice`, `session add ui-search-proof`, `kb joinSession`.
+2. `kb seedReservedVocabularies`, `kb lookupVocabularyByName`/`lookupTermByName` for `type` /
+   `learning`.
+3. `kb publishRevision` — title `ผ่าดิสก์: อย่าหลงลืม snapshot ก่อนซ้อมย้ายข้อมูล`, body containing
+   `หลงลืม` (ลืม inside a word — the R14 counterexample ICU misses and ngram(3,3) finds).
+4. `kb indexRevisionChunks` — `outcome: "indexed"`, one chunk row, `status: "pending"` (no
+   embedder composed for this minimal proof stack, so semantic search on this dataset answers
+   `model_unavailable`, itself one of the states this slice renders).
+
+Then the built UI (`bun run build` in `app/ui/v2`, output verified under
+`app/server/public/v2/`) was opened with `/ego-browser` (fleet rule: ego-browser only, never
+dev-browser) against the running server, bank/workspace `default`, the dev token pasted into the
+Token field. Explore → Search tab → typed `ลืม`:
+
+- Result: rank `#1`, title `ผ่าดิสก์: อย่าหลงลืม snapshot ก่อนซ้อมย้ายข้อมูล`, snippet, match mode
+  `ngram` (confirmed present in the DOM via `page.evaluate` — the narrow panel width clips it
+  visually at the default viewport, a cosmetic layout gap, not a functional one).
+- Screenshot: `docs/overnight/ui/33-search-keyword-thai.png`.
+- Clicking a hit calls the same `onSelectNode` + tab switch to `Nodes` the plain node list
+  already uses — "opens that node in the existing node view" reuses that exact mechanism rather
+  than a second one.
+- Empty-query state observed live before typing: "Type a query to search this workspace's
+  knowledge." (`searchState`'s `empty_query` kind).
+
+Server and its `mktemp -d` root were torn down immediately after (`kill -TERM` on the owned PID,
+then `rm -rf` the root) — no `app/.tmp`/`app/data` was touched, and nothing was left running.
+
+## Acceptor live probe (unrelated to this slice, run for the hard rule)
+
+`bash .tmp/acceptor/live-probe/run.sh <this-worktree> ui-search` on HEAD `5b3f40e` (unchanged —
+this slice touches no `app/server/src` file): **57 kernel methods, HTTP 57 / MCP 57 / CLI 57,
+isolation 191 pass / 0 fail, 0 fatal.** `searchKnowledgeKeyword`/`searchKnowledgeSemantic` show
+as GAP on that scoreboard — a pre-existing fixture gap on the acceptor's own instrument (7 newer
+methods have no fixture yet, per `docs/overnight/PLAN.md`'s 02:16 log entry), not a defect this
+slice introduced or could fix from the UI side.
+
+## Tests and typecheck
+
+- `bun test src` (`app/ui/v2`): **118 pass, 0 fail** (106 before this slice).
+- `./node_modules/.bin/tsc -p tsconfig.json` (`app/ui/v2`): clean.
+- `bun run build` (`app/ui/v2`): succeeded, output at `app/server/public/v2/`.
+- `bun run test:ui-scope` (`app/server`): **13 pass, 0 fail** — unchanged; this is the OTHER,
+  legacy plain-script UI at `app/server/public/index.html`, untouched by this slice.
+- Python architecture guard (`app/migrate-py`, `unittest discover`): **268 pass, OK
+  (skipped=1)** — unchanged; no new TS file imports the publication kernel.
+
+## Amendments
+
+None. No file under `app/docs/contracts/` was touched (search-chunk-v1.md and its R21/R22
+amendments were already written by the search-query/search-polish slices), and no new
+dependency was added.
+
+## Fix round (2026-09-27): scanReason leak + click routing
+
+An independent Opus verifier REFUTED this slice on two blocking findings.
+
+1. **`scanReason` leaked from keyword into semantic results.** `useKnowledgeSearch`'s inline
+   branches never cleared `scanReason` on a successful SEMANTIC response, so a keyword-mode
+   note ("used a plain substring scan…") kept rendering on real semantic hits. Extracted the
+   response→state transition into a pure, unit-tested function,
+   `state/applySearchOutcome.ts`, and fixed the semantic branch to always reset `scanReason`.
+   Failing-first: `src/state/applySearchOutcome.test.ts`'s "semantic success clears a
+   scanReason left over from an earlier keyword search" failed
+   (`expect(received).toBeNull(); Received: "short_query"`) against the extracted-but-unfixed
+   function, then passed after adding `scanReason: null` to the semantic branch. While
+   extracting this, also fixed a second, related bug the extraction surfaced: `run`'s
+   `useCallback` was memoized on `[bank]` only, so reading the five response-state variables
+   directly out of its closure captured stale values from mount, not the latest state — the
+   five separate `useState`s were consolidated into one `SearchOutcome` object updated via a
+   functional `setOutcome(prev => applySearchOutcome(mode, result, prev))`, which is correct
+   regardless of `run`'s own dependency list.
+2. **Clicking a hit didn't open the node view.** The old handler called `onSelectNode` +
+   switched Explore's own tab to `nodes` — a paged, type-filterable `listNodes` view that never
+   renders title/body/history, and shows nothing highlighted at all if the hit is off-page or
+   filtered out. Extracted the navigation decision into `state/searchHitRoute.ts` (`{ view:
+   "knowledge", node: nodeId }`) and wired it through a new `onOpenSearchHit` prop from `App.tsx`
+   (which owns `push`) down through `ExploreView`, so a hit now navigates to `KnowledgeView` at
+   `#/knowledge?node=…` — the view that unconditionally renders `NodeHead` + `RevisionHistory`
+   for whatever id is in the URL. Failing-first: `src/state/searchHitRoute.test.ts` failed with
+   `Cannot find module './searchHitRoute'` before the file existed, passed after adding it.
+   Not re-verified with a fresh browser screenshot in this fix round (time-boxed); the fix is a
+   plumbing change traced by reading `App.tsx`/`useRoute.ts`/`KnowledgeView.tsx`, backed by the
+   new unit test asserting the route patch shape, plus `tsc` confirming the prop wiring
+   type-checks end to end.
+
+Also fixed two cheap nonblocking findings from the same review: the search-results title now has
+`min-w-0 truncate` (was pushing the `ngram`/`substring_scan` badge off-screen for long titles),
+and `DetailTabs.tsx`'s doc comment now says "Six tabs" (was "Five", stale since the search tab
+was added). Added a wire-shape test for `api/search.ts` (`src/api/search.test.ts`, stubbing
+`fetch`) covering the method-name/body-shape mutant the verifier's mutation run (M6) found no
+coverage for.
+
+Re-run: `bun test src` — **125 pass, 0 fail** (118 before this round; +7 new: 3
+`applySearchOutcome`, 2 `searchHitRoute`, 2 `api/search`). `tsc -p tsconfig.json` — clean.
+`bun run build` — succeeded (new bundle hashes, content changed by the fix). `bun run
+test:ui-scope` (`app/server`) — 13 pass, 0 fail, unchanged. Python architecture guard — 268
+pass, OK (skipped=1), unchanged; no new TS file imports the publication kernel. Acceptor live
+probe re-run on this worktree: **57/57/57 methods, isolation 191 pass / 0 fail, 0 fatal** —
+identical to the pre-fix-round run the verifier captured (`out/verify-ui-search-1.md`), including
+the same 26 payload-fixture gaps (`searchKnowledgeKeyword`/`searchKnowledgeSemantic` among them);
+confirms that scoreboard is unaffected by this UI-only fix, not a regression it introduced.

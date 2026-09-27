@@ -17,6 +17,10 @@ import { DialecticPanel } from "../components/DialecticPanel";
 import { Composer } from "../components/Composer";
 import { Transcript } from "../components/Transcript";
 import { TaxonomySetup } from "../components/TaxonomySetup";
+import { KnowledgeSearchBox } from "../components/KnowledgeSearchBox";
+import { KnowledgeSearchResults } from "../components/KnowledgeSearchResults";
+import type { SearchMode } from "../state/useKnowledgeSearch";
+import type { KeywordHitWire, SemanticHitWire } from "../state/searchHitView";
 import { TracePanel } from "../components/TracePanel";
 import { SessionLinksPanel } from "../components/SessionLinksPanel";
 import { LifecyclePanel } from "../components/LifecyclePanel";
@@ -25,10 +29,10 @@ import { AssociationPanel } from "../components/AssociationPanel";
 import { DependentsPanel } from "../components/DependentsPanel";
 import { ListPanel } from "./ListPanel";
 
-export type ExploreTab = "nodes" | "chat" | "messages" | "evidence" | "config";
-export const EXPLORE_TABS: ExploreTab[] = ["nodes", "chat", "messages", "evidence", "config"];
+export type ExploreTab = "nodes" | "search" | "chat" | "messages" | "evidence" | "config";
+export const EXPLORE_TABS: ExploreTab[] = ["nodes", "search", "chat", "messages", "evidence", "config"];
 
-/** The right-hand detail panel. Five tabs, one already-fetched-elsewhere
+/** The right-hand detail panel. Six tabs, one already-fetched-elsewhere
  *  view each -- this component switches between them and lays them out; it
  *  fetches nothing itself, matching `Transcript`/`DialecticPanel`'s own
  *  presentational contract. Chat and Messages are the EXISTING dialectic and
@@ -145,6 +149,18 @@ export function DetailTabs(props: {
     busy: boolean;
     error: string | null;
   };
+  search: {
+    query: string;
+    onQuery: (q: string) => void;
+    mode: SearchMode;
+    onMode: (m: SearchMode) => void;
+    loading: boolean;
+    errorCode: string | null;
+    hits: (KeywordHitWire | SemanticHitWire)[];
+    scanReason: "short_query" | "index_unavailable" | null;
+    embeddingProfile: string | null;
+    onOpenNode: (nodeId: string) => void;
+  };
 }) {
   const { active, onChange } = props;
   return (
@@ -220,6 +236,27 @@ export function DetailTabs(props: {
             onNext={props.nodes.onNext}
             onPrev={props.nodes.onPrev}
             onRefresh={props.nodes.onRefresh}
+          />
+        </div>
+      )}
+
+      {active === "search" && (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <KnowledgeSearchBox
+            query={props.search.query}
+            onQuery={props.search.onQuery}
+            mode={props.search.mode}
+            onMode={props.search.onMode}
+          />
+          <KnowledgeSearchResults
+            query={props.search.query}
+            mode={props.search.mode}
+            loading={props.search.loading}
+            errorCode={props.search.errorCode}
+            hits={props.search.hits}
+            scanReason={props.search.scanReason}
+            embeddingProfile={props.search.embeddingProfile}
+            onOpenNode={props.search.onOpenNode}
           />
         </div>
       )}

@@ -14,6 +14,7 @@ import { ExploreView } from "./explore/ExploreView";
 import { ForumView } from "./forum/ForumView";
 import { KnowledgeView } from "./KnowledgeView";
 import { OverviewView } from "./overview/OverviewView";
+import { searchHitRoute } from "./state/searchHitRoute";
 import { useMemory } from "./state/useMemory";
 import { type Route, useRoute } from "./state/useRoute";
 
@@ -147,6 +148,7 @@ export function App() {
           onSelectNode={(id) => push({ node: id })}
           onTabChange={(tab) => push({ tab })}
           onBack={() => push({ view: "messages" })}
+          onOpenSearchHit={(id) => push(searchHitRoute(id))}
         />
       ) : view === "forum" ? (
         <ForumView
