@@ -62,7 +62,7 @@ describe("plainBody never throws on a strictly parsed body, so no fallback is ne
 // `plainBody` with no swallowing `catch`. Other handlers are not this test's
 // business.
 test("POST /api/memories copies its audit input through plainBody, with no fallback", () => {
-  const source = readFileSync(new URL("../src/app.ts", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../src/app.createApp.ts", import.meta.url), "utf8");
   const from = source.indexOf('.post(\n      "/api/memories",');
   expect(from).toBeGreaterThanOrEqual(0);
   const rest = source.slice(from + 1);

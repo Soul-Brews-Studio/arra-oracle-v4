@@ -37,7 +37,7 @@ describe("D4b rules the maintenance-route audit gap: a separate instance-level l
   });
 
   test("the backfill route's comment points at the instance sink, not 'open for a human'", () => {
-    const route = section(read("../src/app.ts"), '"/api/backfill",', /^\s+\.(post|get)\(/m);
+    const route = section(read("../src/app.createApp.ts"), '"/api/backfill",', /^\s+\.(post|get)\(/m);
     expect(route).not.toMatch(/open for a human/i);
     expect(route).toMatch(/instance-level audit sink/i);
   });
