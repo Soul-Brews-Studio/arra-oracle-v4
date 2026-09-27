@@ -1311,3 +1311,71 @@ Fresh `mktemp -d` datasets, real writer gate, stub query vectors, no model.
   verbatim.
 - `app/ui/v2/src/components/KnowledgeSearchResults.coverage.test.ts` (new, render): red 3 of 4
   against the previous component.
+
+## 22. Amendment 2026-09-27 (post-merge R18 (v3 parity) + R21/R22 + #30 coverage amendment)
+
+Source: `docs/overnight/DECISIONS.md` R21 (no raw score), R22 (keyword order and candidate
+selection are workspace-local, "known residual" documented with the measured bound), and issue
+`Soul-Brews-Studio/arra-oracle-v4#30`. Section 21 above shipped the three fields and said plainly,
+in its own "3 · Callers": *"The v3 adapter (`oracle_search`, `oracle_ask`) is unchanged: it reads
+`hits` and ignores the new fields... folding the kernel's `coverage` into it is not done here."*
+The acceptance verifier of the v3-coverage slice (`.tmp/ac-search-accept-nonblocking.txt` finding
+1) flagged that gap as the live bug it is: `search.retrieve.ts` computed its OWN `saturated` only
+from v3's 50-hit window (`answer.hits.length >= SEARCH_WINDOW`), so a kernel `coverage:"partial"`
+answer with FAR FEWER than 50 merged hits -- the exact R22 residual measured for real in
+`search-chunk-retrieval-candidate-ceiling.test.ts` -- reached `oracle_search`/`oracle_ask` (46% of
+measured real v3 traffic) looking complete. This section corrects that statement; sections above
+are left as written otherwise.
+
+### 1 · The fix
+
+- `search.retrieve.ts`'s `Retrieved` type gained three fields -- `coverage`, `coverageReason`,
+  `candidateCeiling` -- carried verbatim from the kernel's `searchKnowledgeKeyword` /
+  `searchKnowledgeSemantic` answer (per fts term, OR'd: `coverage:"partial"` the moment ANY term's
+  own candidate read saturated). This is independent of, and in addition to, the adapter's own
+  `saturated` (the 50-hit v3 window): a kernel candidate read can saturate while the merged answer
+  is two hits, and a merged answer of exactly 50 hits can still have every candidate read short.
+- **Where it surfaces, and why there (V3-PARITY.md §2.5 "Allowed additions: `compat_warnings` and
+  a `v4` object")**: as a `compat_warnings` entry, `{code:"partial", field:"metadata.coverage" |
+  "search.coverage", detail}`, naming `candidate_ceiling` and the reason. `"partial"` was already
+  in V3-PARITY's closed warning-code set (§2.5) and already the code `oracle_search`'s own 50-hit
+  `saturated` warning uses (`metadata.total`) -- the adapter's existing honesty mechanism, the same
+  one `oracle_stats.ts` and `oracle_concepts.ts` already use to surface a `listTermUsage`
+  `coverage:"partial"`. A new top-level or `metadata`-key addition was considered and rejected: the
+  three raw kernel field names are LanceDB/candidate-read vocabulary a v3 client was never taught,
+  where `compat_warnings` is exactly v3-compat's own contract for "something changed, here is
+  what and why" -- and it is additive, so the pinned `test/fixtures/v3-compat-v1/shapes/oracle_search.json`
+  shape needs no change (`matchesShape` already allows extra keys, `test/helpers/v3-compat-shapes.ts:231`).
+- `oracle_ask` gained the same warning (`field:"search.coverage"`); the original finding named both
+  tools, and `oracle_ask` shares the same `recall()` → `retrieve()` path and had no coverage warning
+  of any kind before this section.
+- `oracle_search_chain` is unchanged: it calls `searchKnowledgeSemantic` directly, never through
+  `retrieve()`/`recall()`, and was outside the cited finding's scope.
+
+### 2 · Test strength (verifier finding 2)
+
+`search-chunk-retrieval-candidate-ceiling.test.ts` -- the real 4096 bound, not the injected-ceiling
+harness section 21's own proof used -- now also asserts `coverage`/`coverage_reason`/
+`candidate_ceiling` on `big_1..4` (`"full"`), and on `big_5` and `after_beta` (`"partial"`,
+`"candidate_ceiling"`, `4096`): the exact R22 residual (BETA-only writes moving ALPHA's answer)
+now visibly says `"partial"` even where the merged answer itself still looks plausible.
+
+### 3 · The CLI (verifier finding 3), honestly
+
+`cli-search.test.ts`'s keyword test stubs the HTTP layer (`Bun.serve` echoing a fixed `response`),
+so it always passed with the fix reverted -- it proves argument marshaling and verbatim printing,
+never that a real kernel computed the fields. That has not changed: no test in this repo boots a
+real listening server and a real `bun app/cli.ts search --mode keyword` subprocess together (the
+pattern `fixtures/transport-v1/live-server/child.ts` uses for read-cursor/audit-parity has no
+publish/index/embed step, and `fixtures/transport-v1/search/child.ts`, which does, calls
+`app.handle()` in-process, never a CLI subprocess). The live probe's own CLI coverage
+(`live-probe/payloads.py` `CLI['search']`) runs only the LEGACY bare `search --query`, never
+`--mode keyword` -- so, contrary to this slice's non-blocking finding 3's aside, the `--issues`
+live probe does **not** currently exercise the CLI's knowledge-tier search at all. The real
+kernel-side proof (§21's own proof list, and section 2 above) covers HTTP and MCP, both
+transports the live probe DOES drive live. A real CLI-subprocess round trip for `search --mode
+keyword` remains a disclosed gap, not a silent one.
+
+**Reverse by**: dropping the two `compat_warnings.push` call sites in `oracle_search.ts` and
+`oracle_ask.ts` and the three `Retrieved` fields in `search.retrieve.ts`; nothing else depends on
+them, and section 21's fields keep flowing to every other caller unchanged.

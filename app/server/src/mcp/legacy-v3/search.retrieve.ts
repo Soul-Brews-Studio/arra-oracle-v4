@@ -18,6 +18,11 @@ export type KernelHit = {
   matched_terms?: string[];
 };
 
+/** The kernel's own #30 coverage answer (search-chunk-v1.md §21): one bit, a
+ *  closed reason and the bound itself -- never a count. Named locally rather
+ *  than imported from `publication/*` (A1: the adapter owns no import there). */
+type KernelCoverage = { coverage: "full" | "partial"; coverage_reason: "candidate_ceiling" | null; candidate_ceiling: number };
+
 export type Retrieved = {
   hits: KernelHit[];
   /** Which retrieval answered: v3's `source` value. */
@@ -29,8 +34,17 @@ export type Retrieved = {
   vectorAvailable: boolean | null;
   /** v3's single `metadata.warning` text, or null. */
   warning: string | null;
-  /** True when the window may have cut matches off: `total` is then a lower bound. */
+  /** True when v3's OWN 50-hit window may have cut matches off: `total` is
+   *  then a lower bound. Independent of `coverage` below -- a kernel read can
+   *  saturate its own candidate ceiling while this window stays wide open. */
   saturated: boolean;
+  /** The kernel's own #30 coverage (search-chunk-v1.md §21), carried through
+   *  rather than dropped: `"partial"` when ANY underlying candidate read (any
+   *  term, for fts) reached `candidateCeiling`, so more matches may exist
+   *  unread even when `hits.length` is far under `SEARCH_WINDOW`. */
+  coverage: "full" | "partial";
+  coverageReason: "candidate_ceiling" | null;
+  candidateCeiling: number;
 };
 
 /**
@@ -49,7 +63,7 @@ export type Retrieved = {
 export async function retrieve(kb: Kb, query: string, mode: "fts" | "vector"): Promise<Retrieved> {
   if (mode === "vector") {
     try {
-      const answer = (await kb("searchKnowledgeSemantic", { query, limit: SEARCH_WINDOW })) as { hits: KernelHit[] };
+      const answer = (await kb("searchKnowledgeSemantic", { query, limit: SEARCH_WINDOW })) as { hits: KernelHit[] } & KernelCoverage;
       return {
         hits: answer.hits,
         source: "vector",
@@ -58,6 +72,9 @@ export async function retrieve(kb: Kb, query: string, mode: "fts" | "vector"): P
         vectorAvailable: true,
         warning: answer.hits.length > 0 ? null : "Vector search returned no results. Entries are embedded after they are saved, so recent ones may not be searchable by vector yet.",
         saturated: answer.hits.length >= SEARCH_WINDOW,
+        coverage: answer.coverage,
+        coverageReason: answer.coverage_reason,
+        candidateCeiling: answer.candidate_ceiling,
       };
     } catch (error) {
       if (!isEmbedderDown(error)) throw error;
@@ -66,12 +83,16 @@ export async function retrieve(kb: Kb, query: string, mode: "fts" | "vector"): P
     }
   }
   const { terms, dropped } = keywordTerms(query);
-  const answers: { term: string; match: string; scan_reason: string | null; hits: KernelHit[] }[] = [];
+  const answers: ({ term: string; match: string; scan_reason: string | null; hits: KernelHit[] } & KernelCoverage)[] = [];
   for (const term of terms) {
-    const answer = (await kb("searchKnowledgeKeyword", { query: term, limit: SEARCH_WINDOW })) as { match: string; scan_reason: string | null; hits: KernelHit[] };
+    const answer = (await kb("searchKnowledgeKeyword", { query: term, limit: SEARCH_WINDOW })) as { match: string; scan_reason: string | null; hits: KernelHit[] } & KernelCoverage;
     answers.push({ term, ...answer });
   }
   const merged = mergeKeyword(answers);
+  // #30 coverage (search-chunk-v1.md §21): partial the moment ANY term's own
+  // candidate read saturated, whatever the merged hit count ends up being --
+  // this is the kernel's bound, not v3's 50-hit window (`saturated` below).
+  const partial = answers.some((answer) => answer.coverage === "partial");
   return {
     hits: merged.slice(0, SEARCH_WINDOW),
     source: "fts",
@@ -80,5 +101,8 @@ export async function retrieve(kb: Kb, query: string, mode: "fts" | "vector"): P
     vectorAvailable: null,
     warning: null,
     saturated: merged.length > SEARCH_WINDOW || answers.some((answer) => answer.hits.length >= SEARCH_WINDOW),
+    coverage: partial ? "partial" : "full",
+    coverageReason: partial ? "candidate_ceiling" : null,
+    candidateCeiling: answers[0]?.candidate_ceiling ?? 0,
   };
 }
