@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type Bank } from "../api/memory";
 import { type Page, type PeerRow, type SessionRow, type NodeRow, listPeers, listSessions, listNodes } from "../api/listing";
 import { listingErrorMessage } from "./listingErrorMessage";
+import { useKeyedRead } from "./useKeyedRead";
 
 const PAGE_SIZE = 50;
 
@@ -34,13 +35,21 @@ type ListState<T> = {
  *  only thing that differs between peers/sessions/nodes -- everything else
  *  (history, loading, error) is identical bookkeeping, so it lives here once
  *  instead of three times. */
-function useCursorList<T>(fetchPage: (after: string | null, includeTotal: boolean) => Promise<Page<T>>) {
+function useCursorList<T>(scope: string, fetchPage: (after: string | null, includeTotal: boolean) => Promise<Page<T>>) {
   const history = useRef<Array<string | null>>([null]);
   // Mirrors `state.pageIndex`/`nextCursor` in a ref so next()/prev() always
   // read the latest value without depending on `state` -- putting `state` in
   // a `useCallback` dep array here would rebuild these on every fetch, which
   // is the kind of churn `useMemory` avoids by keeping fetch identity stable.
   const cursor = useRef({ pageIndex: 0, nextCursor: null as string | null });
+  // Which page load is current, keyed on the bank/workspace it was issued
+  // for (useKeyedRead). A load for a workspace already left is dropped; a
+  // "show history" toggle or a fast next/prev puts two loads for the SAME
+  // workspace in flight, and the newer wins. Every load reads `fetchPage`
+  // from here too, so `refreshAll`'s first-render closure still reads the
+  // workspace on screen (ui-stale round 3: it re-read the first one).
+  const read = useKeyedRead({ scope, fetchPage }, (v) => v.scope);
+  const { begin, land } = read;
   const [state, setState] = useState<ListState<T>>({
     rows: [],
     total: null,
@@ -54,9 +63,11 @@ function useCursorList<T>(fetchPage: (after: string | null, includeTotal: boolea
 
   const load = useCallback(
     async (index: number, includeTotal: boolean) => {
-      setState((s) => ({ ...s, loading: true, error: null }));
+      const t = begin();
+      setState((s) => ({ ...s, error: null }));
       const after = history.current[index] ?? null;
-      const page = await fetchPage(after, includeTotal);
+      const page = await t.value.fetchPage(after, includeTotal);
+      if (!land(t)) return;
       cursor.current = { pageIndex: index, nextCursor: page.nextCursor };
       setState((s) => ({
         rows: page.rows,
@@ -73,7 +84,7 @@ function useCursorList<T>(fetchPage: (after: string | null, includeTotal: boolea
         hasPrev: index > 0,
       }));
     },
-    [fetchPage],
+    [begin, land],
   );
 
   const refresh = useCallback(() => {
@@ -97,7 +108,10 @@ function useCursorList<T>(fetchPage: (after: string | null, includeTotal: boolea
     void load(pageIndex - 1, false);
   }, [load]);
 
-  return { state, refresh, next, prev, load };
+  // `loading` belongs to the CURRENT workspace's load, so a switch cannot
+  // leave the previous one's flag on.
+  const shown = useMemo(() => ({ ...state, loading: read.loading }), [state, read.loading]);
+  return { state: shown, refresh, next, prev, load };
 }
 
 export function useListing(b: Bank) {
@@ -108,24 +122,31 @@ export function useListing(b: Bank) {
   const [includeInactive, setIncludeInactive] = useState(false);
 
   const peers = useCursorList<PeerRow>(
+    scope,
     useCallback((after, includeTotal) => listPeers(b, after, PAGE_SIZE, includeTotal), [b]),
   );
   const sessions = useCursorList<SessionRow>(
+    scope,
     useCallback((after, includeTotal) => listSessions(b, after, PAGE_SIZE, includeTotal), [b]),
   );
   const nodes = useCursorList<NodeRow>(
+    scope,
     useCallback(
       (after, includeTotal) => listNodes(b, after, PAGE_SIZE, includeTotal, typeTerm, includeInactive),
       [b, typeTerm, includeInactive],
     ),
   );
 
+  // Stable: each list's `refresh` reads its CURRENT fetchPage (and so the
+  // current workspace) at call time, never the render it was bound in.
+  const { refresh: refreshPeers } = peers;
+  const { refresh: refreshSessions } = sessions;
+  const { refresh: refreshNodes } = nodes;
   const refreshAll = useCallback(() => {
-    peers.refresh();
-    sessions.refresh();
-    nodes.refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    refreshPeers();
+    refreshSessions();
+    refreshNodes();
+  }, [refreshPeers, refreshSessions, refreshNodes]);
 
   // Every list restarts at page 0 when the bank/workspace changes -- a
   // cursor minted against one workspace means nothing in another, the same

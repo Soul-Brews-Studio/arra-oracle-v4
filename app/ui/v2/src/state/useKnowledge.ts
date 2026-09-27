@@ -30,6 +30,8 @@ import {
 } from "../api/knowledge";
 import { interpretPublishResult } from "./interpretPublishResult";
 import { type Entry, addName, removeName, setState } from "./roster";
+import { useKeyedRead } from "./useKeyedRead";
+import { useStableBank } from "./useStableBank";
 
 const NODES_KEY = "arra-ui-v2-nodes";
 const TAX_KEY = "arra-ui-v2-taxonomy";
@@ -62,7 +64,14 @@ function saveJson(key: string, value: unknown): void {
   }
 }
 
-export function useKnowledge(b: Bank) {
+/** What a node read is FOR: the node and every input that changes its answer. */
+const nodeKey = (v: { b: Bank; selected: string | null }) =>
+  v.selected === null ? null : JSON.stringify([v.b.bank, v.b.workspace, v.b.token, v.selected]);
+
+export function useKnowledge(bank: Bank) {
+  // Keyed on the three strings, not the caller's object: `refresh` depends on
+  // `b`, and a parent that builds the bank inline would refetch on every render.
+  const b = useStableBank(bank);
   const scope = `${b.bank}:${b.workspace}`;
   const [nodes, setNodes] = useState<Entry[]>(() => loadJson<Entry[]>(`${NODES_KEY}:${scope}`, []));
   const [titles, setTitles] = useState<Record<string, string>>({});
@@ -74,10 +83,16 @@ export function useKnowledge(b: Bank) {
   const [head, setHead] = useState<{ node: unknown; revision: RevisionRow | null } | null>(null);
   const [history, setHistory] = useState<RevisionRow[]>([]);
   const [snapshotHead, setSnapshotHead] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Which node read is current, keyed on the node and bank it was issued for
+  // (useKeyedRead). Every await below re-checks it, so a response for a node
+  // already navigated away from (or a bank already left) is dropped instead
+  // of painting that node's head under the new node's id -- the ui-stale bug,
+  // where the LAST response to arrive won. `publish`'s own refresh reads the
+  // node on screen, not the one its closure was bound to.
+  const read = useKeyedRead({ b, selected }, nodeKey);
 
   useEffect(() => {
     setNodes(loadJson<Entry[]>(`${NODES_KEY}:${scope}`, []));
@@ -93,16 +108,20 @@ export function useKnowledge(b: Bank) {
   }, [scope, taxonomy]);
 
   const refresh = useCallback(async () => {
+    const t = read.begin();
+    const { b, selected } = t.value;
     if (selected === null) {
+      // A null key has no loading flag to latch (a workspace switch or "New"
+      // while a node is open used to latch "loading…" on the draft).
       setHead(null);
       setHistory([]);
       return;
     }
-    setLoading(true);
     setError(null);
     const headResult = await getAcceptedHead(b, selected);
+    if (!read.live(t)) return; // a node or bank already left, or a newer read
     if (!headResult.ok) {
-      setLoading(false);
+      read.land(t);
       setHead(null);
       setHistory([]);
       setError(describe(headResult));
@@ -113,7 +132,7 @@ export function useKnowledge(b: Bank) {
     // the bookmark is stale, not the request malformed.
     const body = headResult.body as { node?: unknown; revision?: RevisionRow } | null;
     if (body === null || body.revision === undefined) {
-      setLoading(false);
+      read.land(t);
       setHead(null);
       setHistory([]);
       setNodes((n) => setState(n, selected, "missing"));
@@ -124,7 +143,7 @@ export function useKnowledge(b: Bank) {
     setHead({ node: body.node, revision: body.revision });
 
     const historyResult = await listAcceptedHistory(b, selected);
-    setLoading(false);
+    if (!read.land(t)) return;
     if (!historyResult.ok) {
       setHistory([]);
       setError(describe(historyResult));
@@ -146,6 +165,9 @@ export function useKnowledge(b: Bank) {
     if (typeof historyBody?.snapshot_head_revision_id === "string") {
       setSnapshotHead(historyBody.snapshot_head_revision_id);
     }
+    // Reads its node from `read`, not this closure; the deps only say WHEN a
+    // read is due -- a new node, or a new bank/workspace/token.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [b, selected]);
 
   useEffect(() => {
@@ -226,7 +248,7 @@ export function useKnowledge(b: Bank) {
   return {
     nodes, titles, taxonomy, selected, setSelected,
     head, history, snapshotHead, allTerms,
-    loading, error, publishing, busy,
+    loading: read.loading, error, publishing, busy,
     actions,
   };
 }

@@ -17,6 +17,7 @@ import { OverviewView } from "./overview/OverviewView";
 import { searchHitRoute } from "./state/searchHitRoute";
 import { searchRoutePatch } from "./state/searchRoutePatch";
 import { useMemory } from "./state/useMemory";
+import { useStableBank } from "./state/useStableBank";
 import { type Route, useRoute } from "./state/useRoute";
 
 /** Three columns, matching what the data actually is:
@@ -44,6 +45,11 @@ const TAB_TITLES: Record<Route["view"], string> = {
 
 export function App() {
   const m = useMemory();
+  // ONE bank object per bank/workspace/token, handed to every view. Built
+  // inline it was a new object per App render, and the Knowledge view keyed
+  // its node read on that identity -- so any App render refetched the node on
+  // screen and the extra request could land last (the ui-stale bug).
+  const bank = useStableBank({ bank: m.bank, token: m.token, workspace: m.workspace });
   const [health, setHealth] = useState<number | null>(null);
   const [railCollapsed, setRailCollapsed] = useState(false);
   // Two halves of one system, and the tab says which you are looking at.
@@ -134,12 +140,12 @@ export function App() {
         // what an empty hash opens on. Its quick actions route through the
         // same `push({ view })` the tabs use -- one writer for the URL.
         <OverviewView
-          bank={{ bank: m.bank, token: m.token, workspace: m.workspace }}
+          bank={bank}
           onGo={(v) => push({ view: v })}
         />
       ) : view === "explore" ? (
         <ExploreView
-          bank={{ bank: m.bank, token: m.token, workspace: m.workspace }}
+          bank={bank}
           selectedPeer={route.peer}
           selectedSession={route.session}
           selectedNode={route.node}
@@ -165,7 +171,7 @@ export function App() {
         />
       ) : view === "knowledge" ? (
         <KnowledgeView
-          bank={{ bank: m.bank, token: m.token, workspace: m.workspace }}
+          bank={bank}
           nodeId={route.node}
           onSelectNode={(id) => push({ node: id })}
         />
