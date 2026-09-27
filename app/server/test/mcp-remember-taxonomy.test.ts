@@ -109,10 +109,15 @@ describe("remember.validateType (D5a)", () => {
   test("unset ARRA_KNOWLEDGE_DATASET_ROOT bypasses validation (legacy-store-only deployment, fix round finding 1)", async () => {
     // `composeKnowledgeAccess` still builds a non-null `KnowledgeAccess` when
     // the root is unset (composition.ts: "keeps starting up exactly as
-    // before"); `getBundle` throws the kernel's own `unsupported_dataset`
-    // envelope. `validateType` must treat that as "nothing to validate
-    // against" and let ANY type through unchanged, not fail closed.
+    // before"), and marks it `datasetConfigured: false`. `getBundle` also
+    // throws the kernel's own `unsupported_dataset` envelope in that shape,
+    // but `validateType` must decide the bypass from the CONFIGURATION flag,
+    // not from the error code (round 3 finding: ~15 other storage failures
+    // throw that identical code). `validateType` must treat an unconfigured
+    // access as "nothing to validate against" and let ANY type through
+    // unchanged, not fail closed.
     const unconfigured: KnowledgeAccess = {
+      datasetConfigured: false,
       async getBundle() {
         throw Object.assign(new Error("unsupported target dataset"), { code: "unsupported_dataset" });
       },
@@ -123,10 +128,46 @@ describe("remember.validateType (D5a)", () => {
 
   test("a getBundle failure for any OTHER reason still fails closed", async () => {
     const broken: KnowledgeAccess = {
+      datasetConfigured: true,
       async getBundle() {
         throw Object.assign(new Error("boom"), { code: "internal" });
       },
     } as unknown as KnowledgeAccess;
     await expect(validateType(broken, "alpha", AUTHORITY, "note")).rejects.toThrow("boom");
+  });
+
+  test("round 3 BLOCK: a CONFIGURED root that is missing/unreadable/wrong-schema throws the SAME unsupported_dataset code, but must still fail closed, not bypass", async () => {
+    // This is the exact shape the round-2/3 verifier demonstrated live:
+    // ARRA_KNOWLEDGE_DATASET_ROOT set to a nonexistent path, an empty dir, or
+    // a legacy ARRA_DATA_DIR never migrated. `getBundle` throws the kernel's
+    // generic `unsupported_dataset` (`arra-publication-error/v1`, path "")
+    // from ~15 different storage-layer causes -- it is NOT proof the root is
+    // unset. `datasetConfigured` is explicitly `true` here (the access knows
+    // a root was configured); `validateType` must refuse, not silently let
+    // an invented type through.
+    const configuredButBroken: KnowledgeAccess = {
+      datasetConfigured: true,
+      async getBundle() {
+        throw Object.assign(new Error("unsupported target dataset"), { code: "unsupported_dataset" });
+      },
+    } as unknown as KnowledgeAccess;
+    await expect(validateType(configuredButBroken, "alpha", AUTHORITY, "invented_type")).rejects.toThrow(
+      "unsupported target dataset",
+    );
+  });
+
+  test("an access that does not report datasetConfigured (test fakes / older callers) is treated as configured, so it fails closed on unsupported_dataset", async () => {
+    // `isDatasetConfigured` treats an access with no `datasetConfigured` flag
+    // at all as configured (a test fake with only `getBundle` serves a
+    // dataset). `validateType` must agree, so a fake that omits the flag but
+    // throws `unsupported_dataset` does not accidentally bypass.
+    const noFlag: KnowledgeAccess = {
+      async getBundle() {
+        throw Object.assign(new Error("unsupported target dataset"), { code: "unsupported_dataset" });
+      },
+    } as unknown as KnowledgeAccess;
+    await expect(validateType(noFlag, "alpha", AUTHORITY, "invented_type")).rejects.toThrow(
+      "unsupported target dataset",
+    );
   });
 });

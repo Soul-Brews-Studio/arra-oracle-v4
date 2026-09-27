@@ -137,6 +137,9 @@ describe("remember taxonomy parity (real wiring, fix round)", () => {
       const built = await buildApp({ policyPath, origin: ORIGIN });
       const body = await callTool(built, "whatever_invented");
       expect(body.result?.isError).not.toBe(true);
+      const payload = JSON.parse(body.result.content[0].text);
+      expect(payload.type ?? payload.result?.type).toBe(undefined); // legacy remember tool result shape carries no type echo
+      expect(typeof payload.id).toBe("string");
     });
   }, testTimeout(30_000));
 
@@ -148,6 +151,20 @@ describe("remember taxonomy parity (real wiring, fix round)", () => {
       expect(body.result?.isError).toBe(true);
       const payload = JSON.parse(body.result.content[0].text);
       expect(payload).toMatchObject({ version: "arra-taxonomy-error/v1", code: "invalid_reference", path: "/type" });
+    });
+  }, testTimeout(30_000));
+
+  test("round 3 BLOCK: ARRA_KNOWLEDGE_DATASET_ROOT set to a NONEXISTENT path refuses an invented type, does not silently bypass", async () => {
+    // Live-probe finding: `getBundle` throws the kernel's generic
+    // `unsupported_dataset` for a missing/unreadable/wrong-schema root, the
+    // SAME code as the documented root-unset bypass shape. Catching by code
+    // alone let this succeed with a stored row; it must now refuse closed.
+    const missingRoot = join(dir, "nonexistent-root-" + Date.now());
+    await withRoot(missingRoot, async () => {
+      const { buildApp } = await import("../src/index");
+      const built = await buildApp({ policyPath, origin: ORIGIN });
+      const body = await callTool(built, "invented_type_missing_root");
+      expect(body.result?.isError).toBe(true);
     });
   }, testTimeout(30_000));
 

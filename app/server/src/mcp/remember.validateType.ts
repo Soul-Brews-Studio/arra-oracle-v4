@@ -1,5 +1,6 @@
 import type { RequestAuthority } from "../knowledge/registry";
 import type { KnowledgeAccess } from "../knowledge/transport";
+import { isDatasetConfigured } from "../knowledge/transport.isDatasetConfigured";
 import { failTaxonomy } from "../publication/taxonomy";
 import { callKnowledgeMethod } from "./index.callKnowledgeMethod";
 
@@ -23,19 +24,29 @@ const encode = (payload: Record<string, unknown>) => new TextEncoder().encode(JS
  * error shape -- the same refusal `kb_publishRevision` gives for the same
  * cause (`service.validateTermReferences.ts`).
  *
- * `knowledgeAccess` unset (no MCP knowledge access wired at all, e.g. a
- * bare-`ARRA_DATA_DIR` deployment that never adopted #31's dataset, or an
- * isolated test) is a fail-closed `invalid_request`: there is no kernel to
- * even ask, so this is a wiring gap, not the documented optional-root case.
+ * `knowledgeAccess` null (no MCP knowledge access wired at all -- an
+ * isolated test, or transport composition itself failing -- never the
+ * bare-`ARRA_DATA_DIR` deployment, which still gets a non-null access with
+ * `datasetConfigured: false`, see below) is a fail-closed `invalid_request`:
+ * there is no kernel to even ask, so this is a wiring gap, not the
+ * documented optional-root case.
  *
  * `ARRA_KNOWLEDGE_DATASET_ROOT` UNSET is different and expected
  * (`composition.ts`'s `composeKnowledgeAccess` docs, `README.md`): an
  * existing legacy-store-only deployment "keeps starting up exactly as
  * before", so `remember` must keep accepting any `type`, same as pre-D5a,
- * rather than failing every call with `unsupported_dataset`. That case
- * surfaces here as `getBundle` throwing the kernel's own
- * `arra-publication-error/v1 unsupported_dataset`, caught below and treated
- * as "no taxonomy to validate against" -- bypass, not a refusal.
+ * rather than failing every call with `unsupported_dataset`. That case is
+ * detected from CONFIGURATION (`isDatasetConfigured`, backed by the
+ * `KnowledgeAccess.datasetConfigured` flag `composeKnowledgeAccess` sets
+ * false only when the root env var itself is unset), never from the error
+ * code `getBundle` happens to throw: `unsupported_dataset` is the kernel's
+ * one generic envelope for roughly fifteen distinct storage failures
+ * (`publication/storage.ts`: missing root, root not a directory, missing
+ * table, schema/field-type/nullability mismatch, ...), so a CONFIGURED root
+ * that is broken in any of those ways throws the identical code and MUST
+ * still fail closed -- only the documented root-unset shape bypasses (round
+ * 3 fix: catching by code alone fails open on a configured-but-broken
+ * dataset, which is exactly the case D5a exists to seal).
  */
 export async function validateType(
   knowledgeAccess: KnowledgeAccess | null,
@@ -55,7 +66,7 @@ export async function validateType(
       authority,
     )) as { id: string } | null;
   } catch (error) {
-    if ((error as { code?: string }).code === "unsupported_dataset") return wanted;
+    if (!isDatasetConfigured(knowledgeAccess)) return wanted;
     throw error;
   }
   if (vocabulary === null) failTaxonomy("invalid_reference", "/type");

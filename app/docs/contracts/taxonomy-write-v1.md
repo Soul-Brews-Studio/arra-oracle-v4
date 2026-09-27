@@ -368,3 +368,57 @@ seeded active type still succeeds on both, golden-shape unchanged (HTTP:
 **Source correction.** The Nat ruling cited by the ORIGINAL Amendment 2026-09-26 above
 as "`docs/overnight/DECISIONS.md` NAT-DECISIONS D5a" is `docs/overnight/NAT-DECISIONS.md:29`
 (D5 option a); this note is the correction of record.
+
+## Amendment 2026-09-26 (post-merge Nat 2026-09-28 NAT-DECISIONS D5a (R26): the legacy free-text MCP remember tool goes through taxonomy validation now)
+
+### Fix-round amendment, round 3 (Opus verification REFUTE on round 2)
+
+The round-2 fix-round amendment (Correction 1 above) said the bypass fires for "the
+documented, production-real case: `ARRA_KNOWLEDGE_DATASET_ROOT` unset". That was true of
+the intent but not of the implementation: `remember.validateType.ts` decided the bypass
+by CATCHING the error CODE `getBundle` throws (`unsupported_dataset`), and that same
+code is the kernel's one generic envelope for roughly fifteen distinct storage failures
+in `app/server/src/publication/storage.ts` -- a configured root that does not exist, is
+not a directory, is missing a table, or has a schema/field-type/nullability mismatch all
+throw the identical `arra-publication-error/v1 unsupported_dataset` shape. Catching by
+code alone therefore bypassed taxonomy validation on ALL of those broken-but-configured
+cases too, not only the documented root-unset one -- an operator who set
+`ARRA_KNOWLEDGE_DATASET_ROOT` and then had the path go missing, get moved, or never get
+migrated silently got pre-D5a free-text behaviour on both MCP and HTTP, exactly the gap
+D5a exists to close.
+
+**Fix.** `remember.validateType.ts` now decides the bypass from CONFIGURATION, not from
+the error code: `isDatasetConfigured(knowledgeAccess)`
+(`app/server/src/knowledge/transport.isDatasetConfigured.ts`), backed by the
+`KnowledgeAccess.datasetConfigured` flag `composeKnowledgeAccess` sets to `false` ONLY
+when `ARRA_KNOWLEDGE_DATASET_ROOT` itself is unset (`transport.ts`'s
+`createKnowledgeAccess`). A `getBundle` failure is now bypassed (any `type` accepted,
+pre-D5a behaviour) ONLY when the access reports `datasetConfigured === false`. A
+`getBundle` failure on an access that reports `datasetConfigured === true`, or does not
+report the flag at all (treated as configured, matching `isDatasetConfigured`'s own
+rule for bare test fakes), now RE-THROWS and fails the `remember` call closed -- a
+configured-but-missing/unreadable/wrong-schema root refuses the write, it does not
+silently accept an unvalidated type.
+
+**Tests.** `app/server/test/mcp-remember-taxonomy.test.ts` adds: a configured-but-broken
+access (`datasetConfigured: true`, `getBundle` throwing `unsupported_dataset`) must
+reject, not resolve; an access with no `datasetConfigured` flag at all throwing the same
+code must also reject; the existing unset-root bypass test is updated to set
+`datasetConfigured: false` explicitly, matching what `composeKnowledgeAccess` actually
+sets. `app/server/test/remember-taxonomy-parity.test.ts` adds a real-`buildApp`
+integration test with `ARRA_KNOWLEDGE_DATASET_ROOT` pointed at a nonexistent directory
+(the exact live-probe shape the round-2 verifier used) and asserts MCP `remember`
+refuses an invented type rather than succeeding; the unset-root bypass test now also
+asserts the returned id is a real string, not merely `isError !== true`.
+
+**What is still open, stated exactly.** Workspaces with a configured, working dataset
+but no seeded `type` vocabulary (a workspace created after migration that never ran the
+v3 adapter's `taxonomy.ensureReservedVocabularies.ts` self-seed) refuse EVERY `remember`
+call, including one that omits `type` (default `note`). This is intended under the
+current contract (an unresolvable vocabulary is `invalid_reference`, not a bypass) but
+is an operational risk this amendment does not resolve -- it needs a Nat call on
+seed-on-first-use, tracked outside this contract. `docs/overnight/AC-MATRIX.md` rows 47
+and 108 remain stale from the original pass; deferred, not fixed here.
+
+Source: `docs/overnight/DECISIONS.md` NAT-DECISIONS D5a (R26); round-3 verifier findings
+in `.tmp/round3-findings-remember.txt` (scratch, not committed).
