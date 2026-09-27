@@ -135,17 +135,30 @@ describe("#30 / #10 R22's candidate ceiling, measured", () => {
         expect(reads[0], `big_${i}`).toMatchObject({ source: "index", asked: FTS_CANDIDATE_CEILING });
         expect(reads[0]!.got, `big_${i}`).toBeLessThan(FTS_CANDIDATE_CEILING);
         expect(answered(`big_${i}`), `big_${i}`).toEqual([X]);
+        // #30 coverage (search-chunk-v1.md §21): the candidate read came back
+        // short, so this answer is "full" at the real 4096 bound -- no
+        // injected ceiling, the exact constant production uses.
+        expect(spied(`big_${i}`).value, `big_${i}`).toMatchObject({ coverage: "full", coverage_reason: null, candidate_ceiling: FTS_CANDIDATE_CEILING });
       }
       // The 5th takes ALPHA past the ceiling: the read comes back FULL. X is
       // still BM25's best of ALPHA's rows, so it is read and answered ...
       const full = [{ source: "index", asked: FTS_CANDIDATE_CEILING, got: FTS_CANDIDATE_CEILING }];
       expect(spied(`big_${BIG_REVISIONS}`).reads).toEqual(full);
       expect(answered(`big_${BIG_REVISIONS}`)).toEqual([X]);
+      // The candidate read itself is now saturated at the real bound, even
+      // though X is still answered -- coverage says so anyway (R22's own
+      // point: a full read of the answer's WINDOW cannot vouch for the
+      // candidate read behind it).
+      expect(spied(`big_${BIG_REVISIONS}`).value).toMatchObject({ coverage: "partial", coverage_reason: "candidate_ceiling", candidate_ceiling: FTS_CANDIDATE_CEILING });
       // ... until BETA -- never an ALPHA candidate -- makes "xyz" common across
       // the shared index. BM25 now fills ALPHA's read with BIG chunks, and
       // ALPHA's only match is no longer answered. The residual, measured.
       expect(spied("after_beta").reads).toEqual(full);
       expect(answered("after_beta")).toEqual([]);
+      // The exact R22 residual: coverage still says "partial" on the answer
+      // that lost its only real match, naming the real 4096 ceiling -- a
+      // caller reading `coverage` alone would know not to trust this window.
+      expect(spied("after_beta").value).toMatchObject({ coverage: "partial", coverage_reason: "candidate_ceiling", candidate_ceiling: FTS_CANDIDATE_CEILING });
     },
     TIMEOUT_MS,
   );
