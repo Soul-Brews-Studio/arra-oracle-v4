@@ -18,7 +18,9 @@ const payload = JSON.parse(readArgPayload(payloadJson) ?? "{}") as {
      *  `service.makeReadMethods.ts`/`service.createContextReadMethods.ts` wire
      *  a live request time through as. Needed to exercise `listNodes`'
      *  `eligible_only: true` view (it refuses a missing one) inside the same
-     *  read-only batch the AC4 readonly test snapshots. */
+     *  read-only batch the AC4 readonly test snapshots. Round 3: also how
+     *  the #27 AC3 test asks `getRecallEligibility` at fixed instants instead
+     *  of its `Date.now()` fallback. */
     requestTimeMs?: number;
   }>;
   revisionIds?: string[];
