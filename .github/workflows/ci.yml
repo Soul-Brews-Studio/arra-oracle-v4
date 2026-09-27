@@ -3,9 +3,12 @@ name: CI
 # R13 (docs/overnight/DECISIONS.md): the CI promise from 09-21 15:04 that was
 # never kept. On push and pull_request only — no cron, to spare Actions
 # minutes on a private repo. Nat can add one later.
+# R23 (2026-09-28, Nat: "use only local"): Actions is billing-blocked, so the
+# gate is `bash app/just/local-ci.sh`, which runs these same steps locally.
+# This workflow stays as the canonical step list and can still be run by hand.
+# To return to GitHub CI, restore `push:` and `pull_request:` here.
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 
 # Without this, every push queued a full ~25-minute run behind the last one:
 # on 09-27 six runs stacked up for identical docs-only commits and four were
