@@ -135,6 +135,13 @@ jobs:
           TEST_TIME_SCALE: 5
         run: bun test just/demo.test.ts
 
+      # The browser e2e (app/just/ui-e2e.sh) needs ego-browser and a desktop, so
+      # it is local-only. Its harness rules -- what counts as a verdict, the
+      # deadline, the lease -- are checked here without a browser.
+      - name: Test — ui-e2e harness rules, no browser (app/just/ui-e2e.test.ts)
+        working-directory: app
+        run: bun test just/ui-e2e.test.ts
+
       # app/migrate-py has no pytest.ini/pyproject [tool.pytest] section and no
       # pytest package in its lockfile (measured: `python -m pytest --version`
       # -> "No module named pytest"). The real, documented command is
