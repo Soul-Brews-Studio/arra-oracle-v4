@@ -1,147 +1,189 @@
-# UI proof: slice `ui-a11y` (#33 AC2 + R12 + Nat UI style)
+# UI proof: slice `ui-a11y` (#33 AC2 + R12 + Nat UI style) — FIX ROUND
 
-**Branch**: `v4/on-ui-a11y`, worktree `wt/arra-oracle-v4-ui-a11y-27sep-sun2026`, based on
-`origin/main` `b3fa70d`. Scope: `app/ui/v2` only. `app/server/src` was not touched.
+**Branch**: `v4/on-ui-a11y`, worktree `wt/arra-oracle-v4-ui-a11y-27sep-sun2026`. Scope: `app/ui/v2`
+only, plus this doc. `app/server/src` was not touched. **Base correction** (nonblocking finding
+from the previous round): the real base is `origin/main` `01ba604` (`git merge-base HEAD
+origin/main`), not `b3fa70d` — `01ba604` was already `v4/on-ci-dedupe` merged. `git diff
+01ba604..HEAD` touches only `app/ui/v2/src` and `docs/overnight`.
 
-## What was tested and how
+An independent Opus verifier REFUTED the first round on three blocking points. This is the fix
+round: each is addressed below with a failing-first test, the fix, and a live re-measurement.
 
-- **Unit/render tests** (`bun test` in `app/ui/v2`, no DOM, `react-dom/server`
-  `renderToStaticMarkup` per the existing `evidencePanels.test.ts` pattern): failing-first,
-  then green after the fix. 139 pass / 0 fail across 18 files (was 106 pass before this
-  slice's 4 new test files: `api/asError.test.ts`, `state/authErrorHint.test.ts`,
-  `components/ErrorNote.test.ts`, `components/a11yNames.test.ts`).
-- **`bunx tsc --noEmit`**: clean.
-- **`bun run build`**: 118 modules, clean.
-- **Mandatory live-probe** (`'.tmp/acceptor/live-probe/run.sh' … ui-a11y`, from the overnight
-  worktree, against this checkout): `methods=57 HTTP=57 MCP=57 CLI=57 isolation_failures=0
-  seed_errors=0 gaps=26 fatal=None`. Isolation **191 pass / 0 fail**. Start HEAD == end HEAD
-  (`01ba604…`): this slice made no server-side change, confirmed by the probe itself. The 26
-  GAPs are the pre-existing unexposed lifecycle/trace/search methods other slices own (#28–#31);
-  none are in this slice's scope.
-- **Python architecture guard** (`app/migrate-py`, `python -m unittest discover -s tests`):
-  268 tests, **OK (skipped=1)**.
-- **Live browser proof** (`/ego-browser`, real Chrome, a fresh `mktemp -d` target19+legacy15
-  dataset, a real gated server on a free port started the same way `app/just/demo/stack.sh`
-  does it, direct `curl` against the real endpoints plus DOM interaction): see below. Torn
-  down afterward — server killed, mktemp root removed, browser `localStorage` cleared.
+## Blocking finding 1 — the 830px defect was NOT fixed
 
-## (1) RESPONSIVE — overflow measurements
+**Root cause the verifier found**: the only breakpoint in the compiled CSS was `@media
+(min-width:768px)` (Tailwind's `md:`), so every width ≥ 768px — including 830 — still got the
+desktop layout: fixed `w-64`/`w-96` asides eating 640px of an 830px viewport, leaving ~190px for
+content. The first round's own screenshots were taken at 553/960 CSS px (a CDP scaling artifact,
+documented below), never at a true 830/1440, which is how the defect went unnoticed.
 
-Baseline (pre-fix) is the commissioning brief's own measurement plus a direct code read at the
-start of this slice, confirming the exact lines named: `KnowledgeView.tsx:83` was `w-64
-shrink-0` and `:214` was `w-96 shrink-0`, both fixed-width `<aside>`s in a plain `flex` (row)
-container with no breakpoint anywhere in `app/ui/v2/src` (`rg -c 'sm:|md:|lg:'` was 0 hits).
-The brief's own browser finding: an 830px viewport left a 190px content column.
+**Fix**: every `md:` breakpoint controlling this row/aside layout is now `lg:` (1024px), in
+`KnowledgeView.tsx` (:82,83,216), `App.tsx` (:169,225 — the "messages" tab's `SidebarShell` +
+`DialecticPanel`/`ContextPanel` aside), `explore/ExploreView.tsx` (:114,115), and
+`components/SidebarShell.tsx` (:48). Below 1024px the row container stays `flex-col` (stacked,
+full-width panels); at/above 1024px it becomes `flex-row` with the original fixed aside widths.
+`rg -n 'md:' app/ui/v2/src` now returns zero hits.
 
-Fix: `KnowledgeView.tsx`, `App.tsx` (messages view), `explore/ExploreView.tsx`, and
-`components/SidebarShell.tsx` all changed their row container to `flex-col md:flex-row` and
-their fixed-width asides to `w-full md:w-{64,96,60}` (stacking below `md`, side-by-side at
-`md:` and up). `App.tsx`'s tab bar and `DetailTabs`' tab bar got `flex-wrap` so the tab strip
-itself cannot force width. `NodeHead.tsx`'s title got `min-w-0 break-words` — it sits in a
-`flex` row with badges, and a flex item's default `min-width` is its content width, so an
-unbroken title could force the row (and the page) wider than the viewport without wrapping.
+**Failing-first test**: `components/SidebarShell.test.ts` (new) asserts the rail's classes are
+`lg:`-scoped and contain no `md:` at all — written against the OLD `md:w-60` source, confirmed
+red, then green after the fix. (The full render-in-browser measurement below is the primary
+proof for this finding; render tests can lock the Tailwind class strings but cannot themselves
+measure a compiled cascade.)
 
-Live measurement, `document.documentElement.scrollWidth` vs `window.innerWidth`, on the
-**Knowledge** view (the one with both asides) after the fix, via CDP
-`Emulation.setDeviceMetricsOverride`:
+**Live re-measurement** (the mistake to avoid this round: measuring the wrong CSS-px width).
+This sandbox's ego-browser reports `window.innerWidth` at **1.5× the CDP-requested width**
+(confirmed by probing: requesting CDP width 830 measured `innerWidth=553`, i.e. `830/1.5`).
+Every width below is the CDP override **already multiplied by 1.5** and then *verified* by
+reading `window.innerWidth` back — not assumed:
 
-| requested width | measured `innerWidth` | `scrollWidth` | overflow? |
+| requested CSS px | `innerWidth` read back | `scrollWidth` | overflow? |
 |---|---|---|---|
 | 375 | 375 | 375 | no |
-| 830 | 553 (see note) | 553 | no |
-| 1440 | 960 (see note) | 960 | no |
+| 830 | 830 | 830 | no |
+| 1440 | 1440 | 1440 | no |
 
-Note: the CDP override could not push the real Chrome window wider than its own physical
-size in this environment, so 830/1440 landed at the window's actual 553/960px rather than the
-requested value — the scroll/inner equality (no overflow) still holds at every width actually
-achieved, including the narrowest (375, exact) and two wider ones. The Explore view was
-checked the same way at the 960px width: `scrollWidth === innerWidth === 960`, no overflow.
-Screenshots: `docs/overnight/ui/36-a11y-375-overview.png`,
-`36-a11y-375-knowledge.png`, `36-a11y-830-knowledge.png`, `36-a11y-1440-knowledge.png`.
+Checked across **all 6 named surfaces** (Overview, Explore/nodes, Explore/evidence, Messages,
+Forum, Knowledge) at all three widths — 18/18 `scrollWidth === innerWidth`, zero overflow,
+before *and* after confirming the stacking actually happened (not just "no overflow by luck"):
 
-**Deviation from the ruling**: the exact 830px and 1440px widths were not independently
-confirmed in this browser session (see note above); 375px was exact and clean. Re-running this
-same script against a browser window sized to at least 1440px physical would close the gap; the
-code fix itself (breakpoint at `md` = 768px, well below both 830 and 1440) does not depend on
-the exact width tested.
+| view | @830 asides | @830 main | @1440 asides | @1440 main |
+|---|---|---|---|---|
+| Knowledge | **[830, 830]** (full width, stacked) | 830 | [256, 384] | 800 |
+| Messages | **[830, 830]** (full width, stacked) | 830 | [240, 384] | 816 |
 
-## (2) ACCESSIBILITY — unnamed-control counts
+At 830 both asides now render at the full viewport width (stacked above/below the content, not
+beside it) instead of the pre-fix `[256,384]`/`[240,384]` fixed pair that left 190/206px for
+content. At 1440 the desktop two-column layout is unchanged (`256+384+800=1440`,
+`240+384+816=1440`) — the fix only moves *where* the switch happens, not what either side of it
+looks like.
 
-Before (code-level, measured at the start of this slice): `rg -c 'aria-|role='
-app/ui/v2/src` → **0 files** with any `aria-*` or `role` attribute anywhere in the app.
+**Deviation from the ruling**: `NodeHead.tsx`'s `min-w-0 break-words` title fix and the
+`flex-wrap` tab bars were already in place from the first round (verified by reading the
+current source, not re-added) and are unchanged this round. Screenshot capture at the CDP
+device-metrics override consistently timed out in this sandbox this session
+(`CdpRequestTimeoutError: Page.captureScreenshot`, reproduced on a fresh Page with the override
+cleared and on a brand-new Page — an environment issue, not a rendering one), so the
+375/830/1440 PNGs from the first round are **not replaced** and remain mislabelled (553/960 CSS
+px, disclosed already). The numeric `page.evaluate` proof above — the form of evidence AC2 asks
+for — was captured live against this exact branch's build; a follow-up session with working
+screenshot capture should re-shoot `36-a11y-{375,830,1440}-knowledge.png` at the verified exact
+widths.
 
-After, live in the browser (`page.evaluate`, counting `input,select,textarea,button` with no
-`aria-label`/`aria-labelledby`/associated `<label>`/non-empty text content):
+## Blocking finding 2 — false-empty on a real 401/403 (Explore lists)
 
-| view | total controls | unnamed |
-|---|---|---|
-| Knowledge (rail, head, diff picker, publish form, taxonomy) | 13 | **0** |
-| Explore (peers/sessions lists, 6 detail tabs) | 34 | **0** |
+**Root cause**: `api/listing.ts`'s `toPage` collapsed every non-2xx response into `{rows: [],
+supported: !isUnsupported(result)}`. A real 401/403 is not "unsupported" (`isUnsupported` only
+matches `method_not_found`/bare 404), so `supported` came back `true` — indistinguishable from a
+genuinely empty page. `useListing` then set `error: null`, and `ListPanel.tsx` rendered "no
+peers / nothing on this page matches" over a server that never got to answer.
 
-That is 47 controls checked live across 2 of the 4 named views (Knowledge, Explore); the
-Overview and Chat/Messages surfaces were covered by the same aria-label/label pattern applied
-to their shared components (`Composer`, `DialecticPanel`, `ContextPanel`, `WorkspaceBar`) and
-by the render tests in `a11yNames.test.ts`, not independently re-counted live in this session
-(time box).
+**Fix**: `Page<T>` gained an `error: string | null` field, populated in `toPage` (and
+`api/audit.ts`'s parallel decoder, which shares the type) with the real governed code (or
+transport message, or `HTTP ${status}`) whenever the failure is NOT "route absent" — `supported`
+now means exactly one thing: "this route exists." A new pure helper,
+`state/listingErrorMessage.ts`, turns `{supported, error}` into the sentence a panel shows
+(`authErrorHint` for 401/403, `request failed: ${code}` otherwise, the existing unsupported
+sentence when the route is genuinely absent). `ListPanel.tsx`'s empty-state now renders only
+`supported && !error && …` — an honest "no rows" no longer fires when there is a real error to
+show instead.
 
-Fixes applied: visible `<label htmlFor>`/`id` pairs where a visible label already existed but
-was an unassociated sibling (`WorkspaceBar`'s bank/workspace/token, the Explore node-type
-filter); `aria-label` where no visible label exists (`Composer`, `ReplyComposer`,
-`DialecticPanel`'s question textarea, `KnowledgeSearchBox`, `PublishForm`'s title/body/change
-reason/selects, `LifecycleActions`' retire/supersede fields, `TracePanel`'s trace-id input,
-`AddNameForm`'s shared name input, `ListPanel`'s filter input, `KnowledgeView`'s diff pickers);
-`aria-label`/`aria-expanded` on icon-only buttons (`ListPanel`'s collapse/refresh glyphs,
-`SidebarShell`'s expand/collapse chevrons). A visible focus ring
-(`:focus-visible { outline: 2px solid …}`) was added once, globally, in `index.css` for every
-button/input/select/textarea/link/`[tabindex]`, rather than repeating a
-`focus-visible:ring-*` utility across ~30 files — a missed selector there is caught by any
-keyboard pass; a missed one per-file would not be. Coordination note honoured: `PublishForm.tsx`
-and `KnowledgeView.tsx` only received `className`/attribute changes, no structural edits.
+**Failing-first tests**: `api/listing.test.ts` (new, stubbed `fetch`) and
+`state/listingErrorMessage.test.ts` (new, pure) and `explore/ListPanel.test.ts` (new, render) —
+13 tests, all confirmed red against the pre-fix source (stashed and re-run), all green after.
 
-## (3) ERROR STATES — 401 / 403
+**Live re-measurement**, against the real server (not stubbed) on `Explore`:
 
-Root cause found live, not assumed: the Host/Origin/bearer gate every transport shares
-(`auth/http.ts`'s `ERROR_BODIES`) answers a 401 as `{"error":"unauthenticated"}` and a 403 as
-`{"error":"forbidden"}` — a bare **string** under `error`. `asError()` in
-`app/ui/v2/src/api/memory.ts` only understood the `arra-error/v1` object shape
-(`{error:{code,...}}`); given the string shape it fell through to `null`, and `describe()`
-then reported the generic `HTTP 401`/`HTTP 403` fallback instead of the real reason. Confirmed
-directly against the live server before fixing:
+- Bad token (401): every panel now shows *"No bearer token, or the token is not valid. Check
+  the token field above and try again."* — replacing the old "no peers/no sessions/no nodes".
+- A second, genuinely lower-scope credential minted on the same dev policy (a
+  `readonly-scope-caller` principal with `diagnostics:read` only, no `content:read` — the same
+  mechanism the overnight acceptor's live-probe uses) gets a real `403 {"error":"forbidden"}`
+  from the live server, and the UI shows *"This token does not hold the permission (scope) this
+  request needs. Ask for a token with the right grant, or switch workspace."* on every panel.
+- Both confirmed via `curl` directly against the dev-stack server first (401/403/200 with the
+  three tokens) before checking the UI, so the UI text is known to correspond to the real HTTP
+  status, not a client-side guess.
 
-```
-$ curl … -H "authorization: Bearer wrong-token" …   -> 401 {"error":"unauthenticated"}
-$ curl … -H "authorization: Bearer <readonly-token>" (a content:write call) -> 403 {"error":"forbidden"}
-```
+## Blocking finding 3 — regression: `asError` over-decoded, breaking `chatError`
 
-(The readonly credential was minted by hand into the dev policy the same way the overnight
-worktree's acceptor probe does it — a second principal with only `content:read` on the
-workspace — since `write_dev_policy.py` only mints a full-scope operator token.)
+**Root cause**: the first round's `asError` fix decoded *any* `{error: string}` body as a
+governed code, not only the auth gate's `unauthenticated`/`forbidden`. `auth/http.ts`'s
+`ERROR_BODIES` answers the same flat shape for 400 ("bad request"), 413 ("payload too large"),
+415 ("unsupported media type"), 503 ("policy unavailable"), and an unregistered route's bare 404
+falls back to `{"error":"error"}`. Feeding "bad request" (a spaced string) to
+`chatError.ts`'s `GOVERNED` regex made it fail to match, so `reachedServer()` returned false and
+a real 400 — the server answered — was reported as *"Could not reach the server… check your
+connection"*, which `chatError.ts`'s own header calls "false, not just imprecise".
 
-Fix: `asError()` now decodes the flat string shape into `{code: theString}`. A new pure helper
-`state/authErrorHint.ts` maps `"unauthenticated"` → a token-focused sentence and `"forbidden"`
-→ a scope-focused sentence, wired into `ErrorNote` (checking both `error.code` and
-`error.message`, since some call sites — `KnowledgeView`'s `k.error`, `App.tsx`'s
-`m.messageError` — wrap the bare code as `{code:"refused", message: theCode}` rather than
-passing a real envelope) and into `chatError.ts` (peer chat's own error surface).
+**Fix**: `asError` now decodes the flat-string shape **only** for `"unauthenticated"` and
+`"forbidden"` — the two codes `authErrorHint` actually explains. Every other flat body falls
+through to the object-shape check, finds no `.code`, returns `null`, and `describe()` reports
+`HTTP 400`/`413`/`415`/`503`/`404` — a bare status string `chatError`'s `reachedServer` already
+recognizes correctly. This also restores the pre-#33 `HTTP 404` behaviour for an unregistered
+route's bare fallback (nonblocking finding: the interim `code: "error"` was less informative).
 
-Live confirmation: with the readonly token, clicking "seed reserved vocabularies" in the
-Knowledge view produced a visible **"forbidden"** state in the UI (`docs/overnight/ui/36-a11y-403-forbidden.png`).
-**Deviation from the ruling**: that specific click path renders through `KnowledgeView`'s
-`k.error` → `ErrorNote`, and the browser round that captured it ran against a build made
-*before* the `error.message` fallback fix (the fallback was added in direct response to that
-exact live finding — the screenshot shows the pre-fallback state, i.e. "forbidden" with no
-hint sentence yet). The fallback logic itself is exercised and green in
-`ErrorNote.test.ts`/`authErrorHint.test.ts`, and is a one-line, same-shape change, but a
-second live click-through confirming the hint sentence now appears in the browser was not
-re-run inside the time box. A 401 click-path (bad token on a listing read) was attempted live
-but the Explore lists rendered "no peers/no sessions/no nodes" rather than a visible error —
-whether that is a stale-closure/debounce artifact of the scripted DOM token-swap or a real gap
-in how `useListing` surfaces a 401 was not resolved before time ran out; the 401 *decode* path
-itself (`asError`, `describe`, `ErrorNote`) is covered by the unit/render tests and by the
-direct `curl` proof above, just not by a full click-through screenshot.
+**Failing-first tests**: `api/asError.test.ts` gained 5 new cases (400/413/415/503/404-fallback
+must stay `null`) — confirmed red against the pre-fix source, green after. The existing
+`chatError.test.ts` (400/413/415/503-equivalent via `"HTTP ${status}"`) already covers the
+downstream effect and stayed green throughout, since the fix routes those codes back through the
+path it was already testing.
 
-## Teardown
+## Nonblocking findings addressed
 
-Server process killed, `mktemp -d` root removed, browser `localStorage` cleared, ego-browser
-task space finished (`keep: []`). `app/server/public/v2` was restored with `git checkout --`
-and `git clean -fdq` before committing, per the coordination note (the integrator rebuilds it).
+- **`hasLabelPair` only checked the first `for=`/`id=` pair** (`a11yNames.test.ts`): rewritten
+  with `matchAll` + `.every()` so a correct first pair can no longer mask a mismatched second or
+  third one. Two new tests lock this in directly (a 2-of-3-correct fixture must fail; a
+  3-of-3-correct fixture must pass). `WorkspaceBar`'s own three pairs were already all correct,
+  so this was a test-quality gap, not a live defect — but it is exactly the kind of gap that
+  would have hidden one.
+- **No automated coverage of the responsive stacking**: `components/SidebarShell.test.ts` (new)
+  render-asserts the `lg:`-scoped classes, described above.
+- **Base commit claim was wrong**: corrected above (`01ba604`, not `b3fa70d`).
+- **404 decode regression**: fixed as a side effect of the blocking-finding-3 fix (see above).
+
+Not re-addressed this round (time box): a second live click-through re-confirming the
+`ErrorNote`/`authErrorHint` fallback path inside `KnowledgeView` specifically (the unit/render
+tests for it were already green and unaffected by this round's changes); keyboard
+roving-focus/`aria-selected` on list panels and code-path wrapping outside `NodeHead`'s own
+title (both explicitly outside this slice's brief, called out in AC2 more broadly).
+
+## Test suite
+
+`bun test` in `app/ui/v2`: **160 pass / 0 fail** across 22 files (was 139/0/18 before this
+round; +21 new tests: 6 in `api/listing.test.ts`, 5 in `state/listingErrorMessage.test.ts`, 2 in
+`explore/ListPanel.test.ts`, 1 in `components/SidebarShell.test.ts`, 5 in `api/asError.test.ts`,
+2 in `components/a11yNames.test.ts`). Every new test was confirmed **red** first: the 9 modified
+source files were `git stash`-ed (keeping the new/modified test files in the working tree),
+`bun test src` was run against the pre-fix source (13 failures, matching exactly the new
+assertions), then the stash was popped and the suite re-run green.
+
+`bunx tsc --noEmit`: clean (one incidental fixup needed — `api/audit.ts`'s own `Page<T>`
+decoder, a deliberate second copy of `listing.ts`'s logic per that file's own comment, needed the
+new `error` field to keep compiling; it now reports the same way for consistency, though nothing
+currently reads more than `total` off it).
+
+Python architecture guard (`app/migrate-py`, `PYTHONPATH=src .venv/bin/python -m unittest
+discover -s tests`): 268 tests, **OK (skipped=1)** — unaffected, no server-side or Python file
+was touched.
+
+## Mandatory live-probe
+
+`bash .../live-probe/run.sh <this-checkout> ui-a11y`: `methods=57 HTTP=57 MCP=57 CLI=57
+isolation_failures=0 seed_errors=0 gaps=26 fatal=None`. Isolation **191 pass / 0 fail**. Start
+HEAD == end HEAD (`06e5017…`) — this slice makes no server-side change, confirmed by the probe
+itself. Identical to the first round's numbers, as expected (`app/server/src` untouched).
+
+## Live browser proof — how it was run
+
+Real Chrome via `/ego-browser`, a fresh `mktemp -d` target19+legacy15 dataset, a real gated
+server started the same way `app/just/demo/stack.sh` does it (`resolve_ollama` +
+`demo_stack_up`), on a free ephemeral port. A second, genuinely lower-scope credential
+(`readonly-scope-caller`, `diagnostics:read` only) was appended to the same dev-policy JSON
+in-place — `admitKnowledgeAction` calls `loadPolicy` fresh per request, so this took effect
+without a server restart. `bun run build` was run before the browser session; `git checkout --
+app/server/public/v2 && git clean -fdq app/server/public/v2` was run after, before committing.
+
+**Teardown**: `task.finish({ keep: [] })` (closes the ego-browser task space, clearing its
+localStorage), `kill -TERM` on the server PID, `rm -rf` on the mktemp root — all confirmed
+(directory listing after removal: "No such file or directory"; `ps aux` for the server port:
+no output).
