@@ -271,3 +271,98 @@ Tests can pin the classes but not the heights. The heights are the table above.
 the device-metrics override was cleared. The TaskSpace was finished. The server got `kill -TERM`
 (gone). `rm -rf` removed the mktemp root (`ls`: "No such file or directory"). No listener was left
 on the port.
+
+## Round 4 (after the verifier refuted round 3: sideways scrolling inside the views)
+
+**What round 3 got wrong.** It checked only `document.documentElement.scrollWidth`. Round 3 made
+each view's root the page's one scroll container, so horizontal overflow landed *inside* that
+container, where the document's `scrollWidth` cannot see it. The claim "scrollWidth equals
+innerWidth in all 3 views" was not evidence of no horizontal overflow. The verifier found three
+sources on 72fce75: the "revision to correct" `<select>` (671px for a 114-char title), the diff
+from/to `<select>`s (1219px for a 210-char title with a code path, sideways at 1440 too), and
+`MessageRow` text with `whitespace-pre-wrap` and no overflow-wrap.
+
+**The measurement now.** At every size, in every view, the script scans **every element** whose
+computed `overflow-x` is `auto` or `scroll` and reports any with `scrollWidth > clientWidth`. It
+also reports every element whose box leaves the viewport (`right > innerWidth`). The script is
+`.tmp/measure-r4.mjs` in this worktree. It was run in real Chrome via `/ego-browser`
+`page.evaluate`, and `innerWidth` was read back each time. The sandbox renders at DPR 1.5, so each
+CDP override is the CSS width × 1.5.
+
+**Control: the scan catches the bug.** The same scan, run on the round-3 bundle
+(`index-vopEcGuI.js`) against the same dataset, reports the overflow:
+
+| round-3 bundle | Knowledge | Explore > Messages | Messages | Forum | Overview |
+|---|---|---|---|---|---|
+| 320x640 | root 310 / **1496** | transcript 290 / **333**; `document` **359** ("refresh all" ends at 360) | 310 / **333** | 310 / **333** | root 310 / **336** |
+| 375x812 | root 365 / **1496** | clean | clean | clean | clean |
+| 1440x900 | `<main>` 790 / **1496** | clean | clean | clean | clean |
+
+On that bundle the diff select measured 1312px wide, and the correct select 1415px.
+
+**Round 4 bundle (`index-HFZYwyMh.js`).** Same dataset and same scan. Overflowing scrollers and
+elements past the viewport were **0 / 0 in every cell**: 5 views × 5 sizes (320x640, 375x812,
+812x375, 830x859, 1440x900). `document.scrollWidth` equalled `innerWidth` in every cell.
+
+| CSS px | diff select width | correct select width | Knowledge: page scroller / NodeHead | Explore: lists / DetailTabs / transcript viewport (content) |
+|---|---|---|---|---|
+| 320x640 | 286 | 216 | 465 / 9189; 2275 = 2275 | 288 / 384 / 149 (2059) |
+| 375x812 | 341 | 272 | 637 / 7116; 1579 = 1579 | 365 / 529 / 293 (2019) |
+| 812x375 | 778 | 708 | 295 / 4842; 859 = 859 | 169 / 384 / 177 (1379) |
+| 830x859 | 796 | 726 | 779 / 4842; 859 = 859 | 387 / 687 / 480 (1379) |
+| 1440x900 | 766 | 696 | `<main>` 819 / 4332; 859 = 859 | 735 / 735 / 528 (1059) |
+
+**The dataset.** A fresh `mktemp -d` stack was started with `app/just/demo/stack.sh`'s
+`demo_stack_up` on a free port, with the model URL on a dead port. It was seeded through the
+real CLI (`.tmp/r4stack.sh`):
+- 12 peers and 12 sessions;
+- 16 messages in `session-01`, the last containing
+  `/opt/Code/github.com/Soul-Brews-Studio/arra-oracle-v4/app/server/src/knowledge/publishRevision.ts`;
+- one node with two revisions, both with a 40-line Thai/English body. Revision 1 has a
+  125-character Thai/English title. Revision 2 has a 241-character title that contains the same
+  code path.
+
+**Fixes.** Each is pinned by a failing-first `renderToStaticMarkup` test in
+`components/reflow.test.ts`. The red output is in `.tmp/red-r4.txt`.
+- Every `<select>` that can list a title is `min-w-0 max-w-full`: CorrectForm (also `flex-1`, in a
+  `min-w-0` row), the diff pair, and LinkEditor's loaded-revision pick. The option text truncates
+  instead of widening the view. The diff pair moved into `components/RevisionDiffPicker.tsx`, so a
+  test can render it without a live node.
+- `MessageRow` and `ThreadNode` (Forum) text gets `[overflow-wrap:anywhere]`, and so does the
+  header line with the peer name. An unbroken path breaks mid-token (see the 320 screenshot).
+- The scan at 320px found two more rows that the verifier's 375px pass could not see:
+  - Explore's count strip now wraps (`flex-wrap`). Its "refresh all" button used to end at 360px.
+  - The Overview probe grid is `minmax(min(20rem,100%),1fr)`, and its rows are
+    `minmax(0,1fr)_auto_minmax(0,1.4fr)`. The old 7rem/9rem floors alone outgrew a 320px card.
+
+**Nonblocking findings.**
+- `ErrorNote` matches the first word of `message`, through the new `state/authErrorHintFromText.ts`,
+  which `Transcript` shares. So `forbidden at /peer_name` now gets its hint in the App aside too.
+  `Transcript` computes the hint once.
+- The Explore lists column is a `<section aria-label="Peers and sessions">`. It used to be a
+  `<div>`, and ARIA prohibits naming a generic element.
+- `ListPanel` errors are `role="status"`. The transcript's is the one `role="alert"`, so a bad
+  token no longer raises three assertive alerts with one sentence.
+- Landscape: DetailTabs gained `max-h-full`. Scrolled into view, its tab bar, transcript and
+  composer now fit on one screen wherever the 24rem floor fits (375x812: 529px in a 529px
+  scroller). **Not fixed at 812x375.** The 24rem floor still wins there: 384px in a 211px
+  scrollport, the same as round 3. It also wins at 320x640: 384px in a 357px scroller. I tried capping the floor too (`min(24rem,100%)`) and measured
+  it: the pane fit in 211px, but the transcript viewport was **24px**, which is round 2's defect.
+  So the floor stays.
+- Not done: DetailTabs still has no `role=tab`/`aria-selected` and no roving focus. The tabs are
+  native `<button>`s with the global `:focus-visible` ring.
+
+**Screenshots** are named by CSS width, or width x height where the height matters. The PNG
+pixel size is 1.5× the CSS size:
+- `ui/37-a11y-r4-375-knowledge-diff.png` and `ui/37-a11y-r4-375-knowledge-correct.png`: the
+  capped selects, with no horizontal scrollbar.
+- `ui/37-a11y-r4-1440-knowledge-diff.png` and `ui/37-a11y-r4-1440-knowledge-correct.png`.
+- `ui/37-a11y-r4-320x640-explore-messages.png`: the path wraps, and "refresh all" is on its own
+  line.
+- `ui/37-a11y-r4-375x812-explore-messages.png`, `ui/37-a11y-r4-812x375-explore-messages.png` and
+  `ui/37-a11y-r4-320-overview.png`.
+
+**Teardown.** The origin's `localStorage` and `sessionStorage` were cleared (length read back: 0),
+and the device-metrics override was cleared. The TaskSpaces were finished. The server got
+`kill -TERM` and is gone. `rm -rf` removed the mktemp root (`ls`: "No such file or directory"). No
+listener was left on the port.
