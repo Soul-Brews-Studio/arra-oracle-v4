@@ -426,12 +426,27 @@ failing model; prompt isolation), `chat-model.test.ts` (config validation, reque
 ## Amendment 2026-09-26 (post-merge R3/R4/R5 + #85/#31/#75 acceptance criteria)
 
 Evidence only; no behaviour changes. Ruling R4 (`docs/overnight/DECISIONS.md`) is
-unchanged. The worst case for the `excluded` list (5 sessions x 51 candidates at
-`max_items` 50, with 250-byte session names) is now proven over the real HTTP route
-(`POST /api/knowledge/:bank/getContext|answerChat`) and the real MCP route
-(`POST /mcp/:bank`, `kb_getContext|kb_answerChat`), not only in-process. On both
-transports and for both methods, `coverage` is `"partial"`, `excluded` stays within
-`MAX_CONTEXT_WIRE_BYTES`, `excluded_omitted` is greater than 0, `excluded.length +
-excluded_omitted` equals 205, and the wire result equals the in-process result.
-`answerChat` uses a stub model. Test: `app/server/test/chat-coverage.test.ts`, in the
-describe block "the same results over the live transports".
+unchanged. Two overflow cases for the `excluded` list are now proven through the HTTP
+route handler (`POST /api/knowledge/:bank/getContext|answerChat`) and the MCP route
+handler (`POST /mcp/:bank`, `kb_getContext|kb_answerChat`), not only through the
+service. Both run through `createApp`'s `app.handle` in-process, with the production
+reader and a real policy file; neither runs over a TCP socket.
+
+- **Overflow.** An anchor plus 4 linked sessions, 5 x 51 candidates at `max_items`
+  50, with 250-byte session names: 205 budget entries against the list's 65,536-byte
+  bound. This is an overflow case, not the largest one: the anchor plus
+  `MAX_LINKED_SESSIONS` (8) linked sessions allows 9 x 51 candidates.
+- **Mixed overflow.** An anchor plus 9 linked sessions. Two of them the requester
+  never joined, and the 9th link is past `MAX_LINKED_SESSIONS`. The fixed
+  unauthorized aggregate and the link-bound entry are the first two entries, ahead
+  of 307 overflowing budget entries, and neither is ever omitted.
+
+On both transports and for both methods, `coverage` is `"partial"`, `excluded` stays
+within `MAX_CONTEXT_WIRE_BYTES`, `excluded_omitted` is greater than 0, and every
+budget entry is either listed or counted. The wire `excluded`, `excluded_omitted` and
+items (`items` for `getContext`, `items_used` for `answerChat`) equal the in-process
+result. `answerChat` uses a stub model. Test: `app/server/test/chat-coverage.test.ts`:
+"the excluded list is byte-bounded ...", "under overflow the unauthorized aggregate
+and the link bound still lead the list", and the describe block "the same results
+over the live transports". A mutant that records the two fixed entries after the item
+loop fails 5 of those tests.

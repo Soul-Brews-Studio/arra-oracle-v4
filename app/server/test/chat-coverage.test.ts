@@ -46,6 +46,31 @@ const TOKEN_SHA256 = createHash("sha256").update(TOKEN, "ascii").digest("hex");
 
 /** The overflow scenario's anchor session (`fixtures/chat-v1/gated-coverage.ts`). */
 const OVERFLOW_MAIN = "overflow-main-".padEnd(250, "x");
+/** The mixed overflow scenario's anchor: aggregate + link bound + overflow. */
+const MIXED_MAIN = "mixed-main-".padEnd(250, "x");
+/** Anchor + the 6 authorized linked sessions searched (the 9th link is past
+ *  MAX_LINKED_SESSIONS), 51 candidates each, 50 used. */
+const MIXED_BUDGET_ENTRIES = 7 * 51 - 50;
+
+/** The two fixed entries lead the list, whatever overflows behind them. */
+function expectMixedOverflow(result: Result & { items_used?: string[] }): void {
+  expect(result.coverage).toBe("partial");
+  expect((result.items ?? result.items_used)!.length).toBe(50);
+  expect(utf8(result.excluded)).toBeLessThanOrEqual(MAX_CONTEXT_WIRE_BYTES);
+  expect(result.excluded_omitted).toBeGreaterThan(0);
+  const [aggregate, bound, ...rest] = result.excluded as Record<string, unknown>[];
+  expect(aggregate!.reason).toBe("unauthorized");
+  expect(Object.keys(aggregate!).sort()).toEqual(["count", "reason"]);
+  expect(aggregate!.count as number).toBeGreaterThan(0);
+  expect(bound).toEqual({ reason: "budget_exceeded", session_name: null, public_id: null });
+  for (const entry of rest) {
+    expect(entry.reason).toBe("budget_exceeded");
+    expect(typeof entry.session_name).toBe("string");
+    expect(typeof entry.public_id).toBe("string");
+  }
+  expect(rest.length + result.excluded_omitted).toBe(MIXED_BUDGET_ENTRIES);
+  expect(JSON.stringify(result)).not.toContain("SECRET");
+}
 const pad = (seed: string) => `${seed}${"0".repeat(Math.max(0, 21 - seed.length))}`.slice(0, 21);
 const utf8 = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 
@@ -56,6 +81,13 @@ type Result = {
   excluded: Excluded[];
   excluded_omitted: number;
 };
+/** The wire result carries the in-process items too: getContext the items
+ *  themselves, answerChat the public ids it used. */
+function expectSameItems(wire: Result & { items_used?: string[] }, inProcess: Result): void {
+  const ids = inProcess.items.map((item) => item.public_id);
+  if (wire.items_used !== undefined) expect(wire.items_used).toEqual(ids);
+  else expect(wire.items).toEqual(inProcess.items);
+}
 type Attempt = { ok: boolean; value: Result & { answer?: string; items_used?: string[] }; code?: string; message?: string };
 
 let cleanup: (() => Promise<void>) | null = null;
@@ -224,6 +256,10 @@ describe("getContext coverage is full only when nothing was excluded (R4)", () =
     // listed or counted as omitted -- none vanishes.
     expect(result.excluded.length + result.excluded_omitted).toBe(5 * 51 - 50);
   });
+
+  test("under overflow the unauthorized aggregate and the link bound still lead the list", () => {
+    expectMixedOverflow(scenario("mixed"));
+  });
 });
 
 describe("answerChat carries the corrected coverage and never feeds unauthorized evidence to the model", () => {
@@ -330,6 +366,17 @@ describe("the same results over the live transports (production reader, real pol
         expect(result.excluded.length + result.excluded_omitted).toBe(5 * 51 - 50);
         expect(result.excluded).toEqual(scenario("overflow").excluded);
         expect(result.excluded_omitted).toBe(scenario("overflow").excluded_omitted);
+        expectSameItems(result, scenario("overflow"));
+      });
+
+      test(`${label}: ${method} mixed overflow keeps the aggregate and link bound first`, async () => {
+        const payload = { ...request(MIXED_MAIN, 50), ...(method === "answerChat" ? { question: "what happened?" } : {}) };
+        const result = (await via(payload, method)) as Result & { answer?: string };
+        if (method === "answerChat") expect(result.answer).toBe("stub answer");
+        expectMixedOverflow(result);
+        expect(result.excluded).toEqual(scenario("mixed").excluded);
+        expect(result.excluded_omitted).toBe(scenario("mixed").excluded_omitted);
+        expectSameItems(result, scenario("mixed"));
       });
     }
 
