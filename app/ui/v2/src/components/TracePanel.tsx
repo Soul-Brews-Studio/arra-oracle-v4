@@ -17,9 +17,9 @@ function HitRow({ hit }: { hit: TraceHitRow }) {
   return (
     <li className="flex flex-col gap-0.5 rounded border border-edge px-2 py-1.5 text-[11px]">
       <div className="flex items-center gap-2">
-        <span className="rounded border border-edge px-1 py-0 font-mono text-[10px] text-muted">{hit.kind}</span>
+        <span className="rounded border border-edge px-1 py-0 font-mono text-[10px] text-muted [overflow-wrap:anywhere]">{hit.kind}</span>
         <span className="truncate text-slate-100">{hit.ref}</span>
-        <span className="ml-auto font-mono text-[10px] text-muted">#{hit.position}</span>
+        <span className="ml-auto font-mono text-[10px] text-muted [overflow-wrap:anywhere]">#{hit.position}</span>
       </div>
       <p className="truncate font-mono text-muted">{hit.target}</p>
       {(hit.line_start !== null || hit.line_end !== null) && (
@@ -27,7 +27,7 @@ function HitRow({ hit }: { hit: TraceHitRow }) {
           lines {hit.line_start ?? "?"}–{hit.line_end ?? "?"}
         </p>
       )}
-      {hit.excerpt !== null && <p className="whitespace-pre-wrap text-slate-200">{hit.excerpt}</p>}
+      {hit.excerpt !== null && <p className="whitespace-pre-wrap text-slate-200 [overflow-wrap:anywhere]">{hit.excerpt}</p>}
     </li>
   );
 }

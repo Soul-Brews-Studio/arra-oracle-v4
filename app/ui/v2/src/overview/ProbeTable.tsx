@@ -108,7 +108,7 @@ export function ProbeTable({
             className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1.4fr)] items-baseline gap-2 text-[11px]"
           >
             <span className="truncate font-mono text-slate-200">{row.method}</span>
-            <span className="font-mono tabular-nums text-muted">{row.durationMs} ms</span>
+            <span className="font-mono tabular-nums text-muted [overflow-wrap:anywhere]">{row.durationMs} ms</span>
             <span className={row.warn ? "text-[#f0a35e]" : "text-muted"}>{row.result}</span>
           </li>
         ))}

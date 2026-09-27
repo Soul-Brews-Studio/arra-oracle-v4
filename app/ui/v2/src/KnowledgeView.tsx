@@ -125,7 +125,7 @@ export function KnowledgeView({
         ) : (
           <>
             <div className="flex items-center gap-2 border-b border-edge px-4 py-2">
-              <span className="font-mono text-[11px] text-muted" title={target}>
+              <span className="font-mono text-[11px] text-muted [overflow-wrap:anywhere]" title={target}>
                 {target.slice(0, 10)}…
               </span>
               {terms.length > 0 && <TypeBadge type={typeOf(terms) ?? "note"} />}

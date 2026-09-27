@@ -31,7 +31,7 @@ export function MessageRow({
       <div className="flex min-w-0 flex-wrap items-baseline gap-2 text-[11px] text-muted [overflow-wrap:anywhere]">
         <span className="font-semibold text-slate-100">{message.peer_name}</span>
         {message.role && <span>{message.role}</span>}
-        <span className="font-mono">#{message.seq_in_session}</span>
+        <span className="font-mono [overflow-wrap:anywhere]">#{message.seq_in_session}</span>
         <span className="ml-auto">{relativeIsh(message.created_at)}</span>
       </div>
       {isEmpty ? (

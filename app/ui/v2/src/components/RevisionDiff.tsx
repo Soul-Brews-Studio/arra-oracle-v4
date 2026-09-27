@@ -10,6 +10,10 @@ const ROW_CLASS: Record<"equal" | "changed" | "added" | "removed", string> = {
   removed: "bg-rose-500/10",
 };
 
+/** Break an unbroken token (a path, a JSON link) anywhere rather than widen
+ *  the view; see the link list below. */
+const WRAP = "[overflow-wrap:anywhere]";
+
 const FIELD_LABEL: Record<FieldChange["field"], string> = {
   author_peer_name: "author",
   observer_peer_name: "observer",
@@ -62,7 +66,7 @@ export function RevisionDiff({ from, to }: { from: RevisionRow; to: RevisionRow 
   return (
     <div className="flex flex-col gap-3 rounded border border-edge bg-panel p-3 text-xs">
       <div className="grid grid-cols-2 gap-3 border-b border-edge pb-2">
-        <div>
+        <div className="min-w-0">
           <p className="text-[10px] uppercase tracking-wide text-muted">from · rev {diff.from.revision_no}</p>
           <p
             title={diff.from.title}
@@ -71,7 +75,7 @@ export function RevisionDiff({ from, to }: { from: RevisionRow; to: RevisionRow 
             {diff.from.title}
           </p>
         </div>
-        <div>
+        <div className="min-w-0">
           <p className="text-[10px] uppercase tracking-wide text-muted">to · rev {diff.to.revision_no}</p>
           <p
             title={diff.to.title}
@@ -89,7 +93,7 @@ export function RevisionDiff({ from, to }: { from: RevisionRow; to: RevisionRow 
       )}
 
       <div className="overflow-hidden rounded border border-edge">
-        <table className="w-full table-fixed border-collapse font-mono text-[10px]">
+        <table className="w-full table-fixed border-collapse font-mono text-[10px] [overflow-wrap:anywhere]">
           <tbody>
             {diff.fieldChanges.map((c) => (
               <tr key={c.field} className={c.changed ? ROW_CLASS.changed : ""}>
@@ -117,7 +121,7 @@ export function RevisionDiff({ from, to }: { from: RevisionRow; to: RevisionRow 
         </div>
       ) : (
         <div className="overflow-hidden rounded border border-edge">
-          <table className="w-full table-fixed border-collapse font-mono text-[11px]">
+          <table className="w-full table-fixed border-collapse font-mono text-[11px] [overflow-wrap:anywhere]">
             <tbody>
               {rows.map((row, i) => (
                 <tr key={i} className={ROW_CLASS[row.kind]}>
@@ -134,8 +138,11 @@ export function RevisionDiff({ from, to }: { from: RevisionRow; to: RevisionRow 
         </div>
       )}
 
+      {/* #33 AC2 round 5: a link renders as its whole canonical JSON, one
+          unbroken ~230-char token; without `anywhere` it ran ~1000px past a
+          320px column. min-w-0 lets each half shrink below that token. */}
       <div className="grid grid-cols-2 gap-3">
-        <div>
+        <div className="min-w-0">
           <p className="text-[10px] font-medium uppercase tracking-wide text-muted">
             terms ({diff.termChanges.length})
           </p>
@@ -147,11 +154,11 @@ export function RevisionDiff({ from, to }: { from: RevisionRow; to: RevisionRow 
                 c.change === "relabelled" ? (
                   // Same term_id, different snapshot: each revision keeps the
                   // label it was published with, so both are shown.
-                  <li key={i} className="break-words text-[#f0a35e]">
+                  <li key={i} className="text-[#f0a35e] [overflow-wrap:anywhere]">
                     ~ {termText(c.from)} → {termText(c.term)}
                   </li>
                 ) : (
-                  <li key={i} className={c.change === "added" ? "text-accent" : "text-rose-300"}>
+                  <li key={i} className={`${c.change === "added" ? "text-accent" : "text-rose-300"} ${WRAP}`}>
                     {c.change === "added" ? "+" : "−"} {termText(c.term)}
                   </li>
                 ),
@@ -159,7 +166,7 @@ export function RevisionDiff({ from, to }: { from: RevisionRow; to: RevisionRow 
             </ul>
           )}
         </div>
-        <div>
+        <div className="min-w-0">
           <p className="text-[10px] font-medium uppercase tracking-wide text-muted">
             links ({diff.linkChanges.length})
           </p>
@@ -168,7 +175,7 @@ export function RevisionDiff({ from, to }: { from: RevisionRow; to: RevisionRow 
           ) : (
             <ul className="mt-1 flex flex-col gap-0.5">
               {diff.linkChanges.map((c, i) => (
-                <li key={i} className={c.change === "added" ? "text-accent" : "text-rose-300"}>
+                <li key={i} className={`${c.change === "added" ? "text-accent" : "text-rose-300"} ${WRAP}`}>
                   {c.change === "added" ? "+" : "−"} {JSON.stringify(c.entry)}
                 </li>
               ))}

@@ -65,7 +65,7 @@ export function HealthLine({
             {requestCount} requests
           </span>
         )}
-        {elapsedMs !== null && <span className="font-mono">{elapsedMs} ms</span>}
+        {elapsedMs !== null && <span className="font-mono [overflow-wrap:anywhere]">{elapsedMs} ms</span>}
         {onRefreshAll !== undefined && (
           <button
             onClick={onRefreshAll}

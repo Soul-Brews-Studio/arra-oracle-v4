@@ -43,7 +43,7 @@ export function ThreadNode({
         <div className="flex min-w-0 flex-wrap items-baseline gap-2 text-[11px] text-muted [overflow-wrap:anywhere]">
           <span className="font-semibold text-slate-100">{root.peer_name}</span>
           {root.role && <span>{root.role}</span>}
-          <span className="font-mono">#{root.seq_in_session}</span>
+          <span className="font-mono [overflow-wrap:anywhere]">#{root.seq_in_session}</span>
           {orphaned && (
             <span
               className="rounded border border-amber-500/40 bg-amber-500/10 px-1 text-amber-300"

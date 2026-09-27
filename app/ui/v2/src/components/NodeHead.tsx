@@ -25,7 +25,7 @@ export function NodeHead({
   if (error) {
     return (
       <div className="flex flex-col gap-2 p-4">
-        <p className="font-mono text-xs text-muted">{node.node_id}</p>
+        <p className="font-mono text-xs text-muted [overflow-wrap:anywhere]">{node.node_id}</p>
         <ErrorNote error={error} />
       </div>
     );
@@ -60,14 +60,16 @@ export function NodeHead({
         </div>
       </div>
 
+      {/* #33 AC2 round 5: `anywhere`, so a repo path or an absolute path in
+          the body breaks mid-token instead of running past a 320px column. */}
       {revision.body_format === "text" ? (
-        <pre className="whitespace-pre-wrap rounded border border-edge bg-panel p-3 text-xs text-slate-200">
+        <pre className="whitespace-pre-wrap rounded border border-edge bg-panel p-3 text-xs text-slate-200 [overflow-wrap:anywhere]">
           {revision.body}
         </pre>
       ) : (
         // No markdown renderer wired in -- POC scope. Shown as plain text
         // rather than silently dropped so the body is still legible.
-        <p className="whitespace-pre-wrap text-xs text-slate-200">{revision.body}</p>
+        <p className="whitespace-pre-wrap text-xs text-slate-200 [overflow-wrap:anywhere]">{revision.body}</p>
       )}
 
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1 border-t border-edge pt-2 text-[11px] text-muted">
@@ -78,7 +80,7 @@ export function NodeHead({
         <dt>active</dt>
         <dd className="text-slate-200">{revision.is_active ? "yes" : "no"}</dd>
         <dt>digest</dt>
-        <dd className="font-mono text-slate-200">{digest}</dd>
+        <dd className="font-mono text-slate-200 [overflow-wrap:anywhere]">{digest}</dd>
       </dl>
     </div>
   );

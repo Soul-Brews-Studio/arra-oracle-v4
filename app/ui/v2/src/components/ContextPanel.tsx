@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ContextResult } from "../api/memory";
+import { ContextItemRow } from "./ContextItemRow";
 import { CoverageBadge } from "./CoverageBadge";
 import { ExcludedList } from "./ExcludedList";
 
@@ -60,16 +61,7 @@ export function ContextPanel({
             {expanded && (
               <ul className="mt-2 flex flex-col gap-2">
                 {context.items.map((item) => (
-                  <li key={item.public_id} className="rounded border border-edge bg-panel p-2">
-                    <div className="flex items-center gap-2 text-[11px] text-muted">
-                      <span className="font-mono">{item.peer_name}</span>
-                      <span>·</span>
-                      <span className="font-mono">{item.session_name}</span>
-                      <span>·</span>
-                      <span>seq {item.seq_in_session}</span>
-                    </div>
-                    <p className="mt-1 whitespace-pre-wrap text-xs text-slate-100">{item.content}</p>
-                  </li>
+                  <ContextItemRow key={item.public_id} item={item} />
                 ))}
               </ul>
             )}

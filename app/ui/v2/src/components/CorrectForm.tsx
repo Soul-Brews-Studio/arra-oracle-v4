@@ -71,7 +71,8 @@ export function CorrectForm({
       <h3 className="text-xs font-medium uppercase tracking-wide text-muted">Correct</h3>
       <p className="text-[11px] text-muted">
         Records that a revision was wrong without rewriting it. This publishes a new node of type{" "}
-        <code>correction</code> whose first link is <code>corrects</code> → the revision picked below. That
+        <code className="[overflow-wrap:anywhere]">correction</code> whose first link is{" "}
+        <code className="[overflow-wrap:anywhere]">corrects</code> → the revision picked below. That
         revision stays exactly as published, and the correction shows up as reverse evidence on it (Evidence tab).
         To change this node&apos;s own text, publish a revision instead.
       </p>

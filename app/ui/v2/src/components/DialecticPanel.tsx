@@ -82,7 +82,7 @@ export function DialecticPanel({
 
       {answer && (
         <div className="flex flex-col gap-3 rounded border border-edge bg-panel p-3">
-          <p className="whitespace-pre-wrap text-sm text-slate-100">{answer.answer}</p>
+          <p className="whitespace-pre-wrap text-sm text-slate-100 [overflow-wrap:anywhere]">{answer.answer}</p>
           <CoverageBadge coverage={answer.coverage} />
           <ExcludedList excluded={answer.excluded} omitted={answer.excluded_omitted} />
           <div>
