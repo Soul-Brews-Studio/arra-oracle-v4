@@ -152,3 +152,8 @@ not provide) or C (lineage-only chain expansion)?
 AC-MATRIX item 8 (`session-foreign-visitor-and-literal-evidence`) also bundles the literal #28 AC1
 end-to-end test: one conclusion cites 2 traces and 2 sessions, and reverse lookup returns all of
 them. This slice did not build it. It is outside this slice's brief, and no other slice owns it.
+
+> **Sweep correction (proof-sweep, 2026-09-27).** "no other slice owns it" is no longer true. The
+> ac1-literal slice built it after this file was written (commit `3b51a00`, merged in PR #127):
+> `app/server/test/association-ac1-literal.test.ts`, 1 test. Measured on `594df54` with
+> `cd app/server && bun test test/association-ac1-literal.test.ts`: `1 pass / 0 fail`, 81 expect() calls.

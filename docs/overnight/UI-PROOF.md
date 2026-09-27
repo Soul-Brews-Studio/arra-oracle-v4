@@ -404,11 +404,11 @@ under `docs/overnight/ui/`.
 
 ## Tests
 
-- `revisionDiff.test.ts`: **19 passing** (was 12 before this round; 7 new — field-level diff x3,
+- `revisionDiff.test.ts`: **19 passing** *(sweep 2026-09-27: 26 on `594df54`, `cd app/ui/v2 && bun test src/state/revisionDiff.test.ts`; later rounds added tests)* (was 12 before this round; 7 new — field-level diff x3,
   size guard x3, strengthened `compareRevisionNo` x1). Failing-first: the new tests were written
   and run RED (`SyntaxError: Export named 'MAX_DIFF_CELLS' not found`, then real assertion
   failures) before `revisionDiff.ts` was changed.
-- `chatError.test.ts`: **5 passing** (was 3; 2 new — transport-failure wording, HTTP-status
+- `chatError.test.ts`: **5 passing** *(sweep 2026-09-27: 8 on `594df54`, `bun test src/state/chatError.test.ts`)* (was 3; 2 new — transport-failure wording, HTTP-status
   wording). Failing-first: the transport-failure test failed
   (`expect(received).not.toBe(expected)` on the literal `"Failed to fetch"` title) before the
   fix, passed after.

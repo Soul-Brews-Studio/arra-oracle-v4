@@ -5,8 +5,10 @@
  *
  * Every prior association test either seeds physical rows directly
  * (`association-query.test.ts`, kernel-level fixture rows, no real session/
- * trace ever created) or exercises the 13-method transport wiring with
- * single citations (`knowledge-expose13-live.test.ts`). None of them publish
+ * trace ever created) or exercises the 13-method transport wiring for
+ * CREATING traces and session links (`knowledge-expose13-live.test.ts`) --
+ * that file never publishes a revision that cites them, and never calls
+ * `scanDependents` or `getRevisionAssociations`. None of them publish
  * ONE revision through the REAL `publishRevision` service whose
  * `link_snapshot` cites two REAL sessions (created via `registerSession` +
  * `joinSession` + `appendMessages`, with an actual message in each) and two
@@ -35,6 +37,8 @@ import {
 import { testTimeout } from "./helpers/timing.testTimeout";
 
 const ALPHA = "alpha-workspace";
+/** The cross-workspace distractor lives here -- never in ALPHA. */
+const BETA = "beta-workspace";
 const CLOCK = Date.parse("2026-09-27T00:00:00.000Z");
 const CHILD = new URL("./fixtures/association-v1/core/gated-association.ts", import.meta.url).pathname;
 
@@ -50,6 +54,18 @@ const TRACE_1 = pad("ac1trace1");
 const TRACE_2 = pad("ac1trace2");
 const MSG_1 = pad("ac1msg1");
 const MSG_2 = pad("ac1msg2");
+const DISTRACT_SESSION_ID = pad("ac1distrs");
+const DISTRACT_NODE = pad("ac1distrn");
+/** Sorts BEFORE NODE_A ("ac1distrn" < "ac1nodeA"), so it pins the
+ *  first-page branch of scanDependents' predicate (cursorNode === null,
+ *  service.scanDependents.ts ~:121). */
+const DISTRACT_SESSION_ID_2 = pad("ac1distrs2");
+const DISTRACT_NODE_2 = pad("ac1zdistrn2");
+/** Sorts AFTER NODE_A ("ac1zdistrn2" > "ac1nodeA"), so it pins the
+ *  CONTINUATION branch of the same predicate (cursorNode !== null, the
+ *  `id > cursor` half at service.scanDependents.ts ~:122) -- a distractor
+ *  that only sorts before NODE_A can never reach that branch, since the
+ *  continuation predicate only looks past NODE_A's own id. */
 const REV_A = pad("ac1revA");
 
 /** Distinct relation per citation, so a mixed-up reverse lookup is caught,
@@ -134,9 +150,10 @@ describe("#28 AC1 literal: one conclusion cites 2 traces + 2 sessions; every rev
     "seeded through the REAL service (registerSession/joinSession/appendMessages/createTrace/publishRevision); " +
       "scanDependents and getRevisionAssociations both return exactly the 4 citations, with their own relations",
     async () => {
-      const fixture = await createSeededRevisionFixture([ALPHA]);
+      const fixture = await createSeededRevisionFixture([ALPHA, BETA]);
       try {
         const seeded = fixture.workspaces[ALPHA]!;
+        const seededBeta = fixture.workspaces[BETA]!;
         const ops = [
           // ── two real sessions, each with a real message ─────────────────
           ctx("registerPeer", { workspace_name: ALPHA, peer_id: PEER_1, name: "ac1-author" }), // op0
@@ -174,6 +191,56 @@ describe("#28 AC1 literal: one conclusion cites 2 traces + 2 sessions; every rev
           ev("scanDependents", scanRequest("session", { session_name: SESSION_2_NAME })), // op13
           // ── forward citations, from the conclusion's own side ────────────
           ev("getRevisionAssociations", { workspace_name: ALPHA, node_id: NODE_A, revision_id: null }), // op14
+          // ── CROSS-WORKSPACE DISTRACTORS ───────────────────────────────────
+          // beta-workspace publishes TWO of its OWN revisions, on TWO of its
+          // OWN nodes, each citing a session with the SAME NAME as a real
+          // alpha-workspace citation above (SESSION_1_NAME / SESSION_2_NAME).
+          // `deriveLinkRows` (association.deriveLinkRows.ts) always
+          // recomputes `target_key` from the REQUESTED workspace, not the
+          // node's real one, so these same-named beta sessions recompute to
+          // the SAME target_key as alpha-workspace's real citations. Three
+          // things independently keep them out of alpha's reverse lookup --
+          // the per-node workspace predicate in scanDependents
+          // (service.scanDependents.ts ~:121/:122), the workspace-scoped
+          // equality probe right after it (~:137-142), and
+          // `selectAcceptedRevision`'s own workspace-scoped lookup
+          // (~:148) -- so dropping any ONE of the three does not, by
+          // itself, leak a distractor row in (dropping the workspace
+          // predicate alone instead surfaces `integrity_failure`, from the
+          // equality probe catching the now-cross-workspace duplicate id).
+          // Two distractor NODE ids are used, one on each side of NODE_A in
+          // sort order (DISTRACT_NODE < NODE_A < DISTRACT_NODE_2), so a
+          // predicate drop is caught whichever of scanDependents' two loop
+          // branches it lands on: the first-page branch (cursorNode ===
+          // null, ~:121) is only reachable by an id that could sort first,
+          // and the continuation branch (cursorNode !== null, ~:122, which
+          // requires `id > cursor`) is only reachable by an id that sorts
+          // after NODE_A.
+          ctx("registerSession", { workspace_name: BETA, session_id: DISTRACT_SESSION_ID, name: SESSION_1_NAME }), // op15
+          pub("publishRevision", {
+            operation_id: "ac1-literal-distractor-op",
+            content: revisionEnvelope(BETA, seededBeta, DISTRACT_NODE, {
+              session_name: null,
+              link_snapshot_json: JSON.stringify([
+                linkEntry(0, "related_to", "session", { session_name: SESSION_1_NAME }),
+              ]),
+            }),
+          }), // op16
+          ev("scanDependents", scanRequest("session", { session_name: SESSION_1_NAME })), // op17
+          // Second distractor: same shape, but its node id (DISTRACT_NODE_2)
+          // sorts AFTER NODE_A, so it can only surface through the
+          // CONTINUATION predicate branch, never the first-page one.
+          ctx("registerSession", { workspace_name: BETA, session_id: DISTRACT_SESSION_ID_2, name: SESSION_2_NAME }), // op18
+          pub("publishRevision", {
+            operation_id: "ac1-literal-distractor-op-2",
+            content: revisionEnvelope(BETA, seededBeta, DISTRACT_NODE_2, {
+              session_name: null,
+              link_snapshot_json: JSON.stringify([
+                linkEntry(0, "related_to", "session", { session_name: SESSION_2_NAME }),
+              ]),
+            }),
+          }), // op19
+          ev("scanDependents", scanRequest("session", { session_name: SESSION_2_NAME })), // op20
         ];
 
         const parsed = await drive(fixture.datasetRoot, ops);
@@ -200,6 +267,13 @@ describe("#28 AC1 literal: one conclusion cites 2 traces + 2 sessions; every rev
           expect(result.ok).toBe(true);
           expect(result.value.outcome).toBe("page");
           expect(result.value.occurrences).toHaveLength(1);
+          // A truncated scan (MAX_* caps hit, or a bug that stops early)
+          // would still be able to carry a single occurrence -- only a null
+          // cursor proves the reverse lookup actually reached the end of
+          // this workspace's nodes rather than merely finding one match and
+          // stopping. Without this, a mutant that made the scan give up
+          // after the first hit would pass unnoticed.
+          expect(result.value.next_cursor).toBeNull();
           const occurrence = result.value.occurrences[0];
           expect(occurrence.workspace_name).toBe(ALPHA);
           expect(occurrence.node_id).toBe(NODE_A);
@@ -228,6 +302,57 @@ describe("#28 AC1 literal: one conclusion cites 2 traces + 2 sessions; every rev
           expect(link.relation).toBe(expected.relation);
           expect(link.position).toBe(String(expected.position));
         });
+
+        // The distractor setup itself really wrote, on the real service, in
+        // the real other workspace.
+        expect(parsed.op15.ok).toBe(true);
+        const distractorPublished = parsed.op16;
+        expect(distractorPublished.ok).toBe(true);
+        expect(distractorPublished.value.outcome).toBe("accepted");
+        expect(distractorPublished.value.node_id).toBe(DISTRACT_NODE);
+
+        // With the distractor now sitting in beta-workspace under the SAME
+        // session name, alpha-workspace's reverse lookup for that name must
+        // still return exactly the one alpha-workspace occurrence -- not
+        // two. This pins the first-page branch of the workspace predicate
+        // (DISTRACT_NODE sorts before NODE_A): if either of the workspace
+        // scopes at scanDependents.ts ~:121/:137-142/:148 is ever dropped,
+        // this assertion goes red (either as an extra beta occurrence
+        // leaking in, or, for the ~:121/:137-142 predicates specifically,
+        // as `integrity_failure` from the equality probe).
+        const guarded = parsed.op17;
+        expect(guarded.ok).toBe(true);
+        expect(guarded.value.outcome).toBe("page");
+        expect(guarded.value.occurrences).toHaveLength(1);
+        expect(guarded.value.next_cursor).toBeNull();
+        const guardedOccurrence = guarded.value.occurrences[0];
+        expect(guardedOccurrence.workspace_name).toBe(ALPHA);
+        expect(guardedOccurrence.node_id).toBe(NODE_A);
+        expect(guardedOccurrence.revision_id).toBe(REV_A);
+        expect(guardedOccurrence.link.relation).toBe("discusses");
+
+        // The second distractor setup also really wrote, in beta-workspace.
+        expect(parsed.op18.ok).toBe(true);
+        const distractorPublished2 = parsed.op19;
+        expect(distractorPublished2.ok).toBe(true);
+        expect(distractorPublished2.value.outcome).toBe("accepted");
+        expect(distractorPublished2.value.node_id).toBe(DISTRACT_NODE_2);
+
+        // Same guarantee, but this distractor's node id sorts AFTER NODE_A,
+        // so it can only leak through the CONTINUATION predicate branch
+        // (cursorNode !== null, ~:122). Without this second distractor, a
+        // mutant that drops only that branch's workspace scoping passes
+        // unnoticed here, because DISTRACT_NODE alone never reaches it.
+        const guarded2 = parsed.op20;
+        expect(guarded2.ok).toBe(true);
+        expect(guarded2.value.outcome).toBe("page");
+        expect(guarded2.value.occurrences).toHaveLength(1);
+        expect(guarded2.value.next_cursor).toBeNull();
+        const guarded2Occurrence = guarded2.value.occurrences[0];
+        expect(guarded2Occurrence.workspace_name).toBe(ALPHA);
+        expect(guarded2Occurrence.node_id).toBe(NODE_A);
+        expect(guarded2Occurrence.revision_id).toBe(REV_A);
+        expect(guarded2Occurrence.link.relation).toBe("related_to");
       } finally {
         await fixture.cleanup();
       }

@@ -309,6 +309,23 @@ No server behaviour, codec or field changes. This records a new WRITER of
   `buildCorrection.test.ts`, `api/publishRevision.test.ts` and
   `components/citeCorrect.test.ts`.
 
+## Amendment 2026-09-26 (post-merge PROOF.md rule: every number measured, the command beside it; doc-contradicts-code is a defect)
+
+Source: `docs/overnight/DECISIONS.md` (the PROOF.md rule), issue #22, and the proof sweep
+(`docs/overnight/PROOF-SWEEP.md`). Written 2026-09-27 on `594df54`.
+
+**Change.** The Nat-style amendment says `revision_v1.py` "is now 465 lines" after the split.
+That was true at the split commit (`4056d9b`). The fix round that wrote the sentence (`4e90ba8`)
+already left the file at 461 lines, and it is 461 on `594df54` too, so on that tree
+`revision_v1.py` is 461 lines. The conclusion, under the 500-line cap, is unchanged. The original
+sentence is left as written, because frozen contracts are not rewritten; this amendment is the
+correction.
+
+**Why.** A measured number must match the tree it describes (the PROOF.md rule).
+
+**Command.** `wc -l app/migrate-py/src/arra_migrate/revision_v1.py`, and
+`git show 4056d9b:app/migrate-py/src/arra_migrate/revision_v1.py | wc -l` for the 465.
+
 ## Amendment 2026-09-26 (post-merge R15 (+ its 2026-09-27 update) + #8 scope correction (2026-09-20) + SPEC §15.2/§15.5)
 
 The **Honcho boundary** paragraph above says the SQL/byte-compatibility promise

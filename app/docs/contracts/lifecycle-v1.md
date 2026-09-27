@@ -757,3 +757,21 @@ already-superseded successor, both refused with no side effect on the refused ca
 eligibility" and "`reconcileSearchChunks`/`indexRevisionChunks` on a terminal node" are now in
 `lifecycle-eligibility-enforcement.test.ts`, not `lifecycle-eligibility.test.ts`. §13's paragraph
 itself is left as written (frozen contracts are not rewritten); this amendment is the correction.
+
+## 19. Amendment 2026-09-26 (post-merge PROOF.md rule: every number measured, the command beside it; doc-contradicts-code is a defect)
+
+Source: `docs/overnight/DECISIONS.md` (the PROOF.md rule), issue #22, and the proof sweep
+(`docs/overnight/PROOF-SWEEP.md`). Written 2026-09-27 on `594df54`.
+
+**Change.** §18 says `bun test test/lifecycle-*.test.ts` "reports 35 pass / 0 fail / 416
+`expect()` calls on both sides". That count was true for the file split it describes. It is not
+the count on `594df54`: PR #124 added the #29 AC4 and self/cyclic-supersede guard tests
+(`lifecycle-eligibility-ac4-schema.test.ts`, `lifecycle-eligibility-ac4-readonly.test.ts`,
+`lifecycle-supersede-self-cycle.test.ts`), and the same glob now reports **41 pass / 0 fail / 451
+`expect()` calls across 12 files**. §18 is left as written, because frozen contracts are not
+rewritten; this amendment records the current count.
+
+**Why.** A test count read as current must be the measured current count, with the command beside
+it (the PROOF.md rule).
+
+**Command.** `cd app/server && bun test test/lifecycle-*.test.ts`.
