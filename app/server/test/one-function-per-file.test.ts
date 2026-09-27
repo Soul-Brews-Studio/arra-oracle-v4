@@ -21,50 +21,25 @@
 // benchmarks/run_lance.ts, or this package's own test.order.ts/
 // test.parallel.ts. The rule is not ratcheted there yet.
 //
-// What counts as an "exported function", and how it's detected: this is a
-// two-step scan, not a line-regex (a bare line-regex is what a fix round
-// found could be defeated by `export { localFn }`, an arrow with a return
-// type between the params and `=>`, a generic function name, a reformatted
-// multi-line arrow, `let`/`var` instead of `const`, or an anonymous default
-// arrow -- see exportedFunctionNames below for the enumerated forms this
-// now handles).
-//   1. `Bun.Transpiler().scan(text).exports` (built into Bun, no new
-//      dependency) gives the AUTHORITATIVE list of names this file exports,
-//      for every export form TS has -- function/const/let/var, default,
-//      `export { a, b }`, overloads deduped to one name each, re-exports.
-//      This step can't be fooled by reformatting because it's a real
-//      parse, not a regex over lines.
-//   2. For each exported name, isFunctionDeclared/isDefaultFunction search
-//      the file's TYPE-STRIPPED text (Bun.Transpiler.transformSync) with the
-//      contents of strings, templates, regexes and comments blanked
-//      (blankLiterals) for a LOCAL declaration of that name shaped
-//      like a function: `function NAME(...)` (incl. `async`, `*`, and a
-//      generic `<T>` before the parens), or `const|let|var NAME = ...`
-//      bound to a `function` expression or an arrow (incl. `async`,
-//      generics before the params, a single bare-identifier param with no
-//      parens, and a return-type annotation between the params and `=>`).
-//      A name that step 1 lists but step 2 finds no local function
-//      declaration for -- a re-export of an import (`export { x } from
-//      "./mod"`, or `import {x} ...; export {x};`), a class, an
-//      interface/type (step 1 already excludes pure type exports), or a
-//      plain-value const -- does NOT count. This is what makes
-//      `export { localHelper }` count when localHelper is a function
-//      declared in THIS file, but not when it's imported from elsewhere:
-//      step 2 only finds a match if the function is actually declared
-//      here, regardless of which export syntax names it.
-//   - overload signatures share one name and names are deduped with a Set,
-//     so an overloaded export counts once, not once per signature.
-//   - `export class`, `export interface`, `export type`, and a `const`
-//     bound to a non-function value (object, number, `new Foo()`) match
-//     neither step 2 pattern, so they don't count. A class whose method
-//     happens to share the class's own name is not mistaken for a
-//     top-level function export (step 2 requires `function`/arrow/`const`
-//     binding syntax, not a class body).
+// What counts as an "exported function", and how it's detected: TypeScript's
+// own parser (the compiler API from app/ui/v2's installed `typescript`; see
+// loadTypeScript below). exportedFunctionNames walks the top-level statements
+// of the syntax tree, so nothing inside a string, template, regex, comment,
+// parameter default or nested scope can hide or invent an export. Counted:
+// `export function f` (overloads once), `export const|let|var f = <arrow or
+// function expression>` (every declarator), `export default <function>` (as
+// "default"), `export default local` / `export { local as default }` (under
+// the local's name), and `export { local }` of a function declared here.
+// Not counted: re-exports `export { x } from "./m"`, classes, interfaces,
+// types, enums, plain values, and call results (an IIFE, `memo(fn)`).
 //   - Known gap, not exercised by any file today: an anonymous
-//     `export default function () {}` or `export default (x) => x` always
-//     counts as compliant (there's no name to check), whatever the
-//     filename claims to hold. `.spec.tsx` is not excluded (no such files
-//     exist in-tree).
+//     `export default function () {}` or `export default (x) => x` counts as
+//     compliant (there is no name to check). `.spec.tsx` is not excluded (no
+//     such files exist in-tree).
+//   - History: verify rounds 2-6 attacked a hand-written lexer and found a new
+//     evasion each time; DETECTOR_CASES at the bottom pins every one of those
+//     forms against the names TypeScript reports, so the parser swap is
+//     checked against all of them.
 //
 // "Named after the file": Nat's own example is `service.listMessages.ts` ->
 // `listMessages`, i.e. the LAST dot-segment of the filename stem, not the
@@ -115,306 +90,91 @@ function scan(): string[] {
   return SCAN_ROOTS.flatMap(trackedFiles);
 }
 
-// Everything step 2 classifies has first been through blankLiterals: the
-// CONTENTS of strings, templates, regex literals and comments become spaces
-// (delimiters and newlines kept). Text such as `sep = ";"`, `/;/g`, a doc
-// comment quoting `export { a, b } from "./x"`, or a string holding
-// `function NAME(` can then neither hide a real function nor invent one
-// (round-3 verifier, forms 3 and 4). A re-export `export { x } from "./mod"`
-// needs no special case: x has no LOCAL declaration here, so step 2 never
-// counts it.
-const REGEX_CAN_FOLLOW = new Set("(,=:[!&|?{};+-*%<>~^".split(""));
-const REGEX_AFTER_WORD = /(?:^|[^\w$])(?:return|typeof|case|do|else|in|of|new|delete|void|throw|yield|await|default)$/;
-// A `(` opened right after one of these closes a CONDITION, so a `/` after
-// its `)` starts a regex (`if (y) /re/.test(y)`), unlike `f(x) / 2` (round-5
-// verifier, B1).
-const CONDITION_WORDS = new Set(["if", "while", "for", "with"]);
-
-/** A small recursive JS lexer over the type-stripped text. It blanks (spaces,
- *  newlines kept) the contents of strings, regex literals and comments, and
- *  the WHOLE body of every template literal, expressions included: nothing
- *  inside a template can be a top-level export. Template `${...}` expressions
- *  are lexed as code with their own brace depth and their own nested
- *  strings/templates/regexes/comments, so a `}` from a block-bodied arrow, an
- *  object literal or an inner template can no longer end the expression early
- *  (round-4 retry verifier, B1). */
-function blankLiterals(js: string): string {
-  const out = js.split("");
-  const blank = (from: number, to: number) => {
-    for (let k = from; k < to && k < out.length; k++) if (out[k] !== "\n") out[k] = " ";
-  };
-  const skipString = (i: number): number => {
-    const q = js[i];
-    let j = i + 1;
-    while (j < js.length && js[j] !== q && js[j] !== "\n") j += js[j] === "\\" ? 2 : 1;
-    return Math.min(j + 1, js.length);
-  };
-  const skipTemplate = (i: number): number => {
-    let j = i + 1;
-    while (j < js.length) {
-      if (js[j] === "\\") { j += 2; continue; }
-      if (js[j] === "`") return j + 1;
-      if (js[j] === "$" && js[j + 1] === "{") { j = skipCode(j + 2, true) + 1; continue; }
-      j++;
-    }
-    return js.length;
-  };
-  const skipRegex = (i: number): number => {
-    let j = i + 1;
-    let inClass = false;
-    while (j < js.length && js[j] !== "\n") {
-      if (js[j] === "\\") { j += 2; continue; }
-      if (js[j] === "[") inClass = true;
-      else if (js[j] === "]") inClass = false;
-      else if (js[j] === "/" && !inClass) { j++; break; }
-      j++;
-    }
-    while (j < js.length && /[a-z]/i.test(js[j]!)) j++;
-    return j;
-  };
-  // Lex code from `i`. With `inTemplate`, stop at the `}` that closes the
-  // enclosing `${` and return its index; otherwise run to the end.
-  function skipCode(i: number, inTemplate: boolean): number {
-    let depth = 0;
-    let lastSignificant = "";
-    let beforeLast = "";
-    let lastWord = "";
-    const parens: boolean[] = [];
-    let afterCondition = false;
-    // Whitespace ENDS a word: without this, `export default` accumulated into
-    // one token and REGEX_AFTER_WORD never saw `default` (or `else return`).
-    let wordEnded = false;
-    while (i < js.length) {
-      const c = js[i]!;
-      const next = js[i + 1];
-      if (c === "/" && next === "/") {
-        const end = js.indexOf("\n", i);
-        const stop = end === -1 ? js.length : end;
-        blank(i, stop);
-        i = stop;
-        continue;
-      }
-      if (c === "/" && next === "*") {
-        const end = js.indexOf("*/", i + 2);
-        const stop = end === -1 ? js.length : end + 2;
-        blank(i, stop);
-        i = stop;
-        continue;
-      }
-      if (c === "'" || c === '"') {
-        const j = skipString(i);
-        blank(i + 1, j - 1);
-        i = j;
-        lastSignificant = c;
-        lastWord = "";
-        continue;
-      }
-      if (c === "`") {
-        const j = skipTemplate(i);
-        blank(i + 1, j - 1);
-        i = j;
-        lastSignificant = "`";
-        lastWord = "";
-        continue;
-      }
-      // `i++ / 2` is a division: a postfix ++/-- ends an operand (round-5 N2).
-      const afterPostfix = (lastSignificant === "+" && beforeLast === "+") || (lastSignificant === "-" && beforeLast === "-");
-      const regexHere =
-        lastSignificant === "" ||
-        (REGEX_CAN_FOLLOW.has(lastSignificant) && !afterPostfix) ||
-        REGEX_AFTER_WORD.test(lastWord) ||
-        (lastSignificant === ")" && afterCondition);
-      if (c === "/" && regexHere) {
-        const j = skipRegex(i);
-        blank(i + 1, j);
-        i = j;
-        lastSignificant = "/";
-        lastWord = "";
-        continue;
-      }
-      if (c === "{") depth++;
-      else if (c === "}") {
-        if (depth === 0 && inTemplate) return i;
-        depth--;
-      } else if (c === "(") {
-        parens.push(CONDITION_WORDS.has(lastWord));
-      } else if (c === ")") {
-        afterCondition = parens.pop() ?? false;
-      }
-      if (!/\s/.test(c)) {
-        if (c !== ")") afterCondition = false;
-        beforeLast = lastSignificant;
-        lastSignificant = c;
-        lastWord = /[\w$]/.test(c) ? ((wordEnded ? "" : lastWord) + c).slice(-12) : "";
-        wordEnded = false;
-      } else {
-        wordEnded = true;
-      }
-      i++;
-    }
-    return js.length;
-  }
-  skipCode(0, false);
-  return out.join("");
-}
-
-/** Nesting depth (parens, brackets, braces) at every offset of blanked `js`.
- *  Exported functions are always declared at depth 0, so a parameter default
- *  (`f(x, now = () => 1)`) or a nested helper sharing an exported name is
- *  never mistaken for the export (round-4 retry verifier, N2). */
-function depthMap(js: string): Int32Array {
-  const depth = new Int32Array(js.length + 1);
-  let d = 0;
-  for (let k = 0; k < js.length; k++) {
-    depth[k] = d;
-    const c = js[k];
-    if (c === "(" || c === "[" || c === "{") d++;
-    else if (c === ")" || c === "]" || c === "}") d = Math.max(0, d - 1);
-  }
-  depth[js.length] = d;
-  return depth;
-}
-
-function escapeForRegex(name: string): string {
-  return name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/** Is there a function value starting at `js[at]` (right after an `=` or
- *  `export default`)? `function`/`async function`, or an arrow: optional
- *  `async`, then a BALANCED `( ... )` parameter list or one bare identifier,
- *  then `=>`. Types are already stripped and literal/comment contents already
- *  blanked, so a balanced paren walk is exact: a default parameter holding a
- *  function body (`(cb = function () { return 1; }) => cb()`) or a `;` in a
- *  default no longer stops it (round-3 verifier, form 3). */
-function isFunctionValueAt(js: string, at: number): boolean {
-  let i = at;
-  const skipSpace = () => { while (i < js.length && /\s/.test(js[i]!)) i++; };
-  skipSpace();
-  const fn = /^(?:async\s+)?function\b\s*\*?\s*(?:[\p{L}_$][\p{L}\p{N}_$]*)?\s*/u.exec(js.slice(i, i + 200));
-  if (fn) {
-    // A function EXPRESSION is a function value unless it is called on the
-    // spot: `function(){...}()` (Bun's transform drops IIFE parens) is its
-    // RESULT (round-4 retry verifier, N1).
-    i += fn[0].length;
-    const balanced = (open: string, close: string): boolean => {
-      if (js[i] !== open) return false;
-      let d = 0;
-      for (; i < js.length; i++) {
-        if (js[i] === open) d++;
-        else if (js[i] === close && --d === 0) { i++; return true; }
-      }
-      return false;
-    };
-    if (!balanced("(", ")")) return false;
-    skipSpace();
-    if (!balanced("{", "}")) return false;
-    skipSpace();
-    return js[i] !== "(";
-  }
-  const asyncMatch = /^async(?![\p{L}\p{N}_$])\s*/u.exec(js.slice(i, i + 12));
-  if (asyncMatch) i += asyncMatch[0].length;
-  if (js[i] === "(") {
-    let depth = 0;
-    for (; i < js.length; i++) {
-      if (js[i] === "(") depth++;
-      else if (js[i] === ")" && --depth === 0) { i++; break; }
-    }
-    if (depth !== 0) return false;
-  } else {
-    const ident = /^[\p{L}_$][\p{L}\p{N}_$]*/u.exec(js.slice(i, i + 200));
-    if (!ident) return false;
-    i += ident[0].length;
-  }
-  skipSpace();
-  return js.startsWith("=>", i);
-}
-
-// Identifier boundaries that also work for non-ASCII names (`ทดสอบ`, `debug$`):
-// `\\b` only knows ASCII word characters.
-const ID_BEFORE = "(?<![\\p{L}\\p{N}_$])";
-const ID_AFTER = "(?![\\p{L}\\p{N}_$])";
-
-/** Does the TYPE-STRIPPED `js` declare NAME locally as a function, a function
- *  expression, or an arrow? Classifying after `transformSync` means generics,
- *  parameter and return annotations (which may contain `;`, `>` or `=>`) are
- *  gone, so `<T extends Array<string>>` or `(o: { a: number; b: string })`
- *  cannot hide a function (wave-13 verifier forms c, d, e). */
-function isFunctionDeclared(js: string, name: string, depth: Int32Array): boolean {
-  const esc = escapeForRegex(name);
-  const declaration = new RegExp(`${ID_BEFORE}function\\s*\\*?\\s*${esc}${ID_AFTER}\\s*\\(`, "gu");
-  for (const m of js.matchAll(declaration)) {
-    if (depth[m.index!] === 0) return true;
-  }
-  // A binding either right after const/let/var, or a later declarator in the
-  // same statement (`export const a = () => 1, b = () => 2`); top level only.
-  const binding = new RegExp(`(?:\\b(?:const|let|var)\\s+|,\\s*)${esc}${ID_AFTER}\\s*=(?!>)`, "gu");
-  for (const m of js.matchAll(binding)) {
-    if (depth[m.index!] === 0 && isFunctionValueAt(js, m.index! + m[0].length)) return true;
-  }
-  return false;
-}
-
-// `export { local as alias, other }` with NO `from`: map each exported name
-// back to the local it names, so an aliased local function counts (form b).
-const LOCAL_EXPORT_LIST = /export\s*\{([^}]*)\}(?!\s*from)/g;
-
-function localNameFor(js: string): Map<string, string> {
-  const map = new Map<string, string>();
-  let m: RegExpExecArray | null;
-  LOCAL_EXPORT_LIST.lastIndex = 0;
-  while ((m = LOCAL_EXPORT_LIST.exec(js))) {
-    for (const raw of m[1]!.split(",")) {
-      const part = raw.trim().replace(/^type\s+/, "");
-      if (!part) continue;
-      const [local, alias] = part.split(/\s+as\s+/).map((x) => x.trim());
-      if (local) map.set(alias || local, local);
-    }
-  }
-  return map;
-}
-
-/** Is `export default ...` in `text` a function, function expression, or arrow? */
-function isDefaultFunction(js: string): boolean {
-  for (const m of js.matchAll(/export\s+default\s+/g)) {
-    if (isFunctionValueAt(js, m.index! + m[0].length)) return true;
-  }
-  return false;
-}
-
-function loaderFor(relPath: string): "ts" | "tsx" {
-  return relPath.endsWith(".tsx") ? "tsx" : "ts";
-}
-
-/** Exported function-like names in one file's text, overloads deduped. */
-function exportedFunctionNames(text: string, relPath: string): string[] {
-  const transpiler = new Bun.Transpiler({ loader: loaderFor(relPath) });
-  // Fail loudly, and name the file: a file the scanner cannot parse must not
-  // silently count as exporting nothing.
-  let scanned: { exports: string[] };
-  let js: string;
+// THE DETECTOR IS TYPESCRIPT'S OWN PARSER (round 7). Six verify rounds on a
+// hand-written lexer (regex vs division, templates, keywords as property
+// names: `obj.default / n`) each closed one evasion and opened another. The
+// compiler API is the ground truth every verifier measured against, so it is
+// now the detector itself: no lexer, nothing to evade. It is NOT a new
+// dependency of app/server: it is app/ui/v2's own `typescript`, which CI
+// installs (`bun install` in app/ui/v2) before this suite runs, and this test
+// already scans app/ui/v2/src. If it is missing, the test fails loudly.
+function loadTypeScript(): any {
+  const path = join(ROOT, "ui", "v2", "node_modules", "typescript");
   try {
-    scanned = transpiler.scan(text);
-    js = blankLiterals(transpiler.transformSync(text));
+    return require(path);
   } catch (error) {
-    throw new Error(`one-function-per-file: cannot parse ${relPath}: ${String(error)}`);
+    throw new Error(
+      `one-function-per-file needs TypeScript's parser from app/ui/v2 (run \`bun install --frozen-lockfile\` in app/ui/v2): ${String(error)}`,
+    );
   }
-  const locals = localNameFor(js);
-  const depth = depthMap(js);
+}
+const ts = loadTypeScript();
+
+/** Strip wrappers that do not change what a value IS: parens, `as`,
+ *  `satisfies`, `<T>x`, `x!`. A call (IIFE, `memo(fn)`) is NOT stripped: its
+ *  result is not a function declaration in this file. */
+function unwrap(e: any): any {
+  while (
+    e &&
+    (ts.isParenthesizedExpression(e) ||
+      ts.isAsExpression(e) ||
+      (ts.isSatisfiesExpression && ts.isSatisfiesExpression(e)) ||
+      ts.isTypeAssertionExpression(e) ||
+      ts.isNonNullExpression(e))
+  ) {
+    e = e.expression;
+  }
+  return e;
+}
+
+function isFunctionValue(e: any): boolean {
+  const v = unwrap(e);
+  return !!v && (ts.isArrowFunction(v) || ts.isFunctionExpression(v));
+}
+
+/** Exported function names in one file, from TypeScript's syntax tree:
+ *  - `export function f` / `export async function* f` (overloads count once);
+ *  - `export default function ...` and `export default <arrow|function expr>`
+ *    count as "default" (no name to check);
+ *  - `export const|let|var f = <arrow|function expression>` (also later
+ *    declarators in the same statement);
+ *  - `export default local` and `export { local as default }` count under the
+ *    LOCAL function's name, so the naming check sees it;
+ *  - `export { local }` / `export { local as alias }` of a function declared
+ *    in THIS file count (under the exported name).
+ *  A re-export `export { x } from "./m"`, classes, interfaces, types, enums,
+ *  plain values and call results do not count. */
+function exportedFunctionNames(text: string, relPath: string): string[] {
+  const kind = relPath.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const sf = ts.createSourceFile(relPath, text, ts.ScriptTarget.Latest, true, kind);
+  const flags = (n: any): number => ts.getCombinedModifierFlags(n);
+  const isExported = (n: any) => (flags(n) & ts.ModifierFlags.Export) !== 0;
+  const isDefault = (n: any) => (flags(n) & ts.ModifierFlags.Default) !== 0;
+  const localFunctions = new Set<string>();
   const names: string[] = [];
-  for (const name of scanned.exports) {
-    if (name === "default") {
-      if (isDefaultFunction(js)) {
-        names.push("default");
-        continue;
+  for (const st of sf.statements) {
+    if (ts.isFunctionDeclaration(st)) {
+      if (st.name) localFunctions.add(st.name.text);
+      if (isExported(st)) names.push(isDefault(st) || !st.name ? "default" : st.name.text);
+    } else if (ts.isVariableStatement(st)) {
+      for (const d of st.declarationList.declarations) {
+        if (ts.isIdentifier(d.name) && isFunctionValue(d.initializer)) {
+          localFunctions.add(d.name.text);
+          if (isExported(st)) names.push(d.name.text);
+        }
       }
-      // `export default helper;` or `export { helper as default }` names a
-      // LOCAL: count it under that local's name, so both the count and the
-      // naming check see it (round-3 verifier, forms 1 and 2).
-      const target = locals.get("default") ?? js.match(/export\s+default\s+([\p{L}_$][\p{L}\p{N}_$]*)\s*;/u)?.[1];
-      if (target && isFunctionDeclared(js, target, depth)) names.push(target);
-      continue;
     }
-    if (isFunctionDeclared(js, locals.get(name) ?? name, depth)) names.push(name);
+  }
+  for (const st of sf.statements) {
+    if (ts.isExportAssignment(st) && !st.isExportEquals) {
+      if (isFunctionValue(st.expression)) names.push("default");
+      else if (ts.isIdentifier(st.expression) && localFunctions.has(st.expression.text)) names.push(st.expression.text);
+    } else if (ts.isExportDeclaration(st) && !st.moduleSpecifier && st.exportClause && ts.isNamedExports(st.exportClause)) {
+      for (const el of st.exportClause.elements) {
+        const local = (el.propertyName ?? el.name).text;
+        if (localFunctions.has(local)) names.push(el.name.text === "default" ? local : el.name.text);
+      }
+    }
   }
   return [...new Set(names)];
 }
@@ -629,6 +389,12 @@ const DETECTOR_CASES: { title: string; path: string; src: string; expected: stri
   { title: "r5 export default regex", path: "server/src/x/p.atk13.ts", src: "export default /\\(/;\nexport function f13a() { return 1; }\nexport function f13b() { return 2; }\n", expected: ["f13a", "f13b"] },
   { title: "r5 postfix ++ then division then template", path: "server/src/x/p.atk10.ts", src: "export function atk10(xs: string[]) { let i = 0; i++ / 2; return xs.join(`a/b`); }\nexport function b10() { return 1; }\nexport function c10() { return 2; }\n", expected: ["atk10", "b10", "c10"] },
   { title: "negative: class, object const, re-export", path: "server/src/x/p.neg.ts", src: "export class Thing { run() { return 1; } }\nexport const config = { a: 1, run: () => 2 };\nexport { helper } from \"./other\";\n", expected: [] },
+  { title: "r6 keyword-named property then division: .default", path: "server/src/x/policy.toSeconds.ts", src: "export function toSeconds(timeouts: { default: number }): number {\n  return Math.round(timeouts.default / 1000);\n}\nexport function toMinutes(timeouts: { default: number }): number {\n  return Math.round(timeouts.default / 60000);\n}\n", expected: ["toMinutes", "toSeconds"] },
+  { title: "r6 keyword-named property then division: .new", path: "server/src/x/policy.churn.ts", src: "export function churn(diff: { new: number; total: number }): number {\n  return Math.round((diff.new / diff.total) * 100);\n}\nexport function other(): number { return 1; }\n", expected: ["churn", "other"] },
+  { title: "r6 member named like a condition keyword", path: "server/src/x/p.memberIf.ts", src: "export function memberIf(x: { if(a: number): number }, b: number) { return x.if(1) / b; }\nexport function next() { return 2; }\n", expected: ["memberIf", "next"] },
+  { title: "r6 spaced + + before a regex", path: "server/src/x/p.spaced.ts", src: "export function spaced(a: number, s: string) { return a + +/[(]/.test(s); }\nexport function after() { return 1; }\n", expected: ["after", "spaced"] },
+  { title: "r6 for await condition then regex", path: "server/src/x/p.forAwait.ts", src: "export async function forAwait(xs: AsyncIterable<string>, y: string) {\n  for await (const k of xs) /\\(/.test(y + k);\n  return 1;\n}\nexport function tail() { return 2; }\n", expected: ["forAwait", "tail"] },
+  { title: "r6 one-line postfix division then template", path: "server/src/x/p.postfix.ts", src: "export function postfix(xs: string[]) { let i = 0; return [i++ / 2, xs.join(`a/b`)]; }\nexport function more() { return 1; }\n", expected: ["more", "postfix"] },
 ];
 
 describe("detector agrees with TypeScript on every verifier attack form", () => {
