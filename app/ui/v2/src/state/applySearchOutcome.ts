@@ -15,6 +15,9 @@ export type SearchOutcome = {
   semanticHits: SemanticHitWire[];
   scanReason: "short_query" | "index_unavailable" | null;
   embeddingProfile: string | null;
+  /** #30: the response said `coverage: "partial"` -- its candidate read hit
+   *  the server's bound, so results may be incomplete. Both modes set it. */
+  coveragePartial: boolean;
 };
 
 /** Turns one `searchKnowledgeKeyword` / `searchKnowledgeSemantic` response
@@ -31,19 +34,20 @@ export type SearchOutcome = {
  */
 export function applySearchOutcome(mode: SearchMode, result: ApiResult, previous: SearchOutcome): SearchOutcome {
   if (!result.ok) {
-    return { ...previous, mode, errorCode: describeResult(result), keywordHits: [], semanticHits: [], scanReason: null };
+    return { ...previous, mode, errorCode: describeResult(result), keywordHits: [], semanticHits: [], scanReason: null, coveragePartial: false };
   }
   if (mode === "keyword") {
-    const body = result.body as { hits?: KeywordHitWire[]; scan_reason?: "short_query" | "index_unavailable" | null };
+    const body = result.body as { hits?: KeywordHitWire[]; scan_reason?: "short_query" | "index_unavailable" | null; coverage?: string };
     return {
       ...previous,
       mode,
       errorCode: null,
       keywordHits: Array.isArray(body.hits) ? body.hits : [],
       scanReason: body.scan_reason ?? null,
+      coveragePartial: body.coverage === "partial",
     };
   }
-  const body = result.body as { hits?: SemanticHitWire[]; embedding_profile?: string };
+  const body = result.body as { hits?: SemanticHitWire[]; embedding_profile?: string; coverage?: string };
   return {
     ...previous,
     mode,
@@ -54,5 +58,6 @@ export function applySearchOutcome(mode: SearchMode, result: ApiResult, previous
     // note ("used a plain substring scan…") renders on real semantic hits.
     scanReason: null,
     embeddingProfile: body.embedding_profile ?? null,
+    coveragePartial: body.coverage === "partial",
   };
 }

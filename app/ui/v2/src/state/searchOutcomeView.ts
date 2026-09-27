@@ -7,6 +7,7 @@ export type SearchOutcomeView = {
   errorCode: string | null;
   scanReason: "short_query" | "index_unavailable" | null;
   embeddingProfile: string | null;
+  coveragePartial: boolean;
 };
 
 /** Decides what `useKnowledgeSearch` hands the results panel for the
@@ -39,5 +40,7 @@ export function searchOutcomeView(outcome: SearchOutcome, mode: SearchMode): Sea
     errorCode: outcome.mode === mode ? outcome.errorCode : null,
     scanReason: outcome.mode === mode ? outcome.scanReason : null,
     embeddingProfile: outcome.embeddingProfile,
+    // Gated like `scanReason`: it describes the reply for `outcome.mode`.
+    coveragePartial: outcome.mode === mode && outcome.coveragePartial,
   };
 }

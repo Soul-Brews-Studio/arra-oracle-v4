@@ -312,6 +312,7 @@ export function ExploreView({
             errorCode: search.errorCode,
             hits: search.hits,
             scanReason: search.scanReason,
+            coveragePartial: search.coveragePartial,
             embeddingProfile: search.embeddingProfile,
             // Fix-round finding: this used to `onSelectNode` + switch to the
             // "nodes" tab, which shows a paged, filterable list row at best

@@ -159,6 +159,7 @@ export function DetailTabs(props: {
     errorCode: string | null;
     hits: (KeywordHitWire | SemanticHitWire)[];
     scanReason: "short_query" | "index_unavailable" | null;
+    coveragePartial: boolean;
     embeddingProfile: string | null;
     onOpenNode: (nodeId: string) => void;
   };
@@ -276,6 +277,7 @@ export function DetailTabs(props: {
             errorCode={props.search.errorCode}
             hits={props.search.hits}
             scanReason={props.search.scanReason}
+            coveragePartial={props.search.coveragePartial}
             embeddingProfile={props.search.embeddingProfile}
             onOpenNode={props.search.onOpenNode}
           />
