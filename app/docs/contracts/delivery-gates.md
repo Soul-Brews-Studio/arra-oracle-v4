@@ -275,3 +275,25 @@ which remains a CI-configuration change out of this slice's scope.
 
 **Reverse by:** striking this section; both amendments above remain historically correct
 for what they measured.
+
+## Amendment 2026-09-26 (post-merge R15 (+ its 2026-09-27 update) + #8 scope correction (2026-09-20) + SPEC §15.2/§15.5)
+
+**Row changed in meaning, not in text:** the "Honcho interoperability" row above
+still calls historical SPEC §15 "an unproved tier-1 claim". As of the R15
+table-level update (2026-09-27, `docs/overnight/DECISIONS.md` R15), it is
+measured, not unproved:
+
+- The claim as written, that the tier-1 tables are byte-compatible so a plain
+  table dump imports into stock Honcho unchanged, is **FALSE**. A verbatim INSERT
+  fails, because v4 stores `h_metadata` and Honcho's SQL column is `metadata`.
+- It holds **with conversions**, and only for one bank imported into an empty
+  stock Honcho v3.2.0 with a nanoid21 workspace id. 10 v4-only columns are lost.
+- Evidence: `docs/overnight/HONCHO-TABLE-DIFF.md`; `TestLiveTableRoundTrip`
+  and `TestLiveRoundTrip` via `bash app/just/honcho-live.sh`, against a
+  disposable pinned instance that is torn down after the run.
+
+Gate status: the REST interchange and the table-level measurement are both
+done. Whether the measured result closes #8 is Nat's call (PROOF.md §5). This
+amendment changes no behaviour.
+
+**Reverse by:** striking this section.
