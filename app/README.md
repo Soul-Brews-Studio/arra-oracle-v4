@@ -245,6 +245,11 @@ request time (#29).
     head text, then the most recently accepted head, then node id. The shared index's BM25 only
     picks candidates (every one is read, up to 4096 candidate chunks), so another workspace's
     writes cannot reorder this workspace's hits below that bound (`search-chunk-v1.md` §20).
+  - Both keyword and semantic answers also carry `coverage: "full" | "partial"`,
+    `coverage_reason` (`"candidate_ceiling"` or `null`) and `candidate_ceiling` (4096): whether
+    the underlying candidate read hit its own bound, so more matches may exist unread
+    (`search-chunk-v1.md` §21). The v3 adapter's `oracle_search`/`oracle_ask` fold a `"partial"`
+    answer into `compat_warnings` (§22).
 - `kb_searchKnowledgeSemantic` embeds the query with the composed local Ollama model and ranks
   READY chunk vectors of the active profile (`ollama/all-minilm/384/none` by default) by
   `metric: "l2_squared"` `distance`. No embedder, or a failing one, answers `model_unavailable`

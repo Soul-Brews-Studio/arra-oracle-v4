@@ -67,7 +67,23 @@ describe("CLI search: legacy by default, knowledge tier by --mode (#30 R7, R8)",
   });
 
   test("--mode keyword posts searchKnowledgeKeyword to the registry route", async () => {
-    // #30 coverage (search-chunk-v1.md section 21) passes through verbatim.
+    // Honesty (#30 coverage amendment fix round, issue #30/#31 verifier
+    // finding 3): this test's server is a `Bun.serve` stub that echoes
+    // whatever `response` says, so it proves the CLI marshals `--query`/
+    // `--limit` into the right POST body and prints the body back byte for
+    // byte -- wire pass-through only. It is NOT evidence that a real kernel
+    // computes `coverage`/`coverage_reason`/`candidate_ceiling` (it would
+    // pass unchanged even with the search.retrieve.ts fix fully reverted,
+    // since nothing here ever calls searchKnowledgeKeyword for real).
+    // The real kernel computation is proven by
+    // `search-chunk-retrieval-candidate-ceiling.test.ts` (the real 4096
+    // bound) and `search-chunk-retrieval-live.test.ts` (the fields on a real
+    // HTTP/MCP body from a real dataset). Neither of those drives the CLI
+    // process itself: as of this fix, no test in this repo boots a real
+    // server and a real `bun app/cli.ts search --mode keyword` subprocess
+    // together -- the live probe's CLI coverage (`live-probe/payloads.py`
+    // `CLI['search']`) only runs the LEGACY bare `search --query`, never
+    // `--mode keyword`. That gap is disclosed, not silently closed here.
     response = { match: "ngram", scan_reason: null, coverage: "partial", coverage_reason: "candidate_ceiling", candidate_ceiling: 4096, hits: [] };
     const r = await run("search", "--bank", "test-bank", "--query", "ลืม", "--mode", "keyword", "--limit", "3");
     expect(r.code).toBe(0);

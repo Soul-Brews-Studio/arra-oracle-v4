@@ -19,6 +19,22 @@
 //     so an unrelated write elsewhere in the bank could change the snippet an
 //     entry was shown with (the flaky acceptance step 30).
 //  5. A trace write failing mid-chain hid the hop traces already written.
+//  6. #30 coverage amendment (search-chunk-v1.md §21, DECISIONS.md R21/R22):
+//     `search.retrieve.ts` computed `saturated` only from its own 50-hit v3
+//     window (`answer.hits.length >= SEARCH_WINDOW`), so a kernel
+//     `coverage:"partial"` answer with FEWER than 50 hits -- the exact R22
+//     residual, measured for real in
+//     `search-chunk-retrieval-candidate-ceiling.test.ts` -- reached
+//     `oracle_search`/`oracle_ask` looking complete (issue #30 coverage
+//     amendment; verifier `.tmp/ac-search-accept-nonblocking.txt` finding 1).
+//
+// Second fix round (an independent re-verification refuted the round above's
+// contract claim, and flagged an untested branch):
+//  7. the OR semantics across fts terms -- `answers.some(...)`, a result is
+//     partial when ANY term's own candidate read saturated (§22.1,
+//     search-chunk-v1.md §21) -- had no test where terms disagreed; every
+//     prior case used one term. Mutating `.some` to `.every` at
+//     search.retrieve.ts's `partial` line left every existing test green.
 
 import { describe, expect, test } from "bun:test";
 import { KNOWLEDGE_METHODS, type KnowledgeBundle } from "../src/knowledge/registry";
@@ -228,5 +244,96 @@ describe("the embedder-down test is narrow", () => {
     expect(wrapped.error).not.toContain("Invalid input");
     expect(wrapped.compat).toMatchObject({ code: "kernel_error", tool: "oracle_search", detail: "v4 answered model_unavailable" });
     expect(wrapped.v4_error).toEqual(v4);
+  });
+});
+
+describe("#30 coverage (search-chunk-v1.md §21) reaches oracle_search/oracle_ask, not just the 50-hit window", () => {
+  // A kernel answer of only 2 hits (far under SEARCH_WINDOW=50) that still
+  // reports its OWN candidate read saturated: the exact R22 residual measured
+  // for real in search-chunk-retrieval-candidate-ceiling.test.ts. Before the
+  // fix, `search.retrieve.ts` never looked at these three fields at all.
+  const kernelHit = (id: string) => ({ node_id: id, revision_id: `${id}-rev`, title: id, snippet: id, chunk_ids: [], match: "ngram" });
+  const partialKeyword = { match: "ngram", scan_reason: null, coverage: "partial", coverage_reason: "candidate_ceiling", candidate_ceiling: 4096, hits: [kernelHit("A"), kernelHit("B")] };
+
+  test("retrieve() carries the kernel's coverage/coverage_reason/candidate_ceiling through, independent of the 50-hit window (fts)", async () => {
+    const { retrieve } = await import("../src/mcp/legacy-v3/search.retrieve");
+    const kb = async (method: string) => {
+      if (method === "searchKnowledgeKeyword") return partialKeyword;
+      throw new Error(`unexpected ${method}`);
+    };
+    const retrieved = await retrieve(kb, "probe", "fts");
+    // The 50-hit window was NOT hit (only 2 merged hits) -- that signal must
+    // stay honest on its own -- but the kernel's own coverage must still show.
+    expect(retrieved.saturated).toBe(false);
+    expect(retrieved).toMatchObject({ coverage: "partial", coverageReason: "candidate_ceiling", candidateCeiling: 4096 });
+  });
+
+  test("retrieve() carries the kernel's coverage through for vector mode too", async () => {
+    const { retrieve } = await import("../src/mcp/legacy-v3/search.retrieve");
+    const kb = async (method: string) => {
+      if (method === "searchKnowledgeSemantic") return { ...partialKeyword, hits: [kernelHit("A")] };
+      throw new Error(`unexpected ${method}`);
+    };
+    const retrieved = await retrieve(kb, "probe", "vector");
+    expect(retrieved.saturated).toBe(false);
+    expect(retrieved).toMatchObject({ coverage: "partial", coverageReason: "candidate_ceiling", candidateCeiling: 4096 });
+  });
+
+  test("a two-term fts query is partial when only ONE term's own read saturated (OR, not AND)", async () => {
+    // "alpha beta" becomes two terms (search.keywordTerms.ts). "alpha"'s own
+    // candidate read did not saturate; "beta"'s did. The v3 OR merge (v3's
+    // own semantics: an entry matches when ANY word does) means the answer
+    // still shows both hits, but `coverage` must say "partial" because SOME
+    // underlying read may have missed matches -- not "full" (a wrong AND)
+    // and not keyed to whichever term happened to run first or last.
+    const { retrieve } = await import("../src/mcp/legacy-v3/search.retrieve");
+    const fullTerm = { match: "ngram", scan_reason: null, coverage: "full" as const, coverage_reason: null, candidate_ceiling: 4096, hits: [kernelHit("A")] };
+    const partialTerm = { ...partialKeyword, hits: [kernelHit("B")] };
+    const calls: string[] = [];
+    const kb = async (method: string, payload: Record<string, unknown>) => {
+      calls.push(payload.query as string);
+      if (method !== "searchKnowledgeKeyword") throw new Error(`unexpected ${method}`);
+      return payload.query === "alpha" ? fullTerm : partialTerm;
+    };
+    const retrieved = await retrieve(kb, "alpha beta", "fts");
+    expect(calls).toEqual(["alpha", "beta"]);
+    expect(retrieved).toMatchObject({ coverage: "partial", coverageReason: "candidate_ceiling", candidateCeiling: 4096 });
+    // Which term is the partial one must not matter: this time the FIRST
+    // term's own read saturates and the second one's does not.
+    const swapped = await retrieve(async (method: string, payload: Record<string, unknown>) => (payload.query === "alpha" ? partialTerm : fullTerm), "alpha beta", "fts");
+    expect(swapped.coverage).toBe("partial");
+  });
+
+  test("oracle_search's compat_warnings say so even when its own 50-hit window looks complete", async () => {
+    const { oracle_search } = await import("../src/mcp/legacy-v3/tools/oracle_search");
+    const head = (id: string) => ({ revision: { title: id, body: `${id} body`, term_snapshot_json: "[]" }, lifecycle: null });
+    const kb = async (method: string, payload: Record<string, unknown>) => {
+      if (method === "searchKnowledgeKeyword") return partialKeyword;
+      if (method === "getAcceptedHead") return head(payload.node_id as string);
+      throw new Error(`unexpected ${method}`);
+    };
+    const context = { tool: "oracle_search", bank: "bank-a", kb, assertedPeer: null, authority: { operator: false, peers: null }, indexProfile: {} } as never;
+    const result = (await oracle_search({ query: "probe" }, context)) as { total: number; compat_warnings: { code: string; field: string; detail: string }[] };
+    expect(result.total).toBeLessThan(50);
+    const coverageWarning = result.compat_warnings.find((w) => w.field === "metadata.coverage");
+    expect(coverageWarning).toBeDefined();
+    expect(coverageWarning?.code).toBe("partial");
+    expect(coverageWarning?.detail).toContain("4096");
+  });
+
+  test("oracle_ask's compat_warnings say so too", async () => {
+    const { oracle_ask } = await import("../src/mcp/legacy-v3/tools/oracle_ask");
+    const head = (id: string) => ({ revision: { title: id, body: `${id} body`, term_snapshot_json: "[]" }, lifecycle: null });
+    const kb = async (method: string, payload: Record<string, unknown>) => {
+      if (method === "searchKnowledgeKeyword") return partialKeyword;
+      if (method === "getAcceptedHead") return head(payload.node_id as string);
+      throw new Error(`unexpected ${method}`);
+    };
+    const context = { tool: "oracle_ask", bank: "bank-a", kb, assertedPeer: null, authority: { operator: false, peers: null }, indexProfile: {} } as never;
+    const result = (await oracle_ask({ question: "probe" }, context)) as { compat_warnings: { code: string; field: string; detail: string }[] };
+    const coverageWarning = result.compat_warnings.find((w) => w.field === "search.coverage");
+    expect(coverageWarning).toBeDefined();
+    expect(coverageWarning?.code).toBe("partial");
+    expect(coverageWarning?.detail).toContain("4096");
   });
 });

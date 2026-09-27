@@ -70,6 +70,16 @@ export async function oracle_search(args: Record<string, unknown>, context: V3To
   if (retrieved.saturated) {
     warnings.push({ code: "partial", field: "metadata.total", detail: `v4 examines at most ${SEARCH_WINDOW} matches per query; total counts those` });
   }
+  if (retrieved.coverage === "partial") {
+    // #30 coverage (search-chunk-v1.md §21, amendment below): carried through
+    // even when the 50-hit window above looks complete -- the kernel's own
+    // candidate read can saturate with far fewer merged hits (R22 residual).
+    warnings.push({
+      code: "partial",
+      field: "metadata.coverage",
+      detail: `the kernel's own candidate read reached its bound (candidate_ceiling=${retrieved.candidateCeiling}, reason=${retrieved.coverageReason}); more matches may exist unread, even within this window`,
+    });
+  }
 
   const count = (source: string) => results.filter((result) => result.source === source).length;
   const keyword = retrieved.terms;

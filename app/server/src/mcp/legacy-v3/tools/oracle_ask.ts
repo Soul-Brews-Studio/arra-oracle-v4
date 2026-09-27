@@ -68,6 +68,16 @@ export async function oracle_ask(args: Record<string, unknown>, context: V3ToolC
     warnings.push({ code: "field_unavailable", field: "sources[].confidence", detail: "v4 has no confidence model; every source holds a word of the question" });
     warnings.push({ code: "semantic_change", field: "sources[].score", detail: "score is 1/(1+rank) in v4's order, not v3's fused relevance" });
   }
+  if (found.retrieved.coverage === "partial") {
+    // #30 coverage (search-chunk-v1.md §21): same signal oracle_search now
+    // carries -- ask's keyword recall can saturate its candidate read with
+    // far fewer sources than `limit`.
+    warnings.push({
+      code: "partial",
+      field: "search.coverage",
+      detail: `the kernel's own candidate read reached its bound (candidate_ceiling=${found.retrieved.candidateCeiling}, reason=${found.retrieved.coverageReason}); more matches may exist unread`,
+    });
+  }
 
   return {
     query: question,
