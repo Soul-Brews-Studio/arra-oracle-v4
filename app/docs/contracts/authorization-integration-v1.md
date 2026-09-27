@@ -439,3 +439,76 @@ fix it failed on the recall input order (`{query, mode, limit}` on HTTP). Five
 mutants, each killed by it: `mode` checked before `limit`, `name` before `content`,
 no row for a `forbidden` refusal, a past-2^53 limit recorded as a string, and a fixed
 `{query, mode, limit}` input order.
+
+## Amendment 2026-09-26 (post-merge #31 TODO 'audit consistently across all transports' + R5/R19)
+
+**Change.** None to the maintenance behaviour; this amendment records it as a
+contract rule rather than an open gap, and fixes two inaccuracies. Ruling source:
+`docs/overnight/DECISIONS.md` R5 (operations tables in `ARRA_DATA_DIR`) and R19
+(`connections.method` is `"bearer"`).
+
+- **The maintenance routes stay unaudited, by contract.** `POST /api/backfill`
+  (`maintenance:backfill`) and `POST /api/reindex` (`maintenance:reindex`) write no
+  `mcp_calls` row and no `connections` fold, whether the call succeeds or fails after
+  admission (for example `?batch=0`, which answers the fixed 400). A request refused
+  before admission writes nothing either, as on every other route. The reasons,
+  each already frozen:
+  - §4 of this contract: "Only tool calls admitted for their exact action may append
+    scoped rows", and "Do not change physical schema for this integration". A
+    maintenance route is not a tool call and has no scope. MCP has no maintenance
+    tool: every MCP route is per workspace, and a global-maintenance-only principal
+    has no workspace discovery permission (§1).
+  - SPEC §6.3 defines `mcp_calls.workspace_name` as NOT NULL and a key into
+    `workspaces` ("THE tenant column"). SPEC §7.2 gives `connections` the same
+    column. A global action has no workspace.
+  - The only way to write such a row without a schema change is a sentinel
+    workspace name. LanceDB does accept one (`""` and `"__global__"` were both
+    written in the mutant runs below), so the refusal is a rule, not a physical
+    limit. But no scoped reader (`listMcpCalls`, `listConnections`, `call_log`,
+    `call_stats`) can return a sentinel row, because each one requires a valid
+    admitted workspace. The target copy (`copy_migration/activity_tables.py`
+    `copy_mcp_calls` / `copy_connections`) would also drop the row as
+    `workspace_unresolved`. The row would be invisible, it could not be carried
+    over, and it would put a false value in the tenant column.
+- **How R5 reads here.** R5's "written on every request" rules on WHERE the two
+  tables live and why (off the knowledge writer gate). It is read as every
+  admitted, workspace-scoped request: MCP `tools/call`, `POST /api/knowledge/…`
+  (and the CLI's `kb`), and the legacy memory routes as their MCP twins. This
+  replaces the round-4 "Open for a human" note. **Reverse by** ruling a home for
+  instance-level audit. That is a SPEC §6.3/§7.2 change: a nullable or reserved
+  tenant for global actions, or a separate instance log. It is not a transport
+  change.
+- **What the surfaces say.** The Overview "mcp calls" hover hint said the
+  maintenance routes "are not logged here", which reads as "logged somewhere else".
+  It now says they "write no call-log row in any workspace (a global action has no
+  workspace to file one under)". The subline ("admitted MCP + HTTP calls ·
+  maintenance routes not logged") and the `connections` hint were already exact
+  and are unchanged. `OverviewView.auditCopy.test.ts` holds the source and the
+  shipped bundle to the new text.
+- **Correction: `knowledge/transport.auditKnowledgeCall.ts` header.** It said a
+  null `session_name` "is what the MCP path records for every `kb_*` call". That is
+  false: `runMcp` records a top-level string `session_name` argument. The header
+  now states the two documented MCP-only values (`session_name`, `peer_name`), as
+  the round-4 amendment does.
+- **Correction: `POST /api/memories` audit input.** The copy of the parsed body
+  that becomes the `remember` row's input sat in a `try … catch {}` whose fallback
+  (input `{}`) could never run. The strict parser yields only null, booleans, finite
+  numbers, strings, arrays and Maps, and `JSON.stringify` cannot throw on any of
+  them. Had the fallback ever run, the row would have lost its input without saying
+  so. The copy is now `app.plainBody.ts`, with no fallback, and the MCP envelope
+  reader uses the same function. No response and no row changes.
+
+Tests. `app/server/test/transport-audit-maintenance.test.ts` runs on a real listening
+server (`fixtures/transport-v1/live-server/child.ts`, extended with a `tables` step
+that reads both operations tables directly and unscoped; every wire reader is
+scoped, so it cannot see a sentinel row). An admitted backfill (200), an admitted
+backfill failure (`?batch=0`, 400) and an admitted reindex (200) leave exactly one
+row and one fold in the whole dataset: the positive-control MCP `list_memories` in
+the alpha workspace. It pins current behaviour, so it passed before any change.
+Two mutants were killed by it: a backfill success audited under `"__global__"`,
+and a backfill failure audited under `""`.
+`app/server/test/transport-plain-body.test.ts` was red before the fix (module
+missing). It pins the copy (nested Maps, key order, `__proto__` copied as data,
+detached from the parsed body) and that `app.ts` swallows no copy failure.
+`app/ui/v2/src/overview/OverviewView.auditCopy.test.ts` was red before the fix
+(`not logged here` in the hint and the bundle).

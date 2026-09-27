@@ -5,11 +5,19 @@
 // `connections` fold, DECISIONS.md R5). The CLI's `kb <method>` leg forwards
 // to this route, so it is audited here too.
 //
-// The row is built to be indistinguishable from the one an MCP `kb_<method>`
-// call writes, except for the transport user agent: the same tool name, the
-// same `{ payload }` input the MCP arguments carry (so `mcp/calls.ts` redacts
-// it identically), the same result or governed envelope text, and a null
-// `session_name`, which is what the MCP path records for every `kb_*` call.
+// The row is built to match the one an MCP `kb_<method>` call writes: the
+// same tool name, the same `{ payload }` input the MCP arguments carry (so
+// `mcp/calls.ts` redacts it identically), and the same result or governed
+// envelope text. Beyond the transport user agent, two columns can differ, and
+// both are documented rather than aligned (authorization-integration-v1.md,
+// "Two MCP-only row values on `kb_*`"):
+//   - `session_name` is always null here. MCP (`auth/service.ts` `runMcp`)
+//     records a top-level string `session_name` argument sent next to
+//     `payload`, and null only when there is none. This route has no
+//     top-level arguments -- the body IS the payload -- and a `session_name`
+//     inside the payload is not lifted on either transport.
+//   - `peer_name` is always null here. Under `ARRA_MCP_V3_COMPAT=1` MCP records
+//     the `X-Arra-Peer` speaker, a header this route never reads.
 
 import { auditErrorText } from "../auth/service.auditErrorText";
 

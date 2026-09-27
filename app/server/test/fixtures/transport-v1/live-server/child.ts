@@ -28,8 +28,9 @@ type TokenName = "write" | "bound" | "read" | "other" | "audit" | "diag" | "main
 type Unadmitted = "none" | "bogus";
 type Step = {
   label: string;
-  /** legacy: a legacy HTTP memory route (`path`, `httpMethod`, raw `body`), #31 legacy-audit slice. */
-  transport: "http" | "mcp" | "cli" | "settle" | "legacy";
+  /** legacy: a legacy HTTP memory route (`path`, `httpMethod`, raw `body`), #31 legacy-audit slice.
+   *  tables: every row of both operations tables, read directly, in EVERY workspace (#31 maint-audit). */
+  transport: "http" | "mcp" | "cli" | "settle" | "legacy" | "tables";
   token: TokenName | Unadmitted;
   bank: "alpha" | "beta";
   /** http: registry method. mcp: the TOOL name (`kb_x` or a legacy tool). */
@@ -233,6 +234,22 @@ async function settleFolds(folds: number, deadlineMs: number) {
   }
 }
 
+/**
+ * #31 maint-audit: both operations tables, read DIRECTLY and unscoped. Every
+ * wire reader is scoped to one admitted workspace, so a row filed under any
+ * other name (a sentinel for a global action, say) is invisible over the wire;
+ * this is the only view that can prove no such row exists.
+ */
+async function readOperationsTables() {
+  const { connect } = await import("@lancedb/lancedb");
+  const db = await connect(opsDir);
+  const rows = async (name: string) => {
+    const all = await (await db.openTable(name)).query().toArray();
+    return all.map((row) => ({ workspace_name: row.workspace_name, tool: row.tool ?? row.last_tool ?? null, status: row.status ?? null }));
+  };
+  return { mcp_calls: await rows("mcp_calls"), connections: await rows("connections") };
+}
+
 const outcomes: Record<string, unknown> = { tokens: { ...TOKENS, bogus: UNADMITTED.bogus }, userAgent: USER_AGENT };
 try {
   for (const step of payload.steps) {
@@ -241,6 +258,10 @@ try {
     try {
       if (step.transport === "settle") {
         outcomes[step.label] = await settleFolds(step.folds ?? 0, step.ms ?? 250);
+        continue;
+      }
+      if (step.transport === "tables") {
+        outcomes[step.label] = await readOperationsTables();
         continue;
       }
       if (step.transport === "legacy") {
