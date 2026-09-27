@@ -175,6 +175,27 @@ jobs:
         working-directory: app/benchmarks
         run: ../migrate-py/.venv/bin/python -m unittest discover -s . -p 'test_*.py' -v
 
+      # Until 09-27 CI only BUILT the UI: its unit tests and its type-check never
+      # ran here, and vite build does not type-check. A verifier caught this
+      # while reviewing the ui-polish slice.
+      - name: Typecheck UI v2
+        working-directory: app/ui/v2
+        run: ./node_modules/.bin/tsc -p tsconfig.json
+
+      - name: Test — UI v2 (bun test src)
+        working-directory: app/ui/v2
+        run: bun test src
+
       - name: Build UI v2
         working-directory: app/ui/v2
         run: bun run build
+
+      # The server serves the COMMITTED bundle in app/server/public/v2. A slice
+      # once shipped a bundle built from an older round of its own source.
+      # Rebuilding must reproduce the committed files exactly (content-hashed
+      # names; measured reproducible on 09-27).
+      - name: Committed UI bundle matches its source
+        run: |
+          git status --porcelain app/server/public/v2
+          test -z "$(git status --porcelain app/server/public/v2)" || {
+            echo "::error::app/server/public/v2 is stale: run 'bun run build' in app/ui/v2 and commit the result"; exit 1; }
