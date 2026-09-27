@@ -20,13 +20,13 @@ export function LifecycleBanner({ gate }: { gate: LifecycleGate }) {
         {gate.successor !== null && (
           <a
             href={`#/knowledge?node=${encodeURIComponent(gate.successor.node_id)}`}
-            className="text-accent underline underline-offset-2"
+            className="min-w-0 text-accent underline underline-offset-2 [overflow-wrap:anywhere]"
           >
             open successor: {gate.successor.title ?? gate.successor.node_id}
           </a>
         )}
       </div>
-      <p className="text-muted">{gate.explanation}</p>
+      <p className="text-muted [overflow-wrap:anywhere]">{gate.explanation}</p>
     </div>
   );
 }

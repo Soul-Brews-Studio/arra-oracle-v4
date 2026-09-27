@@ -26,11 +26,13 @@ export function AddNameForm({
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && submit()}
         placeholder={placeholder}
+        aria-label={placeholder}
         className="w-full rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-100 outline-none focus:border-accent"
       />
       <button
         onClick={submit}
         disabled={value === ""}
+        aria-label={`Add ${placeholder.replace(/[…:]+$/, "")}`}
         className="shrink-0 rounded border border-accent/40 bg-accent/10 px-2 py-1 text-xs font-medium text-accent hover:bg-accent/20 disabled:opacity-40"
       >
         add

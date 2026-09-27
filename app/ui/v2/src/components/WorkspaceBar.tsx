@@ -52,37 +52,47 @@ export function WorkspaceBar({
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-edge px-4 py-2">
       <div className="flex items-center gap-1.5">
-        <label className="shrink-0 text-[10px] uppercase tracking-wide text-muted">bank</label>
+        <label htmlFor="ws-bar-bank" className="shrink-0 text-[10px] uppercase tracking-wide text-muted">
+          bank
+        </label>
         <input
+          id="ws-bar-bank"
           value={bank}
           onChange={(e) => onBank(e.target.value)}
           placeholder="default"
-          className="w-36 rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-100 outline-none focus:border-accent"
+          className="w-36 rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-100 outline-none focus:border-accent focus-visible:ring-2 focus-visible:ring-accent"
         />
       </div>
       <div className="flex items-center gap-1.5">
-        <label className="shrink-0 text-[10px] uppercase tracking-wide text-muted">workspace</label>
+        <label htmlFor="ws-bar-workspace" className="shrink-0 text-[10px] uppercase tracking-wide text-muted">
+          workspace
+        </label>
         <input
+          id="ws-bar-workspace"
           value={workspace}
           onChange={(e) => onWorkspace(e.target.value)}
           placeholder="workspace_name"
-          className="w-36 rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-100 outline-none focus:border-accent"
+          className="w-36 rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-100 outline-none focus:border-accent focus-visible:ring-2 focus-visible:ring-accent"
         />
       </div>
       <div className="flex items-center gap-1.5">
-        <label className="shrink-0 text-[10px] uppercase tracking-wide text-muted">token</label>
+        <label htmlFor="ws-bar-token" className="shrink-0 text-[10px] uppercase tracking-wide text-muted">
+          token
+        </label>
         <input
+          id="ws-bar-token"
           value={token}
           onChange={(e) => onToken(e.target.value)}
           type="password"
           placeholder="bearer…"
-          className="w-36 rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-100 outline-none focus:border-accent"
+          className="w-36 rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-100 outline-none focus:border-accent focus-visible:ring-2 focus-visible:ring-accent"
         />
       </div>
       <div className="flex items-center gap-2 pt-0.5">
         <button
           onClick={ping}
-          className="rounded border border-accent/40 bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent hover:bg-accent/20"
+          aria-label="Ping the server health endpoint"
+          className="rounded border border-accent/40 bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent hover:bg-accent/20 focus-visible:ring-2 focus-visible:ring-accent"
         >
           ping
         </button>

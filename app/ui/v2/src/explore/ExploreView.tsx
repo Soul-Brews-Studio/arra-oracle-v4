@@ -129,7 +129,7 @@ export function ExploreView({
       <div className="flex items-center gap-2 border-b border-edge px-4 py-2 text-xs text-muted">
         <span>Workspaces</span>
         <span>&gt;</span>
-        <span className="text-slate-100">{bank.workspace}</span>
+        <span className="min-w-0 text-slate-100 [overflow-wrap:anywhere]">{bank.workspace}</span>
         <button
           onClick={onBack}
           className="ml-auto rounded border border-edge px-2 py-1 text-muted hover:border-accent hover:text-accent"
@@ -146,8 +146,18 @@ export function ExploreView({
         refreshing={listing.peers.state.loading || listing.sessions.state.loading || listing.nodes.state.loading}
       />
 
-      <div className="flex min-h-0 flex-1">
-        <div className="flex w-64 shrink-0 flex-col overflow-y-auto border-r border-edge">
+      {/* #33 AC2 round 3: below `lg` this row stacks and is the page's one
+          scroll container. The lists are capped (their own scroller) and the
+          detail pane keeps a viewport-relative height (see `DetailTabs`), so
+          neither can squeeze the other: round 2 left the pane `flex-1
+          min-h-0` under `shrink-0` lists and it measured 0px at 375x812. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-visible">
+        {/* a <section>, not a <div>: ARIA forbids naming a generic element,
+            so the label was ignored by assistive tech (round 4). */}
+        <section
+          aria-label="Peers and sessions"
+          className="flex max-h-[45vh] w-full shrink-0 flex-col overflow-y-auto border-b border-edge lg:max-h-none lg:w-64 lg:border-b-0 lg:border-r"
+        >
           <ListPanel
             label="peers"
             rows={listing.peers.state.rows}
@@ -184,7 +194,7 @@ export function ExploreView({
             onPrev={listing.sessions.prev}
             onRefresh={listing.sessions.refresh}
           />
-        </div>
+        </section>
 
         <DetailTabs
           active={activeTab}

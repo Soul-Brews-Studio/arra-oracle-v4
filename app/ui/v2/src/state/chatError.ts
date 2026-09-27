@@ -29,6 +29,8 @@
  *     reached the server at all. "The server refused this question" is
  *     false for this case, not just imprecise.
  */
+import { authErrorHint } from "./authErrorHint";
+
 export type ChatErrorView = {
   kind: "model_unavailable" | "failed";
   title: string;
@@ -56,7 +58,8 @@ function reachedServer(code: string): boolean {
 
 export function chatError(code: string | null): ChatErrorView | null {
   if (code === null) return null;
-  if (GOVERNED.exec(code)?.[1] === "model_unavailable") {
+  const bare = GOVERNED.exec(code)?.[1];
+  if (bare === "model_unavailable") {
     return { kind: "model_unavailable", title: "Model unavailable", detail: MODEL_UNAVAILABLE_DETAIL };
   }
   if (!reachedServer(code)) {
@@ -65,6 +68,13 @@ export function chatError(code: string | null): ChatErrorView | null {
       title: "Could not reach the server",
       detail: `The request did not complete: ${code}. Check your connection and try again.`,
     };
+  }
+  // #33 AC2/R12 (a11y slice), requirement 3: 401/403 get their own honest
+  // sentence instead of the generic "see the code above", the same hint
+  // `ErrorNote` shows via `authErrorHint` for every other panel.
+  const hint = authErrorHint(bare);
+  if (hint !== null) {
+    return { kind: "failed", title: code, detail: hint };
   }
   return { kind: "failed", title: code, detail: "The server refused this question; see the code above." };
 }

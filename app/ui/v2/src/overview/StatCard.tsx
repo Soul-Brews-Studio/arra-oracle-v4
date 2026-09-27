@@ -116,7 +116,7 @@ export function StatCard({
       )}
 
       {sub !== null && <p className="mt-1 text-[11px] leading-snug text-muted">{sub}</p>}
-      {meta !== null && <p className="mt-0.5 font-mono text-[10px] text-muted">{meta}</p>}
+      {meta !== null && <p className="mt-0.5 font-mono text-[10px] text-muted [overflow-wrap:anywhere]">{meta}</p>}
     </div>
   );
 }

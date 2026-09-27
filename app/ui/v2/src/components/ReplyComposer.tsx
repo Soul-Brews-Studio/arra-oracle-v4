@@ -37,10 +37,10 @@ export function ReplyComposer({
       {replyingTo && (
         <div className="mb-2 flex items-start gap-2 rounded border border-accent/30 bg-accent/5 px-2 py-1.5 text-xs">
           <div className="min-w-0 flex-1">
-            <span className="font-semibold text-accent">replying to {replyingTo.peer_name}</span>
+            <span className="font-semibold text-accent [overflow-wrap:anywhere]">replying to {replyingTo.peer_name}</span>
             <p className="mt-0.5 truncate text-muted">{replyingTo.content || "(empty content)"}</p>
           </div>
-          <button onClick={onCancel} className="shrink-0 text-muted hover:text-slate-100">
+          <button onClick={onCancel} aria-label="Cancel reply" className="shrink-0 text-muted hover:text-slate-100">
             cancel
           </button>
         </div>
@@ -50,12 +50,14 @@ export function ReplyComposer({
           value={peer}
           onChange={(e) => setPeer(e.target.value)}
           placeholder="peer name"
+          aria-label="Peer name"
           className="w-32 rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-100 outline-none focus:border-accent"
         />
         <input
           value={role}
           onChange={(e) => setRole(e.target.value)}
           placeholder="role (optional)"
+          aria-label="Role (optional)"
           className="w-32 rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-100 outline-none focus:border-accent"
         />
       </div>
@@ -67,6 +69,7 @@ export function ReplyComposer({
         }}
         rows={3}
         placeholder={replyingTo ? "reply content (Ctrl/Cmd+Enter to send)" : "message content (Ctrl/Cmd+Enter to send)"}
+        aria-label={replyingTo ? "Reply content" : "Message content"}
         className="w-full resize-none rounded border border-edge bg-ink px-2 py-1.5 text-sm text-slate-100 outline-none focus:border-accent"
       />
       <div className="mt-2 flex justify-end">

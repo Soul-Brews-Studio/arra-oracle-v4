@@ -8,7 +8,7 @@ import { LifecycleBanner } from "./components/LifecycleBanner";
 import { NodeHead } from "./components/NodeHead";
 import { NodeRail } from "./components/NodeRail";
 import { NodeWritePanel } from "./components/NodeWritePanel";
-import { RevisionDiff } from "./components/RevisionDiff";
+import { RevisionDiffPicker } from "./components/RevisionDiffPicker";
 import { RevisionHistory } from "./components/RevisionHistory";
 import { TaxonomySetup } from "./components/TaxonomySetup";
 import { TermCloud } from "./components/TermCloud";
@@ -89,8 +89,15 @@ export function KnowledgeView({
   const writable = writableHead(k.selected, k.head?.revision ?? null, sortedHistory);
 
   return (
-    <div className="flex min-h-0 flex-1">
-      <aside className="flex w-64 shrink-0 flex-col gap-3 overflow-y-auto border-r border-edge p-3">
+    // #33 AC2 round 3: below `lg` this root is the ONE scroll container -- the
+    // page scrolls, top to bottom: a height-capped bookmark rail, the node at
+    // its full height, then taxonomy and tags. Round 2 made `<main>` a second,
+    // nested `flex-1 overflow-y-auto` scroller here, and a scroll container's
+    // automatic min-height is 0, so it took all the negative free space: the
+    // node view measured 6px tall at 375x812. From `lg` it is three columns
+    // again and `<main>` scrolls on its own (`KnowledgeView.test.ts`).
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-visible">
+      <aside className="flex max-h-[40vh] w-full shrink-0 flex-col gap-3 overflow-y-auto border-b border-edge p-3 lg:max-h-none lg:w-64 lg:border-b-0 lg:border-r">
         <NodeRail
           entries={k.nodes}
           selected={k.selected}
@@ -109,7 +116,7 @@ export function KnowledgeView({
         />
       </aside>
 
-      <main className="flex min-w-0 flex-1 flex-col overflow-y-auto">
+      <main className="flex min-w-0 flex-none flex-col lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
         {target === null ? (
           <EmptyState
             title="No node selected"
@@ -118,7 +125,7 @@ export function KnowledgeView({
         ) : (
           <>
             <div className="flex items-center gap-2 border-b border-edge px-4 py-2">
-              <span className="font-mono text-[11px] text-muted" title={target}>
+              <span className="font-mono text-[11px] text-muted [overflow-wrap:anywhere]" title={target}>
                 {target.slice(0, 10)}…
               </span>
               {terms.length > 0 && <TypeBadge type={typeOf(terms) ?? "note"} />}
@@ -161,39 +168,13 @@ export function KnowledgeView({
               }}
             />
             {sortedHistory.length >= 2 && (
-              <div className="flex flex-col gap-2 border-t border-edge p-3">
-                <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted">
-                  <span className="uppercase tracking-wide">diff</span>
-                  <select
-                    value={diffFromId ?? ""}
-                    onChange={(e) => setDiffFromId(e.target.value)}
-                    className="rounded border border-edge bg-ink px-2 py-1 text-slate-100 outline-none focus:border-accent"
-                  >
-                    {sortedHistory.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        #{r.revision_no} — {r.title}
-                      </option>
-                    ))}
-                  </select>
-                  <span>vs</span>
-                  <select
-                    value={diffToId ?? ""}
-                    onChange={(e) => setDiffToId(e.target.value)}
-                    className="rounded border border-edge bg-ink px-2 py-1 text-slate-100 outline-none focus:border-accent"
-                  >
-                    {sortedHistory.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        #{r.revision_no} — {r.title}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                {diffFrom !== null && diffTo !== null && diffFrom.id !== diffTo.id ? (
-                  <RevisionDiff from={diffFrom} to={diffTo} />
-                ) : (
-                  <p className="text-[11px] text-muted">pick two different revisions to diff</p>
-                )}
-              </div>
+              <RevisionDiffPicker
+                revisions={sortedHistory}
+                from={diffFrom}
+                to={diffTo}
+                onFrom={setDiffFromId}
+                onTo={setDiffToId}
+              />
             )}
             <NodeWritePanel
               gate={gate}
@@ -232,7 +213,7 @@ export function KnowledgeView({
         )}
       </main>
 
-      <aside className="flex w-96 shrink-0 flex-col gap-4 overflow-y-auto border-l border-edge p-3">
+      <aside className="flex w-full shrink-0 flex-col gap-4 overflow-y-auto border-t border-edge p-3 lg:w-96 lg:border-l lg:border-t-0">
         <TaxonomySetup
           ids={k.taxonomy}
           seeded={k.taxonomy !== null}
