@@ -195,3 +195,28 @@ v4-overnight, v3-search slice (Claude Opus 5.5, AI). Rulings: `docs/overnight/DE
 **Acceptance.** `app/server/test/mcp-v3-acceptance.test.ts` on this slice: before PASS 10 / FAIL 0 / GAP 27, after PASS 15 / FAIL 0 / GAP 22 in each of 10 consecutive runs. Steps 7, 8 (`ลืม`, hybrid), 30 (`arra_search`), 31 (tenant carrier) and 36 (cross-bank isolation) went GAP to PASS. Harness corrections, each stated in its step's notes: step 13 (superseded entry absent) is also gated on `oracle_supersede`, and step 20 (distilled learning found) on `oracle_trace_distill`, since each asserts something only meaningful after that tool ran (the harness's own rule for absence steps). Step 30 compares `arra_search` with `oracle_search` called with the same arguments right after it (`compareToCanonicalCall`, recorded by the session child). A first fix compared it with step 13, but step 21 writes a node in between, and step 30 failed in 3 of 6 runs on a moved snippet. The verdict also no longer compares an alias step with itself when it names no step.
 
 **Evidence.** `app/server/test/mcp-v3-search-wiring.test.ts` (catalogue names, availability, D3 descriptions, reader-only routing and its pin to the registry, the `alsoNeeds` rule, the stable merge snippet, chain idempotency and partial-write disclosure, the narrow embedder-down test). `app/server/test/mcp-v3-search.test.ts` (a gated child on a fresh dataset with a stub query embedder: shape, order, the multi-word OR, hybrid, R14, substring scan, D3 via `kb_supersedeNode`/`kb_retireNode`, filters, paging, refusals, vector before and after backfill, embedder-down fallback, cross-bank isolation, read-only and write-only grants, ask, chain traces and retries). `app/server/test/mcp-v3-frame.test.ts` (a write-only grant at the service) and `app/server/test/mcp-v3-verdict.test.ts` (the alias verdict). First round red 2 pass / 21 fail (`not_yet_available ... searchChunksKeyword, searchChunksSemantic`). Fix round red: unit 37 pass / 10 fail, gated 24 pass / 2 fail, with a write-only principal's `oracle_search_chain` answering 200 with entries. Then all green.
+
+## Amendment 2026-09-26 (post-merge R3/R4/R5 + #85/#31/#75 acceptance criteria)
+
+Evidence only, no behaviour change. This states which transport the §4 audit covers,
+as measured live, so that #31 "audit parity" means what the contract says:
+
+- **Audited.** Only an admitted MCP `tools/call`, whether it succeeds or fails. It
+  appends one `mcp_calls` row and folds `connections` in the operations root
+  (DECISIONS.md R5). `method` is `bearer` and `principal` is the credential id (R19).
+- **Not audited.** `POST /api/knowledge/:bank/:method` is not a tool call, so HTTP
+  writes no row. The CLI's `kb <method>` leg forwards to that same HTTP route and
+  writes no row either. The CLI's legacy commands call MCP tools, so they are audited
+  exactly like a direct MCP call. The row has the same tool, status, redacted `input`
+  and `auth`, and differs only in `internal_metadata.transport.user_agent`.
+- **Redaction.** No bearer token appears in any row. `h_metadata` has exactly the keys
+  `{input, result, auth}`, and `auth` has exactly
+  `{principal_id, credential_id, policy_version}`. A secret-shaped argument is
+  redacted the same way whichever client sent it.
+- **`connections` fold key.** The key is (workspace, method, principal, label), so one
+  credential used by two clients gets two rows. This matches the documented `foldId`
+  in `mcp/connections.ts`. It is narrower than SPEC §7.2's `'<method>:<principal>'`
+  key, and this amendment records that difference without resolving it.
+
+Test: `app/server/test/transport-audit-parity.test.ts`, which runs on a real listening
+server and spawns the real CLI process.
