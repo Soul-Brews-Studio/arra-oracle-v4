@@ -6,6 +6,7 @@
 #
 #   bash app/just/local-ci.sh              # this checkout
 #   bash app/just/local-ci.sh <checkout>   # another worktree
+#   LOCAL_CI_SHARDS=4 bash app/just/local-ci.sh   # shard count (default 4, as ci.yml; more only on an idle machine)
 #
 # Prints one line per step (its exit code and name), then
 # LOCAL_CI_RESULT PASS|FAIL. Exit code 0 only when every step passed. Keep it
@@ -21,7 +22,7 @@ step "uv sync (app/migrate-py, frozen)"   bash -c "cd '$W' && uv sync --project 
 step "Lint (ruff 0.16.4, migrate-py + just/scripts)" bash -c "cd '$W' && uvx ruff@0.16.4 check app/migrate-py/src app/migrate-py/tests app/just/scripts"
 step "Typecheck (app/server)"             bash -c "cd '$W/app/server' && bun run typecheck"
 step "Build (app/server)"                 bash -c "cd '$W/app/server' && bun run build >/dev/null"
-step "Test: sharded full suite"           bash -c "cd '$W/app/server' && TEST_SHARDS=4 TEST_TIMEOUT_MS=60000 TEST_TIME_SCALE=5 bun run test:parallel 2>&1 | grep -E 'PARALLEL|pass,|fail|shard [0-9]+:' | tail -12; exit \${PIPESTATUS[0]}"
+step "Test: sharded full suite"           bash -c "cd '$W/app/server' && TEST_SHARDS=${LOCAL_CI_SHARDS:-4} TEST_TIMEOUT_MS=60000 TEST_TIME_SCALE=5 bun run test:parallel 2>&1 | grep -E 'PARALLEL|pass,|fail|shard [0-9]+:' | tail -12; exit \${PIPESTATUS[0]}"
 step "Test: demo.test.ts (stub Ollama)"   bash -c "cd '$W/app' && TEST_TIME_SCALE=5 bun test just/demo.test.ts 2>&1 | tail -3; exit \${PIPESTATUS[0]}"
 step "Test: ui-e2e harness rules"         bash -c "cd '$W/app' && bun test just/ui-e2e.test.ts 2>&1 | tail -3; exit \${PIPESTATUS[0]}"
 step "Test: Python migrate-py discover"   bash -c "cd '$W/app/migrate-py' && PYTHONPATH=src .venv/bin/python -m unittest discover -s tests 2>&1 | grep -E '^(Ran|OK|FAILED)'; exit \${PIPESTATUS[0]}"
