@@ -61,7 +61,7 @@ describe("preflight: the required surface", () => {
       for (const factory of readers) {
         const bundle = await (service as Record<string, any>)[factory](fixture.datasetRoot);
         expect(Object.keys(bundle.context).sort()).toEqual([
-          "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSearchFreshness", "getSession", "getTrace",
+          "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getRepresentation", "getSearchFreshness", "getSession", "getTrace",
           "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks", "listSessionLinks", "listSessionMembers", "listSessions",
           "listTraceHits", "listTraces", "searchKnowledgeKeyword", "searchKnowledgeSemantic",
         ]);
@@ -108,7 +108,7 @@ describe("real persistence: cursors inside the real gate", () => {
   ];
   const SEED = 4;
 
-  test("BOTH writer factories expose the thirty-two context methods, with no nested close", async () => {
+  test("BOTH writer factories expose the thirty-three context methods, with no nested close", async () => {
     for (const factory of ["context", "evidence"] as const) {
       const fixture = await createReadCursorFixture([ALPHA]);
       try {
@@ -117,10 +117,10 @@ describe("real persistence: cursors inside the real gate", () => {
         // (`{ ...reads, ...writeOnly }`), so this is that union, not just the
         // write-only methods. #30 R7/R8 added embedPendingChunks (write-only)
         // and getSearchFreshness (read); overnight R18 added closeSession
-        // (write-only) and listSessionMembers (read).
+        // (write-only) and listSessionMembers (read); D3b (R24) added getRepresentation (read).
         expect(parsed.contextMethods).toEqual([
           "advanceReadCursor", "appendMessages", "closeSession", "createSessionLink", "createTrace", "embedPendingChunks", "getContext",
-          "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSearchFreshness", "getSession", "getTrace",
+          "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getRepresentation", "getSearchFreshness", "getSession", "getTrace",
           "indexRevisionChunks", "joinSession", "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks",
           "listSessionLinks", "listSessionMembers", "listSessions", "listTraceHits", "listTraces", "reconcileSearchChunks", "registerPeer", "registerSession",
           "retireNode", "supersedeNode", "writeChunkEmbedding",
