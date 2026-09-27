@@ -27,7 +27,8 @@
 // `createContextReadMethods` returns nineteen methods (`listTraces` added by
 // K5, docs/overnight/V3-PARITY.md §5) and `createContextWriterService`
 // returns `{...reads}` plus fourteen of its own, so the writer union is
-// thirty-three; the reader adds the two reader-only #30 searches, twenty-one.
+// thirty-four with D3b `getRepresentation`; the reader adds the two reader-only #30
+// searches, twenty-two.
 // They were then compared against the accepted read-cursor
 // lane's literals and found identical, which is the expected outcome: this
 // slice adds methods to the existing context reader/writer and no new
@@ -73,23 +74,24 @@ const RUNTIME_EXPORTS = [
   "openPublicationReader",
   "openPublicationWriter",
 ].join(",");
-/** Thirty-three on every context WRITER facade (its own fourteen plus the
- *  nineteen reader methods it spreads in), twenty-one on every context READER
- *  facade (the nineteen plus the two reader-only #30 searches). */
+/** Thirty-four on every context WRITER facade (its own fourteen plus the
+ *  twenty reader methods it spreads in, D3b `getRepresentation` included),
+ *  twenty-two on every context READER facade (the twenty plus the two
+ *  reader-only #30 searches). */
 // #30 overnight R7/R8: `getSearchFreshness` (read) and `embedPendingChunks`
 // (write-only) join the context facade -- both lists below grew accordingly.
 // Overnight R18: + closeSession (K9, D7) on every writer, + listSessionMembers (K10) on both.
 // Overnight R18 (V3 + K5 + V7): + listTraces (K5, docs/overnight/V3-PARITY.md §5) on both.
 const CONTEXT_WRITE_METHODS =
   "advanceReadCursor,appendMessages,closeSession,createSessionLink,createTrace,embedPendingChunks," +
-  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
+  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getRepresentation,getSearchFreshness," +
   "getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
   "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits," +
   "listTraces,reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
   "writeChunkEmbedding";
 const CONTEXT_READ_METHODS =
-  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
+  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getRepresentation,getSearchFreshness," +
   "getSession,getTrace," +
   "listConnections,listLifecycleHistory,listMcpCalls,listMessages,listPeers," +
   "listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits,listTraces," +
@@ -316,7 +318,7 @@ afterAll(async () => {
 
 describe("context facades across all four factories", () => {
   test(
-    "each writer facade carries thirty-three methods and each reader facade twenty-one, with exports unchanged",
+    "each writer facade carries thirty-four methods and each reader facade twenty-two, with exports unchanged",
     async () => {
       const root = await freshDataset("facades");
       // One writer per gated child: closing releases fd 42, so a second open in
@@ -379,7 +381,9 @@ describe("context facades across all four factories", () => {
       // K5 (docs/overnight/V3-PARITY.md §5, overnight R18 (V3 + K5 + V7))
       // added `listTraces` (a read, on the reader and spread onto the
       // writer): 32 -> 33 and 20 -> 21.
-      expect({ writer: writerMethods.length, reader: readerMethods.length }).toEqual({ writer: 33, reader: 21 });
+      // D3b (Nat 2026-09-28) added `getRepresentation` (a read, on the reader
+      // and spread onto the writer): 33 -> 34 and 21 -> 22.
+      expect({ writer: writerMethods.length, reader: readerMethods.length }).toEqual({ writer: 34, reader: 22 });
       for (const search of ["searchKnowledgeKeyword", "searchKnowledgeSemantic"]) {
         expect(readerMethods).toContain(search);
         expect(writerMethods).not.toContain(search);

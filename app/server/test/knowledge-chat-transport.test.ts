@@ -89,7 +89,7 @@ const fakeBundle: KnowledgeBundle = {
         excluded: [],
         excluded_omitted: 0,
         items_used: [CONTEXT_ITEM.public_id],
-      };
+      } as never;
     },
     async getChatSettings() {
       return { model: null };

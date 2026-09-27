@@ -541,7 +541,7 @@ describe("real persistence: registration, shapes and reads", () => {
       // fourteen write-only methods (overnight R18 added closeSession, K9).
       expect(parsed.contextMethods).toEqual([
         "advanceReadCursor", "appendMessages", "closeSession", "createSessionLink", "createTrace", "embedPendingChunks", "getContext",
-        "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSearchFreshness", "getSession", "getTrace",
+        "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getRepresentation", "getSearchFreshness", "getSession", "getTrace",
         "indexRevisionChunks", "joinSession", "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks",
         "listSessionLinks", "listSessionMembers", "listSessions", "listTraceHits", "listTraces", "reconcileSearchChunks", "registerPeer", "registerSession",
         "retireNode", "supersedeNode", "writeChunkEmbedding",
@@ -1103,10 +1103,10 @@ describe("core: the sourced path and the reader bundle", () => {
       expect(parsed.readerKeys).toEqual(["context", "publication", "taxonomy"]);
       // Exactly the twenty READ methods (#30's two searches and, from
       // search-embed R7/R8, getSearchFreshness included; overnight R18's
-      // listSessionMembers too); no mutator -- embedPendingChunks and
+      // listSessionMembers too; D3b getRepresentation too); no mutator -- embedPendingChunks and
       // closeSession included -- reachable from a reader.
       expect(parsed.readerContextMethods).toEqual([
-        "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getSearchFreshness", "getSession", "getTrace",
+        "getContext", "getMessage", "getPeer", "getReadCursor", "getRecallEligibility", "getRepresentation", "getSearchFreshness", "getSession", "getTrace",
         "listConnections", "listLifecycleHistory", "listMcpCalls", "listMessages", "listPeers", "listSearchChunks", "listSessionLinks", "listSessionMembers", "listSessions",
         "listTraceHits", "listTraces", "searchKnowledgeKeyword", "searchKnowledgeSemantic",
       ]);

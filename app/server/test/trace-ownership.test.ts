@@ -56,7 +56,7 @@ const RUNTIME_EXPORTS = [
   "openPublicationReader",
   "openPublicationWriter",
 ].join(",");
-/** §1: thirty-three on every context WRITER facade, twenty-one on every context
+/** §1: thirty-four on every context WRITER facade, twenty-two on every context
  *  READER facade — derived from `service.ts`'s actual returned method sets
  *  across all five integrated kernels (createTrace/getTrace/listTraceHits/
  *  listTraces and indexRevisionChunks/listSearchChunks/
@@ -69,14 +69,14 @@ const RUNTIME_EXPORTS = [
 // Overnight R18 (V3 + K5 + V7): + listTraces (K5) on both.
 const CONTEXT_WRITE_METHODS =
   "advanceReadCursor,appendMessages,closeSession,createSessionLink,createTrace,embedPendingChunks," +
-  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
+  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getRepresentation,getSearchFreshness," +
   "getSession,getTrace," +
   "indexRevisionChunks,joinSession,listConnections,listLifecycleHistory,listMcpCalls," +
   "listMessages,listPeers,listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits," +
   "listTraces,reconcileSearchChunks,registerPeer,registerSession,retireNode,supersedeNode," +
   "writeChunkEmbedding";
 const CONTEXT_READ_METHODS =
-  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getSearchFreshness," +
+  "getContext,getMessage,getPeer,getReadCursor,getRecallEligibility,getRepresentation,getSearchFreshness," +
   "getSession,getTrace," +
   "listConnections,listLifecycleHistory,listMcpCalls,listMessages,listPeers," +
   "listSearchChunks,listSessionLinks,listSessionMembers,listSessions,listTraceHits,listTraces," +
@@ -252,7 +252,7 @@ afterAll(async () => {
 
 describe("context facades across all four factories", () => {
   test(
-    "each writer facade carries thirty-three methods and each reader facade twenty-one, with exports unchanged",
+    "each writer facade carries thirty-four methods and each reader facade twenty-two, with exports unchanged",
     async () => {
       const root = await freshDataset("facades");
       for (const [factory, keys] of [
