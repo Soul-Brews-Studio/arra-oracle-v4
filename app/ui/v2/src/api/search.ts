@@ -12,8 +12,6 @@
  *     `embedding_profile` to KEYWORD search is `unexpected_field` -- the two
  *     request shapes are not interchangeable, so they get distinct types.
  */
-import { type ApiResult, callMethod } from "./client";
-import { type Bank } from "./memory";
 import { type KeywordHitWire, type SemanticHitWire } from "../state/searchHitView";
 
 /** #30 coverage (`search-chunk-v1.md` section 21): whether the answer's
@@ -36,8 +34,9 @@ export type SemanticSearchResult = SearchCoverage & {
   hits: SemanticHitWire[];
 };
 
-export const searchKnowledgeKeyword = (b: Bank, query: string, limit = 20): Promise<ApiResult> =>
-  callMethod(b.bank, "searchKnowledgeKeyword", { workspace_name: b.workspace, query, limit }, b.token);
-
-export const searchKnowledgeSemantic = (b: Bank, query: string, limit = 20): Promise<ApiResult> =>
-  callMethod(b.bank, "searchKnowledgeSemantic", { workspace_name: b.workspace, query, limit }, b.token);
+// searchKnowledgeKeyword / searchKnowledgeSemantic moved out (style-ui-split,
+// docs/overnight/DECISIONS.md): each lives in its own file named after
+// itself. Re-exported here so importers (`state/useKnowledgeSearch.ts`) do
+// not churn.
+export { searchKnowledgeKeyword } from "./search.searchKnowledgeKeyword";
+export { searchKnowledgeSemantic } from "./search.searchKnowledgeSemantic";

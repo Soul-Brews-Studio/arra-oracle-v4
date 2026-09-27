@@ -14,10 +14,6 @@
  * encode and withheld rather than fail the page. `toPage` ignores it: a
  * count needs only `total`, which still includes them.
  */
-import { type ApiResult, callMethod } from "./client";
-import { type Page } from "./listing";
-import { type Bank, asError } from "./memory";
-
 /** `context.encodeMcpCallRow.ts` MCP_CALL_FIELDS, in wire order. `duration_ms`
  *  is Int64 decimal TEXT; `created_at` is ISO, derived server-side from raw
  *  epoch MILLIS -- the one column here stored in millis rather than micros. */
@@ -36,59 +32,9 @@ export type ConnectionRow = {
   requests: string; tool_calls: string; last_tool: string | null;
 };
 
-/** A deliberate second copy of `listing.ts`'s private decoder rather than an
- *  export added over there -- that file belongs to another worktree this week,
- *  and a conflict in it would block two people instead of none. The rule it
- *  encodes is documented once, at `listing.ts`'s `isUnsupported`: from a
- *  LISTING route, `method_not_found` or a bare 404 means the method is absent,
- *  because a listing has no row identity that could legitimately be missing.
- *
- * Note what a failed request looks like coming out of here: empty rows, null
- * cursor, null total. The null CURSOR is why nothing downstream may read
- * `nextCursor === null` as "that was the whole set" -- see `countWithSample`,
- * which learned that the hard way. */
-export function toPage<T>(result: ApiResult, cursorKey: string): Page<T> {
-  if (!result.ok) {
-    const absent = asError(result.body)?.code === "method_not_found" || result.status === 404;
-    // `Page.error` (added alongside `listing.ts`'s own `toPage`, #33 fix-round):
-    // this tier only ever feeds `useOverview`'s COUNTS, not a rendered row
-    // list, so there is no "false empty page" UI defect to match here -- but
-    // the shared `Page<T>` shape now requires the field, and a real failure
-    // (401/403/5xx) is worth keeping distinguishable from "route absent" for
-    // the same reason `listing.ts` does it, on the chance a future caller
-    // reads more than `total` off this.
-    return {
-      rows: [],
-      nextCursor: null,
-      total: null,
-      supported: !absent,
-      error: absent ? null : (result.error ?? asError(result.body)?.code ?? `HTTP ${result.status}`),
-    };
-  }
-  const body = result.body as Record<string, unknown>;
-  return {
-    rows: Array.isArray(body.rows) ? (body.rows as T[]) : [],
-    nextCursor: typeof body[cursorKey] === "string" ? (body[cursorKey] as string) : null,
-    total: typeof body.total === "string" ? body.total : null,
-    supported: true,
-    error: null,
-  };
-}
-
-/** Both methods send EVERY key, `null` where there is no filter: the grammar is
- *  closed, so an omitted key is `missing_field`, not a default. `tool`/`status`
- *  null means "no filter", never "match null" -- neither is ever null on a row. */
-export async function listMcpCalls(
-  b: Bank, afterId: string | null, limit: number, includeTotal: boolean,
-  tool: string | null, status: string | null,
-): Promise<Page<McpCallRow>> {
-  const body = { workspace_name: b.workspace, after_id: afterId, limit, tool, status, include_total: includeTotal };
-  return toPage<McpCallRow>(await callMethod(b.bank, "listMcpCalls", body, b.token), "next_after_id");
-}
-
-export async function listConnections(
-  b: Bank, afterId: string | null, limit: number, includeTotal: boolean,
-): Promise<Page<ConnectionRow>> {
-  const body = { workspace_name: b.workspace, after_id: afterId, limit, include_total: includeTotal };
-  return toPage<ConnectionRow>(await callMethod(b.bank, "listConnections", body, b.token), "next_after_id");
-}
+// Functions split out (style-ui-split, docs/overnight/DECISIONS.md): each
+// lives in its own file named after itself, re-exported here so importers
+// (`state/useOverview.ts`) do not churn.
+export { toPage } from "./audit.toPage";
+export { listMcpCalls } from "./audit.listMcpCalls";
+export { listConnections } from "./audit.listConnections";
