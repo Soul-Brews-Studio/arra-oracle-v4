@@ -308,3 +308,17 @@ No server behaviour, codec or field changes. This records a new WRITER of
 - Pinned by `app/ui/v2/src/state/buildLinkSnapshot.test.ts`,
   `buildCorrection.test.ts`, `api/publishRevision.test.ts` and
   `components/citeCorrect.test.ts`.
+
+## Amendment 2026-09-26 (post-merge R15 (+ its 2026-09-27 update) + #8 scope correction (2026-09-20) + SPEC §15.2/§15.5)
+
+The **Honcho boundary** paragraph above says the SQL/byte-compatibility promise
+of historical SPEC §15 "is not a measured LanceDB round-trip guarantee". It is
+now measured (R15 table-level update, 2026-09-27, `docs/overnight/DECISIONS.md`):
+the promise is **FALSE as stated** and holds only **with conversions**, as
+listed in `docs/overnight/HONCHO-TABLE-DIFF.md`. That measurement is of the
+tier-1 tables (`workspaces`, `peers`, `sessions`, `session_peers`,
+`messages`) only. Nothing in this byte contract changes: it still promises
+no Honcho hash, conclusion-delete, scope-table or MCP tool parity, and no
+revision or conclusion hash is involved.
+
+**Reverse by:** striking this section.
