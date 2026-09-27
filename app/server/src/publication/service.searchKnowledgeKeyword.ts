@@ -2,6 +2,7 @@ import { FTS_CANDIDATE_CEILING, FTS_MIN_QUERY_CODE_POINTS, type FtsMatch } from 
 import { failPublication } from "./errors";
 import {
   chunkMayHoldQuery,
+  coverageSignal,
   groupKnowledgeHits,
   keywordHitOrder,
   keywordScanPredicate,
@@ -90,8 +91,20 @@ const SEAM_ONLY_MAX_CODE_POINTS = 2 * (FTS_MIN_QUERY_CODE_POINTS - 1);
  * costly #29 seam only down R22's order, until `limit` nodes pass), and a
  * node's chunks collapse into one hit. Every read is scoped to the workspace.
  * Keyword and semantic answers are never fused (R7).
+ *
+ * COVERAGE (#30, `search-chunk-v1.md` section 21): the answer says when the
+ * bound above was reached. Any source read that came back holding the whole
+ * `ceiling` -- counted as read, before `chunkMayHoldQuery` drops a row --
+ * makes it `coverage: "partial"`, `coverage_reason: "candidate_ceiling"`; a
+ * full read cannot tell whether more existed. `ceiling` is
+ * `FTS_CANDIDATE_CEILING`; only tests inject another.
  */
-export async function searchKnowledgeKeyword(reader: DatasetAdapter, requestBytes: Uint8Array, requestTimeMs?: number) {
+export async function searchKnowledgeKeyword(
+  reader: DatasetAdapter,
+  requestBytes: Uint8Array,
+  requestTimeMs?: number,
+  ceiling: number = FTS_CANDIDATE_CEILING,
+) {
   const request = parseSearchKnowledgeKeyword(requestBytes);
   const { query, limit } = request;
   await requireWorkspace(reader, request.workspace_name);
@@ -104,18 +117,22 @@ export async function searchKnowledgeKeyword(reader: DatasetAdapter, requestByte
   const match: FtsMatch = indexed ? "ngram" : "substring_scan";
   const scanReason: ScanReason | null = indexed ? null : short ? "short_query" : "index_unavailable";
 
+  /** Whether any candidate read came back holding the whole ceiling. */
+  let saturated = false;
   /** Candidate rows -> the chunks an occurrence can touch. No candidate keeps
    *  a source rank: the index's BM25 `_score` is never read. */
-  const candidates = (rows: Record<string, unknown>[]): RankedChunk[] =>
-    rows.map((row) => rankedChunk(row, null)).filter((chunk) => chunkMayHoldQuery(chunk.text, chunk.chunk_index, query));
+  const candidates = (rows: Record<string, unknown>[]): RankedChunk[] => {
+    if (rows.length >= ceiling) saturated = true;
+    return rows.map((row) => rankedChunk(row, null)).filter((chunk) => chunkMayHoldQuery(chunk.text, chunk.chunk_index, query));
+  };
   /** Every chunk matching `predicate`, up to the ceiling, in node-id order: the unranked scans. */
   const scan = (predicate: string) =>
-    reader.orderedProjection(SEARCH_CHUNKS, `(${scope}) AND ${predicate}`, [...SEARCH_HIT_COLUMNS], { column: "node_id", ascending: true }, FTS_CANDIDATE_CEILING);
+    reader.orderedProjection(SEARCH_CHUNKS, `(${scope}) AND ${predicate}`, [...SEARCH_HIT_COLUMNS], { column: "node_id", ascending: true }, ceiling);
 
   let fromIndex: RankedChunk[] = [];
   let fromScan: RankedChunk[] = [];
   if (indexed) {
-    fromIndex = candidates(await reader.fullTextSearchChunks(query, scope, FTS_CANDIDATE_CEILING));
+    fromIndex = candidates(await reader.fullTextSearchChunks(query, scope, ceiling));
     const seam = seamPredicate(query);
     if (codePoints <= SEAM_ONLY_MAX_CODE_POINTS && seam !== null) fromScan = candidates(await scan(seam));
   } else {
@@ -143,6 +160,8 @@ export async function searchKnowledgeKeyword(reader: DatasetAdapter, requestByte
   return {
     match,
     scan_reason: scanReason,
+    // Whether every candidate was read (section 21): the bound, never a count.
+    ...coverageSignal(saturated, ceiling),
     hits: hits.map((hit, index) => ({
       node_id: hit.node_id,
       revision_id: hit.revision_id,

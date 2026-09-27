@@ -49,7 +49,6 @@ from pathlib import Path
 import pyarrow as pa
 
 from arra_migrate.rehearsal import (
-    MICROS_VALUE,
     MS_VALUE,
     _ReadOnlySource,
     build_source,
@@ -221,7 +220,6 @@ class CrashRecoveryTests(unittest.TestCase):
         # Prove this was a genuine MID-run state: strictly fewer than the
         # full 19 tables exist, and at least the ones we observed do.
         partial_names = set()
-        target_dir = killed_root / "target.lance"
         source_dir = killed_root / "source.lance"
         self.assertTrue(source_dir.exists() or (killed_root / "source").exists())
         # Discover partial tables the filesystem way, independent of any

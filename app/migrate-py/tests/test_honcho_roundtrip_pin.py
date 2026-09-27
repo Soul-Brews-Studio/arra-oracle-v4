@@ -12,7 +12,11 @@ from __future__ import annotations
 
 import unittest
 
-from arra_migrate.honcho_roundtrip.pin import HONCHO_V3_2_0, NotALoopbackTargetError, require_loopback_url
+from arra_migrate.honcho_roundtrip.pin import (
+    HONCHO_V3_2_0,
+    NotALoopbackTargetError,
+    require_loopback_url,
+)
 
 
 class PinEnvIsValidForPinnedHonchoTests(unittest.TestCase):

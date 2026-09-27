@@ -20,9 +20,9 @@ import traceback
 from pathlib import Path
 
 import lancedb
-from export_publication_fixture import create_publication_fixture
 
 from arra_migrate.writer_gate import WriterUnavailableError
+from export_publication_fixture import create_publication_fixture
 
 REFUSED_BEFORE_CONNECT = 0
 CONNECT_REACHED = 3

@@ -134,3 +134,46 @@ against nonzero millisecond `last_read_at`/`created_at` values — see
 **Reverse by:** striking this amendment section. Nothing above it changes as
 a result; the digest and validation behavior simply return to being
 unrecorded rather than recorded.
+
+## Amendment 2026-09-26 (post-merge R7/R11/R17 + the audit's thin PASS rows)
+
+Made by the `ac-evidence` slice, under `docs/overnight/DECISIONS.md` and the
+acceptance-criteria audit at `docs/overnight/AC-MATRIX.md` (#75 row "Method-count
+gates frozen at 10/5 while the facade grows"). Appended, not an edit: every byte
+above is unchanged.
+
+**What §1/§7/§8's "ten"/"five" (and "eight"/"four" before them) meant.** These
+literals were never a claim about a live ceiling this contract polices as the
+facade grows over time. **Fix round (2026-09-27):** an independent verifier
+read the sentence below as contradicting the one above it; it is not — this
+sentence is the historical snapshot the sentence above says these literals
+were, not a second, competing claim. They named exactly two counts, true only
+at the moment this contract's §1 amendment landed: the context WRITER facade
+had ten methods and the context READER facade had five, immediately after
+this slice added `advanceReadCursor`
+(writer) and `getReadCursor` (writer + reader) to whatever the facade already
+carried. §1's own words say so ("Explicitly amend the context-ingestion-v1
+section8 eight/four method counts to ten/five") — each pair is a snapshot at
+one commit, not a ceiling this contract polices going forward.
+
+**Why this needed saying.** Nothing in §7/§8 stated that in those words, and the
+audit found real readers who could take "gates frozen at 10/5" as a live
+invariant this contract still enforces. It does not: the facade has grown every
+time a later slice (R7 §28/29/30, R18 v3-parity, …) added a context method, and
+each of those additions is its OWNER's contract to amend, not this one's. This
+contract's own gate (§8) never re-asserts a facade-wide count; it names only
+the two methods and the two byte-for-byte test-comment edits ("eight" -> "ten",
+"four" -> "five") this slice itself made, once, in 2026-09-20's tree.
+
+**Current count, for orientation only (not a new gate of this contract).** As
+of this amendment, `app/server/test/context-ownership.test.ts:52-53` pins the
+context writer facade at exactly thirty-three methods and the reader at
+exactly twenty-one, with the growth history in the adjacent comments (R7 #30's
+two search methods, R18's `closeSession`/`listSessionMembers`/`listTraces`).
+Verified by running `bun test test/context-ownership.test.ts` on this tree
+(see `docs/overnight/AC-MATRIX.md` for the exact pass count and date). The next
+slice that adds a context method will change these numbers again, and should
+amend ITS OWN contract, not this file.
+
+**Reverse by:** striking this amendment section; §1/§7/§8 already say what they
+said before, this only makes the scope of "ten"/"five" explicit.

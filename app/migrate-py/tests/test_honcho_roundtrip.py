@@ -35,7 +35,6 @@ from pathlib import Path
 
 from arra_migrate.honcho_roundtrip.bundle import (
     LOSSY_FIELDS,
-    LOSSY_FIELDS_BY_CONSTRUCTION,
     Tier1Bundle,
     _message_payload,
     confirm_fields_absent_from_export,

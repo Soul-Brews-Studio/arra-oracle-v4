@@ -47,7 +47,11 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from arra_migrate.honcho_roundtrip import names
-from arra_migrate.honcho_roundtrip.bundle import Tier1Bundle, export_from_honcho, export_to_honcho
+from arra_migrate.honcho_roundtrip.bundle import (
+    Tier1Bundle,
+    export_from_honcho,
+    export_to_honcho,
+)
 from arra_migrate.honcho_roundtrip.diff import diff_against_input, honcho_to_bundle
 from arra_migrate.honcho_roundtrip.target import FakeHonchoTarget
 

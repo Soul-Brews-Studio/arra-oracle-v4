@@ -50,7 +50,8 @@ GOLDEN = json.loads(
 
 sys.path.insert(0, str(TESTS_DIR))
 
-from export_publication_fixture import (
+# Imported after sys.path is extended above, which is why it is not at the top.
+from export_publication_fixture import (  # noqa: E402
     SEED_INSTANT,
     FixtureRefusedError,
     all_table_names,

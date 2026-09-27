@@ -887,7 +887,8 @@ class IsolationTests(unittest.TestCase):
             'import { admit } from "./auth/policy";\n',
             "// publication is documented in app/docs/contracts\n",
         )
-        hits = lambda text: [p for p in self.PUBLICATION_IMPORT_PATTERNS if p in text]
+        def hits(text):
+            return [p for p in self.PUBLICATION_IMPORT_PATTERNS if p in text]
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self.assertNotIn(str(self.TS_ROOT), str(root))
@@ -939,7 +940,8 @@ class IsolationTests(unittest.TestCase):
             'import type { OperationService } from "./auth/service";\n',
             "// the store is reached only through the admitted service\n",
         )
-        hits = lambda text: [p for p in self.RAW_DEPENDENCY_PATTERNS if f'from "{p}"' in text]
+        def hits(text):
+            return [p for p in self.RAW_DEPENDENCY_PATTERNS if f'from "{p}"' in text]
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self.assertNotIn(str(self.TS_ROOT), str(root))

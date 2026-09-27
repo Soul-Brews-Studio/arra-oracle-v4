@@ -35,6 +35,7 @@ const EMPTY_OUTCOME: SearchOutcome = {
   semanticHits: [],
   scanReason: null,
   embeddingProfile: null,
+  coveragePartial: false,
 };
 
 /** `routed` restores `query`/`mode` from the route on mount -- fix-round

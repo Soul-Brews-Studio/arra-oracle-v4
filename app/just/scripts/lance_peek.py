@@ -9,6 +9,7 @@ app is running -- and it reads the version the directory is at right now, which
 a long-lived cached handle would not.
 """
 import sys
+
 import lance
 
 path, cmd = sys.argv[1], (sys.argv[2] if len(sys.argv) > 2 else "schema")

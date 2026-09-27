@@ -16,13 +16,21 @@ import { type ApiResult, callMethod } from "./client";
 import { type Bank } from "./memory";
 import { type KeywordHitWire, type SemanticHitWire } from "../state/searchHitView";
 
-export type KeywordSearchResult = {
+/** #30 coverage (`search-chunk-v1.md` section 21): whether the answer's
+ *  candidate read reached the server's bound, on both methods. */
+export type SearchCoverage = {
+  coverage: "full" | "partial";
+  coverage_reason: "candidate_ceiling" | null;
+  candidate_ceiling: number;
+};
+
+export type KeywordSearchResult = SearchCoverage & {
   match: "ngram" | "substring_scan";
   scan_reason: "short_query" | "index_unavailable" | null;
   hits: KeywordHitWire[];
 };
 
-export type SemanticSearchResult = {
+export type SemanticSearchResult = SearchCoverage & {
   embedding_profile: string;
   metric: "l2_squared";
   hits: SemanticHitWire[];

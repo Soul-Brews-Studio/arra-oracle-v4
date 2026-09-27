@@ -1,6 +1,6 @@
 import { fail } from "../contracts/errors";
-import { overfetch } from "../fts/fts";
-import { CHUNKER_VERSION, activeEmbeddingProfileId, groupKnowledgeHits, parseSearchKnowledgeSemantic, rankedChunk } from "./search-chunk";
+import { FTS_CANDIDATE_CEILING, overfetchCoverage } from "../fts/fts";
+import { CHUNKER_VERSION, activeEmbeddingProfileId, coverageSignal, groupKnowledgeHits, parseSearchKnowledgeSemantic, rankedChunk } from "./search-chunk";
 import { quote } from "./storage";
 import { SEARCH_CHUNKS } from "./service.constants";
 import { contextScope } from "./service.contextScope";
@@ -36,12 +36,21 @@ import { type DatasetAdapter, type QueryEmbedder } from "./service.types";
  *   distance between the query vector and one stored row's OWN vector, a
  *   per-row quantity, never a corpus-wide statistic like BM25's document
  *   frequency, so it carries no cross-workspace leak.
+ * - COVERAGE (#30, `search-chunk-v1.md` section 21): the overfetch loop's
+ *   own bound. When its last round read the whole `ceiling` of nearest
+ *   chunks and fewer than `limit` nodes survived (stale revisions, retired
+ *   nodes, several chunks of one node), a farther match may exist unread:
+ *   `coverage: "partial"`, `coverage_reason: "candidate_ceiling"`. An answer
+ *   that reached `limit`, or whose source ran dry, is `"full"`. The read is
+ *   prefiltered to the workspace, so the flag is workspace-local. `ceiling`
+ *   is `FTS_CANDIDATE_CEILING`; only tests inject another.
  */
 export async function searchKnowledgeSemantic(
   reader: DatasetAdapter,
   embedder: QueryEmbedder | undefined,
   requestBytes: Uint8Array,
   requestTimeMs?: number,
+  ceiling: number = FTS_CANDIDATE_CEILING,
 ) {
   const request = parseSearchKnowledgeSemantic(requestBytes);
   await requireWorkspace(reader, request.workspace_name);
@@ -61,15 +70,20 @@ export async function searchKnowledgeSemantic(
     ` AND chunker_version = ${quote(CHUNKER_VERSION)}`;
 
   const current = currentEligibleChunks(reader, request.workspace_name, null, requestTimeMs);
-  const hits = await overfetch(request.limit, async (fetch) => {
-    const candidates = await reader.vectorSearchChunks(vector, predicate, fetch);
-    const kept = await current(candidates.map((row) => rankedChunk(row, row._distance)));
-    return { fetched: candidates.length, kept: groupKnowledgeHits(kept.chunks, kept.heads, "ascending", null) };
-  });
+  const { kept: hits, saturated } = await overfetchCoverage(
+    request.limit,
+    async (fetch) => {
+      const candidates = await reader.vectorSearchChunks(vector, predicate, fetch);
+      const kept = await current(candidates.map((row) => rankedChunk(row, row._distance)));
+      return { fetched: candidates.length, kept: groupKnowledgeHits(kept.chunks, kept.heads, "ascending", null) };
+    },
+    ceiling,
+  );
 
   return {
     embedding_profile: profile,
     metric: "l2_squared" as const,
+    ...coverageSignal(saturated, ceiling),
     hits: hits.map((hit) => ({
       node_id: hit.node_id,
       revision_id: hit.revision_id,

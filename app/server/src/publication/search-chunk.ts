@@ -26,6 +26,7 @@
 
 export { EMBEDDING_DIMENSION } from "./search-chunk.embeddingProfile";
 export { CHUNKER_VERSION } from "./search-chunk.chunkerVersion";
+export { type CoverageReason, type CoverageSignal, coverageSignal } from "./search-chunk.coverageSignal";
 export { CHUNK_SIZE_CHARS, chunkText } from "./search-chunk.chunkText";
 export { CHUNK_STATUSES, type ChunkStatus } from "./search-chunk.storedStatus";
 export { MAX_RECONCILE_REVISIONS, type ReconcileSearchChunksRequest, parseReconcileSearch } from "./search-chunk.parseReconcileSearch";
