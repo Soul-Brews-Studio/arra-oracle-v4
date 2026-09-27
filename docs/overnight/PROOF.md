@@ -219,7 +219,7 @@ tests with 0 fail. Its per-issue verdict:
   - #8: the live leg passes at REST level, and the TABLE-level measurement (#129, `HONCHO-TABLE-DIFF.md`) found "byte-compatible" FALSE as stated and TRUE WITH CONVERSIONS for one bank (10 v4-only columns lost; `h_metadata` must be renamed to `metadata`; message ids collide across banks). Accepting that verdict, or funding true byte compatibility, is D11 in `NAT-DECISIONS.md`.
   - Chat providers other than local Ollama.
   - Everything in `DECISIONS.md` you want to overturn.
-- **Screenshots.** `Page.captureScreenshot` times out in ego lite on m5, even on a `data:` page,
-  and neither `bringToFront` nor focus emulation helps. The browser e2e therefore reports those
-  steps as FAIL, never as PASS. Restarting ego lite is Nat's call, because it would close his own space.
+- **Screenshots (resolved 2026-09-27).** `Page.captureScreenshot` timed out in ego lite on m5 for most of the day.
+  It works again without a restart, and the full `app/just/ui-e2e.sh` is now green: `PASS ok=28 fail=0 skip=1`,
+  with 13 fresh screenshots (`UI-E2E.md`, "Full green run"). The e2e still runs locally only; ego lite is not in CI.
 - **Merged.** #109 went into `main` on Nat's "merge all pr", and #110–#118 followed, each once accepted.

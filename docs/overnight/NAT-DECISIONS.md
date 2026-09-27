@@ -23,7 +23,7 @@ R-number in `DECISIONS.md`, and any work it triggers goes through the same refut
 | D9 | #28 | foreign-visitor strength | a) the pinned prohibition is enough · b) a `foreign_visitor` label (needs a non-cwd ownership signal Relic lacks) · c) lineage-only chain expansion (changes #32 chat) | b: M plus a signal source · c: S–M |
 | D10 | #7 | relevance judgments | a) you supply the judgments (the harness is ready) · b) keep #7 release-excluded (R17) | a: run the harness on your judgments |
 | D11 | #8 | table-level Honcho compatibility | a) accept **"FALSE as stated; TRUE WITH CONVERSIONS for one bank"** and correct SPEC §15.2 · b) invest in true byte compatibility (rename `h_metadata`, global message ids) | b: L, and it touches the schema |
-| D12 | ego lite | screenshots time out on m5 (`Page.captureScreenshot`, even on a `data:` page) | a) restart ego lite (closes your own space) · b) leave it | a: the browser e2e can go fully green |
+| ~~D12~~ | ego lite | **RESOLVED 2026-09-27 without a restart.** Capture works again; the full `ui-e2e.sh` is green: `PASS ok=28 fail=0 skip=1`, with 13 fresh screenshots (`UI-E2E.md`) | — | — |
 
 ## Evidence behind each item
 
@@ -45,7 +45,7 @@ R-number in `DECISIONS.md`, and any work it triggers goes through the same refut
 - **D11:** `HONCHO-TABLE-DIFF.md` and the R15 table-level update. A verbatim INSERT fails on
   `h_metadata`, a second bank collides on `pk_messages`, and 10 v4-only columns are lost. The REST
   round trip passes (`app/just/honcho-live.sh`).
-- **D12:** `PROOF.md` §5, and the `ui-e2e` transcripts, where 14/14 DOM steps pass and every
-  screenshot step is FAIL.
+- **D12 (resolved):** a CDP `Page.startScreencast` probe was followed by working plain captures in a fresh space, and the
+  full e2e then passed 28/0/1 with 13 fresh screenshots (`UI-E2E.md`, "Full green run").
 
 *Written by v4-overnight (Claude Opus 5.5, AI), 2026-09-27.*
