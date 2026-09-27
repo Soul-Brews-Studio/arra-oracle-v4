@@ -9,9 +9,22 @@
 // deadline and fails at the deadline, and a step's verdict is decided once.
 // Every retry prints a `RETRY ...` line, so a run that needed one says so.
 //
+// Output and lifetime: `ego-browser nodejs` hands the script's stdout back
+// only when the script exits (measured, 0.5.1.13), and killing that client
+// does not stop the script inside the ego service. So every line goes
+// through `say`, which appends it to the transcript file itself (the shell
+// streams and judges that file), and two checks bound the run from inside:
+// - `cfg.deadline` (epoch ms): past it, the current and every later step is
+//   a STEP_FAIL, so a slow run is a visible failure, never a silent kill;
+// - `cfg.lease` (a file the shell removes when it stops waiting): once it is
+//   gone the driver stops writing and aborts (`e.abort`), so a straggler can
+//   never add lines, or verdicts, after the shell has judged the run.
+//
 // Runs inside `ego-browser nodejs` (Node ESM, the ego SDK's globals), never in
 // the page; page-side code is passed to `page.evaluate` as self-contained
 // functions, because they cannot close over anything here.
+
+import { appendFileSync, existsSync } from "node:fs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const msg = (e) => String(e?.message ?? e).replace(/\s+/g, " ").slice(0, 400);
@@ -80,18 +93,40 @@ async function pageOps(ops) {
   return true;
 }
 
-export function makeHarness({ page, outDir }) {
+export function harness({ page, cfg }) {
+  const outDir = cfg.outDir;
   const failures = [];
   const shots = [];
+
+  const alive = () => existsSync(cfg.lease);
+  function say(line) {
+    if (!alive()) return;
+    appendFileSync(cfg.transcript, `${line}\n`);
+    console.log(line);
+  }
+  // Lease gone: abort (not a verdict). Deadline passed: an ordinary error,
+  // so it lands as the current step's STEP_FAIL.
+  function check() {
+    if (!alive()) throw Object.assign(new Error("lease revoked: the shell stopped waiting"), { abort: true });
+    if (Date.now() > cfg.deadline) throw new Error(`driver deadline passed (${new Date(cfg.deadline).toISOString()})`);
+  }
+
+  // After one screenshot has timed out on every attempt, the browser is not
+  // producing frames at all (measured: even a data: URL in a fresh space
+  // times out, while requestAnimationFrame and printToPDF still work), so
+  // later screenshots get ONE attempt. Each still fails on its own verdict;
+  // this only stops 13 x 47s of retries from eating the driver's budget.
+  let captureDead = false;
 
   async function retry(label, fn, attempts = 3) {
     let last;
     for (let i = 1; i <= attempts; i++) {
+      check();
       try {
         return await fn();
       } catch (e) {
         last = e;
-        console.log(`RETRY ${label} attempt ${i}/${attempts}: ${msg(e)}`);
+        say(`RETRY ${label} attempt ${i}/${attempts}: ${msg(e)}`);
         await sleep(400 * i);
       }
     }
@@ -124,6 +159,7 @@ export function makeHarness({ page, outDir }) {
     const until = Date.now() + timeout;
     let last = null;
     while (Date.now() < until) {
+      check();
       try {
         last = arg === undefined ? await page.evaluate(fn) : await page.evaluate(fn, arg);
         if (last && last.ok !== false) return last;
@@ -164,6 +200,7 @@ export function makeHarness({ page, outDir }) {
     const path = `${outDir}/e2e-${name}.png`;
     try {
       await retry(`screenshot ${name}`, async () => {
+        if (captureDead) say(`NOTE screenshot ${name}: one attempt only, an earlier capture timed out on every attempt`);
         await ensureViewport();
         if (focus !== null) {
           const found = await page.evaluate((t) => {
@@ -183,28 +220,32 @@ export function makeHarness({ page, outDir }) {
         await writeFile(path, Buffer.from(shotData.data, "base64"));
         const { size } = await stat(path);
         if (size < 12000) throw new Error(`near-blank screenshot (${size} bytes)`);
-      });
+      }, captureDead ? 1 : 3);
       shots.push(path);
-      console.log(`SHOT ${path}`);
+      say(`SHOT ${path}`);
     } catch (e) {
+      if (e.abort) throw e;
+      if (/timed out/.test(msg(e))) captureDead = true;
       failures.push(`screenshot-${name}`);
-      console.log(`STEP_FAIL screenshot-${name}: ${msg(e)}`);
+      say(`STEP_FAIL screenshot-${name}: ${msg(e)}`);
     }
   }
 
   async function step(name, fn) {
     try {
+      check();
       const detail = await fn();
       if (detail && detail.skip) {
-        console.log(`STEP_SKIP ${name} (${detail.skip})`);
+        say(`STEP_SKIP ${name} (${detail.skip})`);
         return;
       }
-      console.log(`STEP_OK ${name}${detail ? ` ${typeof detail === "string" ? detail : JSON.stringify(detail)}` : ""}`);
+      say(`STEP_OK ${name}${detail ? ` ${typeof detail === "string" ? detail : JSON.stringify(detail)}` : ""}`);
     } catch (e) {
+      if (e.abort) throw e;
       failures.push(name);
-      console.log(`STEP_FAIL ${name}: ${msg(e)}`);
+      say(`STEP_FAIL ${name}: ${msg(e)}`);
     }
   }
 
-  return { page, act, go, shot, step, waitDom, ensureViewport, failures, shots, sleep };
+  return { page, act, go, shot, step, waitDom, ensureViewport, say, check, failures, shots, sleep };
 }

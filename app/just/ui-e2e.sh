@@ -10,6 +10,7 @@
 # a fresh mktemp dir, printed at the end. UI_E2E_NO_BUILD=1 skips rebuilding
 # app/server/public/v2 from app/ui/v2 (by default it rebuilds, so a change to
 # the UI source is what gets tested; an unchanged tree rebuilds byte-identical).
+# UI_E2E_DRIVER_BUDGET (seconds, default 600) bounds the browser driver.
 #
 # Order:
 #   1. build the UI bundle (vite) into app/server/public/v2
@@ -21,7 +22,8 @@
 #      never reach the page)
 #   4. drive the UI with `ego-browser nodejs` (ui-e2e/drive.mjs): create ->
 #      revise -> cite -> correct -> retire a citer -> supersede -> evidence
-#      labels -> history byte-identity -> peer chat -> Thai keyword search
+#      labels -> history byte-identity -> peer chat -> Thai keyword search ->
+#      a revision's label snapshot surviving a term rename and later edits
 #   5. ALWAYS (trap on EXIT): clear the origin's storage and close the browser
 #      space (ui-e2e/teardown.mjs), stop the server, remove the mktemp root
 #
@@ -59,31 +61,38 @@ command -v ego-browser >/dev/null 2>&1 || { echo "STEP_FAIL preflight: ego-brows
 resolve_ollama
 
 CFG=""
-# Browser teardown, retried: the same `ego-browser nodejs` start-up stall the
-# driver watchdog covers also hit this call (runs 6-7 left their space open
-# and printed nothing). Output goes to a file, not a pipe, so an attempt that
-# dies still shows what it said. Three silent attempts is a loud
-# STEP_FAIL, and the run exits 1: a leaked token in localStorage is a
-# failure, not a footnote.
+LEASE=""
+# Browser teardown. teardown.mjs appends its own lines to teardown.txt as it
+# goes (stdout from `ego-browser nodejs` only arrives at exit). It is
+# idempotent -- clear one origin's storage, close one space -- so a second
+# attempt after a 60s timeout is safe even if the first is still running
+# inside the ego service. It counts only when it PROVES the origin clear
+# (`after=0`) and the space finished; otherwise STEP_FAIL and exit 1: a
+# leaked token in localStorage is a failure, not a footnote.
 BROWSER_DOWN_FAILED=0
 browser_down() {
+  [ -n "$LEASE" ] && rm -f "$LEASE"
   [ -n "$CFG" ] && [ -f "$CFG" ] || return 0
   [ -f "$ROOT/ego-space-id" ] || { echo "TEARDOWN no browser space was opened"; return 0; }
   local attempt log="$OUT/teardown.txt"
-  for attempt in 1 2 3; do
+  : >"$log"
+  for attempt in 1 2; do
     timeout 60 ego-browser nodejs -e "const m = await import('$E2E_DIR/teardown.mjs'); await m.teardown('$CFG');" \
-      >"$log" 2>&1 </dev/null
-    if rg -q '^TEARDOWN space ' "$log"; then
+      >"$OUT/teardown-stdout.txt" 2>&1 </dev/null
+    if rg -q '^TEARDOWN origin .* after=0$' "$log" && rg -q '^TEARDOWN space .* finished' "$log"; then
       rg '^TEARDOWN' "$log"
       return 0
     fi
-    echo "RETRY browser-teardown attempt $attempt/3: $(tail -c 300 "$log" | tr '\n' ' ')"
+    echo "RETRY browser-teardown attempt $attempt/2: $(tail -c 300 "$log" "$OUT/teardown-stdout.txt" | tr '\n' ' ')"
   done
-  echo "STEP_FAIL browser-teardown: space $(cat "$ROOT/ego-space-id") not closed and origin storage not proven clear"
+  rg '^TEARDOWN' "$log"
+  echo "STEP_FAIL browser-teardown: space $(cat "$ROOT/ego-space-id") not proven closed with origin storage after=0"
   BROWSER_DOWN_FAILED=1
 }
 cleanup() {
   local rc=$?
+  # An interrupted run can leave the transcript's `tail -F` behind.
+  local j; for j in $(jobs -p); do kill "$j" 2>/dev/null; done
   browser_down
   [ "$BROWSER_DOWN_FAILED" -eq 1 ] && rc=1
   demo_stack_down
@@ -97,7 +106,7 @@ trap 'exit 143' TERM
 
 step "build the v2 UI from app/ui/v2 into app/server/public/v2"
 if [ "${UI_E2E_NO_BUILD:-0}" = "1" ]; then
-  skip "ui-build" "UI_E2E_NO_BUILD=1, testing the bundle already on disk"
+  echo "STEP_SKIP ui-build (UI_E2E_NO_BUILD=1, testing the bundle already on disk)"
 else
   (cd "$APP/ui/v2" && bun run build) >"$OUT/ui-build.log" 2>&1 || { tail -20 "$OUT/ui-build.log"; fail "ui-build" "vite build failed"; }
   if [ -n "$(git -C "$APP/.." status --porcelain -- app/server/public/v2)" ]; then
@@ -155,61 +164,66 @@ echo "visible message ids: ${VISIBLE_IDS[*]}   secret session: $SECRET_SESSION (
 ok "seed"
 
 CFG="$ROOT/ui-e2e-config.json"
+LEASE="$ROOT/driver-lease"
+BUDGET="${UI_E2E_DRIVER_BUDGET:-600}"
 "$PY" - "$CFG" "$ORIGIN" "$PORT" "$TOKEN" "$OUT" "$ROOT/ego-space-id" "$OLLAMA_UP" "$OLLAMA_BASE" \
-  "$CHAT_PEER" "$CHAT_SESSION" "$CANARY" "${VISIBLE_IDS[@]}" <<'PY'
-import json, sys
-(cfg, origin, port, token, out, space, up, base, peer, session, canary), ids = sys.argv[1:12], sys.argv[12:]
+  "$CHAT_PEER" "$CHAT_SESSION" "$CANARY" "$LEASE" "$BUDGET" "${VISIBLE_IDS[@]}" <<'PY'
+import json, sys, time
+(cfg, origin, port, token, out, space, up, base, peer, session, canary, lease, budget), ids = sys.argv[1:14], sys.argv[14:]
 json.dump({"origin": origin, "port": port, "token": token, "outDir": out, "spaceFile": space,
            "ollamaUp": up == "1", "ollamaBase": base, "peer": peer, "session": session,
-           "canary": canary, "visibleMessageIds": ids}, open(cfg, "w"))
+           "canary": canary, "visibleMessageIds": ids,
+           "transcript": out + "/transcript.txt", "teardownLog": out + "/teardown.txt",
+           "lease": lease, "deadline": int(time.time() * 1000) + int(budget) * 1000}, open(cfg, "w"))
 PY
 
-# Measured flake: `ego-browser nodejs` can hang inside `taskSpace()` before
-# it touches the page (one run sat 8+ minutes with no output). Until the
-# driver prints `E2E_SPACE`, nothing has been asserted and no browser state
-# exists, so a start that does not print it within 90s is killed and
-# retried, at most 3 times. Once `E2E_SPACE` is out, the run is never
-# retried: its verdicts stand, whatever they are.
+# One driver attempt, never a retry. Measured on ego-browser 0.5.1.13:
+# `ego-browser nodejs` hands the script's stdout back only when the script
+# exits (0 bytes at t=5s of an 8s script, file or pipe alike), and killing
+# that client does not stop the script, which keeps running inside the ego
+# service. So a watchdog on stdout cannot see progress, and a restart would
+# drive the same server twice and could replace a slow run's STEP_FAILs with
+# a later attempt's STEP_OKs. Instead:
+#   - the driver appends every line to transcript.txt itself; `tail -F`
+#     streams it live, and the verdict is counted from it;
+#   - it stops itself at the config's deadline (BUDGET seconds from now):
+#     every step still running or not yet started is a STEP_FAIL;
+#   - `timeout` (BUDGET + 60s) is only a backstop for a call stuck inside
+#     the ego SDK. When it fires, or when the driver exits, the lease file is
+#     removed: from then on the driver writes nothing and aborts, and the
+#     verdict is read from a copy (verdict.txt) taken at that moment.
 run_driver() {
-  local attempt pid tailpid waited
-  for attempt in 1 2 3; do
-    : >"$OUT/transcript.txt"
-    timeout 900 ego-browser nodejs -e "const m = await import('$E2E_DIR/drive.mjs'); await m.drive('$CFG');" \
-      >"$OUT/transcript.txt" 2>&1 </dev/null &
-    pid=$!
-    waited=0
-    while kill -0 "$pid" 2>/dev/null && ! rg -q '^E2E_SPACE ' "$OUT/transcript.txt"; do
-      sleep 1
-      waited=$((waited + 1))
-      [ "$waited" -ge 90 ] && break
-    done
-    if rg -q '^E2E_SPACE ' "$OUT/transcript.txt"; then
-      tail -n +1 -f "$OUT/transcript.txt" &
-      tailpid=$!
-      wait "$pid"
-      DRIVER_RC=$?
-      sleep 0.5
-      kill "$tailpid" 2>/dev/null
-      wait "$tailpid" 2>/dev/null
-      return 0
-    fi
-    kill "$pid" 2>/dev/null
-    wait "$pid" 2>/dev/null
-    echo "RETRY driver-start attempt $attempt/3: no E2E_SPACE after ${waited}s; output: $(head -c 300 "$OUT/transcript.txt" | tr '\n' ' ')"
-  done
-  DRIVER_RC=1
-  echo "STEP_FAIL driver-start: ego-browser did not open a task space in 3 attempts" | tee -a "$OUT/transcript.txt"
+  local tailpid
+  : >"$OUT/transcript.txt"
+  : >"$LEASE"
+  tail -n +1 -F "$OUT/transcript.txt" 2>/dev/null &
+  tailpid=$!
+  timeout "$((BUDGET + 60))" ego-browser nodejs -e "const m = await import('$E2E_DIR/drive.mjs'); await m.drive('$CFG');" \
+    >"$OUT/driver-stdout.txt" 2>&1 </dev/null
+  DRIVER_RC=$?
+  rm -f "$LEASE"
+  sleep 0.5
+  kill "$tailpid" 2>/dev/null
+  wait "$tailpid" 2>/dev/null
+  cp "$OUT/transcript.txt" "$OUT/verdict.txt"
+  if [ "$DRIVER_RC" -eq 124 ]; then
+    echo "STEP_FAIL driver-timeout: no exit within $((BUDGET + 60))s (budget ${BUDGET}s)" | tee -a "$OUT/verdict.txt"
+  fi
+  if [ "$DRIVER_RC" -ne 0 ]; then
+    echo "driver exited rc=$DRIVER_RC; the last of its stdout/stderr:"
+    tail -n 15 "$OUT/driver-stdout.txt"
+  fi
 }
 
 step "drive the built UI with ego-browser (ui-e2e/drive.mjs)"
 DRIVER_RC=1
 run_driver
 
-N_OK=$(rg -c '^STEP_OK ' "$OUT/transcript.txt" || true)
-N_FAIL=$(rg -c '^STEP_FAIL ' "$OUT/transcript.txt" || true)
-N_SKIP=$(rg -c '^STEP_SKIP ' "$OUT/transcript.txt" || true)
+N_OK=$(rg -c '^STEP_OK ' "$OUT/verdict.txt" || true)
+N_FAIL=$(rg -c '^STEP_FAIL ' "$OUT/verdict.txt" || true)
+N_SKIP=$(rg -c '^STEP_SKIP ' "$OUT/verdict.txt" || true)
 echo
-if [ "$DRIVER_RC" -ne 0 ] || ! rg -q '^E2E_DRIVER_DONE$' "$OUT/transcript.txt" || [ "${N_FAIL:-0}" -gt 0 ]; then
+if [ "$DRIVER_RC" -ne 0 ] || ! rg -q '^E2E_DRIVER_DONE$' "$OUT/verdict.txt" || [ "${N_FAIL:-0}" -gt 0 ]; then
   echo "UI_E2E_RESULT FAIL ok=${N_OK:-0} fail=${N_FAIL:-0} skip=${N_SKIP:-0} driver_rc=$DRIVER_RC"
   exit 1
 fi
