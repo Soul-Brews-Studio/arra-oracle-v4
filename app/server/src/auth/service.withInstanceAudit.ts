@@ -14,12 +14,17 @@
  * refused call writes an `outcome: "refused"` row with no principal, and an
  * admitted call writes `outcome: "admitted"` whether `run` then succeeds or
  * throws. One row either way; never zero, never two.
+ *
+ * #31 R25 (Nat D4b): `route`/`action` widened from the two maintenance
+ * literals to `string` so `/api/instance-audit`'s own reader (an
+ * `instance-audit:read` action, not a `GlobalAction`) can reuse this same
+ * one-row-either-way wrapper instead of a second copy of the try/catch shape.
  */
 
 export async function withInstanceAudit<T>(
   write: (record: Record<string, unknown>) => Promise<void>,
-  route: "/api/backfill" | "/api/reindex",
-  action: "maintenance:backfill" | "maintenance:reindex",
+  route: string,
+  action: string,
   input: unknown,
   admit: () => { principalId: string | null },
   run: () => Promise<T>,
