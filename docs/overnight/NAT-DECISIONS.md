@@ -17,7 +17,7 @@ R-number in `DECISIONS.md`, and any work it triggers goes through the same refut
 | D11 | a) accept the measured verdict, correct SPEC, close #8 | R15 "Ruled", SPEC §15.2; #8 closed by #122 |
 | D12 | resolved without a restart: screenshots work again after a CDP screencast probe; `ui-e2e.sh` PASS ok=28 fail=0 skip=1 | `UI-E2E.md` |
 | — | #75 closed after R23 merged (#134) | R23 |
-| D3 | b) build peer representation and node/revision-grounded context | R24; slice in progress |
+| D3 | b) build peer representation and node/revision-grounded context | R24; landed on `v4/on-peer-representation` (verifier ACCEPT) |
 | D4 | b) a separate instance-level audit log for `/api/backfill` and `/api/reindex` | R25; #126 in progress |
 | D5 | a) validate the legacy `remember` tool | R26; slice in progress |
 | D6 | a) #10 closed on the target-19 design | R27 |

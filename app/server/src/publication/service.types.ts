@@ -378,7 +378,7 @@ export type ContextOptions = KnowledgeOptions & {
 /** What the chat facade needs from a reader: context assembly, nothing else
  *  (#32 / R9). A writer's context facade satisfies it too, but the transport
  *  composes chat over the READER bundle only. */
-export type ChatReader = { getContext(requestBytes: Uint8Array): Promise<ContextResult> };
+export type ChatReader = { getContext(requestBytes: Uint8Array, requestTimeMs?: number): Promise<ContextResult> };
 
 export type ChatService = ReturnType<typeof createChatService>;
 

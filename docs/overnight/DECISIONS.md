@@ -434,6 +434,13 @@ v3". Measured usage on this machine: 709 real v3 tool calls; `oracle_search` 46%
   - A model-free, write-free `getRepresentation` (method 58) on HTTP, MCP and CLI.
   - A token-estimate and watermark block.
   - No new core tables (DESIGN.md §12).
+- **Landed** (v4/on-peer-representation, verifier round 2 ACCEPT): `getRepresentation`
+  (58 methods on HTTP/MCP/CLI, as `POST /api/knowledge/:bank/getRepresentation` per the
+  registry recipe, not the GET that DESIGN.md §12 sketches); conclusions scoped to the
+  requested sessions/chain; a `budget` block (named estimate, `tokenizer: null`) and a
+  `freshness` block (`assembled_at`, table-version watermarks, index `"unknown"`).
+  Contracts: `representation-v1.md` (new), `chat-v1.md` amendment. `summary` stays null:
+  no `summary` type term is seeded, so the stored-summary path is untested.
 
 ## R25 · #31 instance-level maintenance routes audit to a separate instance log
 

@@ -10,7 +10,7 @@ This file holds only Claude Code session guidance, not a second design authority
 ## Orientation
 
 - Read `AGENTS.md` and `DESIGN.md` for current Python/LanceDB/TS direction. `SPEC.md` preserves historical rationale, including superseded architecture.
-- Active code exists in `app/`; inspect `git status`/HEAD rather than assuming a branch or PR state. The 19-table target is built and enforced by the TypeScript runtime, and it serves 57 knowledge methods on HTTP, MCP and CLI, but it is not the default migration: `python -m arra_migrate` still creates the 15-table set, and `target-19-manifest.json` still says `proposed-not-active`. AGENTS.md "Current implementation" has the measured detail.
+- Active code exists in `app/`; inspect `git status`/HEAD rather than assuming a branch or PR state. The 19-table target is built and enforced by the TypeScript runtime, and it serves 58 knowledge methods on HTTP, MCP and CLI, but it is not the default migration: `python -m arra_migrate` still creates the 15-table set, and `target-19-manifest.json` still says `proposed-not-active`. AGENTS.md "Current implementation" has the measured detail.
 - `ψ/` is a symlink to the shared neo-oracle vault. **Never `git add` anything under it.**
 
 ## Before you edit `SPEC.md`

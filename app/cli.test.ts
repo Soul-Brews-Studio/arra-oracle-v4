@@ -331,6 +331,32 @@ describe("CLI kb friendly aliases (#31 R8)", () => {
     expect(requests[0]?.body).toMatchObject({ workspace_name: "test-bank", peer_name: "nat", session_name: "standup", question: "what happened?" });
   });
 
+  test("D3b: context get / chat ask forward --observer and --about as the perspective keys, and omit them otherwise", async () => {
+    let r = await run("context", "get", "--bank", "test-bank", "--peer", "nat", "--session", "standup", "--observer", "neo", "--about", "nat");
+    expect(r.code).toBe(0);
+    expect(requests[0]?.body).toEqual({
+      workspace_name: "test-bank", peer_name: "nat", session_name: "standup", max_items: 10,
+      observer_peer_name: "neo", subject_peer_name: "nat",
+    });
+    requests.length = 0;
+    r = await run("chat", "ask", "--bank", "test-bank", "--peer", "nat", "--session", "standup", "--question", "q?", "--observer", "neo", "--about", "nat");
+    expect(r.code).toBe(0);
+    expect(requests[0]?.body).toMatchObject({ observer_peer_name: "neo", subject_peer_name: "nat" });
+    requests.length = 0;
+    r = await run("context", "get", "--bank", "test-bank", "--peer", "nat", "--session", "standup");
+    expect(Object.keys(requests[0]?.body).sort()).toEqual(["max_items", "peer_name", "session_name", "workspace_name"]);
+  });
+
+  test("D3b: peer context maps onto getRepresentation (observer -> about)", async () => {
+    const r = await run("peer", "context", "--bank", "test-bank", "--observer", "neo", "--about", "nat", "--requester", "nat");
+    expect(r.code).toBe(0);
+    expect(requests[0]?.path).toBe("/api/knowledge/test-bank/getRepresentation");
+    expect(requests[0]?.body).toEqual({
+      workspace_name: "test-bank", observer_peer_name: "neo", subject_peer_name: "nat", max_items: 10,
+      requester_peer_name: "nat",
+    });
+  });
+
   test("aliases carry credentials under the same #25 §5 rule", async () => {
     const r = await run("peer", "add", "--bank", "test-bank", "--name", "nat");
     expect(r.code).toBe(0);

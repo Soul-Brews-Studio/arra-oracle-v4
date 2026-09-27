@@ -450,3 +450,57 @@ result. `answerChat` uses a stub model. Test: `app/server/test/chat-coverage.tes
 and the link bound still lead the list", and the describe block "the same results
 over the live transports". A mutant that records the two fixed entries after the item
 loop fails 5 of those tests.
+
+## Amendment 2026-09-26 (post-merge Nat 2026-09-28 NAT-DECISIONS D3b: peer representation plus node/revision-grounded context IS owed (AC-MATRIX slice 11, then slice 10))
+
+**Change.** Chat is no longer grounded in messages only. The introduction's "no `conclusion`
+table" statement still holds: a conclusion is the reserved `type` term of R10, stored as an
+ordinary node revision. No table was added.
+
+- **Request grammar (§1).** `getContext` and `answerChat` accept two OPTIONAL keys,
+  `observer_peer_name` and `subject_peer_name` (`S(<=256B)` or null). When they are omitted,
+  the request and its behaviour are what they were before. They narrow which conclusions are
+  selected. They never change permissions: the requester is still `peer_name`, with the same
+  current-membership rule. They are not acting peers, so `PEER_FIELDS` does not list them. A
+  name that is not a peer of the workspace is `invalid_reference` at that field. That check
+  runs after the requester's own membership check.
+- **Result (§2).** `getContext` adds `scope` (requested session, effective sessions,
+  observer, subject), `conclusions`, `summary`, `conclusions_coverage: {complete}`,
+  `budget` and `freshness`. `answerChat` adds `conclusions_used: [{node_id, revision_id}]`
+  (citations beside `items_used` message ids), `conclusions_coverage`, `budget` and
+  `freshness`. The selection rule, the conclusion shape and the budget and freshness blocks
+  are defined in `representation-v1.md` §4-§5. `getContext` shares them with the new
+  `getRepresentation`.
+- **Scope.** Conclusions have the SAME scope as messages: the requested session, the linked
+  chain reported in `scope.effective_sessions`, and session-less (workspace-level)
+  conclusions. A conclusion recorded in any other session is not part of the context, even
+  when the requester is a member there, and raises no flag. (Fix round, 2026-09-28: the first
+  cut selected from every session the requester belonged to while `effective_sessions` said
+  only the requested one, and a protected conclusion anywhere in the workspace made every
+  context `"partial"`. See `representation-v1.md` §4 item 6.)
+- **Read boundary.** Inside that scope, a conclusion recorded in a linked session the
+  requester is not a current member of is withheld. So is a source handle into a session it
+  may not read. Only coarse flags report it: `conclusions_coverage.complete: false`,
+  `sources_incomplete: true`, `coverage: "partial"`. No counts and no ids. `coverage` is
+  `"full"` only when neither messages nor in-scope conclusions were excluded. This extends R4.
+- **Budget.** Conclusions come first in the existing `MAX_CONTEXT_WIRE_BYTES` budget, and
+  messages share what is left. Conclusions are also bounded by `max_items`. `budget` names an
+  ESTIMATE (`tokenizer: null`, `token_count_kind: "estimate"`, `ceil(utf8_bytes/4)`). This
+  server has no tokenizer and claims no exact token count.
+- **Freshness.** `assembled_at` is the registry's request time, the same value used as the
+  eligibility `as_of`. The source watermarks are table versions. `index_watermark` is
+  `"unknown"`, because context reads no search index.
+- **Prompt.** `renderContextText` puts one line per conclusion before the messages:
+  `[conclusion <revision_id>] <observer> -> <subject>: <text>`. The model input also
+  carries `conclusions`.
+- **Surfaces.** HTTP and MCP carry the keys unchanged through the registry. The CLI aliases
+  `context get` and `chat ask` take `--observer` and `--about`, and send the keys only when
+  those flags are given.
+
+**Reason.** Nat ruled D3b on 2026-09-28 (`docs/overnight/NAT-DECISIONS.md`, recorded in
+`docs/overnight/DECISIONS.md`). Peer representation plus node/revision-grounded context is
+owed before #32 and #31 can close. This amendment is AC-MATRIX slice 11 (then slice 10), as
+DESIGN.md §12 specifies.
+
+**Evidence.** `app/server/test/context-peer-representation.test.ts` (18 tests after the fix
+round) runs against a real gated dataset through the production registry, HTTP and MCP.
