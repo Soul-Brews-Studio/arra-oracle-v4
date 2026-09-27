@@ -213,6 +213,26 @@ if (subcommand === "search") {
     );
   }
 
+  if (first === "__shared_cwd__") {
+    // #28 "cwd-only foreign visitor" (docs/overnight/FOREIGN-VISITOR.md): an
+    // owner session and a visitor from another oracle's corpus that RAN IN
+    // THE SAME DIRECTORY. relic files both under one cwd-derived `repo` key
+    // and one project folder; nothing in the row says whose corpus a session
+    // belongs to. The owner's hit ranks first on purpose.
+    const folder = "/Users/nat/.claude/projects/-opt-Code-github-com-example-neo-oracle";
+    printAndExit(
+      JSON.stringify({
+        query: first,
+        hits: [
+          { session_uuid: "s-owner", file_path: `${folder}/s-owner.jsonl`, repo: "projects/github.com/example/neo-oracle",
+            source: "claude-live", seq: 3, role: "assistant", ts: "2026-09-16T10:00:00.000Z", text: "owner hit" },
+          { session_uuid: "s-visitor", file_path: `${folder}/s-visitor.jsonl`, repo: "projects/github.com/example/neo-oracle",
+            source: "claude-live", seq: 9, role: "assistant", ts: "2026-09-16T10:05:00.000Z", text: "visitor hit, same cwd" },
+        ],
+      }),
+    );
+  }
+
   printAndExit(
     JSON.stringify({
       query: first,
