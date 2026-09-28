@@ -7,7 +7,8 @@
 // nothing. When set, the three openers below resolve to it instead, and
 // `ARRA_DATA_DIR` no longer holds ops tables at all.
 
-import { DATA_DIR, storageOptionsForRoot } from "./storage.storageOptions";
+import { DATA_DIR } from "./storage.storageOptions";
+import { storageOptionsForRoot } from "./storage.storageOptionsForRoot";
 
 export const OPS_DIR = process.env.ARRA_OPS_DIR ?? DATA_DIR;
 export const isOpsRootSeparate = process.env.ARRA_OPS_DIR !== undefined;

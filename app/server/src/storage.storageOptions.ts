@@ -12,42 +12,10 @@
 // needs no DynamoDB for it -- conditional put has been the default since
 // lance-format#2793, and R2 honours If-Match/If-None-Match.
 
+import { storageOptionsForRoot } from "./storage.storageOptionsForRoot";
+
 export const DATA_DIR = process.env.ARRA_DATA_DIR ?? "../data";
 export const isRemote = DATA_DIR.startsWith("s3://");
-
-// Generalised so `storage.opsRoot.ts` (R33 S4(a)) can ask for options for a
-// SEPARATE root (`ARRA_OPS_DIR`) that may itself be `s3://` -- same env-var
-// idiom, just parameterised over which root/dir env var is in play.
-export function storageOptionsForRoot(root: string): Record<string, string> | undefined {
-  if (!root.startsWith("s3://")) return undefined;
-
-  const account = process.env.R2_ACCOUNT_ID;
-  const endpoint =
-    process.env.S3_ENDPOINT ??
-    (account ? `https://${account}.r2.cloudflarestorage.com` : undefined);
-  const key = process.env.AWS_ACCESS_KEY_ID;
-  const secret = process.env.AWS_SECRET_ACCESS_KEY;
-
-  // Fail here, loudly, rather than let LanceDB retry an unauthenticated
-  // request and surface it later as a confusing 400 from the object store.
-  const missing = [
-    !endpoint && "S3_ENDPOINT or R2_ACCOUNT_ID",
-    !key && "AWS_ACCESS_KEY_ID",
-    !secret && "AWS_SECRET_ACCESS_KEY",
-  ].filter(Boolean);
-  if (missing.length) {
-    throw new Error(`${root} needs ${missing.join(", ")} — see ~/.config/arra-oracle-v4/r2.env`);
-  }
-
-  return {
-    endpoint: endpoint!,
-    region: process.env.S3_REGION ?? "auto", // R2 ignores it; the client demands one
-    access_key_id: key!,
-    secret_access_key: secret!,
-    // Only for a local http S3 (moto, MinIO). R2 is https and must stay so.
-    allow_http: String(endpoint!.startsWith("http://")),
-  };
-}
 
 export function storageOptions(): Record<string, string> | undefined {
   return storageOptionsForRoot(DATA_DIR);

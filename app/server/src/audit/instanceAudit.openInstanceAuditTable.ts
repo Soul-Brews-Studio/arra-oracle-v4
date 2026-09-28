@@ -28,7 +28,7 @@
 
 import { connect, type Table } from "@lancedb/lancedb";
 import { Field, Int64, Schema, Utf8 } from "apache-arrow";
-import { OPS_DIR, opsStorageOptions } from "../storage.opsRoot";
+import { OPS_DIR, opsStorageOptions } from "../storage.opsStorageOptions";
 
 const TABLE = "instance_audit";
 
@@ -72,7 +72,7 @@ let tablePromise: Promise<Table> | null = null;
 
 // R33 S4(a) (Nat 2026-09-28, docs/overnight/DECISIONS.md): this table lives
 // under `ARRA_OPS_DIR` when set, else falls back to `ARRA_DATA_DIR` unchanged
-// (`storage.opsRoot.ts`).
+// (`storage.opsStorageOptions.ts`).
 export async function openInstanceAuditTable(): Promise<Table> {
   tablePromise ??= (async () => {
     handle ??= await connect(OPS_DIR, { storageOptions: opsStorageOptions() });

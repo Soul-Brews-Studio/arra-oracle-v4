@@ -925,7 +925,7 @@ R33 S4(a).
 
 Where §"Amendment 2026-09-26 (overnight R5)" above says `mcp_calls` and `connections` are
 read from "the operations root, `ARRA_DATA_DIR`", read that as: the operations root is now
-`ARRA_OPS_DIR` when that env var is set, else `ARRA_DATA_DIR` unchanged (`storage.opsRoot.ts`).
+`ARRA_OPS_DIR` when that env var is set, else `ARRA_DATA_DIR` unchanged (`storage.opsStorageOptions.ts`).
 The same applies to `instance_audit` (D4b, above). No admission, redaction, or wire-contract
 behaviour changed — only WHICH physical Lance root the three tables' single opener
 (`mcp/calls.openCallLogTable.ts`, `mcp/connections.openConnectionsTable.ts`,

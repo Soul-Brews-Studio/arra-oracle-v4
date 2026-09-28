@@ -15,7 +15,7 @@
 // too. Every call below re-opens the table from the manifest.
 
 import { connect } from "@lancedb/lancedb";
-import { OPS_DIR, opsStorageOptions } from "../storage.opsRoot";
+import { OPS_DIR, opsStorageOptions } from "../storage.opsStorageOptions";
 
 const TABLE = "connections";
 
@@ -23,7 +23,7 @@ let handle: Awaited<ReturnType<typeof connect>> | null = null;
 
 // R33 S4(a) (Nat 2026-09-28, docs/overnight/DECISIONS.md): this table lives
 // under `ARRA_OPS_DIR` when set, else falls back to `ARRA_DATA_DIR` unchanged
-// (`storage.opsRoot.ts`).
+// (`storage.opsStorageOptions.ts`).
 export async function openConnectionsTable() {
   handle ??= await connect(OPS_DIR, { storageOptions: opsStorageOptions() });
   return handle.openTable(TABLE);

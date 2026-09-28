@@ -19,7 +19,7 @@ IS_REMOTE = DATA_DIR.startswith("s3://")
 
 # R33 S4(a) (Nat 2026-09-28, docs/overnight/DECISIONS.md): the sibling root
 # the ops tables (`mcp_calls`, `connections`, `instance_audit`) move to.
-# Unset -> falls back to DATA_DIR, matching the TS side's `storage.opsRoot.ts`
+# Unset -> falls back to DATA_DIR, matching the TS side's `storage.opsStorageOptions.ts`
 # exactly (unset changes nothing).
 OPS_DIR = os.environ.get("ARRA_OPS_DIR", DATA_DIR)
 OPS_DIR_IS_SEPARATE = "ARRA_OPS_DIR" in os.environ
