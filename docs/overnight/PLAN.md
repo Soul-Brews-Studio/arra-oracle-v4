@@ -468,3 +468,17 @@ Every slice below went through the same loop as the night: implement → indepen
   hashes were unchanged. Nat ruled R32: start v4 fresh on target-19 with no migration. Slice
   `v4/on-cutover-rehearsal` does this: the migrator defaults to target-19, active-15 is
   available behind `--legacy-active15`, and the manifest is `active`. It was ACCEPTED in round 1.
+- **Evolution, measured with relic** (`relic sessions --since 30d --all-tiers`, counting
+  sessions whose repo or worktree is arra-oracle-v4, subagents and workflow agents included):
+  654 sessions in total. They split into three bursts:
+
+  | Date | Sessions | Burst |
+  |---|---|---|
+  | 09-19 | 9 | spec and schema design (SPEC through v26.9.20) |
+  | 09-20 | 76 | spec and schema design |
+  | 09-21 | 190 | spec and schema design |
+  | 09-26 | 182 | the overnight build (#109) |
+  | 09-27 | 189 | the overnight build (#109) |
+  | 09-28 | 8 | rulings and finish (so far; the index lags) |
+
+  The whole issue list closed between 09-26 and 09-28.
