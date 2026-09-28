@@ -102,7 +102,11 @@ this worktree, today, 0 failures.
     the closed envelope plus both digests"` (R20 `embedding_profile_mismatch`).
 - **Proposed-not-active contract object:** `app/server/test/target-schema-cross-language.
   test.ts:150`, `expect(golden.status).toBe("proposed-not-active")`, cross-checked against
-  the Python side at `app/migrate-py/tests/test_target_manifest.py:19` and
+  the Python side at `app/migrate-py/tests/test_target_manifest.py:23` *(re-pin
+  2026-09-28: line moved; the assertion itself changed by R32 (#135, 2026-09-28) from
+  `assertEqual(manifest["status"], "proposed-not-active")` to `"active"` — target19 is
+  now the default migrator output, a semantic change outside this doc-hygiene pass; see
+  `docs/overnight/DECISIONS.md`)* and
   `test_target_schema_v1.py:114` *(sweep: the `proposed-not-active` assertion is `:115`; `:114` asserts `registry_version`)*.
   - Run: `bun test test/transport-ownership.test.ts test/search-chunk-digest-boot.test.ts
     test/target-schema-cross-language.test.ts test/contract-v1.test.ts` -> **`32 pass /
@@ -111,12 +115,16 @@ this worktree, today, 0 failures.
   needed — this is a data-flow fact, not a behavior with its own assertion surface).
   Traced the literal parameter across three layers with no lookup/mapping table
   anywhere in between:
-  - `app/server/src/app.ts:145,212` *(sweep 2026-09-27: now `:160,227-228`, after PRs #124/#125 edited `app.ts`)*: the route is `POST /mcp/:bank`; `params.bank` is
+  - `app/server/src/app.createApp.ts:170,229` *(re-pin 2026-09-28: `app.ts` split into
+    `app.createApp.ts` by style-split6; `params.bank` sites now here)*: the route is
+    `POST /mcp/:bank`; `params.bank` is
     passed as the FIRST positional argument straight into `mcpHandle(params.bank, ...)`.
-  - `app/server/src/mcp/index.ts:224-246`: `createMcpAdapter`'s returned `handle`
+  - `app/server/src/mcp/index.createMcpAdapter.ts:13-31` *(re-pin 2026-09-28: `createMcpAdapter`
+    moved out of the `mcp/index.ts` barrel into its own file)*: `createMcpAdapter`'s returned `handle`
     receives that value as its own `bank` parameter and passes it straight into
     `service.runMcp(authorization, bank, ...)`.
-  - `app/server/src/auth/service.ts:322-350` *(sweep: now `:331-363`)*: `runMcp`'s second parameter is literally
+  - `app/server/src/auth/service.createOperationService.ts:330-362` *(re-pin 2026-09-28:
+    `auth/service.ts` renamed to `auth/service.createOperationService.ts`)*: `runMcp`'s second parameter is literally
     named `workspace`, and it is used unchanged as `{ kind: "workspace", workspace,
     action }` for admission — the same string, no lookup.
   There is no `workspaces` table join or rename step anywhere on this path: the bank
@@ -147,7 +155,7 @@ not a live-rendered pin — recorded honestly as a smaller residual gap.
   count below), and each later slice amends its own contract, not this one.
   - Current count, verified today: `bun test test/context-ownership.test.ts` ->
     **`10 pass / 0 fail`, 69 expect() calls, 11.82s** — pins the writer at 33 and the
-    reader at 21 context methods (`context-ownership.test.ts:52-53`).
+    reader at 21 context methods (`context-ownership.test.ts:50-51`).
 - **Before/after manifest, replacing `delivery-gates.md:51`'s stale `11cf723` snapshot:**
   `delivery-gates.md`'s "Latest verification scope" section still cites a commit
   (`11cf7235a815234d305f338982cf2cf53ef21197`, dated 2026-09-20) that predates the

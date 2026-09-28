@@ -366,7 +366,7 @@ joining.
 Two more behaviours:
 
 - `chat ask` waits up to 75 s, longer than the server's 60 s model bound, so a slow answer
-  arrives as the server's own result (`app/cli.ts:187-194`).
+  arrives as the server's own result (`app/cli.ts:192-198`).
 - `bun app/cli.ts help` does not list `--history` for `nodes list`, although the alias
   accepts it.
 

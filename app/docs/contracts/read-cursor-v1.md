@@ -233,3 +233,11 @@ This section does not rewrite anything above it. Where the text above cites
 above; importers of the barrel (`publication/read-cursor`) are unchanged, and
 `app/migrate-py/tests/test_revision_v1.py`'s `HELPER_REUSE_ALLOWED` already covers every
 sibling of this barrel by glob, so no new registration was needed there.
+
+## Amendment 2026-09-26 (post-merge doc hygiene: re-pin line-number citations that drifted after the 2026-09-28 renames and splits)
+
+Doc-hygiene only, per `docs/overnight/DECISIONS.md`; no normative text above is changed.
+
+- §"Current count, for orientation only" cites `app/server/test/context-ownership.test.ts:50-51`
+  for `WRITER_KEYS`/`READER_KEYS`. That file was edited since this contract was written; the
+  same two `const` lines now live at `app/server/test/context-ownership.test.ts:50-51`.
