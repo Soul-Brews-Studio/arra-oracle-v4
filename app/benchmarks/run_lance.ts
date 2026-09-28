@@ -18,7 +18,7 @@
 // Four profiles, one candidate pool, one eligibility filter, so the numbers
 // are actually comparable:
 //   - `icu`      -- exactly the product's current FTS config (mirrors
-//                   app/server/src/db.ts:112). Duplicated here rather than
+//                   app/server/src/db.ensureFtsIndex.ts). Duplicated here rather than
 //                   imported because db.ts exports nothing today; see the
 //                   TODO on ICU_LEGACY_PRODUCT_FTS_OPTIONS.
 //   - `ngram3`   -- SPEC/R14's ngram(3,3), no stem, no stop words. See the
@@ -78,7 +78,7 @@ export function composeIndexedText(title: string, body: string): string {
 }
 
 /**
- * Mirrors `app/server/src/db.ts:112` exactly -- the product's CURRENT FTS
+ * Mirrors `app/server/src/db.ensureFtsIndex.ts` exactly -- the product's CURRENT FTS
  * config (`Index.fts({ baseTokenizer: "icu" })`, every other option left at
  * its LanceDB default).
  *

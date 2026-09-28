@@ -791,6 +791,19 @@ class IsolationTests(unittest.TestCase):
         #     (`failTaxonomy`/`TaxonomyError`) to carry the identical closed
         #     envelope `kb_publishRevision` already refuses with.
         TS_ROOT / "mcp" / "remember.validateType.ts",
+        #   - knowledge/transport.state.ts / transport.createKnowledgeAccess.ts
+        #     (style-split4b, 2026-09-28): split out of transport.ts (an
+        #     existing reviewed consumer) for the one-function-per-file ratchet.
+        #     transport.state.ts carries only the TYPE imports (`ChatModelFn`,
+        #     `ChatSettings`, `QueryEmbedder`, `KnowledgeBundle`/`KnowledgeAction`)
+        #     transport.ts's own config/access shapes always cited; no runtime
+        #     kernel call. transport.createKnowledgeAccess.ts is the writer-
+        #     ownership factory itself, moved verbatim -- same
+        #     openEvidenceReader/openEvidenceWriter/createChatService calls
+        #     transport.ts made before the split, still the sole doorway
+        #     transport.ts's own barrel re-exports.
+        TS_ROOT / "knowledge" / "transport.state.ts",
+        TS_ROOT / "knowledge" / "transport.createKnowledgeAccess.ts",
     )
 
     def test_no_active_server_source_imports_the_publication_kernel(self):
