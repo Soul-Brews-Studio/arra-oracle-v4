@@ -60,7 +60,7 @@ The Python registry defines Arrow types; opening it from TypeScript does not add
 `bun run --cwd app/server start` refuses to boot without `ARRA_AUTH_POLICY`, an
 absolute path to an owner-only (0600) `arra-auth/v1` policy file. It exits 1 with
 `ARRA_AUTH_POLICY must be an absolute path to the policy file`
-(`composition.ts:84-87`). The sequence below starts a working server. It was re-run on
+(`composition.readConfig.ts:5-8`; style-split6 split this out of `composition.ts`). The sequence below starts a working server. It was re-run on
 2026-09-27 against a fresh `mktemp -d` on `e00b50b`, with only `PORT` changed to a random
 free port: every step exited 0, `/health` answered 200, and `tools/list` returned 65 tools. It also builds the
 target19 dataset the knowledge transport needs, since the plain `arra_migrate`
@@ -202,7 +202,7 @@ kb_scanDependents kb_reconcileRevisionAssociations
 
 **v3-compatible tools** (R18; design in `docs/overnight/V3-PARITY.md`). The family lives in
 `server/src/mcp/legacy-v3/` and is served only with `ARRA_MCP_V3_COMPAT=1` (exactly `1`,
-`composition.ts:211-213`). It lets an existing arra-oracle v3 client talk to v4 unchanged.
+`composition.composeV3Compat.ts:7-8`; style-split6 split this out of `composition.ts`). It lets an existing arra-oracle v3 client talk to v4 unchanged.
 Measured live with the flag on, before D3b added `getRepresentation`: `tools/list` returns 90 (8 + 57 + 25).
 
 ```text
