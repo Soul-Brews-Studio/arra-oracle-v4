@@ -159,7 +159,7 @@ GET /                                             foreign Host  400
 
 A missing, repeated or malformed `?bank` is refused with 400 before admission (`app.createApp.ts:93-99`,
 `:269-274`), so the 401 needs a bank (`test/auth-integration.test.ts:97-107`,
-`test/mcp-correctness.test.ts:467-469`).
+`test/mcp-correctness.test.ts:470-472`).
 
 The bearer's policy grants (`content:read`/`write`, `audit:read`, `diagnostics:read`,
 `maintenance:backfill`/`reindex`) gate every protected method. The dev policy from

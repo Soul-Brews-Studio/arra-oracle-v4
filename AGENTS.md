@@ -96,7 +96,7 @@ Every number here was measured on `e00b50b` on 2026-09-27: counts come from the 
   GET /                                             foreign Host  400
   ```
 
-  A missing, repeated or malformed `?bank` is refused with 400 before admission (`app.createApp.ts:93-99`, `:269-274`), so the 401 needs a bank. Both are pinned: `auth-integration.test.ts:97-107` (401) and `mcp-correctness.test.ts:467-469` (400).
+  A missing, repeated or malformed `?bank` is refused with 400 before admission (`app.createApp.ts:93-99`, `:269-274`), so the 401 needs a bank. Both are pinned: `auth-integration.test.ts:97-107` (401) and `mcp-correctness.test.ts:470-472` (400).
 - **Membership boundary (R3).**
   - `listMessages`, `getMessage` and `listSessionMembers` take an optional `requester_peer_name` (`publication/context.requireMessageReadAuthority.ts`, `service.requireCurrentMembership.ts`):
     - A named requester must be a current member of the session. The two list methods and `getMessage` answer a non-member differently, on purpose:
