@@ -237,7 +237,29 @@ sibling of this barrel by glob, so no new registration was needed there.
 ## Amendment 2026-09-26 (post-merge doc hygiene: re-pin line-number citations that drifted after the 2026-09-28 renames and splits)
 
 Doc-hygiene only, per `docs/overnight/DECISIONS.md`; no normative text above is changed.
+Corrected 2026-09-28: an earlier version of this section wrongly claimed the
+"Current count, for orientation only" citation had moved from `:50-51` to `:50-51`
+(a no-op) and wrongly described it as citing `WRITER_KEYS`/`READER_KEYS`. Neither is
+true; superseded by the paragraph below.
 
-- §"Current count, for orientation only" cites `app/server/test/context-ownership.test.ts:50-51`
-  for `WRITER_KEYS`/`READER_KEYS`. That file was edited since this contract was written; the
-  same two `const` lines now live at `app/server/test/context-ownership.test.ts:50-51`.
+- `app/server/test/context-ownership.test.ts` was not touched by the 2026-09-28
+  renames/splits, so `docs/overnight/proof-sweep-drift.py`'s citation for that file
+  at this contract's line 169 is not rename drift and its `path:line` is not being
+  re-pinned here — `:52-53` is still where that comment lives.
+- What the checker is actually catching: the **content** of those lines changed
+  since this contract's text was written. `:169` says "As of this amendment,
+  `app/server/test/context-ownership.test.ts:52-53` pins the context writer facade
+  at exactly thirty-three methods and the reader at exactly twenty-one." The live
+  comment at those lines (2026-09-28) reads "thirty-four" / "twenty-two" — later
+  slices (R7 #30's two search methods, R18's `closeSession`/`listSessionMembers`/
+  `listTraces`) added context methods after this amendment's numbers were fixed.
+  `:171-172`'s own prose already names those additions and the paragraph already
+  says "The next slice that adds a context method will change these numbers again,
+  and should amend ITS OWN contract, not this file" — so the stale 33/21 vs. live
+  34/22 mismatch is the disclaimed, expected case, not an error introduced by this
+  slice. Per that same sentence, correcting the count is out of scope for this
+  doc-hygiene amendment and belongs to whichever later contract amended the facade
+  count.
+
+**Reverse by:** striking this amendment section; it adds no new gate, only a
+correction to the earlier mis-statement above.
