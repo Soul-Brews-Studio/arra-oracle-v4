@@ -205,3 +205,31 @@ dataset, on both HTTP and MCP:
 Test: `app/server/test/read-cursor-live-transport.test.ts`. Driver:
 `app/server/test/fixtures/transport-v1/live-server/child.ts`. See
 `docs/overnight/DECISIONS.md` R2 and R3.
+
+## Amendment 2026-09-28 (post-merge Nat style: one exported function per file, named after the file (origin, Nat 2026-09-12: 'split to function per file? like <= 600?'); ratchet app/server/test/one-function-per-file.test.ts)
+
+`server/src/publication/read-cursor.ts` is now a re-export barrel; it exports nothing of
+its own. The functions moved unchanged, with no behaviour change, into these files (see
+`docs/overnight/DECISIONS.md` for the ratchet rule this satisfies):
+
+- `read-cursor.parseGetReadCursor.ts`: `parseGetReadCursor` and `GetReadCursorRequest`.
+- `read-cursor.parseAdvanceReadCursor.ts`: `parseAdvanceReadCursor` and
+  `AdvanceReadCursorRequest`; the private `publicId` helper stays local to this file (its
+  only caller).
+- `read-cursor.validateWorkspaceRow.ts`: `validateWorkspaceRow`; the private
+  `storedRequiredText` and `storedNullableText` helpers stay local to this file (their only
+  caller).
+- `read-cursor.encodeReadCursorRow.ts`: `encodeReadCursorRow`; the private `storedPointer`
+  helper stays local to this file (its only caller).
+- `read-cursor.constants.ts`: `READ_CURSOR_FIELDS`, `WORKSPACE_FIELDS` and the
+  request/name bounds, as data.
+- Helpers used by MORE than one of the files above each got their own single-export file,
+  never an object/namespace bundle: `read-cursor.parseRequest.ts`, `read-cursor.name.ts`,
+  `read-cursor.requireExactColumns.ts`, `read-cursor.storedText.ts`,
+  `read-cursor.storedName.ts`, `read-cursor.storedTimestamp.ts`.
+
+This section does not rewrite anything above it. Where the text above cites
+`read-cursor.ts` by file, the function now named lives in the split file listed for it
+above; importers of the barrel (`publication/read-cursor`) are unchanged, and
+`app/migrate-py/tests/test_revision_v1.py`'s `HELPER_REUSE_ALLOWED` already covers every
+sibling of this barrel by glob, so no new registration was needed there.
