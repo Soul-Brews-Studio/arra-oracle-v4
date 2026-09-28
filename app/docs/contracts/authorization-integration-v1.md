@@ -874,3 +874,19 @@ own header comment" ("This file never defines the schema...") is unchanged in sp
 the comment itself now lives at the top of `app/server/src/db.db.ts:1-2`, the split file
 that owns the `connect`/`openTable`/`checkoutLatest` logic. `db.ts` re-exports
 `db.db.ts`'s exports unchanged.
+
+## Amendment 2026-09-28 (post-merge Nat style: one exported function per file, named after the file (origin, Nat 2026-09-12: 'split to function per file? like <= 600?'); ratchet app/server/test/one-function-per-file.test.ts)
+
+`composition.ts` is now a pure re-export barrel (docs/overnight/DECISIONS.md, slice
+style-split6). Every exported function moved verbatim to its own `composition.<name>.ts`
+sibling, and the plain constants/types (`RuntimeConfig`, `SUPPORTED_BUN`,
+`SUPPORTED_ELYSIA`, `GLOBAL_BODY_BACKSTOP`, `VersionCheck`) moved to the data-only
+`composition.constants.ts`. Where the text above cites "`composition.ts`" as the module
+that reads `ARRA_MCP_V3_COMPAT` as trusted configuration, or names `composeAuditSink` as
+the one audit writer, read that as `composition.composeV3Compat.ts` and
+`composition.composeAuditSink.ts` respectively -- both re-exported by the `composition.ts`
+barrel unchanged, so every existing import of `./composition` still resolves the same
+names. No composition graph behaviour changed: this is a pure move, verified by the same
+targeted suites (`test:mcp`, `test:auth`, `test:chat`, `test:search-chunk`, `test:cli`)
+and the live probe (`58/58/58` HTTP/MCP/CLI methods, 0 isolation failures) passing
+unchanged before and after.
