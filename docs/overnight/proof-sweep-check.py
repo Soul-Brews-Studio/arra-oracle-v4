@@ -25,9 +25,11 @@ T = "app/server/test/"
 ROWS = [
     ("AGENTS.md", "`knowledge/transport.state.ts:12`", "`knowledge/transport.ts:67`",
      S + "knowledge/transport.state.ts", (12, 12), r"MAX_KNOWLEDGE_REQUEST_BYTES = 1024 \* 1024"),
-    ("AGENTS.md", "`mcp/tools.ts:16,181,201`", "`mcp/tools.ts:16,171,191`",
+    ("AGENTS.md", "`mcp/tools.ts:18,181,201`", "`mcp/tools.ts:16,171,191`",
      S + "mcp/tools.ts", (181, 181), r"export const KNOWLEDGE_TOOLS"),
-    ("AGENTS.md", "`mcp/tools.ts:16,181,201`", None,
+    ("AGENTS.md", "`mcp/tools.ts:18,181,201`", None,
+     S + "mcp/tools.ts", (18, 18), r"export const MEMORY_TOOLS = \["),
+    ("AGENTS.md", "`mcp/tools.ts:18,181,201`", None,
      S + "mcp/tools.ts", (201, 201), r"TOOLS = \[\.\.\.MEMORY_TOOLS, \.\.\.KNOWLEDGE_TOOLS\]"),
     ("AGENTS.md", "`composition.ts:242-244`", "`composition.ts:199-201`",
      S + "composition.ts", (242, 244), r'ARRA_MCP_V3_COMPAT === "1"'),
