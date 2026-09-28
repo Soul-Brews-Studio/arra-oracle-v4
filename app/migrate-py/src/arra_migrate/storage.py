@@ -17,10 +17,17 @@ from typing import Optional
 DATA_DIR = os.environ.get("ARRA_DATA_DIR", "../data")
 IS_REMOTE = DATA_DIR.startswith("s3://")
 
+# R33 S4(a) (Nat 2026-09-28, docs/overnight/DECISIONS.md): the sibling root
+# the ops tables (`mcp_calls`, `connections`, `instance_audit`) move to.
+# Unset -> falls back to DATA_DIR, matching the TS side's `storage.opsRoot.ts`
+# exactly (unset changes nothing).
+OPS_DIR = os.environ.get("ARRA_OPS_DIR", DATA_DIR)
+OPS_DIR_IS_SEPARATE = "ARRA_OPS_DIR" in os.environ
 
-def storage_options() -> Optional[dict]:
+
+def storage_options_for_root(root: str) -> Optional[dict]:
     """None for a local path, so `connect()` takes the same call either way."""
-    if not IS_REMOTE:
+    if not root.startswith("s3://"):
         return None
 
     account = os.environ.get("R2_ACCOUNT_ID")
@@ -41,7 +48,7 @@ def storage_options() -> Optional[dict]:
     ]
     if missing:
         raise SystemExit(
-            f"{DATA_DIR} needs {', '.join(missing)} — see ~/.config/arra-oracle-v4/r2.env"
+            f"{root} needs {', '.join(missing)} — see ~/.config/arra-oracle-v4/r2.env"
         )
 
     return {
@@ -54,5 +61,17 @@ def storage_options() -> Optional[dict]:
     }
 
 
+def storage_options() -> Optional[dict]:
+    return storage_options_for_root(DATA_DIR)
+
+
+def ops_storage_options() -> Optional[dict]:
+    return storage_options_for_root(OPS_DIR)
+
+
 def describe() -> str:
     return f"{DATA_DIR} ({'s3' if IS_REMOTE else 'local'})"
+
+
+def describe_ops() -> str:
+    return f"{OPS_DIR} ({'s3' if OPS_DIR.startswith('s3://') else 'local'})"

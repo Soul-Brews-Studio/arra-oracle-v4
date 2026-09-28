@@ -15,8 +15,11 @@
 export const DATA_DIR = process.env.ARRA_DATA_DIR ?? "../data";
 export const isRemote = DATA_DIR.startsWith("s3://");
 
-export function storageOptions(): Record<string, string> | undefined {
-  if (!isRemote) return undefined;
+// Generalised so `storage.opsRoot.ts` (R33 S4(a)) can ask for options for a
+// SEPARATE root (`ARRA_OPS_DIR`) that may itself be `s3://` -- same env-var
+// idiom, just parameterised over which root/dir env var is in play.
+export function storageOptionsForRoot(root: string): Record<string, string> | undefined {
+  if (!root.startsWith("s3://")) return undefined;
 
   const account = process.env.R2_ACCOUNT_ID;
   const endpoint =
@@ -33,7 +36,7 @@ export function storageOptions(): Record<string, string> | undefined {
     !secret && "AWS_SECRET_ACCESS_KEY",
   ].filter(Boolean);
   if (missing.length) {
-    throw new Error(`${DATA_DIR} needs ${missing.join(", ")} — see ~/.config/arra-oracle-v4/r2.env`);
+    throw new Error(`${root} needs ${missing.join(", ")} — see ~/.config/arra-oracle-v4/r2.env`);
   }
 
   return {
@@ -44,4 +47,8 @@ export function storageOptions(): Record<string, string> | undefined {
     // Only for a local http S3 (moto, MinIO). R2 is https and must stay so.
     allow_http: String(endpoint!.startsWith("http://")),
   };
+}
+
+export function storageOptions(): Record<string, string> | undefined {
+  return storageOptionsForRoot(DATA_DIR);
 }

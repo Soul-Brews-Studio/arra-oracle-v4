@@ -2,8 +2,18 @@
 
     uv run arra-migrate                      # target-19 (the default since R32)
     uv run arra-migrate --legacy-active15    # the legacy 15, for the legacy routes only
+    uv run arra-migrate --ops                # exactly mcp_calls/connections/instance_audit @ ARRA_OPS_DIR
     ARRA_RESET=1 uv run arra-migrate         # recreate (old versions stay -- Lance deletes nothing)
     uv run arra-migrate --check              # exit 1 if disk disagrees with the selected registry
+
+R33 S4(a) (Nat 2026-09-28, docs/overnight/DECISIONS.md): ``--ops`` creates
+ONLY the three operations tables, at ``ARRA_OPS_DIR`` (falls back to
+``ARRA_DATA_DIR`` when unset, same as the TS server). It reuses the existing
+``mcp_call``/``connection`` model declarations and the standalone
+``instance_audit`` model unchanged -- no new schema is invented here. Like
+the other two modes, it refuses a root that already holds a table from
+either tenant registry (legacy-15 or target-19): the ops root is for
+operations tables only.
 
 R32 (Nat 2026-09-28, #135; docs/overnight/DECISIONS.md): the cutover rehearsal
 found no live v4 data, so v4 starts fresh on target-19 and nothing is migrated.
@@ -24,10 +34,19 @@ import sys
 import lancedb
 
 from .models import TABLES as LEGACY_ACTIVE15_TABLES
-from .storage import DATA_DIR, describe, storage_options
+from .models.connection import TABLE as CONNECTIONS_TABLE, Connection
+from .models.instance_audit import TABLE as INSTANCE_AUDIT_TABLE, InstanceAudit
+from .models.mcp_call import TABLE as MCP_CALLS_TABLE, McpCall
+from .storage import DATA_DIR, OPS_DIR, describe, describe_ops, ops_storage_options, storage_options
 from .target_v1 import TARGET_TABLES
 
 LEGACY_FLAG = "--legacy-active15"
+OPS_FLAG = "--ops"
+OPS_TABLES = {
+    MCP_CALLS_TABLE: McpCall,
+    CONNECTIONS_TABLE: Connection,
+    INSTANCE_AUDIT_TABLE: InstanceAudit,
+}
 
 
 def _print_schema(tbl) -> None:
@@ -46,16 +65,30 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check", action="store_true", help="exit 1 if disk disagrees with the selected registry")
     parser.add_argument(LEGACY_FLAG, dest="legacy", action="store_true",
                         help="create the legacy active-15 registry instead of target-19")
+    parser.add_argument(OPS_FLAG, dest="ops", action="store_true",
+                        help="create exactly mcp_calls/connections/instance_audit at ARRA_OPS_DIR")
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+    if args.ops and args.legacy:
+        print(f"refused: {OPS_FLAG} and {LEGACY_FLAG} are mutually exclusive", file=sys.stderr)
+        return 2
     check_only = args.check
     reset = bool(os.environ.get("ARRA_RESET"))
 
-    tables, label = (LEGACY_ACTIVE15_TABLES, "legacy-active15") if args.legacy else (TARGET_TABLES, "target-19")
-    other = TARGET_TABLES if args.legacy else LEGACY_ACTIVE15_TABLES
-    foreign_names = set(other) - set(tables)
-
-    print(f"store: {describe()}  registry: {label}")
-    db = lancedb.connect(DATA_DIR, storage_options=storage_options())
+    if args.ops:
+        tables, label = OPS_TABLES, "ops"
+        root, opts = OPS_DIR, ops_storage_options()
+        # A root already holding ANY tenant table (either registry) is not an
+        # ops root -- refuse rather than bolt operations tables onto a
+        # knowledge/legacy dataset.
+        foreign_names = (set(TARGET_TABLES) | set(LEGACY_ACTIVE15_TABLES)) - set(tables)
+        print(f"store: {describe_ops()}  registry: {label}")
+    else:
+        tables, label = (LEGACY_ACTIVE15_TABLES, "legacy-active15") if args.legacy else (TARGET_TABLES, "target-19")
+        root, opts = DATA_DIR, storage_options()
+        other = TARGET_TABLES if args.legacy else LEGACY_ACTIVE15_TABLES
+        foreign_names = set(other) - set(tables)
+        print(f"store: {describe()}  registry: {label}")
+    db = lancedb.connect(root, storage_options=opts)
 
     # `table_names()` PAGINATES, defaulting to 10. With 15 tables the tail came
     # back missing, so the "already exists" check below said absent and the
@@ -67,9 +100,12 @@ def main(argv: list[str] | None = None) -> int:
 
     foreign = sorted(existing & foreign_names)
     if foreign:
-        hint = "drop the flag" if args.legacy else f"pass {LEGACY_FLAG}"
+        if args.ops:
+            hint = "use a new empty root for ARRA_OPS_DIR"
+        else:
+            hint = "drop the flag" if args.legacy else f"pass {LEGACY_FLAG}"
         print(
-            f"refused: {DATA_DIR} holds {foreign}, which only the other registry declares. "
+            f"refused: {root} holds {foreign}, which only the other registry declares. "
             f"This is not a {label} dataset; {hint} to work on it, or use a new empty root. "
             "Nothing was created.",
             file=sys.stderr,
@@ -110,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         tbl = db.create_table(name, schema=model, mode="overwrite")
-        print(f"created {name} @ {DATA_DIR}/{name}.lance")
+        print(f"created {name} @ {root}/{name}.lance")
         _print_schema(tbl)
 
     if check_only and drift:
