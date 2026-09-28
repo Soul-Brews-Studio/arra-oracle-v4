@@ -354,3 +354,9 @@ Also fixed in this round, all nonblocking:
 Not changed, and disclosed. `oracle_trace_distill`'s `operation_id` is still random unless the caller passes `idempotency_key`. V3-PARITY §4.3 specifies `"v3-distill:"+sha256(canonical input)`. That would make an identical re-distill replay the first node instead of adding a second, which contradicts the same section's "re-distilling adds a second node" and v3's own behavior. The choice is left to the design owner. D11 is unchanged: linking two existing traces stays not carried.
 
 **Tests:** `test/trace-list-tie.test.ts`, `test/trace-list-heads.test.ts` (new); `test/trace-list-service.test.ts`, `test/trace-list-cursor.test.ts`, `test/mcp-v3-trace.test.ts`, `test/mcp-v3-trace-list-walk.test.ts` (extended).
+
+## Amendment 2026-09-26 (post-merge Nat style: one exported function per file, named after the file (origin, Nat 2026-09-12: '1 file should not too long can we split to function per file? like <= 600?'); ratchet app/server/test/one-function-per-file.test.ts)
+
+The "Physical schema, `storage.ts`" reference above means `TARGET_SCHEMA`, which now
+lives in `app/server/src/publication/storage.schema.ts`. `storage.ts` is a barrel that
+re-exports it unchanged; no schema change.

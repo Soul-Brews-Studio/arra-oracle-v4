@@ -775,3 +775,9 @@ rewritten; this amendment records the current count.
 it (the PROOF.md rule).
 
 **Command.** `cd app/server && bun test test/lifecycle-*.test.ts`.
+
+## Amendment 2026-09-26 (post-merge Nat style: one exported function per file, named after the file (origin, Nat 2026-09-12: '1 file should not too long can we split to function per file? like <= 600?'); ratchet app/server/test/one-function-per-file.test.ts)
+
+The "Physical schema, `storage.ts`" reference above means `TARGET_SCHEMA`, which now
+lives in `app/server/src/publication/storage.schema.ts`. `storage.ts` is a barrel that
+re-exports it unchanged; no schema change.

@@ -373,3 +373,11 @@ doc-contradicts-code defect under the PROOF.md rule.
 
 **Command.** `rg -n 'display title = optional metadata' DESIGN.md` prints `371:`.
 `python3 docs/overnight/proof-sweep-check.py` re-checks this row with the others.
+
+## Amendment 2026-09-26 (post-merge Nat style: one exported function per file, named after the file (origin, Nat 2026-09-12: '1 file should not too long can we split to function per file? like <= 600?'); ratchet app/server/test/one-function-per-file.test.ts)
+
+The raw Arrow decoding and `rawRows` this contract describes in `storage.ts` now live
+in `app/server/src/publication/storage.decodeArrowRows.ts` and
+`app/server/src/publication/storage.rawRows.ts`. `storage.ts` re-exports both unchanged;
+`rawRows` behavior is unchanged, no connection opener/owner constructor added, no lossy
+Number fallback introduced.
