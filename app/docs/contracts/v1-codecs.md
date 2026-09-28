@@ -92,3 +92,11 @@ No runtime authentication, message ingestion, conclusions, context/chat or addit
 - CodeGraph MCP SDK: filtered 21-tool probe passed after full reindex; all **46 source hashes** matched. Known missing-caller limitations still apply. Neither SDK check proves native-client tool exposure.
 
 No new dependency, live data write, runtime API change, registry activation or R2 operation occurred. The fixture database is temporary and model-free.
+
+## Amendment 2026-09-26 (post-merge R32 (Nat 2026-09-28): #135 re-scoped — start v4 fresh on target-19, no migration of v3 data; target-19 becomes the default)
+
+Appended; the text above is not rewritten.
+
+**What changed.** The instruction "Do not replace the active15 registry with this fixture" is superseded for the MIGRATOR DEFAULT only. Since R32, `python -m arra_migrate` creates the target19 registry (`arra_migrate.target_v1`), and the active15 registry is created only with `--legacy-active15`. The fixtures themselves, and the codec byte semantics this contract freezes, are unchanged.
+
+**Why.** The #135 cutover rehearsal found no live v4 data, so v4 starts fresh on target19 instead of migrating. Source: [`docs/overnight/DECISIONS.md`](../../../docs/overnight/DECISIONS.md) R32.

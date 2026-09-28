@@ -307,13 +307,16 @@ describe("bank-scoped observability", () => {
 });
 
 describe("audit identity and wire safety", () => {
-  test("status reports active foundation separately from proposed target contract", async () => {
+  // R32 (Nat 2026-09-28, #135): target-19 is the default migration, so the
+  // manifest is `active`; the legacy 15 are named separately, not as active.
+  test("status reports the active target-19 contract and the legacy 15 separately", async () => {
     const result = await toolValue(await rpc("alpha", "status"));
-    expect(result.contract).toMatchObject({
+    expect(result.contract).toEqual({
       manifest: "arra-v4-target/1",
-      status: "proposed-not-active",
-      active_tables: 15,
+      status: "active",
+      active_tables: 19,
       target_tables: 19,
+      legacy_tables: 15,
     });
   });
 

@@ -75,10 +75,10 @@ describe("CLI transport contract", () => {
   });
   test("subject survives remember request", async () => { expect((await run("remember", "--content", "fact", "--subject", "nat")).code).toBe(0); expect(requests[0]?.body.params.arguments.subject_peer_name).toBe("nat"); });
   test("status carries active versus proposed contract state unchanged", async () => {
-    response = { jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: JSON.stringify({ contract: { status: "proposed-not-active", active_tables: 15, target_tables: 19 } }) }] } };
+    response = { jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: JSON.stringify({ contract: { status: "active", active_tables: 19, target_tables: 19, legacy_tables: 15 } }) }] } };
     const r = await run("status");
     expect(r.code).toBe(0);
-    expect(JSON.parse(JSON.parse(r.out).result.content[0].text).contract).toEqual({ status: "proposed-not-active", active_tables: 15, target_tables: 19 });
+    expect(JSON.parse(JSON.parse(r.out).result.content[0].text).contract).toEqual({ status: "active", active_tables: 19, target_tables: 19, legacy_tables: 15 });
   });
   for (const args of [
     ["remember"], ["get-memory"], ["recall", "--query"], ["recall", "--query", "x", "--limit", "NaN"],

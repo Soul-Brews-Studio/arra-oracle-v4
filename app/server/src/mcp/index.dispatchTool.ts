@@ -192,11 +192,15 @@ export async function dispatchTool(
         auth: ["bearer — policy-file authorization active"],
         embedder_ready: embedder.ok,
         tools: TOOLS.length,
+        // R32 (Nat 2026-09-28, #135): target-19 is the default migration and
+        // the manifest says `active`. The legacy 15 are still created, behind
+        // `--legacy-active15`, for the legacy memories routes.
         contract: {
           manifest: "arra-v4-target/1",
-          status: "proposed-not-active",
-          active_tables: 15,
+          status: "active",
+          active_tables: 19,
           target_tables: 19,
+          legacy_tables: 15,
         },
       };
     }

@@ -30,11 +30,16 @@ PRINCIPAL="dev-operator"
 
 mkdir -p "$TMP" "$KDATA" "$LDATA"
 
+# R32 (docs/overnight/DECISIONS.md): the bare migrator creates target19; the
+# legacy 15 need the explicit flag. The server still opens `memories` in
+# ARRA_DATA_DIR for /api/memories and startup FTS, so both datasets stay.
 echo "== legacy-15 dataset ($LDATA) =="
-ARRA_DATA_DIR="$LDATA" "$PY" -m arra_migrate
+ARRA_DATA_DIR="$LDATA" "$PY" -m arra_migrate --legacy-active15
 
 echo "== target19 dataset ($KDATA) =="
-# create_target19_dataset.py itself refuses (exit 1, nothing deleted) rather
+ARRA_DATA_DIR="$KDATA" "$PY" -m arra_migrate
+# The tables now exist, so create_target19_dataset.py only seeds the
+# 'default' workspace row (no transport creates one). It itself refuses (exit 1, nothing deleted) rather
 # than seed on top of an existing 'default' workspace row whose created_at is
 # sub-millisecond (#75/#105 -- see docs/overnight/DECISIONS.md R1). Give the
 # operator the exact dev-stack remedy here rather than only the script's

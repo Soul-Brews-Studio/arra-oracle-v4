@@ -586,8 +586,10 @@ class IsolationTests(unittest.TestCase):
         rehearsal that reads the active-15 shape and writes the target-19
         shape, never wired into ``__main__`` and never touching
         ``ARRA_DATA_DIR``. What this test still guards is the thing that
-        matters: the PRODUCTION migrator entrypoint (``__main__.py``) does not
-        pull the unreviewed candidate into the path that creates real tables.
+        matters: no OTHER module pulls the target registry in behind the
+        migrator's back. R32 (Nat 2026-09-28, #135) reversed the old rule for
+        ``__main__.py`` itself: target-19 is now its default registry, so it
+        imports ``target_v1`` deliberately, and that import is asserted below.
 
         ``copy_migration/`` (issue #34, overnight rulings R11 + R17) is
         excluded DELIBERATELY, as a whole package, for the same reason as
@@ -602,17 +604,23 @@ class IsolationTests(unittest.TestCase):
         scanned = [
             p for p in self.SOURCE_ROOT.rglob("*.py")
             if "target_v1" not in p.parts and "copy_migration" not in p.parts and p.name != "rehearsal.py"
+            and p.name != "__main__.py"
         ]
-        # Floor: today that is 8 root modules + 17 models. If a reorg makes this
+        # Floor: today that is 8 root modules + 17 models (``__main__`` is
+        # asserted separately below, since R32 made it a deliberate consumer). If a reorg makes this
         # scan collapse, the assertion fails instead of the loop finding nothing.
         self.assertGreaterEqual(len(scanned), 25, f"only scanned {len(scanned)} modules")
         for path in scanned:
             with self.subTest(module=str(path.relative_to(self.SOURCE_ROOT))):
                 self.assertNotIn("target_v1", path.read_text(encoding="utf-8"))
-        self.assertNotIn(
-            "target_v1",
+        # R32 (Nat 2026-09-28, #135): the production entry point now imports
+        # target_v1 ON PURPOSE -- target-19 is its default registry. It is the
+        # one module outside the exclusions above allowed to, and it must
+        # still never reach the copy migration.
+        self.assertIn(
+            "from .target_v1 import TARGET_TABLES",
             (self.SOURCE_ROOT / "__main__.py").read_text(encoding="utf-8"),
-            "the real migrator entrypoint must still never import the candidate",
+            "R32: the real migrator entrypoint creates target-19 by default",
         )
         self.assertNotIn(
             "copy_migration",

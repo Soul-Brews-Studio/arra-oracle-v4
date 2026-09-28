@@ -149,7 +149,7 @@ last_sync_at, sync_attempts, superseded_by, superseded_at, is_active,
 h_metadata, internal_metadata
 ```
 
-Declaring peers/messages/taxonomy tables does not mean their APIs are implemented. `app/migrate-py/src/arra_migrate/models/__init__.py` is the active registry; the older Rust schema is not the baseline.
+Declaring peers/messages/taxonomy tables does not mean their APIs are implemented. `app/migrate-py/src/arra_migrate/models/__init__.py` was the active registry when this section was written; since R32 (Nat 2026-09-28, #135) the default is `target_v1` and this set is created only by `--legacy-active15`. The older Rust schema is not the baseline.
 
 ### Verification status carried forward, not misreported as all-pass
 
@@ -1207,8 +1207,8 @@ with file:line citations, is in [AGENTS.md "Current implementation"](AGENTS.md).
 Three headline claims above are superseded by fresh source:
 
 - "15 built tables / 19 proposed" (§"What changed"). The 19 tables are built and enforced:
-  TypeScript `TARGET_SCHEMA` equals Python `target_v1`, 19 tables / 228 fields. The default
-  migrator still creates the 15.
+  TypeScript `TARGET_SCHEMA` equals Python `target_v1`, 19 tables / 228 fields. Since R32
+  (Nat 2026-09-28, #135) the default migrator creates the 19; the 15 need `--legacy-active15`.
 - "8 tools, auth absent" (§1 `[L]`, evidence list). MCP now serves 65 tools, 8 legacy plus 57
   `kb_*`, or 90 when `ARRA_MCP_V3_COMPAT=1`. Bearer auth from an `arra-auth/v1` policy file
   is required (#25, closed).
@@ -1218,8 +1218,9 @@ Three headline claims above are superseded by fresh source:
 ```text
  DESIGN section                    state on e00b50b                                  ruling
  --------------------------------  ------------------------------------------------  ---------
- §4  19-table schema               BUILT + ENFORCED; default migrator still active15; —
-                                   target-19-manifest still "proposed-not-active"
+ §4  19-table schema               BUILT + ENFORCED + DEFAULT (R32, 2026-09-28):     R32
+                                   migrator creates 19; manifest "active"; the 15
+                                   only via --legacy-active15 (legacy routes)
  §5  Honcho-shaped core            BUILT: peers, sessions, members, messages, cursors #28
      membership as read boundary   BUILT: requester must be a current member, else   R3
                                    audit:read operator view; optional peers binding

@@ -14,7 +14,7 @@ export async function db(): Promise<Table> {
   if (!dbState.table) {
     const names = await dbState.conn.tableNames();
     if (!names.includes(TABLE)) {
-      throw new Error(`table '${TABLE}' not found in ${DATA_DIR}. Run 'just migrate run' first.`);
+      throw new Error(`table '${TABLE}' not found in ${DATA_DIR}. Run 'just migrate run-legacy' (python -m arra_migrate --legacy-active15) first.`);
     }
     dbState.table = await dbState.conn.openTable(TABLE);
     return dbState.table;
