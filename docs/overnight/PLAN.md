@@ -422,3 +422,17 @@ Every slice below went through the same loop as the night: implement → indepen
   the refuter's only blocking finding is fixed. Local CI is running.
 - 03:15 #34 area 6 (code-intel readiness) re-run live. The result is partial: CodeGraph
   misses a definition, and Serena exceeds 120 s. Details are in `AC-EVIDENCE.md` §6.
+- 03:13 **PR #137 MERGED** (`6dcbf8b`): style-shrink. `MISNAMED_ALLOWLIST` goes from 8 to 0.
+- 03:20 **PR #136 MERGED** (`5eda133`): R24–R29 (Nat's D3–D10), plus the code-intel readiness re-run for #34.
+- 04:10 **PR #138 MERGED** (`ceb583e`): `LOCAL_CI_SHARDS`. I measured 8 shards at 661 s against about 380 s for 4 under load, so the default stays at 4.
+- 04:19 **PR #139 MERGED** (`ff29ece`): peer representation (R24). It adds `getRepresentation` (58 methods), observer/subject perspective, conclusions in context, and the budget and freshness blocks. Round 1 was refuted (conclusions ignored the session scope) and round 2 accepted. Local CI caught 2 method-list pins, which were fixed.
+- 04:41 **PR #140 MERGED** (`387c973`): `remember` is now taxonomy-validated (R26). Rounds 1 and 2 were refuted; round 3 accepted after the fail-open-on-broken-root fix. #27 closed.
+- 04:52 **PR #126 MERGED** (`949e966`): instance-level audit log (R25). It took four refutation rounds, the last on the non-atomic `existOk` create race. #34 closed as rehearsal proven, and #135 opened for the real cutover.
+- 05:19 **PR #141 MERGED** (`5528013`): the `author_peer_name` filter, plus a test proving chat never reads `search_chunks_v1`. Accepted in round 1. #32 closed at 14/14 PASS.
+- 05:31 **PR #142 MERGED** (`4352e4f`): 9 UI files split to one function per file. `MULTI_EXPORT_ALLOWLIST` goes from 39 to 30.
+- 05:50 **PR #143 MERGED** (`992c6e9`): 5 server files split. The Python adapter guard now also refuses split raw modules (`./embed.embedOne`). Allowlist: 25.
+- 05:52 **Flaky gate, root cause found.** `storage.storageOptions.ts` reads `ARRA_DATA_DIR` once at import, and `db.ts` caches its connection. So two test files that set `ARRA_DATA_DIR` in one `bun test` process share the first file's data dir. Running mcp-correctness and remember-taxonomy-parity together gives 15 pass / 15 fail in either order. This is what failed CI for maint-audit round 1 and for the instance-audit reader. Fix: the `v4/on-test-isolation` runner runs each such file in its own process. Verifier ACCEPTED (old runner 106/15, new 121/0).
+- 06:44 **PR #146 MERGED** (`94021c5`): the operator-only `instance_audit` reader (R25). Four refuter rounds; round 4 checked 44 live requests. #31 closed. Local CI 2188/0 on the #145 runner.
+- 06:45 **PR #147 MERGED** (`0777111`): `publication/lifecycle` and `rows` split. Allowlist: 20.
+- 06:40–06:50 **GitHub Actions switched off for tests** (Nat): 1 macOS matrix and 19 hosted test/CI workflows disabled across both orgs, with a re-enable log. New `/actions-off` skill.
+- 06:55 **PR #148 MERGED** (`88b4225`): the `policy.registry` and `connections` splits kept from the refuted split2 branch, with the missing contract amendment and a guard on imports of `REGISTRY`. Allowlist: 18.
