@@ -107,3 +107,43 @@ Each slice can be merged on its own and has its own tests.
   confirm no `memories` table is ever created.
 - **Test suites.** `migration-copy`, `mcp-v3-*`, `fts-service` and the two instance-audit suites
   pass on fixtures that contain only target-19.
+
+## Amendment 2026-09-28 (slice `legacy-s2-t19-memory-read`, S2 build)
+
+S2 (the target-19 read path for memories, behind a flag, default off) is built:
+`db.legacyRead.getById.ts` / `db.legacyRead.list.ts` / `db.legacyRead.searchText.ts` /
+`db.legacyRead.searchVector.ts`, gated by `ARRA_MEMORIES_BACKEND` (`db.legacyRead.backend.ts`;
+default `"legacy"`, unchanged behaviour) and wired at the `db.getById`/`db.list`/`db.searchText`/
+`db.searchVector` boundary itself, so `db.ts`'s own barrel and every existing caller
+(`/api/memories`, the v3-compat MCP tools) are untouched.
+
+Each reads through `db.legacyRead.openTarget19MemoryReader.ts` (`composeKnowledgeAccess` +
+`getBundle("content:read")`, a reviewed doorway, cached for the process lifetime) and calls the
+existing #29/#30 kernels -- `getAcceptedHead`, `listNodes`, `searchKnowledgeKeyword`,
+`searchKnowledgeSemantic` -- never opens a dataset or a writer directly.
+`db.legacyRead.mapAcceptedHeadToMemory.ts` maps one node + head revision + lifecycle label back
+to the EXACT `db.clean.ts` wire shape, the reverse of `migration/buildRevisionRequest.ts`:
+- `type` reads the `legacy_type` term snapshot when present (the original legacy string, R11),
+  else the reserved `type` term.
+- `peer_name` is lossy going forward (the legacy writer's field is never carried by
+  `buildRevisionRequest.ts`, only `internal_metadata.legacy_peer_name` when a caller sets it) --
+  read back from there, `null` otherwise. This is the one field S2 cannot round-trip; S3 (pointing
+  `remember`/`recall` at target-19 directly) does not have this gap, since it never goes through
+  the legacy shape at all.
+- `sync_state`/`superseded_by` derive from the #29 lifecycle label (`"synced"` when not terminal);
+  `last_sync_at`/`superseded_at` and the stored `embedding` vector have no target-19 equivalent at
+  the node/revision layer and read as absent (`null`/`embedded: false`), same as `db.clean.ts`'s
+  own `score`/`distance` being `undefined` outside a search.
+- `db.legacyRead.list.ts` walks `listNodes`' `after_id` keyset (its own `MAX_PAGE_LIMIT` page
+  ceiling) and applies every legacy filter (`type`, `session_name`, `peer_name`,
+  `subject_peer_name`, `sync_state`, `is_active`) in the mapped shape, since `listNodes` itself has
+  no equivalent of those filters; a `type_term`-id-based push-down is future work, left to S3.
+
+Tested by `test/legacy-read-target19-parity.test.ts`: a real target-19 fixture seeded through the
+real `publishRevision`/`indexRevisionChunks` writer path (gated child,
+`test/fixtures/legacy-read-target19/gated-publish-and-index.ts`), `ARRA_MEMORIES_BACKEND` unset
+proven to leave the legacy path untouched (rejects rather than silently reading the target-19
+fixture), and flag-on coverage of `getById`, workspace-scoped `list` (cross-workspace exclusion),
+and Thai-substring `searchText` (R14 ngram, "ลืม" inside "หลงลืม"). `searchVector` is implemented
+against the same `searchKnowledgeSemantic` kernel but not covered by this test round (it needs a
+composed query embedder in-process; deferred, noted in the slice report's `deviations_from_ruling`).
