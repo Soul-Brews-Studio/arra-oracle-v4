@@ -28,7 +28,7 @@
 
 import { connect, type Table } from "@lancedb/lancedb";
 import { Field, Int64, Schema, Utf8 } from "apache-arrow";
-import { DATA_DIR, storageOptions } from "../storage";
+import { OPS_DIR, opsStorageOptions } from "../storage.opsStorageOptions";
 
 const TABLE = "instance_audit";
 
@@ -70,9 +70,12 @@ let handle: Awaited<ReturnType<typeof connect>> | null = null;
 // call can retry rather than being stuck on a rejected promise forever.
 let tablePromise: Promise<Table> | null = null;
 
+// R33 S4(a) (Nat 2026-09-28, docs/overnight/DECISIONS.md): this table lives
+// under `ARRA_OPS_DIR` when set, else falls back to `ARRA_DATA_DIR` unchanged
+// (`storage.opsStorageOptions.ts`).
 export async function openInstanceAuditTable(): Promise<Table> {
   tablePromise ??= (async () => {
-    handle ??= await connect(DATA_DIR, { storageOptions: storageOptions() });
+    handle ??= await connect(OPS_DIR, { storageOptions: opsStorageOptions() });
     return handle.createEmptyTable(TABLE, INSTANCE_AUDIT_SCHEMA, { mode: "create", existOk: true });
   })().catch((error) => {
     tablePromise = null;

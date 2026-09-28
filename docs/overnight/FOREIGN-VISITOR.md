@@ -26,7 +26,7 @@ discussion #20, which #21 simplifies ("it does not erase it") and #36 supersedes
 | #36, DESIGN.md:1138 | "explicit scope + bounded chain expansion cannot admit foreign sessions" |
 | #36 comment 2 (namespaces) | "Provider/account/session components may inform explicit configuration, but must not be guessed from cwd or apparent conversation adjacency. … A Relic bank is not automatically a v4 workspace." |
 | #36 comment 1 (codecs) | "`session_uuid` is an opaque provider identity, not guessed from cwd" |
-| AGENTS.md:123 | "Relic is a read-only source; namespace and pin evidence; cwd/adjacency does not prove ownership" |
+| AGENTS.md:124 | "Relic is a read-only source; namespace and pin evidence; cwd/adjacency does not prove ownership" |
 
 "Visitor" appears only in #20. It does not appear in SPEC.md, DESIGN.md, #21, #36, #101, the
 issue comments, or the relic source, measured with `rg -i visitor`. "The relic source" here and
@@ -77,7 +77,7 @@ Measured on this base, the prohibition already holds by construction:
 - **relic's own cwd defaults are unreachable.** `relic tail` with no target resolves "the
   session before this one" in the process cwd (`cli.ts:1306-1308`). The adapter refuses empty
   and `-`-prefixed ids and always tails a resolved file path. `search`, `session` and
-  `sessions` scope by cwd only under an explicit `--cwd` flag (`cli.ts:59-61`), which the
+  `sessions` scope by cwd only under an explicit `--cwd` flag (`cli.ts:63-64`), which the
   adapter never passes.
 
 ## 3. What this slice built
@@ -135,7 +135,7 @@ reads Relic sessions, flag sessions that match only on cwd as `foreign_visitor`.
 "related … NOT a continuation edge", and parallel readers in the same worktree as "peers …
 NOT successor sessions". So a visitor may carry at most `related_to`, and "lineage" would
 be `continues`/`forked_from` only. `getContext` today expands one hop over **all**
-relations, `related_to` included (`service.getContext.ts:34-47`).
+relations, `related_to` included (`service.getContext.ts:55-68`).
 - *Would build:* restrict `getContext` expansion to `DIRECTED_SESSION_RELATIONS`, plus an
   amendment to chat-v1.md.
 - *Why not here:* this is analysis-28 Unit C ("A related_to link is not expanded, unless the

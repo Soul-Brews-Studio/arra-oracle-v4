@@ -10,12 +10,16 @@ default:
     @just --list --list-submodules
 
 # Cold start: schema, deps, server. The order is the architecture.
-# The plain server opens the legacy `memories` tier in ARRA_DATA_DIR, which
-# since R32 only `--legacy-active15` creates (the bare migrator makes target19).
+# R32 (docs/overnight/DECISIONS.md): a fresh install must get a target-19
+# knowledge root too, not just the legacy-15 `memories` tier -- otherwise
+# /api/knowledge/* 404s until someone runs dev-stack.sh by hand. Both roots
+# come from the one script dev-stack.sh also uses (just/scripts/create-both-roots.sh),
+# so `up` and dev-stack never drift. Idempotent: re-running only creates
+# what's missing.
 up:
-    @just migrate run-legacy
     @just server install
-    @just server start
+    @just/scripts/create-both-roots.sh data data-knowledge
+    @ARRA_KNOWLEDGE_DATASET_ROOT="{{source_directory()}}/data-knowledge" just server start
 
 # Is anything actually running?
 status:
