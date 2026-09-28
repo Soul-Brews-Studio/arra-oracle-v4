@@ -436,3 +436,54 @@ Every slice below went through the same loop as the night: implement → indepen
 - 06:45 **PR #147 MERGED** (`0777111`): `publication/lifecycle` and `rows` split. Allowlist: 20.
 - 06:40–06:50 **GitHub Actions switched off for tests** (Nat): 1 macOS matrix and 19 hosted test/CI workflows disabled across both orgs, with a re-enable log. New `/actions-off` skill.
 - 06:55 **PR #148 MERGED** (`88b4225`): the `policy.registry` and `connections` splits kept from the refuted split2 branch, with the missing contract amendment and a guard on imports of `REGISTRY`. Allowlist: 18.
+
+### 2026-09-28, after 07:00 (+07): finishing the issue list
+
+- 07:35 **PR #150 MERGED** (`5c3d727`): PROOF-SWEEP.md re-pins. Drift went from 41 to 2; the
+  verifier refuted 3 wrong re-pins, which were fixed.
+- 07:52 **PR #151 MERGED** (`7a4acd4`) and 08:05 **PR #152 MERGED** (`eef28c7`): splits 4b and 4a.
+  4a was refuted twice (for missing contract amendments and stale AGENTS citations) and
+  accepted in round 3.
+- About 08:15 Nat rebooted the machine. The CIs that were in flight were stopped. The split6
+  partial diff was saved to /tmp, and the slice was relaunched clean afterwards.
+- 08:52 **PR #153 MERGED** (`2f4a9b1`): the read-cursor/session-link split, redone without
+  the object-bundling that got split2 refuted. 08:52 **PR #154 MERGED** (`52af160`): the
+  mcp/calls and mcp/index split.
+- 10:56 **PR #155 MERGED** (`78d911a`): composition.ts split. `MULTI_EXPORT_ALLOWLIST`: 39 → 7.
+  **#22 closed** (R30). Nat ruled that the 7 frozen contract validators stay allowlisted,
+  because each is under 600 lines.
+- 11:04 **PR #156 MERGED** (`be4c91e`): proof-sweep-check goes from 25/40 to 41/41, plus
+  R30 and R31. A hidden wrong pin (`tools.ts:16` should be `:18`) was found by the verifier.
+- **GitHub Actions (R31):** 48 hosted workflows are disabled across both orgs:
+  - the macOS matrix;
+  - 19 test/CI workflows;
+  - 11 release/deploy workflows;
+  - 18 scheduled workflows.
+
+  The `/actions-off` skill and its re-enable log are in
+  `~/.claude/skills/actions-off/logs/`.
+- **#7 closed as not planned** (Nat). The harness stays in `app/benchmarks`.
+- **#135:** the cutover rehearsal found no live v4 data. Production is v3 SQLite at
+  `~/.arra-oracle-v2` (12 GB), and the only active-15 dataset was empty dev data. The source
+  hashes were unchanged. Nat ruled R32: start v4 fresh on target-19 with no migration. Slice
+  `v4/on-cutover-rehearsal` does this: the migrator defaults to target-19, active-15 is
+  available behind `--legacy-active15`, and the manifest is `active`. It was ACCEPTED in round 1.
+- **Evolution, measured with relic** (`relic sessions --since 30d --all-tiers`, counting
+  sessions whose repo or worktree is arra-oracle-v4, subagents and workflow agents included):
+  654 sessions in total. They split into three bursts:
+
+  | Date | Sessions | Burst |
+  |---|---|---|
+  | 09-19 | 9 | spec and schema design (SPEC through v26.9.20) |
+  | 09-20 | 76 | spec and schema design |
+  | 09-21 | 190 | spec and schema design |
+  | 09-26 | 182 | the overnight build (#109) |
+  | 09-27 | 189 | the overnight build (#109) |
+  | 09-28 | 8 | rulings and finish (so far; the index lags) |
+
+  The whole issue list closed between 09-26 and 09-28.
+- 14:01 **PR #157 MERGED** (`474978e`). Target-19 is the migrator default (R32).
+  - `--legacy-active15` still creates the legacy root.
+  - The manifest is `active`.
+  - Local CI passed, 2197/0.
+  - **#135 closed. All 65 issues are closed.**
