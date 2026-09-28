@@ -139,7 +139,7 @@ call is needed for the regression suite, whose models are stubs.
 
 Every route needs `Authorization: Bearer <64 lowercase hex>` except `/health` and the
 static UI (`GET /`, `/knowledge.html`, `/v2/*`). Those are deliberately public and skip
-policy admission, but not the Host/Origin gate, which runs on every request (`app.createApp.ts:152-155`,
+policy admission, but not the Host/Origin gate, which runs on every request (`app.createApp.ts:155-156`,
 `app.createApp.ts:468-497`; `authorization-integration-v1.md:34`). Measured 2026-09-27:
 
 ```text
@@ -150,8 +150,8 @@ GET /                                             foreign Host  400
 ```
 
 A missing, repeated or malformed `?bank` is refused with 400 before admission (`app.createApp.ts:93-99`,
-`:268-273`), so the 401 needs a bank (`test/auth-integration.test.ts:97-107`,
-`test/mcp-correctness.test.ts:436-439`).
+`:269-274`), so the 401 needs a bank (`test/auth-integration.test.ts:97-107`,
+`test/mcp-correctness.test.ts:467-469`).
 
 The bearer's policy grants (`content:read`/`write`, `audit:read`, `diagnostics:read`,
 `maintenance:backfill`/`reindex`) gate every protected method. The dev policy from
@@ -202,7 +202,7 @@ kb_scanDependents kb_reconcileRevisionAssociations
 
 **v3-compatible tools** (R18; design in `docs/overnight/V3-PARITY.md`). The family lives in
 `server/src/mcp/legacy-v3/` and is served only with `ARRA_MCP_V3_COMPAT=1` (exactly `1`,
-`composition.ts:211-213`). It lets an existing arra-oracle v3 client talk to v4 unchanged.
+`composition.ts:242-244`). It lets an existing arra-oracle v3 client talk to v4 unchanged.
 Measured live with the flag on, before D3b added `getRepresentation`: `tools/list` returns 90 (8 + 57 + 25).
 
 ```text
