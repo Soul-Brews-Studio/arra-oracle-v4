@@ -37,12 +37,12 @@ Every number here was measured on `e00b50b` on 2026-09-27: counts come from the 
 - **Runtime.** `app/server/` holds TypeScript/Bun/Elysia; `app/cli.ts` plus `app/cli/` is the source-run CLI. Startup refuses unless Bun is exactly `1.3.14` and Elysia exactly `1.4.30` (`composition.constants.ts:23-24`, `composition.checkSupportedRuntime.ts:12-26`; style-split6 split these out of `composition.ts`). Rust migrations and Hono-era diagrams are historical.
 - **Storage.** **LanceDB is canonical**, local by default, with optional R2 configuration for `ARRA_DATA_DIR` only. There is no libSQL database. `ARRA_DATA_DIR` holds the legacy `memories` tier and the operations tables. Per R5, `mcp_calls` and `connections` are written there on every admitted MCP tool call and every admitted `POST /api/knowledge/:bank/:method` call, which the CLI `kb` path uses, successes and failures alike, including a body-scope or bound-peer refusal (one writer, `composition.ts` `composeAuditSink`, reached from `auth/service.ts`'s MCP path and `knowledge/transport.auditKnowledgeCall.ts`; #31). The legacy HTTP memory routes are audited too, as their MCP twins (`/api/memories` as `list_memories`/`remember`, `/api/search` as `recall`, `/api/health` as `bank_info`; `auth/service.auditedHttpCall.ts`). Requests refused before admission (no or bad token, no grant, unreadable policy) and the global maintenance routes (`/api/backfill`, `/api/reindex`: no MCP twin, no workspace for a row) write no row. They are read there by `listMcpCalls`/`listConnections` (`knowledge/registry.ts:261-272`); their target19 copies stay declared and empty. Per R19, `connections.method` is `"bearer"`, `principal` is the credential id, and `remote_ip` stays null. `ARRA_KNOWLEDGE_DATASET_ROOT` holds target19. Nothing moves data between the two roots except `arra-migrate-copy`.
 - **Knowledge methods: 58** in `app/server/src/knowledge/registry.ts` (34 `content:read`, 22 `content:write`, 2 `audit:read`; the 58th is D3b `getRepresentation`, `app/docs/contracts/representation-v1.md`). That one table drives all three transports:
-  - HTTP `POST /api/knowledge/:bank/:method`, capped at 1 MiB (`knowledge/transport.ts:69`);
+  - HTTP `POST /api/knowledge/:bank/:method`, capped at 1 MiB (`knowledge/transport.state.ts:12`);
   - MCP `kb_<method>` with a `{payload}` wrapper, capped at 256 KiB (`auth/http.readBoundedBody.ts:4`);
   - CLI `kb <method>` (`app/cli.ts:99-103`).
   A method added to the registry reaches all three with no transport edit. Live probe before D3b: 57 reachable on HTTP, 57 on MCP, 57 on CLI.
-- **MCP tools: 66** = 8 legacy memory tools (`remember`, `recall`, `get_memory`, `list_memories`, `bank_info`, `call_log`, `call_stats`, `status`, all on `ARRA_DATA_DIR`) plus 58 `kb_*` (`mcp/tools.ts:16,179,199`). `tools/list` shows only the tools the caller's grants allow. `kb_*` tools are hidden when no knowledge dataset is configured (`mcp/tools.isAdvertised.ts:14-18`). Measured live with the dev policy before D3b: 65 (66 with `kb_getRepresentation`).
-- **v3-compatible MCP adapter** (R18), in `app/server/src/mcp/legacy-v3/`. It is off unless `ARRA_MCP_V3_COMPAT=1`, and only the exact value `1` turns it on (`composition.composeV3Compat.ts:7-8`, D10; style-split6 split this out of `composition.ts`). It carries **25** tools (`legacy-v3/catalogue.ts`):
+- **MCP tools: 66** = 8 legacy memory tools (`remember`, `recall`, `get_memory`, `list_memories`, `bank_info`, `call_log`, `call_stats`, `status`, all on `ARRA_DATA_DIR`) plus 58 `kb_*` (`mcp/tools.ts:18,181,201`). `tools/list` shows only the tools the caller's grants allow. `kb_*` tools are hidden when no knowledge dataset is configured (`mcp/tools.isAdvertised.ts:14-18`). Measured live with the dev policy before D3b: 65 (66 with `kb_getRepresentation`).
+- **v3-compatible MCP adapter** (R18), in `app/server/src/mcp/legacy-v3/`. It is off unless `ARRA_MCP_V3_COMPAT=1`, and only the exact value `1` turns it on (`composition.composeV3Compat.ts:7-8`, D10). It carries **25** tools (`legacy-v3/catalogue.ts`):
   - the `____IMPORTANT` guide;
   - `oracle_learn` `research_note` `handoff` `supersede` `search` `ask` `read` `list` `stats` `concepts` `reflect` `recap` `inbox` `verify` `thread` `threads` `thread_read` `thread_update` `trace` `trace_get` `trace_list` `trace_chain` `trace_distill` `search_chain`.
 
@@ -50,7 +50,7 @@ Every number here was measured on `e00b50b` on 2026-09-27: counts come from the 
 
   Other adapter rules:
   - An inbound `arra_*` alias resolves to its `oracle_*` tool and is never listed (D6, `auth/service.resolveToolName.ts`).
-  - The `X-Arra-Peer` speaker header is read only while the flag is on (`app.createApp.ts:172`, D8) and is bound by R3 `peers`.
+  - The `X-Arra-Peer` speaker header is read only while the flag is on (`app.createApp.ts:175`, D8) and is bound by R3 `peers`.
   - The recall tools exclude superseded, retired, inactive and out-of-window nodes; the browse tools include them, flagged (D3).
   - No v3 corpus is imported (D9).
 
@@ -81,10 +81,10 @@ Every number here was measured on `e00b50b` on 2026-09-27: counts come from the 
   - A digest that cannot be measured gives `blocked: "digest_unmeasured"`. A different digest gives `embedding_profile_mismatch`, and nothing is embedded. Boot never probes and never pins.
 - **Lifecycle (#29).** There is one eligibility rule, `publication/service.eligibilityReasonsOf.ts`. It returns `retired`, `superseded`, `inactive`, `not_yet_valid` or `expired`, and the validity window is half-open, `[valid_from, valid_to)`. The transport supplies `as_of` at request time, because readers take no clock. The rule serves `getRecallEligibility`, both searches, and `listNodes {eligible_only:true}` (the recall view). By default `listNodes` hides retired and superseded nodes; `include_inactive:true` is the history mode. `retireNode` and `supersedeNode` are exposed. Superseding into a node that is already retired or superseded is refused.
 - **Auth is implemented, not absent.**
-  - `ARRA_AUTH_POLICY` must be an absolute path to an owner-only (0600) `arra-auth/v1` policy file, checked at startup (`composition.readConfig.ts:5-8`; style-split6 split this out of `composition.ts`).
-  - The `Host`/`Origin` gate runs on **every** request, including the public ones (`app.createApp.ts:152-155`), and the server binds only `127.0.0.1` (`index.ts:95-99`).
+  - `ARRA_AUTH_POLICY` must be an absolute path to an owner-only (0600) `arra-auth/v1` policy file, checked at startup (`composition.readConfig.ts:5-8`).
+  - The `Host`/`Origin` gate runs on **every** request, including the public ones (`app.createApp.ts:155-156`), and the server binds only `127.0.0.1` (`index.startup.ts:59-61`).
   - Protected routes need exactly one `Authorization: Bearer <64-hex>` (`auth/http.readAuthorization.ts:2-11`).
-  - `/health` and the static UI (`GET /`, `/knowledge.html`, `/v2/*`) skip policy admission but not the Host/Origin gate (`app.createApp.ts:258`, `app.createApp.ts:468-497`, `authorization-integration-v1.md:34`).
+  - `/health` and the static UI (`GET /`, `/knowledge.html`, `/v2/*`) skip policy admission but not the Host/Origin gate (`app.createApp.ts:259`, `app.createApp.ts:468-497`, `authorization-integration-v1.md:34`).
 
   Measured live on this base:
 
@@ -95,7 +95,7 @@ Every number here was measured on `e00b50b` on 2026-09-27: counts come from the 
   GET /                                             foreign Host  400
   ```
 
-  A missing, repeated or malformed `?bank` is refused with 400 before admission (`app.createApp.ts:93-99`, `:268-273`), so the 401 needs a bank. Both are pinned: `auth-integration.test.ts:97-107` (401) and `mcp-correctness.test.ts:436-439` (400).
+  A missing, repeated or malformed `?bank` is refused with 400 before admission (`app.createApp.ts:93-99`, `:269-274`), so the 401 needs a bank. Both are pinned: `auth-integration.test.ts:97-107` (401) and `mcp-correctness.test.ts:467-469` (400).
 - **Membership boundary (R3).**
   - `listMessages`, `getMessage` and `listSessionMembers` take an optional `requester_peer_name` (`publication/context.requireMessageReadAuthority.ts`, `service.requireCurrentMembership.ts`):
     - A named requester must be a current member of the session. The two list methods and `getMessage` answer a non-member differently, on purpose:
