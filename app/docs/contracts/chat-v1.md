@@ -541,3 +541,17 @@ PR #139.
 **Evidence.** `app/server/test/context-peer-representation.test.ts`, new `describe` blocks
 "R24 (Nat D3b, #32): author_peer_name narrows getContext/answerChat selection" and
 "R24 (Nat D3b, #32): stale search cannot occur because chat never reads search_chunks_v1".
+
+## Amendment 2026-09-26 (post-merge Nat style: one exported function per file, named after the file (origin, Nat 2026-09-12: '1 file should not too long can we split to function per file? like <= 600?'); ratchet app/server/test/one-function-per-file.test.ts)
+
+`app/server/src/publication/chat.ts` is now a barrel of re-exports. Every function this
+contract cites (`parseGetContext`, `parseAnswerChat`, `parseGetChatSettings`,
+`projectContextItem`, `contextItemWireBytes`, `renderContextText`, `mapModelFailure`) moved
+VERBATIM to its own `chat.<fn>.ts`; shared request-field grammar (`name`, `maxItems`,
+`question`, `perspective`, `parseRequest`) moved to their own single-export
+`chat.<helper>.ts` files; every type and constant this contract names moved to
+`chat.state.ts` (data only, no functions). No behaviour, wire shape, or error code changed;
+`publication/chat.ts` remains the same import path every caller (HTTP transport, MCP, tests)
+already used. Reason: `docs/overnight/DECISIONS.md` (overnight ruling on Nat's
+one-function-per-file style) and the style-split4b slice brief (SHRINK
+MULTI_EXPORT_ALLOWLIST, behaviour-preserving splits of `publication/chat.ts`).

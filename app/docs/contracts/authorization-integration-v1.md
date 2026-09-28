@@ -866,6 +866,15 @@ fold key "matches the documented `foldId` in `mcp/connections.ts`", read that as
 `test/style-split2-guard.test.ts` checks that the barrel's re-exports are the split files'
 own exports.
 
+## Amendment 2026-09-26 (post-merge Nat style: one exported function per file, named after the file (origin, Nat 2026-09-12: '1 file should not too long can we split to function per file? like <= 600?'); ratchet app/server/test/one-function-per-file.test.ts)
+
+`db.ts` (and `auth/http.ts`, `publication/storage.ts`) is now a barrel that only
+re-exports; see `docs/overnight/DECISIONS.md`. This amendment's reference to "`db.ts`'s
+own header comment" ("This file never defines the schema...") is unchanged in spirit but
+the comment itself now lives at the top of `app/server/src/db.db.ts:1-2`, the split file
+that owns the `connect`/`openTable`/`checkoutLatest` logic. `db.ts` re-exports
+`db.db.ts`'s exports unchanged.
+
 ## Amendment 2026-09-28 (post-merge Nat style: one exported function per file, named after the file (origin, Nat 2026-09-12: 'split to function per file? like <= 600?'); ratchet app/server/test/one-function-per-file.test.ts)
 
 Per `docs/overnight/DECISIONS.md`, slice style-split5b (#22) shrank
