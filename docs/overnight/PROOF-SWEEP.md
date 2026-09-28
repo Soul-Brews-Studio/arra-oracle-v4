@@ -46,9 +46,9 @@ was deleted. `PLAN.md` needed no correction line (see "Checked and true").
 
 | # | Claim | File:line (doc) | Was | Now | Command |
 |---|---|---|---|---|---|
-| 1 | `/mcp/:bank/:workspace` returns 400 at `app.ts:233`; `params.bank` at `app.ts:212` | AC-MATRIX.md #31 bank row; AC-EVIDENCE.md §3 (`app.ts:145,212`) | `:233`, `:212` / `:145,212` | `app.createApp.ts:249-254`, `:230` / `:163,230` (PRs #124/#125 edited `app.ts`; re-pin 2026-09-28: `app.ts` split into `app.createApp.ts` by PR #147) | `rg -n '"/mcp/:bank"\|params.bank,\|/mcp/:bank/:workspace' app/server/src/app.createApp.ts` |
+| 1 | `/mcp/:bank/:workspace` returns 400 at `app.ts:233`; `params.bank` at `app.ts:212` | AC-MATRIX.md #31 bank row; AC-EVIDENCE.md §3 (`app.ts:145,212`) | `:233`, `:212` / `:145,212` | `app.createApp.ts:249-254`, `:228-229` / `:163,228-229` (PRs #124/#125 edited `app.ts`; re-pin 2026-09-28: `app.ts` split into `app.createApp.ts` by PR #147) | `rg -n '"/mcp/:bank"\|params.bank,\|/mcp/:bank/:workspace' app/server/src/app.createApp.ts` |
 | 2 | `runMcp` uses `workspace` unchanged | AC-MATRIX.md #31 bank row; AC-EVIDENCE.md §3 | `auth/service.ts:322-350` | `service.createOperationService.ts:330-362` (re-pin 2026-09-28: `service.ts` split into `service.createOperationService.ts` by PR #147) | `rg -n 'async runMcp\|kind: "workspace", workspace, action' app/server/src/auth/service.createOperationService.ts` |
-| 3 | the single audit sink | AC-MATRIX.md #31 audit row | `auth/service.ts:188-213` | `appendAudit` `service.createOperationService.ts:183-205`; the one writer is `composition.ts:108` `composeAuditSink` (re-pin 2026-09-28: `service.ts` split into `service.createOperationService.ts`) | `rg -n 'async function appendAudit\|deps.logCall' app/server/src/auth/service.createOperationService.ts; rg -n composeAuditSink app/server/src/composition.ts` |
+| 3 | the single audit sink | AC-MATRIX.md #31 audit row | `auth/service.ts:188-213` | `appendAudit` `service.createOperationService.ts:183-209`; the one writer is `composition.ts:108` `composeAuditSink` (re-pin 2026-09-28: `service.ts` split into `service.createOperationService.ts`) | `rg -n 'async function appendAudit\|deps.logCall' app/server/src/auth/service.createOperationService.ts; rg -n composeAuditSink app/server/src/composition.ts` |
 | 4 | no-leak test | AC-MATRIX.md #32 "no leak" row | `chat-coverage.test.ts:223` | `:266` | `rg -n 'recording stub saw only' app/server/test/chat-coverage.test.ts` |
 | 5 | overflow and unauthorized-aggregate tests | AC-MATRIX.md #85 rows 2-3 | `chat-coverage.test.ts:205-219`, `:136-145,:195-203` | `:244-258`, `:175-183,:234-242` | `rg -n '^\s*test\(' app/server/test/chat-coverage.test.ts` |
 | 6 | `chat-coverage` count | AC-MATRIX.md #32 and #85 rows | 17/0 (678 expects) | **26/0 (6076 expects)**. PR #124 added 9 live-transport tests | `bun test test/chat-coverage.test.ts` |
@@ -112,7 +112,7 @@ Checked and true in the same passes (not corrected): AGENTS.md 57 methods = 33 `
 `bun test test/mcp-v3-acceptance.test.ts` prints `PASS 37 / FAIL 0 / GAP 0 of 37 steps` (39/0); `trace-v1.md` K-list
 item 1's nine test files all carry `listTraces` (`rg -c listTraces` on each); every other AGENTS.md and README
 citation opened by hand matched (`storage.ts:50-74`, `:217`, `pyproject.toml:17`, `composition.ts:33-34,66-80`,
-`:84-87`, `registry.ts:271-282` (re-pin 2026-09-28: content shifted within the file), `auth/http.ts:15`, `:23-33`, `app/cli.ts:103-107` (re-pin 2026-09-28: shifted within `app/cli.ts`), `tools.isAdvertised.ts:14-18`,
+`:84-87`, `registry.ts:271-282` (re-pin 2026-09-28: content shifted within the file), `auth/http.ts:15`, `:23-33`, `app/cli.ts:104-108` (re-pin 2026-09-28: shifted within `app/cli.ts`), `tools.isAdvertised.ts:14-18`,
 `chat-model.types.ts:10-16`, `run_dev_server.py:45`, `search-chunk.profiles.ts:75-84`, `auth-integration.test.ts:97-107`,
 `service.listSessionMembers.ts:39`, `service.getMessage.ts:18-26`, `taxonomy.constants.ts:44`, `app/cli.ts:192-199` (re-pin 2026-09-28: shifted within `app/cli.ts`)).
 
