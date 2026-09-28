@@ -98,3 +98,35 @@ Proof: `app/server/test/session-link-service.test.ts` — "a mixed continues/for
 The "Physical schema (unchanged, `storage.ts:41`)" reference above means
 `TARGET_SCHEMA`, which now lives in `app/server/src/publication/storage.schema.ts`.
 `storage.ts` is a barrel that re-exports it unchanged; no schema change.
+
+## Amendment 2026-09-28 (post-merge Nat style: one exported function per file, named after the file (origin, Nat 2026-09-12: 'split to function per file? like <= 600?'); ratchet app/server/test/one-function-per-file.test.ts)
+
+`server/src/publication/session-link.ts` is now a re-export barrel; it exports nothing of
+its own. The functions moved unchanged, with no behaviour change, into these files (see
+`docs/overnight/DECISIONS.md` for the ratchet rule this satisfies):
+
+- `session-link.parseCreateSessionLink.ts`: `parseCreateSessionLink` and
+  `CreateSessionLinkRequest`; the private `nullableName`, `relation` and `evidenceRefText`
+  helpers stay local to this file (their only caller).
+- `session-link.parseListSessionLinks.ts`: `parseListSessionLinks` and
+  `ListSessionLinksRequest`.
+- `session-link.encodeSessionLinkRow.ts`: `encodeSessionLinkRow`; every stored-row helper
+  (`requireExactColumns`, `storedText`, `storedName`, `storedNanoid21`, `storedRelation`,
+  `storedNullableName`, `storedEvidenceRef`, `storedTimestamp`) is used only by this one
+  exported function, so all stay local to this file rather than getting their own file.
+- `session-link.constants.ts`: `SESSION_LINK_FIELDS`, `SESSION_RELATIONS`,
+  `DIRECTED_SESSION_RELATIONS`, `SESSION_LINK_DIRECTIONS`, `MAX_PAGE_LIMIT`,
+  `MAX_RESULT_WIRE_BYTES`, `MAX_CYCLE_VISITED`, `EVIDENCE_REF_KEYS` and the request/name
+  bounds, as data.
+- Helpers used by MORE than one of the files above each got their own single-export file,
+  never an object/namespace bundle: `session-link.parseRequest.ts`, `session-link.name.ts`,
+  `session-link.id.ts`.
+
+This section does not rewrite anything above it, including the R7 amendment directly
+above naming `service.assertSessionLinkAcyclic.ts`'s own imports of
+`DIRECTED_SESSION_RELATIONS` and `MAX_CYCLE_VISITED` -- those names are unchanged and now
+resolve through the barrel to `session-link.constants.ts`. Where the text above cites
+`session-link.ts` by file, the function now named lives in the split file listed for it
+above; importers of the barrel (`publication/session-link`) are unchanged, and
+`app/migrate-py/tests/test_revision_v1.py`'s `HELPER_REUSE_ALLOWED` already covers every
+sibling of this barrel by glob, so no new registration was needed there.

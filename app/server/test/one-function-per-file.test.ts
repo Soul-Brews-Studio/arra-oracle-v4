@@ -221,15 +221,11 @@ function measure(): FileReport[] {
 
 /** Files exporting MORE than one function, with today's exact count. */
 const MULTI_EXPORT_ALLOWLIST: Record<string, { count: number; reason: string }> = {
-  "server/src/publication/read-cursor.ts": { count: 4, reason: "frozen contract (app/docs/contracts/read-cursor-v1.md) parse/encode pipeline" },
-  "server/src/publication/session-link.ts": { count: 3, reason: "frozen contract (app/docs/contracts/session-link-v1.md) parse/encode pipeline" },
   "server/src/contracts/common.ts": { count: 19, reason: "frozen contract validators (app/docs/contracts), shared by every kernel" },
   "server/src/contracts/evidence-v1.ts": { count: 9, reason: "frozen contract validators (app/docs/contracts/revision-evidence-v1.md), shared by every kernel" },
   "server/src/contracts/v1.ts": { count: 9, reason: "frozen contract validators (app/docs/contracts/v1-codecs.md), shared by every kernel" },
   "server/src/contracts/revision-v1.ts": { count: 5, reason: "frozen contract validators (app/docs/contracts/revision-publication-v1.md)" },
   "server/src/contracts/errors.ts": { count: 4, reason: "frozen contract error helpers, one error family shared by every kernel" },
-  "server/src/mcp/calls.ts": { count: 6, reason: "mcp call-log audit helpers, one operational table (#31 maint-audit exported redact/truncate for the instance-level sink to reuse, not re-derive, R5)" },
-  "server/src/mcp/index.ts": { count: 4, reason: "MCP adapter composition root" },
   "server/src/contracts/batch-v1.ts": { count: 2, reason: "frozen contract (app/docs/contracts/v1-codecs.md) dispatch/encode pair" },
   "server/src/contracts/replay-v1.ts": { count: 2, reason: "frozen contract replay-op pair, shared by source and revision replay" },
 };
