@@ -615,6 +615,13 @@ class IsolationTests(unittest.TestCase):
         # (similarity 99%; its one import line follows the sibling auth/service.ts rename).
         TS_ROOT / "app.createApp.ts",
         TS_ROOT / "mcp" / "index.ts",
+        # style-split5b (2026-09-28, #22) moved mcp/index.ts's real dispatch
+        # logic (the kb_* tool dispatcher and the JSON-RPC adapter) out into
+        # these two files; mcp/index.ts is now a re-export barrel. Both must
+        # be scanned or a raw ./db/./storage/./calls import landing in either
+        # would go uncaught.
+        TS_ROOT / "mcp" / "index.dispatchTool.ts",
+        TS_ROOT / "mcp" / "index.createMcpAdapter.ts",
         # The HTTP entrypoint too: it imported ./db directly, contrary to the
         # frozen section 3, and now delegates trusted index work to composition.
         TS_ROOT / "index.ts",

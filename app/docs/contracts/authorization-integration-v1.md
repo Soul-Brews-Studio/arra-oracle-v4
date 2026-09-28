@@ -865,3 +865,32 @@ fold key "matches the documented `foldId` in `mcp/connections.ts`", read that as
 `mcp/connections.foldConnection.ts`. Importers of the barrel are unchanged.
 `test/style-split2-guard.test.ts` checks that the barrel's re-exports are the split files'
 own exports.
+
+## Amendment 2026-09-28 (post-merge Nat style: one exported function per file, named after the file (origin, Nat 2026-09-12: 'split to function per file? like <= 600?'); ratchet app/server/test/one-function-per-file.test.ts)
+
+Per `docs/overnight/DECISIONS.md`, slice style-split5b (#22) shrank
+`MULTI_EXPORT_ALLOWLIST` in `app/server/test/one-function-per-file.test.ts` by splitting
+`mcp/calls.ts` and `mcp/index.ts` into re-export barrels, behaviour-preserving, each
+exported function moved VERBATIM:
+
+- `mcp/calls.ts` -> `calls.redact.ts`, `calls.truncate.ts`, `calls.auditFailureCount.ts`,
+  `calls.logCall.ts`, `calls.recent.ts`, `calls.aggregate.ts`, with the audit-failure
+  counter as data-only state in `calls.state.ts`, and the private helpers shared by more
+  than one split (`quote`, `requiredBank`, `safeInteger`) each getting their own
+  single-export file. `mcp/calls.ts` remains the RAW module the Python adapter guard
+  (`raw_import()` in `app/migrate-py/tests/test_revision_v1.py`) refuses under `./calls`,
+  `../mcp/calls`, and any dotted split (`./calls.recent`, etc.) — proven with a live
+  mutation during this slice's review, not just read.
+- `mcp/index.ts` -> `index.configureKnowledgeAccess.ts`, `index.dispatchTool.ts`,
+  `index.createMcpAdapter.ts`, `index.handshakeResponse.ts`, with the `knowledgeAccess`
+  module singleton as data-only state in `index.state.ts`. `mcp/index.ts` stays listed in
+  `ADAPTER_FILES` (`app/migrate-py/tests/test_revision_v1.py`); `index.dispatchTool.ts` and
+  `index.createMcpAdapter.ts`, which now hold the real dispatch logic, were added to that
+  same list so a raw `./db`/`./storage`/`./calls` import landing in either would still be
+  caught.
+
+This section does not rewrite anything above it. Where the text above cites `mcp/calls.ts`
+(e.g. "`mcp/calls.ts` uses for `mcp_calls`", `redact`/`truncate` reuse, `auditFailureCount()`)
+or `mcp/index.ts` (e.g. the `remember` case, the dispatch `runMcp` audit point, the removed
+dead action map), the named function still exists under that name, re-exported from the
+same barrel path — no citation above is stale. Importers of either barrel are unchanged.
