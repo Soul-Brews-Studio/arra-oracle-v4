@@ -1,11 +1,13 @@
-"""ISOLATED target-19 candidate registry. arra-v4-target/1.
+"""The target-19 registry. arra-v4-target/1.
 
-This package declares the proposed 19 target tables so their physical Arrow
-shape can be reviewed and fixture-tested. It is NOT the active registry:
+This package declares the 19 target tables and their physical Arrow shape.
+Since R32 (Nat 2026-09-28, #135; docs/overnight/DECISIONS.md) it is the
+DEFAULT registry: ``python -m arra_migrate`` creates exactly these tables.
 
-  - ``arra_migrate.models.TABLES`` stays the 15-table baseline the runtime serves.
-  - Nothing here creates, activates or migrates a live table. The migrator
-    never imports this package. Tests write only to temporary roots.
+  - ``arra_migrate.models.TABLES`` is the LEGACY 15-table set, created only by
+    ``python -m arra_migrate --legacy-active15`` for the legacy routes.
+  - Nothing in this package creates a table on import. The migrator
+    (``__main__``) imports it; tests write only to temporary roots.
   - The target REPLACES ``memories`` / ``memory_terms`` with node revisions;
     it is 15 - 2 + 6 = 19, not 15 + 4.
 

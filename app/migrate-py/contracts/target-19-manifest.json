@@ -1,6 +1,6 @@
 {
   "manifest_version": "arra-v4-target/1",
-  "status": "proposed-not-active",
+  "status": "active",
   "authority": "discussion-36",
   "current_registry_tables": [
     "workspaces", "peers", "sessions", "session_peers", "messages",
