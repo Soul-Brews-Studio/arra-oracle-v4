@@ -903,3 +903,17 @@ This section does not rewrite anything above it. Where the text above cites `mcp
 or `mcp/index.ts` (e.g. the `remember` case, the dispatch `runMcp` audit point, the removed
 dead action map), the named function still exists under that name, re-exported from the
 same barrel path — no citation above is stale. Importers of either barrel are unchanged.
+
+`composition.ts` is now a pure re-export barrel (docs/overnight/DECISIONS.md, slice
+style-split6). Every exported function moved verbatim to its own `composition.<name>.ts`
+sibling, and the plain constants/types (`RuntimeConfig`, `SUPPORTED_BUN`,
+`SUPPORTED_ELYSIA`, `GLOBAL_BODY_BACKSTOP`, `VersionCheck`) moved to the data-only
+`composition.constants.ts`. Where the text above cites "`composition.ts`" as the module
+that reads `ARRA_MCP_V3_COMPAT` as trusted configuration, or names `composeAuditSink` as
+the one audit writer, read that as `composition.composeV3Compat.ts` and
+`composition.composeAuditSink.ts` respectively -- both re-exported by the `composition.ts`
+barrel unchanged, so every existing import of `./composition` still resolves the same
+names. No composition graph behaviour changed: this is a pure move, verified by the same
+targeted suites (`test:mcp`, `test:auth`, `test:chat`, `test:search-chunk`, `test:cli`)
+and the live probe (`58/58/58` HTTP/MCP/CLI methods, 0 isolation failures) passing
+unchanged before and after.

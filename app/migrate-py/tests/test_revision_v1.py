@@ -733,6 +733,11 @@ class IsolationTests(unittest.TestCase):
         TS_ROOT / "knowledge" / "transport.ts",
         TS_ROOT / "knowledge" / "registry.ts",
         TS_ROOT / "composition.ts",
+        # style-split6 (2026-09-28): composeKnowledgeAccess moved out of the
+        # composition.ts barrel into its own file; it is the one that lazily
+        # imports publication/search-chunk.profiles and
+        # publication/search-chunk.fetchOllamaModelDigest now.
+        TS_ROOT / "composition.composeKnowledgeAccess.ts",
     )
 
     #: The #34 copy migration (overnight rulings R11 + R17,
