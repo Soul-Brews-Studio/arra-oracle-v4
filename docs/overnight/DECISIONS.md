@@ -480,3 +480,29 @@ v3". Measured usage on this machine: 709 real v3 tool calls; `oracle_search` 46%
 - **D9 was not asked:** #28 was already closed on the pinned reading A (the
   cwd-only foreign-visitor prohibition, `relic-foreign-visitor.test.ts` 10/0).
   Readings B and C stay available if Nat reopens it.
+
+## R30 · #22 closes with the 7 frozen contract validators allowlisted
+
+- **Ruling (Nat, 2026-09-28, about 09:00):** keep `contracts/common`, `v1`, `evidence-v1`,
+  `revision-v1`, `errors`, `batch-v1` and `replay-v1` on `MULTI_EXPORT_ALLOWLIST`, and close #22.
+- **Why:** Nat's original rule (2026-09-12) was *"1 file should not too long … split to
+  function per file? like <= 600?"*. All 7 are frozen validators under 600 lines.
+- **Where it stands:** `MISNAMED_ALLOWLIST` went from 8 to 0 and `MULTI_EXPORT_ALLOWLIST` from
+  39 to 7 (#137, #142–#144, #147, #148, #151–#155). The ratchet still refuses growth, new
+  offenders and stale entries.
+
+## R31 · GitHub-hosted Actions are off; tests run locally only
+
+- **Ruling (Nat, 2026-09-28):** *"disable actions workflow eliminate asap mac os and disable test
+  first gh billed alot … use test local only"*. Two follow-ups: disable all release/publish/deploy
+  workflows too, and disable the hosted workflows that run on a schedule.
+- **Done:** 48 hosted workflows disabled across Soul-Brews-Studio and laris-co:
+  - the macOS matrix first;
+  - then 19 test/CI workflows;
+  - then 11 release/deploy workflows;
+  - then 18 scheduled workflows.
+
+  Self-hosted runners are untouched. The log is
+  `~/.claude/skills/actions-off/logs/disabled-2026-09-28.tsv`; `reenable.sh` undoes it. Skill:
+  `/actions-off`.
+- **Gate:** `app/just/local-ci.sh` (R23) stays the only merge gate for this repo.
