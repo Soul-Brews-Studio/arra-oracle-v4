@@ -8,7 +8,7 @@
 # already be holding.
 #
 # Sourced by demo.sh, which sets: PY, APP, SRV, SCRIPTS, BANK first.
-# Exports on success: ROOT, KDATA, LDATA, POLICY, TOKEN, PORT, ORIGIN,
+# Exports on success: ROOT, KDATA, LDATA, ODATA, POLICY, TOKEN, PORT, ORIGIN,
 # ARRA_URL/ARRA_BANK/ARRA_TOKEN (consumed by app/cli.ts), SERVER_PID.
 
 demo_stack_up() {
@@ -16,8 +16,9 @@ demo_stack_up() {
 
   ROOT="$(mktemp -d "${TMPDIR:-/tmp}/arra-demo.XXXXXX")"
   KDATA="$ROOT/dataset"   # target19 -- serves /api/knowledge/* and kb_*
-  LDATA="$ROOT/legacy"    # legacy15 -- serves /api/memories, startup FTS, mcp_calls/connections
-  mkdir -p "$KDATA" "$LDATA"
+  LDATA="$ROOT/legacy"    # legacy15 -- serves /api/memories, startup FTS
+  ODATA="$ROOT/ops"       # R33 S4(a) -- mcp_calls/connections/instance_audit
+  mkdir -p "$KDATA" "$LDATA" "$ODATA"
   show "mktemp -d  ->  $ROOT"
 
   # R32: the bare migrator creates target19; the legacy 15 need the flag.
@@ -27,6 +28,12 @@ demo_stack_up() {
 
   show "ARRA_DATA_DIR=$KDATA $PY -m arra_migrate"
   ARRA_DATA_DIR="$KDATA" "$PY" -m arra_migrate || fail "dataset-create" "arra_migrate (target19) exited non-zero"
+  echo
+
+  # R33 S4(a) (Nat 2026-09-28, docs/overnight/DECISIONS.md): operations
+  # tables move to their own sibling root.
+  show "ARRA_OPS_DIR=$ODATA $PY -m arra_migrate --ops"
+  ARRA_OPS_DIR="$ODATA" "$PY" -m arra_migrate --ops || fail "dataset-create" "arra_migrate --ops exited non-zero"
   echo
 
   show "$PY app/just/scripts/create_target19_dataset.py $KDATA"
@@ -61,6 +68,7 @@ s.close()')"
     export PORT="$PORT"
     export ARRA_DATA_DIR="$LDATA"
     export ARRA_KNOWLEDGE_DATASET_ROOT="$KDATA"
+    export ARRA_OPS_DIR="$ODATA"
     # R18 D10: v3-compatible oracle_* tools, on for this demo's MCP steps.
     export ARRA_MCP_V3_COMPAT=1
     # `DEMO_OLLAMA_URL` (the bun stub test) or a real local Ollama; propagated

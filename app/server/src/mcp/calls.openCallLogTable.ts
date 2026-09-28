@@ -9,13 +9,16 @@
 // several (one exported function per file, fix-round 2 style finding).
 
 import { connect } from "@lancedb/lancedb";
-import { DATA_DIR, storageOptions } from "../storage";
+import { OPS_DIR, opsStorageOptions } from "../storage.opsStorageOptions";
 
 const TABLE = "mcp_calls";
 
 let handle: Awaited<ReturnType<typeof connect>> | null = null;
 
+// R33 S4(a) (Nat 2026-09-28, docs/overnight/DECISIONS.md): this table lives
+// under `ARRA_OPS_DIR` when set, else falls back to `ARRA_DATA_DIR` unchanged
+// (`storage.opsStorageOptions.ts`).
 export async function openCallLogTable() {
-  handle ??= await connect(DATA_DIR, { storageOptions: storageOptions() });
+  handle ??= await connect(OPS_DIR, { storageOptions: opsStorageOptions() });
   return handle.openTable(TABLE);
 }

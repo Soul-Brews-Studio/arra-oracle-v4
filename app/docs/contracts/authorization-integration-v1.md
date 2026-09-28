@@ -917,3 +917,20 @@ names. No composition graph behaviour changed: this is a pure move, verified by 
 targeted suites (`test:mcp`, `test:auth`, `test:chat`, `test:search-chunk`, `test:cli`)
 and the live probe (`58/58/58` HTTP/MCP/CLI methods, 0 isolation failures) passing
 unchanged before and after.
+
+## Amendment 2026-09-26 (post-merge R33 S4(a) (Nat 2026-09-28): operations tables move to a sibling Lance root ARRA_OPS_DIR)
+
+This section does not rewrite anything above it. Authority: `docs/overnight/DECISIONS.md`
+R33 S4(a).
+
+Where §"Amendment 2026-09-26 (overnight R5)" above says `mcp_calls` and `connections` are
+read from "the operations root, `ARRA_DATA_DIR`", read that as: the operations root is now
+`ARRA_OPS_DIR` when that env var is set, else `ARRA_DATA_DIR` unchanged (`storage.opsStorageOptions.ts`).
+The same applies to `instance_audit` (D4b, above). No admission, redaction, or wire-contract
+behaviour changed — only WHICH physical Lance root the three tables' single opener
+(`mcp/calls.openCallLogTable.ts`, `mcp/connections.openConnectionsTable.ts`,
+`audit/instanceAudit.openInstanceAuditTable.ts`) connects to. `python -m arra_migrate --ops`
+creates exactly these three tables at `ARRA_OPS_DIR`, reusing the same model declarations
+(`arra_migrate.models.mcp_call`/`connection`/`instance_audit`) unchanged, and refuses a root
+that already holds a tenant (legacy-15 or target-19) table. Unset `ARRA_OPS_DIR` is the exact
+pre-R33 default: nothing about an existing deployment changes until the operator sets it.

@@ -93,7 +93,8 @@ const shards = lpt(groupFiles, shardCount);
 // such files sharing one process silently use whichever data dir was imported
 // first (measured 2026-09-28: remember-taxonomy-parity and mcp-correctness each
 // pass alone and fail 3-15 tests when LPT puts them in the same shard).
-const ownsDataDir = (f: string) => /process\.env\.ARRA_DATA_DIR\s*=/.test(readFileSync(join(here, f), "utf8"));
+const ownsDataDir = (f: string) =>
+  /process\.env\.(ARRA_DATA_DIR|ARRA_OPS_DIR)\s*=/.test(readFileSync(join(here, f), "utf8"));
 /** One shard's `bun test` invocations: the shared files together, then each data-dir owner alone. */
 const invocations = (shardFiles: readonly string[]): string[][] => {
   const own = shardFiles.filter(ownsDataDir);
