@@ -482,3 +482,8 @@ Every slice below went through the same loop as the night: implement → indepen
   | 09-28 | 8 | rulings and finish (so far; the index lags) |
 
   The whole issue list closed between 09-26 and 09-28.
+- 14:01 **PR #157 MERGED** (`474978e`). Target-19 is the migrator default (R32).
+  - `--legacy-active15` still creates the legacy root.
+  - The manifest is `active`.
+  - Local CI passed, 2197/0.
+  - **#135 closed. All 65 issues are closed.**
