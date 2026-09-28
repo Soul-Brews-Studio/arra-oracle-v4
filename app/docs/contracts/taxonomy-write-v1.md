@@ -422,3 +422,11 @@ and 108 remain stale from the original pass; deferred, not fixed here.
 
 Source: `docs/overnight/DECISIONS.md` NAT-DECISIONS D5a (R26); round-3 verifier findings
 in `.tmp/round3-findings-remember.txt` (scratch, not committed).
+
+## Amendment 2026-09-26 (post-merge Nat style: one exported function per file, named after the file (origin, Nat 2026-09-12: '1 file should not too long can we split to function per file? like <= 600?'); ratchet app/server/test/one-function-per-file.test.ts)
+
+The dataset-root checks this contract places "in
+`app/server/src/publication/storage.ts`" now live in
+`app/server/src/publication/storage.assertLocalDatasetRoot.ts` and
+`app/server/src/publication/storage.realpathOrFail.ts`. `storage.ts` re-exports both
+unchanged; no behaviour change.

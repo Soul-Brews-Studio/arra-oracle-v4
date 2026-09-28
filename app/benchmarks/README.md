@@ -205,7 +205,7 @@ comparable:
 
 | Profile | What it is |
 |---|---|
-| `icu` | Exactly the product's CURRENT FTS config (`Index.fts({baseTokenizer:"icu"})`, mirroring `app/server/src/db.ts:112`). Duplicated locally with a `TODO(#30)` to import once `db.ts` exports it as a shared constant. |
+| `icu` | Exactly the product's CURRENT FTS config (`Index.fts({baseTokenizer:"icu"})`, mirroring `app/server/src/db.ensureFtsIndex.ts`). Duplicated locally with a `TODO(#30)` to import once `db.ts` exports it as a shared constant. |
 | `ngram3` | `ngram(3,3)`, no stemming, no stop-word removal, per ruling R14. Duplicated locally with a `TODO(fts-ngram slice)` -- no shared `FTS_INDEX_OPTIONS` module exists on this base (`rg FTS_INDEX_OPTIONS app/server/src` finds nothing). |
 | `literal_includes` | Exact case-folded substring scan. Labelled `literal`, **never** `trigram` -- LanceDB's `ngram` profile is still tokenized BM25 (measured in `LANCEDB-FACTS.md`), not a literal substring engine. |
 | `vector` | `tbl.vectorSearch(...).distanceType(vectors.distance)` over PRECOMPUTED, FROZEN vectors read from a file. **No model call, ever** -- with no vectors file the profile reports `not_run` with a reason, and the manifest's `embedding.status` is `"not_run"`. Tests always stub the vectors file (`fixtures/run-lance-v1/vectors.json`); nothing in this repo's tests calls Ollama. |

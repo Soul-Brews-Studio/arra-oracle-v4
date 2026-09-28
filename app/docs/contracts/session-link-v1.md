@@ -92,3 +92,9 @@ Decision 4's cycle walk queried only the relation named on the PROPOSED edge (`r
 No schema change, no grammar change, no change to Decision 1–3, 5 or 6. The query itself is WIDER — a union of both relations instead of one — even though the set of requests it accepts is narrower (a mixed loop that previously slipped through is now refused). This is a wider cycle-detection query, not a new rule.
 
 Proof: `app/server/test/session-link-service.test.ts` — "a mixed continues/forked_from loop is refused at the request that closes it" (red before this amendment's code change, green after), "a legal diamond across continues AND forked_from stays accepted", and "related_to stays exempt from the cycle walk even facing a directed loop".
+
+## Amendment 2026-09-26 (post-merge Nat style: one exported function per file, named after the file (origin, Nat 2026-09-12: '1 file should not too long can we split to function per file? like <= 600?'); ratchet app/server/test/one-function-per-file.test.ts)
+
+The "Physical schema (unchanged, `storage.ts:41`)" reference above means
+`TARGET_SCHEMA`, which now lives in `app/server/src/publication/storage.schema.ts`.
+`storage.ts` is a barrel that re-exports it unchanged; no schema change.
