@@ -159,7 +159,7 @@ GET /                                             foreign Host  400
 
 A missing, repeated or malformed `?bank` is refused with 400 before admission (`app.createApp.ts:93-99`,
 `:269-274`), so the 401 needs a bank (`test/auth-integration.test.ts:97-107`,
-`test/mcp-correctness.test.ts:467-469`).
+`test/mcp-correctness.test.ts:470-472`).
 
 The bearer's policy grants (`content:read`/`write`, `audit:read`, `diagnostics:read`,
 `maintenance:backfill`/`reindex`) gate every protected method. The dev policy from
@@ -366,7 +366,7 @@ joining.
 Two more behaviours:
 
 - `chat ask` waits up to 75 s, longer than the server's 60 s model bound, so a slow answer
-  arrives as the server's own result (`app/cli.ts:187-194`).
+  arrives as the server's own result (`app/cli.ts:192-198`).
 - `bun app/cli.ts help` does not list `--history` for `nodes list`, although the alias
   accepts it.
 
