@@ -20,7 +20,7 @@ const PAGE_LIMIT = 100;
  * -- is applied in that shape, exactly like `db.list.ts`'s own predicates,
  * BEFORE `limit` truncates the result.
  */
-export async function legacyReadList(bank: string, limit = 50, filters: MemoryFilters = {}): Promise<LegacyMemoryRow[]> {
+export async function list(bank: string, limit = 50, filters: MemoryFilters = {}): Promise<LegacyMemoryRow[]> {
   const bundle = await openTarget19MemoryReader();
   const out: LegacyMemoryRow[] = [];
   let afterId: string | null = null;

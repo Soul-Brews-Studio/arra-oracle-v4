@@ -13,7 +13,7 @@
 // app/.tmp, app/data, ~/, R2 or a running service.
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { createFixture as createSeededRevisionFixture, revisionEnvelope, runGated, type SeededWorkspace } from "./helpers/publication-fixture";
-import { resetTarget19MemoryReaderForTests } from "../src/db.legacyRead.resetReaderForTests";
+import { resetReaderForTests } from "../src/db.legacyRead.resetReaderForTests";
 import { testTimeout } from "./helpers/timing.testTimeout";
 
 const WS = "alpha-workspace";
@@ -42,7 +42,7 @@ function withEnv<T>(env: Record<string, string>, run: () => Promise<T>): Promise
       if (prior[key] === undefined) delete process.env[key];
       else process.env[key] = prior[key];
     }
-    resetTarget19MemoryReaderForTests();
+    resetReaderForTests();
   });
 }
 
@@ -72,7 +72,7 @@ beforeAll(async () => {
   if (betaParsed.ok !== true) throw new Error(`beta seed failed: ${betaResult.stdout}\n${betaResult.stderr}`);
 }, testTimeout(120_000));
 
-afterEach(() => resetTarget19MemoryReaderForTests());
+afterEach(() => resetReaderForTests());
 
 afterAll(async () => {
   await fixture.cleanup();
@@ -80,9 +80,9 @@ afterAll(async () => {
 
 describe("legacy-read target-19 dark launch (R33 S2)", () => {
   test("flag off: default backend never opens the target-19 dataset", async () => {
-    const { memoriesBackend } = await import("../src/db.legacyRead.backend");
-    expect(memoriesBackend({})).toBe("legacy");
-    expect(memoriesBackend({ ARRA_MEMORIES_BACKEND: "something-else" })).toBe("legacy");
+    const { backend } = await import("../src/db.legacyRead.backend");
+    expect(backend({})).toBe("legacy");
+    expect(backend({ ARRA_MEMORIES_BACKEND: "something-else" })).toBe("legacy");
   });
 
   test("flag on: getById maps a node/revision to the legacy row shape", () =>

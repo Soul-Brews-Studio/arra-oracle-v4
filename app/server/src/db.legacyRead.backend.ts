@@ -8,6 +8,6 @@
 // Writes are untouched either way -- this flag only gates reads.
 export type MemoriesBackend = "legacy" | "target19";
 
-export function memoriesBackend(env: NodeJS.ProcessEnv = process.env): MemoriesBackend {
+export function backend(env: NodeJS.ProcessEnv = process.env): MemoriesBackend {
   return env.ARRA_MEMORIES_BACKEND === "target19" ? "target19" : "legacy";
 }

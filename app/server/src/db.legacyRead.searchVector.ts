@@ -9,7 +9,7 @@ import { mapAcceptedHeadToMemory, type LegacyMemoryRow } from "./db.legacyRead.m
  * resolved to the legacy row shape through the same `getAcceptedHead` path
  * `db.legacyRead.getById` uses.
  */
-export async function legacyReadSearchVector(q: string, bank: string, limit = 10): Promise<LegacyMemoryRow[]> {
+export async function searchVector(q: string, bank: string, limit = 10): Promise<LegacyMemoryRow[]> {
   const bundle = await openTarget19MemoryReader();
   const result = (await bundle.context.searchKnowledgeSemantic(
     requestBytes({ workspace_name: bank, query: q, limit }),

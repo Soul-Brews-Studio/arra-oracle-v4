@@ -3,7 +3,7 @@ import { openTarget19MemoryReader } from "./db.legacyRead.openTarget19MemoryRead
 import { mapAcceptedHeadToMemory, type LegacyMemoryRow } from "./db.legacyRead.mapAcceptedHeadToMemory";
 
 /** Target-19-backed `db.getById`: `node_id` <- legacy `id` (`buildRevisionRequest.ts`). */
-export async function legacyReadGetById(bank: string, id: string): Promise<LegacyMemoryRow | null> {
+export async function getById(bank: string, id: string): Promise<LegacyMemoryRow | null> {
   const bundle = await openTarget19MemoryReader();
   const found = (await bundle.publication.getAcceptedHead(
     requestBytes({ workspace_name: bank, node_id: id }),

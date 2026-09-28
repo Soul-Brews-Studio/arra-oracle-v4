@@ -2,8 +2,8 @@ import { db } from "./db.db";
 import { clean } from "./db.clean";
 import { quote } from "./db.quote";
 import { requiredBank } from "./db.requiredBank";
-import { memoriesBackend } from "./db.legacyRead.backend";
-import { legacyReadList } from "./db.legacyRead.list";
+import { backend } from "./db.legacyRead.backend";
+import { list as legacyReadList } from "./db.legacyRead.list";
 
 export interface MemoryFilters {
   type?: string;
@@ -15,7 +15,7 @@ export interface MemoryFilters {
 }
 
 export async function list(bank: string, limit = 50, filters: MemoryFilters = {}) {
-  if (memoriesBackend() === "target19") return legacyReadList(bank, limit, filters);
+  if (backend() === "target19") return legacyReadList(bank, limit, filters);
   const scopedBank = requiredBank(bank);
   const tbl = await db();
   let q = tbl.query();

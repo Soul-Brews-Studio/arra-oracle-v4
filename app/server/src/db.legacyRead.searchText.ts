@@ -11,7 +11,7 @@ import { type FtsResult } from "./fts/fts";
  * `FtsResult` contract `db.searchText.ts` already uses (`"ngram"` |
  * `"substring_scan"`, from the one shared `fts.constants.ts` (R14/R7)).
  */
-export async function legacyReadSearchText(q: string, bank: string, limit = 10): Promise<FtsResult<LegacyMemoryRow>> {
+export async function searchText(q: string, bank: string, limit = 10): Promise<FtsResult<LegacyMemoryRow>> {
   const bundle = await openTarget19MemoryReader();
   const result = (await bundle.context.searchKnowledgeKeyword(
     requestBytes({ workspace_name: bank, query: q, limit }),
