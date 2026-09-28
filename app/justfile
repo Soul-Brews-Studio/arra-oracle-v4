@@ -10,8 +10,10 @@ default:
     @just --list --list-submodules
 
 # Cold start: schema, deps, server. The order is the architecture.
+# The plain server opens the legacy `memories` tier in ARRA_DATA_DIR, which
+# since R32 only `--legacy-active15` creates (the bare migrator makes target19).
 up:
-    @just migrate run
+    @just migrate run-legacy
     @just server install
     @just server start
 

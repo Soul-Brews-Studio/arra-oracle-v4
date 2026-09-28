@@ -506,3 +506,40 @@ v3". Measured usage on this machine: 709 real v3 tool calls; `oracle_search` 46%
   `~/.claude/skills/actions-off/logs/disabled-2026-09-28.tsv`; `reenable.sh` undoes it. Skill:
   `/actions-off`.
 - **Gate:** `app/just/local-ci.sh` (R23) stays the only merge gate for this repo.
+
+## R32 · #135 re-scoped: v4 starts fresh on target-19, nothing is migrated
+
+- **Ruling (Nat, 2026-09-28):** start v4 fresh on target-19; do not migrate v3 data. Target-19
+  becomes the default for a fresh v4 install. v3 keeps running untouched for as long as it is used.
+- **Why:** the #135 cutover rehearsal found no live v4 data. Production is the v3 SQLite at
+  `~/.arra-oracle-v2`, which `arra-migrate-copy` refuses by design (R18 D9 keeps v3 import out of
+  scope). `~/.arra-oracle-v5` is a separate port with another schema. The only active-15 dataset
+  was empty dev data (0 memories, 0 workspaces). A migration had nothing to carry.
+- **What changed:**
+  - `python -m arra_migrate` creates the 19 target tables (`target_v1.TARGET_TABLES`) by default,
+    and `--check` drift-checks them. The legacy 15 (`models.TABLES`) are created and checked only
+    with `--legacy-active15`. Unknown or abbreviated flags are rejected before anything is created.
+  - The migrator refuses (exit 2, nothing created) a root that already holds tables only the other
+    registry declares. Re-running the bare command on an old legacy root therefore cannot bolt the
+    six target-only tables onto it.
+  - `app/migrate-py/contracts/target-19-manifest.json` says `"status": "active"`. The validator
+    accepts only `active` and rejects the stale `proposed-not-active`. `current_registry_tables`
+    keeps its frozen key and now records the legacy 15 the target replaced. The MCP `status` tool
+    reports `status: "active", active_tables: 19, legacy_tables: 15`.
+  - The server still needs a legacy-15 root in `ARRA_DATA_DIR`: `db.db.ts` refuses to start the
+    legacy memories tier without `memories`, and the operations tables (R5) are written there.
+    `dev-stack.sh`, `demo/stack.sh` and the live-R2 fixture now create it with the flag. They
+    create the knowledge root with the default migrator, and `create_target19_dataset.py` then only
+    seeds the `default` workspace row.
+  - Not changed: the digest-pinned review golden (`tests/fixtures/target-v1/golden-schema.json`)
+    keeps `proposed-not-active`. It records the scope of the 2026-09-20 physical-schema review, and
+    R32 does not reopen that review.
+- **Evidence:** `app/migrate-py/tests/test_migrate_default.py`,
+  `app/migrate-py/tests/test_target_manifest.py`, and
+  `app/server/test/target-schema-default-dataset.test.ts`. The last one creates a fresh default
+  dataset, passes `assertTargetDataset`, starts the real server through the writer gate on a
+  scratch port, and serves `listMessages` and `getContext` over HTTP.
+- **Reverse by:** make `--legacy-active15` the default again, set the manifest status back to
+  `proposed-not-active` (along with the validator and the three tests that pin it), and restore the
+  `__main__` import ban in `test_target_schema_v1.py`. No data needs moving either way, because
+  nothing was migrated.

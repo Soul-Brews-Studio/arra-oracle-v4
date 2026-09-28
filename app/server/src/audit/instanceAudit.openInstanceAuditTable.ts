@@ -22,7 +22,7 @@
 // is declared in Python (`migrate-py/src/arra_migrate/models/
 // instance_audit.py`; AGENTS.md: Python declares the schema, TS never does),
 // and mirrored here by hand because this table is intentionally OUTSIDE the
-// tenant `TABLES` registry `python -m arra_migrate` creates (it is
+// tenant `TABLES` registry `python -m arra_migrate --legacy-active15` creates (it is
 // instance-level, not per-workspace) — nothing here overrides that model, it
 // only supplies the same shape to `createEmptyTable`.
 

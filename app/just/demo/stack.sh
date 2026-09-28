@@ -20,8 +20,13 @@ demo_stack_up() {
   mkdir -p "$KDATA" "$LDATA"
   show "mktemp -d  ->  $ROOT"
 
-  show "ARRA_DATA_DIR=$LDATA $PY -m arra_migrate"
-  ARRA_DATA_DIR="$LDATA" "$PY" -m arra_migrate || fail "dataset-create" "arra_migrate (legacy15) exited non-zero"
+  # R32: the bare migrator creates target19; the legacy 15 need the flag.
+  show "ARRA_DATA_DIR=$LDATA $PY -m arra_migrate --legacy-active15"
+  ARRA_DATA_DIR="$LDATA" "$PY" -m arra_migrate --legacy-active15 || fail "dataset-create" "arra_migrate --legacy-active15 exited non-zero"
+  echo
+
+  show "ARRA_DATA_DIR=$KDATA $PY -m arra_migrate"
+  ARRA_DATA_DIR="$KDATA" "$PY" -m arra_migrate || fail "dataset-create" "arra_migrate (target19) exited non-zero"
   echo
 
   show "$PY app/just/scripts/create_target19_dataset.py $KDATA"

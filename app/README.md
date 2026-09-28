@@ -7,14 +7,16 @@ updated after every merge since). Counts below were measured on `e00b50b` on 202
 the test-file counts, which were re-measured on `ec5c2c5` (2026-09-27, proof sweep).
 
 This is a local prototype with bearer-token auth from a local policy file. It is **not**
-unauthenticated. The 19-table target is built and served, but the default migrator does not
-create it. A target19 dataset comes from the dev stopgap creator, or from the operator-only
-copy migration `arra-migrate-copy` (#34), which writes a new candidate from a copy of a
-legacy source. Both are described below.
+unauthenticated. The 19-table target is built and served, and since R32 (Nat 2026-09-28,
+#135: v4 starts fresh, no v3 migration) the default migrator `python -m arra_migrate` creates
+it. The legacy 15 need `--legacy-active15`, and the server still needs them in `ARRA_DATA_DIR`.
+The operator-only copy migration `arra-migrate-copy` (#34) still writes a new candidate from
+a copy of a legacy source.
 
 ```text
 Python LanceModel registries                 local LanceDB, two roots
   models/        (active15, 15 tables) ----->  ARRA_DATA_DIR
+    python -m arra_migrate --legacy-active15
                                                   memories: 8 legacy MCP tools,
                                                   /api/memories, /api/search,
                                                   13 legacy CLI commands
@@ -23,6 +25,7 @@ Python LanceModel registries                 local LanceDB, two roots
                                                   AND read here
 
   target_v1/     (target19, 19 tables) ----->  ARRA_KNOWLEDGE_DATASET_ROOT
+    python -m arra_migrate (default, R32)
     dev:  create_target19_dataset.py             nodes/revisions/taxonomy/context/
     ops:  arra-migrate-copy (#34),               evidence/trace/lifecycle/search:
           new candidate from a copy              58 registry methods on HTTP,
@@ -38,10 +41,10 @@ Python LanceModel registries                 local LanceDB, two roots
 
 | Path | Responsibility |
 |---|---|
-| `migrate-py/src/arra_migrate/models/` | Active Python schema registry (active15) |
-| `migrate-py/src/arra_migrate/target_v1/` | Target Python schema registry (target19, `arra-v4-target/1`, 19 tables / 228 fields) |
+| `migrate-py/src/arra_migrate/models/` | Legacy Python schema registry (active15), created only by `--legacy-active15` (R32) |
+| `migrate-py/src/arra_migrate/target_v1/` | Default Python schema registry since R32 (target19, `arra-v4-target/1`, 19 tables / 228 fields) |
 | `migrate-py/src/arra_migrate/copy_migration/` | `arra-migrate-copy` (#34, R11/R17): operator-only copy of a legacy15 source into a NEW target19 candidate. No cutover, and not reachable over HTTP, MCP or the CLI |
-| `migrate-py/src/arra_migrate/__main__.py` | active15 table creation and drift checks (`python -m arra_migrate[, --check]`) |
+| `migrate-py/src/arra_migrate/__main__.py` | table creation and drift checks: target19 by default, active15 with `--legacy-active15` (`python -m arra_migrate [--legacy-active15] [--check]`) |
 | `just/scripts/create_target19_dataset.py` | Dev-only stopgap that creates a target19 dataset and seeds its first `workspaces` row, with `created_at` truncated to milliseconds (R1) |
 | `just/scripts/write_dev_policy.py` | Dev-only auth policy + bearer token writer (`arra-auth/v1` shape) |
 | `just/scripts/run_dev_server.py` | Execs the server as the sole target19 writer, holding the fd-42 gate; defaults `ARRA_CHAT_PROVIDER=ollama` (line 45) |
@@ -63,8 +66,8 @@ absolute path to an owner-only (0600) `arra-auth/v1` policy file. It exits 1 wit
 (`composition.readConfig.ts:5-8`; style-split6 split this out of `composition.ts`). The sequence below starts a working server. It was re-run on
 2026-09-27 against a fresh `mktemp -d` on `e00b50b`, with only `PORT` changed to a random
 free port: every step exited 0, `/health` answered 200, and `tools/list` returned 65 tools. It also builds the
-target19 dataset the knowledge transport needs, since the plain `arra_migrate`
-migrator only creates active15.
+target19 dataset the knowledge transport needs (the default `arra_migrate` since R32) and the
+legacy15 dataset the legacy routes still open (`--legacy-active15`).
 
 `app/just/dev-stack.sh` runs all of this for you, under `app/.tmp/`, if you
 just want a running server; the manual form is here so each step is legible.
@@ -73,12 +76,17 @@ just want a running server; the manual form is here so each step is legible.
 # Choose a NEW isolated local directory; do not reset an existing bank.
 ROOT="$(mktemp -d)"; PY=app/migrate-py/.venv/bin/python
 
-ARRA_DATA_DIR="$ROOT/legacy15" $PY -m arra_migrate
-ARRA_DATA_DIR="$ROOT/legacy15" $PY -m arra_migrate --check
+ARRA_DATA_DIR="$ROOT/legacy15" $PY -m arra_migrate --legacy-active15
+ARRA_DATA_DIR="$ROOT/legacy15" $PY -m arra_migrate --legacy-active15 --check
 
-# Dev stopgap: creates the 19 tables and seeds one workspace row ('default')
-# directly, created_at truncated to milliseconds (R1). The reviewed path from
-# existing legacy data is arra-migrate-copy (#34), which writes to a NEW directory.
+# The default (R32): the 19 target tables.
+ARRA_DATA_DIR="$ROOT/target19" $PY -m arra_migrate
+ARRA_DATA_DIR="$ROOT/target19" $PY -m arra_migrate --check
+
+# Dev seed: finds the 19 tables present and inserts one workspace row
+# ('default'), created_at truncated to milliseconds (R1); no transport creates
+# a workspace. The path from existing legacy data is arra-migrate-copy (#34),
+# which writes to a NEW directory.
 $PY app/just/scripts/create_target19_dataset.py "$ROOT/target19"
 
 # Writes dev-policy.json (0600) + dev-token.txt (0600, 64 lowercase hex),

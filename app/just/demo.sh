@@ -9,7 +9,7 @@
 # What it does, in order (docs/overnight/DEMO.md is a captured transcript of
 # a real run, with a paragraph of explanation per step):
 #   1. A fresh mktemp stack: a target19 dataset (create_target19_dataset.py),
-#      a legacy15 dataset (arra_migrate), a dev auth policy + token
+#      a legacy15 dataset (arra_migrate --legacy-active15), a dev auth policy + token
 #      (write_dev_policy.py) -- same building blocks as `dev-stack.sh`, but
 #      isolated under mktemp, never app/.tmp, and on a free port.
 #   2. The server, started through the writer gate (run_dev_server.py),

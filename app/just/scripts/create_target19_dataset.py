@@ -1,11 +1,11 @@
 """Create (or complete) a target19 dataset for LOCAL DEV use only.
 
-Not part of the reviewed migration path -- `arra_migrate.target_v1` declares
-the 19 candidate tables but nothing in the package wires them into a runnable
-CLI yet (the active registry served by `just migrate run` is still the
-15-table baseline). This script is the dev-stack's own stopgap: it creates
-whichever of the 19 declared tables are missing at `dataset_root` (idempotent,
-like `arra-migrate` itself) and, if the `workspaces` table has no row named
+Since R32 (docs/overnight/DECISIONS.md) the bare `python -m arra_migrate`
+creates the 19 target tables, and `dev-stack.sh` runs it first; this script
+then finds every table present and only seeds the workspace row. It still
+creates whichever of the 19 declared tables are missing at `dataset_root`
+(idempotent, like `arra-migrate` itself), so older callers that skip the
+migrator keep working, and, if the `workspaces` table has no row named
 `default`, inserts one directly.
 
 Why the workspace row is inserted here rather than through the server's own

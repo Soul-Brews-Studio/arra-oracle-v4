@@ -76,7 +76,7 @@ run_leg() {
   echo "=== $label  (expect: $expect) ==="
   echo "=================================================================="
   echo "-- legacy15 dataset --"
-  ARRA_DATA_DIR="$ldata" "$PY" -m arra_migrate || { echo "$label: legacy15 create FAILED"; return 1; }
+  ARRA_DATA_DIR="$ldata" "$PY" -m arra_migrate --legacy-active15 || { echo "$label: legacy15 create FAILED"; return 1; }
 
   echo "-- target19 dataset via $creator --"
   if ! "$PY" "$creator" "$kdata"; then
