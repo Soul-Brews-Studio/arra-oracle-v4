@@ -1,25 +1,9 @@
-import type { Policy, PolicyRecord } from "./policy.types";
-
-/**
- * The construction boundary. A handle only authorizes if this module minted
- * it, so JSON copies, spread clones and prototype lookalikes are rejected.
- * This is an in-process boundary, not protection against arbitrary code in
- * the process.
- *
- * MODULE-PRIVATE STATE: in the original single-file `policy.ts` this WeakMap
- * was truly file-private, touched only by `parsePolicy` (write) and `admit`
- * (read). Splitting those two into separate files means the map itself needs
- * exactly one owner module so its identity can't accidentally fork — this
- * file is that owner. The map itself is never exported; only these two
- * accessor functions cross the boundary, preserving the original
- * write-once/read-only usage pattern.
- */
-const REGISTRY = new WeakMap<object, PolicyRecord>();
-
-export function registerPolicy(handle: Policy, record: PolicyRecord): void {
-  REGISTRY.set(handle, record);
-}
-
-export function lookupPolicy(handle: object): PolicyRecord | undefined {
-  return REGISTRY.get(handle);
-}
+// Re-export barrel: kept at the original path so importers do not churn (not
+// itself cited by any frozen contract -- see AGENTS/DECISIONS split-style
+// note). Split into policy.registry.registerPolicy.ts and
+// policy.registry.lookupPolicy.ts (Nat style: one exported function per file,
+// named after the file -- docs/overnight/DECISIONS.md). The two split files
+// import the shared WeakMap directly from policy.registry.state.ts, never
+// through this barrel.
+export { registerPolicy } from "./policy.registry.registerPolicy";
+export { lookupPolicy } from "./policy.registry.lookupPolicy";

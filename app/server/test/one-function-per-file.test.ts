@@ -221,6 +221,8 @@ function measure(): FileReport[] {
 
 /** Files exporting MORE than one function, with today's exact count. */
 const MULTI_EXPORT_ALLOWLIST: Record<string, { count: number; reason: string }> = {
+  "server/src/publication/read-cursor.ts": { count: 4, reason: "frozen contract (app/docs/contracts/read-cursor-v1.md) parse/encode pipeline" },
+  "server/src/publication/session-link.ts": { count: 3, reason: "frozen contract (app/docs/contracts/session-link-v1.md) parse/encode pipeline" },
   "server/src/contracts/common.ts": { count: 19, reason: "frozen contract validators (app/docs/contracts), shared by every kernel" },
   "server/src/composition.ts": { count: 10, reason: "startup composition root; wires config/service/access checks, not independently reusable (#31 maint-audit added composeInstanceAuditSink)" },
   "server/src/contracts/evidence-v1.ts": { count: 9, reason: "frozen contract validators (app/docs/contracts/revision-evidence-v1.md), shared by every kernel" },
@@ -235,10 +237,6 @@ const MULTI_EXPORT_ALLOWLIST: Record<string, { count: number; reason: string }> 
   "server/src/mcp/calls.ts": { count: 6, reason: "mcp call-log audit helpers, one operational table (#31 maint-audit exported redact/truncate for the instance-level sink to reuse, not re-derive, R5)" },
   "server/src/mcp/index.ts": { count: 4, reason: "MCP adapter composition root" },
   "server/src/mcp/protocol.ts": { count: 4, reason: "MCP JSON-RPC envelope helpers, one wire shape" },
-  "server/src/publication/read-cursor.ts": { count: 4, reason: "frozen contract (app/docs/contracts/read-cursor-v1.md) parse/encode pipeline" },
-  "server/src/mcp/connections.ts": { count: 3, reason: "mcp connection-fold audit helpers, one operational table" },
-  "server/src/publication/session-link.ts": { count: 3, reason: "frozen contract (app/docs/contracts/session-link-v1.md) parse/encode pipeline" },
-  "server/src/auth/policy.registry.ts": { count: 2, reason: "policy registry: register/lookup pair over one map" },
   "server/src/contracts/batch-v1.ts": { count: 2, reason: "frozen contract (app/docs/contracts/v1-codecs.md) dispatch/encode pair" },
   "server/src/contracts/replay-v1.ts": { count: 2, reason: "frozen contract replay-op pair, shared by source and revision replay" },
 };
