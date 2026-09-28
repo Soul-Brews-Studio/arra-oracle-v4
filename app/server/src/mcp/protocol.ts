@@ -16,61 +16,17 @@
 // back to our newest known one otherwise. NEVER hard-code one and reject the
 // rest. There is no MCP "v2" (SPEC §6.1) — the spec is date-revisioned, and the
 // SERVER is what carries a version number.
+//
+// This file is now a barrel (style-split4b, 2026-09-28): each exported function
+// moved verbatim to its own protocol.<fn>.ts, and the shared constants/types
+// moved to protocol.state.ts (data only). Re-exported here so every existing
+// importer (`./mcp/protocol` / `../src/mcp/protocol`) keeps working unchanged,
+// including SERVER_NAME/SERVER_VERSION, which app.createApp.ts and mcp/index.ts
+// import from this path.
 
-/** Revisions we know how to speak. Anything else still gets an answer — in the
- *  newest of these — rather than silence. Kept in sync with digger-node. */
-export const KNOWN_PROTOCOL_VERSIONS = [
-  "2026-07-28",
-  "2025-11-25",
-  "2025-06-18",
-  "2025-03-26",
-  "2024-11-05",
-] as const;
-
-export const SERVER_NAME = "arra-oracle-v4";
-export const SERVER_VERSION = "26.9.28-alpha.638";
-
-export interface JsonRpcRequest {
-  jsonrpc?: string;
-  id?: string | number | null;
-  method?: string;
-  params?: Record<string, unknown>;
-}
-
-export const ok = (id: unknown, result: unknown) => ({ jsonrpc: "2.0", id, result });
-export const err = (id: unknown, code: number, message: string) => ({
-  jsonrpc: "2.0",
-  id,
-  error: { code, message },
-});
-
-/** Lance stores int64, and the JS client hands those back as BigInt, which
- *  `JSON.stringify` refuses outright — "cannot serialize BigInt". Every tool
- *  returning a row hit this, so the conversion belongs HERE, at the one place
- *  every result passes through, not in each tool.
- *
- *  Values inside JS's safe-integer range remain numbers. Larger int64 values
- *  stay exact as decimal strings rather than being silently rounded. */
-const bigintSafe = (_k: string, v: unknown) => {
-  if (typeof v !== "bigint") return v;
-  return v <= BigInt(Number.MAX_SAFE_INTEGER) && v >= BigInt(Number.MIN_SAFE_INTEGER)
-    ? Number(v)
-    : v.toString();
-};
-
-/** MCP tool results are content blocks, not bare JSON. */
-export const text = (value: unknown) => ({
-  content: [
-    {
-      type: "text",
-      text: typeof value === "string" ? value : JSON.stringify(value, bigintSafe, 2),
-    },
-  ],
-});
-
-export function negotiate(asked: unknown): string {
-  const want = String(asked ?? "");
-  return (KNOWN_PROTOCOL_VERSIONS as readonly string[]).includes(want)
-    ? want
-    : KNOWN_PROTOCOL_VERSIONS[0];
-}
+export { KNOWN_PROTOCOL_VERSIONS, SERVER_NAME, SERVER_VERSION } from "./protocol.state";
+export type { JsonRpcRequest } from "./protocol.state";
+export { ok } from "./protocol.ok";
+export { err } from "./protocol.err";
+export { text } from "./protocol.text";
+export { negotiate } from "./protocol.negotiate";
