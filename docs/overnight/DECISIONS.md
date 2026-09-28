@@ -543,3 +543,16 @@ v3". Measured usage on this machine: 709 real v3 tool calls; `oracle_search` 46%
   `proposed-not-active` (along with the validator and the three tests that pin it), and restore the
   `__main__` import ban in `test_target_schema_v1.py`. No data needs moving either way, because
   nothing was migrated.
+
+## R33 · Retiring the legacy root: v3 tools stay frozen, and the ops tables get their own root
+
+- **Ruling (Nat, 2026-09-28).** The plan is `docs/overnight/LEGACY-ROOT-RETIREMENT-PLAN.md`.
+  - **S3 (a):** `remember`, `recall`, `get_memory` and `list_memories` keep their exact names
+    and wire shapes. Only their internals move from the legacy `memories` table to target-19
+    nodes and revisions. The `mcp-v3-*` suites are the fence.
+  - **S4 (a):** `mcp_calls`, `connections` and `instance_audit` move to a sibling Lance root,
+    `ARRA_OPS_DIR`, separate from knowledge data. This settles the long-standing mismatch in
+    R5, whose text says "operations root" while the code shares `DATA_DIR`.
+- **Order.** S2 (target-19 read path behind a flag) and S4 (ops root) can run in parallel. S3
+  and S5 come next, then S6 and S7 delete the legacy root.
+- **Reverse by.** Each slice lists its own reverse step in the plan.
